@@ -28,6 +28,10 @@ describe("Remote MCP accounts", () => {
     const user = userEvent.setup();
     const input = await screen.findByLabelText("个人访问令牌");
     expect(input).toHaveAttribute("type", "password");
+    await user.click(screen.getByRole("button", { name: "显示令牌" }));
+    expect(input).toHaveAttribute("type", "text");
+    await user.click(screen.getByRole("button", { name: "隐藏令牌" }));
+    expect(input).toHaveAttribute("type", "password");
     expect(screen.queryByRole("button", { name: "在浏览器中登录" })).not.toBeInTheDocument();
     expect(screen.queryByText(/当前版本尚未配置 GitHub 浏览器登录/)).not.toBeInTheDocument();
     expect(screen.queryByText(/账号连接后，任务可以使用此服务/)).not.toBeInTheDocument();

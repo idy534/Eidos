@@ -88,12 +88,13 @@ describe("Plugin Hook review", () => {
 });
 
 describe("Plugin resources", () => {
-  it("shows publisher and packaged setup instructions without enabling capabilities", async () => {
+  it("shows packaged setup instructions without enabling capabilities", async () => {
     const readSkillDetail = vi.fn().mockResolvedValue({ qualifiedId: ownSkill.qualifiedId, content: "Setup guide", body: "Setup guide", directory: "/plugins/demo/skills/review" });
     Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { readSkillDetail } });
     const props = setup({ ...plugin, presentation: { developerName: "Example Team", license: "MIT", onboardingSkillId: ownSkill.qualifiedId } }, { skills: [ownSkill] });
     const user = userEvent.setup();
-    expect(screen.getByText("Example Team")).toBeInTheDocument();
+    expect(screen.queryByText("Example Team")).not.toBeInTheDocument();
+    expect(screen.queryByText(/个技能/)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "查看 Demo 的资源" }));
     await user.click(screen.getByRole("button", { name: /Review/ }));
     expect(await screen.findByText("Setup guide")).toBeInTheDocument();

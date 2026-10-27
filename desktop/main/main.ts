@@ -955,6 +955,19 @@ ipcMain.handle(IPC.WORKSPACE_SHOW_IN_FINDER, async (_event, targetPath: unknown)
     throw new Error("无法在 Finder 中显示该路径。");
   }
 });
+ipcMain.handle(IPC.WORKSPACE_OPEN_PATH, async (_event, targetPath: unknown) => {
+  if (typeof targetPath !== "string" || !targetPath.trim()) {
+    throw new Error("路径参数无效。");
+  }
+  try {
+    const canonicalTarget = await realpath(targetPath);
+    await stat(canonicalTarget);
+    const failure = await electronShell.openPath(canonicalTarget);
+    if (failure) throw new Error("无法打开该路径。");
+  } catch {
+    throw new Error("无法打开该路径。");
+  }
+});
 ipcMain.handle(IPC.TERMINAL_CREATE, (
   event,
   sessionId: unknown,

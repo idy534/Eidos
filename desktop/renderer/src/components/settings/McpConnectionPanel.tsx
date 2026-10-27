@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import type { McpConnectionRequest, McpConnectionState } from "../../../../shared/mcp-connections.js";
 import type { McpServerRecord } from "../../contracts.js";
 import { Button } from "../Button.js";
+import { Tooltip } from "../Tooltip.js";
 import { ToastContainer } from "../ToastContainer.js";
 import { githubIcon } from "./SettingsIcons.js";
+import { EyeIcon, EyeOffIcon } from "./ChannelIcons.js";
 
 const states: Record<string, string> = {
   disconnected: "尚未连接账号",
@@ -34,6 +36,7 @@ export function McpConnectionPanel({
 }) {
   const [state, setState] = useState<McpConnectionState>();
   const [token, setToken] = useState("");
+  const [showToken, setShowToken] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const autoOpen = useRef(false);
@@ -140,16 +143,33 @@ export function McpConnectionPanel({
       }}
     >
       <label htmlFor={`mcp-token-${server.serverId}`}>个人访问令牌</label>
-      <input
-        id={`mcp-token-${server.serverId}`}
-        type="password"
-        value={token}
-        autoComplete="off"
-        spellCheck={false}
-        disabled={busy || !enabled || connecting}
-        maxLength={8192}
-        onChange={(event) => setToken(event.target.value)}
-      />
+      <div className="custom-model-secret-input" style={{ width: "100%", position: "relative" }}>
+        <input
+          id={`mcp-token-${server.serverId}`}
+          type={showToken ? "text" : "password"}
+          value={token}
+          autoComplete="off"
+          spellCheck={false}
+          disabled={busy || !enabled || connecting}
+          maxLength={8192}
+          onChange={(event) => setToken(event.target.value)}
+        />
+        <Tooltip content={showToken ? "隐藏令牌" : "显示令牌"}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="small"
+            className="custom-model-secret-toggle"
+            aria-label={showToken ? "隐藏令牌" : "显示令牌"}
+            title={showToken ? "隐藏令牌" : "显示令牌"}
+            aria-pressed={showToken}
+            disabled={busy || !enabled || connecting}
+            onClick={() => setShowToken(!showToken)}
+          >
+            {showToken ? <EyeOffIcon /> : <EyeIcon />}
+          </Button>
+        </Tooltip>
+      </div>
       <div className="mcp-token-actions">
         <Button
           type="submit"

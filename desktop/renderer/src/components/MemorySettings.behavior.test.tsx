@@ -252,3 +252,38 @@ it("places full backup in local data settings and reports a failure", async () =
   expect(backupData).toHaveBeenCalledOnce();
   expect(screen.getByRole("button", { name: "备份本地数据" })).toBeEnabled();
 });
+
+it("removes the memory policy banner and places mode and export controls in the header", async () => {
+  mount();
+  await screen.findByRole("link", { name: note.path });
+  expect(screen.queryByText(/模型在当前对话中及时记下有长期价值的信息/)).not.toBeInTheDocument();
+  const header = document.querySelector(".memory-header");
+  expect(header).toBeInTheDocument();
+  expect(within(header as HTMLElement).getByRole("combobox", { name: "记忆模式" })).toBeInTheDocument();
+  expect(within(header as HTMLElement).getByRole("button", { name: "导出 Markdown" })).toBeInTheDocument();
+});
+
+it("collapses and expands the notes list using the divider toggle button", async () => {
+  mount();
+  const user = userEvent.setup();
+  await screen.findByRole("link", { name: note.path });
+
+  const collapseBtn = screen.getByRole("button", { name: "折叠笔记列表" });
+  expect(collapseBtn).toHaveAttribute("aria-expanded", "true");
+  const workspace = document.querySelector(".memory-workspace")!;
+  const filesNav = screen.getByRole("navigation", { name: "记忆文件" });
+  expect(workspace).not.toHaveClass("memory-workspace--sidebar-collapsed");
+  expect(filesNav).toHaveAttribute("aria-hidden", "false");
+
+  // 点击折叠
+  await user.click(collapseBtn);
+  expect(screen.getByRole("button", { name: "展开笔记列表" })).toHaveAttribute("aria-expanded", "false");
+  expect(workspace).toHaveClass("memory-workspace--sidebar-collapsed");
+  expect(filesNav).toHaveAttribute("aria-hidden", "true");
+
+  // 再次点击展开
+  await user.click(screen.getByRole("button", { name: "展开笔记列表" }));
+  expect(screen.getByRole("button", { name: "折叠笔记列表" })).toHaveAttribute("aria-expanded", "true");
+  expect(workspace).not.toHaveClass("memory-workspace--sidebar-collapsed");
+  expect(filesNav).toHaveAttribute("aria-hidden", "false");
+});

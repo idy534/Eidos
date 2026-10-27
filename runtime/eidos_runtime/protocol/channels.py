@@ -14,6 +14,7 @@ class ChannelPublicConnection(EidosFrozenStrictModel):
     revision: JsonSafeInt
     config: ChannelConfig
     has_secret: bool
+    client_secret: str = Field(default="", alias="clientSecret", repr=False)
 
 
 class ChannelResponse(EidosFrozenStrictModel):

@@ -19,6 +19,40 @@ logger = logging.getLogger("eidos.runtime.telemetry")
 
 _DEFAULT_SERVICE_NAME = "eidos-runtime"
 _SUPPORTED_EXPORTERS = frozenset({"console", "otlp"})
+_OTLP_TRACE_EXPORTER_LOGGER = "opentelemetry.exporter.otlp.proto.http.trace_exporter"
+# These are the two messages emitted by the locked OTLP SDK for a transient
+# failure and the eventual exhaustion of the same batch's retry budget.
+_OTLP_TRANSIENT_FAILURE_MESSAGES = frozenset({
+    "Transient error %s encountered while exporting %s batch, retrying in %.2fs.",
+    "Failed to export %s batch due to timeout, max retries or shutdown.",
+})
+_OTLP_FILTER_INSTALL_LOCK = threading.Lock()
+
+
+class _FirstOtlpTraceFailure(logging.Filter):
+    """Keep the first transient export failure visible without flooding logs."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._reported = False
+        self._lock = threading.Lock()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not isinstance(record.msg, str) or record.msg not in _OTLP_TRANSIENT_FAILURE_MESSAGES:
+            return True
+        with self._lock:
+            if self._reported:
+                return False
+            self._reported = True
+            record.msg += " Further transient OTLP trace export errors are suppressed for this Runtime process."
+            return True
+
+
+def _limit_otlp_trace_failure_logs() -> None:
+    exporter_logger = logging.getLogger(_OTLP_TRACE_EXPORTER_LOGGER)
+    with _OTLP_FILTER_INSTALL_LOCK:
+        if not any(isinstance(item, _FirstOtlpTraceFailure) for item in exporter_logger.filters):
+            exporter_logger.addFilter(_FirstOtlpTraceFailure())
 
 
 @dataclass
@@ -143,6 +177,7 @@ def _span_processors(names: Iterable[str]) -> tuple[SpanProcessor, ...]:
                         )) else 3.0
                     ),
                 )
+                _limit_otlp_trace_failure_logs()
                 processors.append(BatchSpanProcessor(
                     exporter,
                     schedule_delay_millis=(

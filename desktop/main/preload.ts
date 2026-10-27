@@ -134,6 +134,8 @@ const api: EidosRuntimeAPI = {
     ipcRenderer.invoke(IPC.WORKSPACE_OPEN_IN_EDITOR, sessionId, path),
   showItemInFolder: (path: string): Promise<void> =>
     ipcRenderer.invoke(IPC.WORKSPACE_SHOW_IN_FINDER, path),
+  openPath: (path: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.WORKSPACE_OPEN_PATH, path),
 
   // User terminal
   createTerminal: (

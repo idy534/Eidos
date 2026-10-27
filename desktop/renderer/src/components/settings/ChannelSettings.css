@@ -420,6 +420,16 @@
   gap: 1rem 1.25rem;
 }
 
+.channel-grid-fields--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 720px) {
+  .channel-grid-fields--three {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 680px) {
   .channel-grid-fields {
     grid-template-columns: 1fr;
@@ -439,6 +449,38 @@
   letter-spacing: -0.005em;
 }
 
+.channel-field.model-selector-field {
+  align-items: stretch;
+}
+
+.channel-field.model-selector-field > label {
+  font-size: 0.82rem;
+  font-weight: 550;
+  color: var(--text-secondary);
+  letter-spacing: -0.005em;
+}
+
+.channel-field.model-selector-field .model-selector {
+  width: 100%;
+}
+
+.channel-field.model-selector-field .model-selector__trigger {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  height: 2.35rem;
+  min-height: 2.35rem;
+  border-radius: var(--radius-sm);
+  padding: 0 0.8rem;
+  font-size: 0.86rem;
+}
+
+.channel-field.model-selector-field .model-selector__trigger:focus-visible {
+  border-color: #007aff;
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.12);
+  outline: none;
+}
+
 .channel-field input,
 .channel-field select,
 .channel-field textarea {
@@ -453,6 +495,10 @@
   font-family: inherit;
   transition: border-color 140ms ease, box-shadow 140ms ease;
   outline: none;
+}
+
+.channel-field select {
+  height: 2.35rem;
 }
 
 .channel-field input::placeholder,

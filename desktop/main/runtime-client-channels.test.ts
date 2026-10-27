@@ -20,7 +20,7 @@ void test("channel fixtures enforce the generated Python boundary", async () => 
   assert.equal(isChannelResponse({ state: "connected", clientSecret: "leak" }), false);
 });
 
-void test("channel configuration is redacted, revision guarded and survives Runtime restart", { timeout: 30000 }, async () => {
+void test("channel configuration echoes secret, is revision guarded and survives Runtime restart", { timeout: 30000 }, async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "eidos-channel-contract-"));
   const options = { pythonExecutable: path.join(root, ".venv/bin/python"), runtimeRoot: path.join(root, "runtime"),
     dataDirectory: path.join(temporary, "data"), environment: { EIDOS_PROJECTLESS_ROOT: path.join(temporary, "workspaces") } };
@@ -34,11 +34,11 @@ void test("channel configuration is redacted, revision guarded and survives Runt
     const saved = await client.saveChannel(request);
     assert.equal(saved.connection?.revision, 1);
     assert.equal(saved.connection?.hasSecret, true);
+    assert.equal(saved.connection?.clientSecret, "sample-channel-secret");
     assert.equal(Object.hasOwn(saved.connection?.config ?? {}, "robotCode"), false);
     assert.equal(Object.hasOwn(saved.connection?.config ?? {}, "corpId"), false);
-    assert.equal(JSON.stringify(saved).includes("sample-channel-secret"), false);
     await assert.rejects(client.saveChannel(request), (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "INVALID_PARAMS");
-    const full = { expectedRevision: 1, config: { ...request.config, approvalMode: "full_access" as const } };
+    const full = { expectedRevision: 1, config: { ...request.config, approvalMode: "full_access" as const }, clientSecret: "sample-channel-secret" };
     await assert.rejects(client.saveChannel(full), (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "INVALID_PARAMS");
     const confirmed = await client.saveChannel({ ...full, fullAccessConfirmation: "full-access-v1" });
     assert.equal(confirmed.connection?.revision, 2);
@@ -55,15 +55,16 @@ void test("channel configuration is redacted, revision guarded and survives Runt
     const restored = await client.readChannel();
     assert.equal(restored.connection?.revision, 2);
     assert.equal(restored.connection?.config.clientId, "app");
+    assert.equal(restored.connection?.clientSecret, "sample-channel-secret");
     assert.equal(restored.connection?.config.approvalMode, "full_access");
     assert.equal(restored.state, "disabled");
     assert.equal(restored.connection?.config.reasoningSelection, "high");
     for (const channel of ["feishu", "wecom"] as const) {
       assert.equal((await client.readChannel({ channel })).connection?.revision, 1);
     }
-    const retained = await client.saveChannel({ ...full, expectedRevision: 2 });
+    const retained = await client.saveChannel({ ...full, expectedRevision: 2, clientSecret: "sample-channel-secret" });
     assert.equal(retained.connection?.revision, 3);
-    await client.saveChannel({ expectedRevision: 3, config: { ...request.config, approvalMode: "manual" } });
+    await client.saveChannel({ expectedRevision: 3, config: { ...request.config, approvalMode: "manual" }, clientSecret: "sample-channel-secret" });
     await assert.rejects(client.saveChannel({ ...full, expectedRevision: 4 }),
       (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "INVALID_PARAMS");
     await client.shutdown(); assert.equal(await client.waitForExit(), 0);

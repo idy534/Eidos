@@ -148,3 +148,20 @@ export function formatAutomationTime(instant: string, timezone?: string | null):
     return `${new Date(instant).toISOString()} · UTC`;
   }
 }
+
+export function formatPreviewTime(instant: string, timezone?: string | null): string {
+  const zone = timezone || "UTC";
+  try {
+    return new Date(instant).toLocaleString("zh-CN", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  } catch {
+    return new Date(instant).toISOString();
+  }
+}

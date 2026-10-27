@@ -5,7 +5,7 @@ import type { ModelOption } from "../../contracts.js";
 import { AutomationForm } from "./AutomationForm.js";
 import { AutomationToolCard } from "./AutomationToolCard.js";
 import { AutomationTaskList } from "./AutomationTaskList.js";
-import { automationDateInput, formatAutomationTime, oneTimeOptions } from "./automation-time.js";
+import { automationDateInput, formatAutomationTime, formatPreviewTime, oneTimeOptions } from "./automation-time.js";
 
 const model = { id: "model", name: "本地模型" } as ModelOption;
 const task: Automation = {
@@ -134,5 +134,12 @@ describe("automation timezone boundaries", () => {
     const customGroup = timezoneSelect.querySelector('optgroup[label="当前设置"]');
     expect(customGroup).toBeInTheDocument();
     expect(customGroup?.querySelector('option[value="Antarctica/Troll"]')).toBeInTheDocument();
+  });
+
+  it("formats preview time without redundant timezone suffixes", () => {
+    const formatted = formatPreviewTime("2026-10-28T00:00:00Z", "Asia/Seoul");
+    expect(formatted).toBe("2026/10/28 09:00");
+    expect(formatted).not.toContain("Asia/Seoul");
+    expect(formatted).not.toContain("GMT");
   });
 });

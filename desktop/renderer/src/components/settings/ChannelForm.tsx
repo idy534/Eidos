@@ -60,7 +60,7 @@ export function ChannelForm({
     projectId: null,
     approvalMode: "manual",
   });
-  const [secret, setSecret] = useState("");
+  const [secret, setSecret] = useState(connection?.clientSecret ?? "");
   const [showSecret, setShowSecret] = useState(false);
   const [error, setError] = useState("");
   const [showFullAccessDialog, setShowFullAccessDialog] = useState(false);
@@ -78,7 +78,7 @@ export function ChannelForm({
       projectId: null,
       approvalMode: "manual",
     },
-    secret: "",
+    secret: connection?.clientSecret ?? "",
   });
 
   const busyRef = useRef(false);
@@ -103,8 +103,11 @@ export function ChannelForm({
       revisionRef.current = connection.revision;
       lastSavedRef.current = {
         config: connection.config,
-        secret: "",
+        secret: connection.clientSecret ?? "",
       };
+      if (connection.clientSecret !== undefined) {
+        setSecret(connection.clientSecret);
+      }
     }
   }, [connection]);
 
@@ -133,16 +136,15 @@ export function ChannelForm({
         expectedRevision: revisionRef.current,
         config: targetConfig,
         ...(needConfirmation ? { fullAccessConfirmation: "full-access-v1" as const } : {}),
-        ...(trimmedSecret ? { clientSecret: trimmedSecret } : {}),
+        clientSecret: trimmedSecret,
       });
 
       if (success) {
         revisionRef.current += 1;
         lastSavedRef.current = {
           config: targetConfig,
-          secret: "",
+          secret: targetSecret,
         };
-        setSecret("");
       }
       return success;
     } catch {
@@ -200,10 +202,7 @@ export function ChannelForm({
       return false;
     }
 
-    const isSameClientAsConnection = Boolean(connection && connection.config?.clientId === trimmedId);
-    const hasRetainedSecret = Boolean(connection?.hasSecret && isSameClientAsConnection);
-
-    if (!trimmedSecret && !hasRetainedSecret) {
+    if (!trimmedSecret) {
       return false;
     }
 
@@ -220,15 +219,13 @@ export function ChannelForm({
 
     const trimmedId = nextConfig.clientId.trim();
     const trimmedSecret = secret.trim();
-    const isSameClientAsConnection = Boolean(connection && connection.config?.clientId === trimmedId);
-    const hasRetainedSecret = Boolean(connection?.hasSecret && isSameClientAsConnection);
 
     if (checked) {
       if (!trimmedId) {
         setError(`请填写 ${idLabel}。`);
         return;
       }
-      if (!trimmedSecret && !hasRetainedSecret) {
+      if (!trimmedSecret) {
         setError(`请填写 ${secretLabel}。`);
         return;
       }
@@ -239,9 +236,6 @@ export function ChannelForm({
   const handleClientIdChange = (value: string) => {
     const nextConfig = { ...config, clientId: value };
     setConfig(nextConfig);
-    if (value.trim() !== config.clientId.trim()) {
-      setSecret("");
-    }
     if (clientIdDebounceTimer.current) {
       clearTimeout(clientIdDebounceTimer.current);
     }
@@ -276,12 +270,8 @@ export function ChannelForm({
   };
 
   const handleSecretBlur = () => {
-    const trimmedId = config.clientId.trim();
     const trimmedSecret = secret.trim();
-    const isSameClientAsConnection = Boolean(connection && connection.config?.clientId === trimmedId);
-    const hasRetainedSecret = Boolean(connection?.hasSecret && isSameClientAsConnection);
-
-    if (!trimmedSecret && !hasRetainedSecret) {
+    if (!trimmedSecret) {
       setError(`请填写 ${secretLabel}。`);
     }
   };
@@ -326,9 +316,6 @@ export function ChannelForm({
   };
 
   const missingProject = config.projectId && !projects.some((project) => project.id === config.projectId);
-  const hasSavedSecretForCurrentId = Boolean(
-    connection?.hasSecret && connection.config?.clientId === config.clientId.trim(),
-  );
 
   return (
     <form
@@ -346,11 +333,7 @@ export function ChannelForm({
           return;
         }
         const trimmedSecret = secret.trim();
-        const isSameClientAsConnection = Boolean(
-          connection && connection.config?.clientId === config.clientId.trim(),
-        );
-        const hasRetainedSecret = Boolean(connection?.hasSecret && isSameClientAsConnection);
-        if (!trimmedSecret && !hasRetainedSecret) {
+        if (!trimmedSecret) {
           setError(`请填写 ${secretLabel}。`);
           return;
         }
@@ -464,7 +447,7 @@ export function ChannelForm({
                     maxLength={1024}
                     value={secret}
                     autoComplete="new-password"
-                    placeholder={hasSavedSecretForCurrentId ? "已保存，留空则保留" : `请输入 ${secretLabel}`}
+                    placeholder={`请输入 ${secretLabel}`}
                     onChange={(event) => handleSecretChange(event.target.value)}
                     onBlur={handleSecretBlur}
                   />
@@ -493,7 +476,7 @@ export function ChannelForm({
             <p className="channel-card-subheading">配置{name}消息的默认执行模型、项目工作区和审批规则</p>
           </div>
           <div className="channel-form-card-body">
-            <div className="channel-grid-fields">
+            <div className="channel-grid-fields channel-grid-fields--three">
               <div className="channel-field model-selector-field">
                 <label>模型与思考强度</label>
                 <ModelSelector
@@ -507,14 +490,14 @@ export function ChannelForm({
               </div>
 
               <div className="channel-field">
-                <label htmlFor="field-project-id">执行位置</label>
+                <label htmlFor="field-project-id">所属项目</label>
                 <div className="channel-select-wrapper">
                   <select
                     id="field-project-id"
                     value={config.projectId ?? ""}
                     onChange={(event) => handleProjectChange(event.target.value || null)}
                   >
-                    <option value="">独立工作区</option>
+                    <option value="">无项目</option>
                     {missingProject && <option value={config.projectId ?? ""}>已保存的项目不可用</option>}
                     {projects.map((project) => (
                       <option key={project.id} value={project.id}>

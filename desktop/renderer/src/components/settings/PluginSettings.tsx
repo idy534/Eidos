@@ -252,15 +252,6 @@ export function PluginSettings({
                   </div>}
                   {Boolean(plugin.compatibility?.issues?.length) && <div className="plugin-hook-status">此插件包含当前版本暂不支持的能力，请查看兼容信息。</div>}
                 </>}
-                meta={
-                  <div className="plugin-meta-info">
-                    <span>{plugin.presentation?.developerName || plugin.id}</span>
-                    <span className="meta-divider">·</span>
-                    <span>{skills.filter(skill => skill.pluginId === plugin.id).length} 个技能</span>
-                    <span className="meta-divider">·</span>
-                    <span>{mcpServers.filter(server => server.pluginId === plugin.id).length} 个 MCP 服务</span>
-                  </div>
-                }
                 action={
                   <div className="plugin-actions-group">
                     {plugin.hookReview && (plugin.hookReview.definitions?.length ?? 0) > 0 && <Button variant="secondary" size="small" disabled={isRowPending} onClick={() => setReview({ plugin, enable: false })}>审阅 Hook</Button>}

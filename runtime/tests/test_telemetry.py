@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 import json
 import logging
@@ -18,6 +19,7 @@ from opentelemetry.sdk.trace.export import (
 )
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.common.http import _OTLPHTTPClient
 
 from eidos_runtime import __version__
 from eidos_runtime.db.storage import SessionStore
@@ -156,6 +158,97 @@ def test_provider_initializes_requested_exporter(
         assert exporters
     finally:
         provider.shutdown()
+
+
+@pytest.mark.parametrize("backoff", [0.0, 60.0])
+@pytest.mark.parametrize("background", [False, True])
+def test_otlp_transient_failure_logs_once_and_export_recovers(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    backoff: float,
+    background: bool,
+) -> None:
+    request_received = threading.Event()
+
+    class Collector(BaseHTTPRequestHandler):
+        status = 503
+        received: list[tuple[str, int]] = []
+
+        def do_POST(self) -> None:
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            self.received.append((self.path, self.status))
+            self.send_response(self.status)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            request_received.set()
+
+        def log_message(self, _format: str, *args: object) -> None:
+            pass
+
+    exporter_logger = logging.getLogger("opentelemetry.exporter.otlp.proto.http.trace_exporter")
+    monkeypatch.setattr(exporter_logger, "filters", [])
+    monkeypatch.delenv("OTEL_SDK_DISABLED", raising=False)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT", raising=False)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TIMEOUT", raising=False)
+    monkeypatch.setenv("OTEL_TRACES_EXPORTER", "otlp")
+    monkeypatch.setenv("OTEL_BSP_SCHEDULE_DELAY", "50" if background else "60000")
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+    monkeypatch.setattr(_OTLPHTTPClient, "_compute_backoff", lambda self, retry: backoff)
+
+    collector = HTTPServer(("127.0.0.1", 0), Collector)
+    monkeypatch.setenv(
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        f"http://127.0.0.1:{collector.server_port}/v1/traces",
+    )
+    server_thread = threading.Thread(target=collector.serve_forever, daemon=True)
+    server_thread.start()
+    try:
+        provider = initialize_telemetry()
+        try:
+            assert provider.tracer_provider is not None
+            tracer = provider.tracer_provider.get_tracer("test.otlp.failure")
+
+            def export_span() -> None:
+                request_received.clear()
+                with tracer.start_as_current_span("test.otlp.span"):
+                    pass
+                if background:
+                    assert request_received.wait(timeout=5)
+                provider.force_flush()
+
+            with caplog.at_level(logging.WARNING, logger=exporter_logger.name):
+                export_span()
+                export_span()
+                messages = [record.getMessage() for record in caplog.records if record.name == exporter_logger.name]
+                assert len(messages) == 1
+                assert "suppressed for this Runtime process" in messages[0]
+                if backoff == 0.0:
+                    assert "Service Unavailable" in messages[0]
+                    assert len(Collector.received) > 2
+                else:
+                    assert "timeout, max retries or shutdown" in messages[0]
+
+                Collector.status = 200
+                export_span()
+                assert Collector.received[-1] == ("/v1/traces", 200)
+
+                Collector.status = 503
+                export_span()
+                assert len([record for record in caplog.records if record.name == exporter_logger.name]) == 1
+
+                Collector.status = 400
+                export_span()
+                messages = [record.getMessage() for record in caplog.records if record.name == exporter_logger.name]
+                assert len(messages) == 2
+                assert "code: 400" in messages[-1]
+        finally:
+            provider.shutdown()
+    finally:
+        collector.shutdown()
+        server_thread.join(timeout=5)
+        collector.server_close()
+    assert not server_thread.is_alive()
 
 
 def test_run_model_and_tool_spans_share_the_run_trace(tmp_path: Path) -> None:

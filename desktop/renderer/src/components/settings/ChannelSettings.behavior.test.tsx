@@ -22,6 +22,7 @@ const connection: ChannelPublicConnection = {
   id: "connection",
   revision: 2,
   hasSecret: true,
+  clientSecret: "saved-client-secret",
   config: {
     enabled: true,
     clientId: "app",
@@ -35,7 +36,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("loads connection state without exposing saved credentials and shows unknown delivery reasons", async () => {
+it("loads connection state with saved credentials displayed as masked password and shows unknown delivery reasons", async () => {
   const user = userEvent.setup();
   window.eidosRuntime = {
     readChannel: vi.fn().mockImplementation(({ channel } = {}) => Promise.resolve(channel && channel !== "dingtalk" ? { state: "disabled" } : {
@@ -55,8 +56,8 @@ it("loads connection state without exposing saved credentials and shows unknown 
   await user.click(screen.getByRole("button", { name: "设置" }));
 
   expect(screen.getByLabelText("Client Secret")).toHaveAttribute("type", "password");
-  expect(screen.getByLabelText("Client Secret")).toHaveValue("");
-  expect(screen.getByLabelText("Client Secret")).toHaveAttribute("placeholder", "已保存，留空则保留");
+  expect(screen.getByLabelText("Client Secret")).toHaveValue("saved-client-secret");
+  expect(screen.getByLabelText("Client Secret")).toHaveAttribute("placeholder", "请输入 Client Secret");
   await user.click(screen.getByRole("button", { name: "显示密码" }));
   expect(screen.getByLabelText("Client Secret")).toHaveAttribute("type", "text");
   await user.click(screen.getByRole("button", { name: "隐藏密码" }));
@@ -151,7 +152,7 @@ it("automatically dismisses toast notification after 3.5 seconds", async () => {
   vi.useRealTimers();
 });
 
-it("saves current options while retaining the saved secret inside Runtime", async () => {
+it("saves current options while preserving the secret from the input", async () => {
   const user = userEvent.setup();
   const save = vi.fn().mockResolvedValue(true);
   render(<ChannelForm connection={connection} models={[model]} projects={[]} busy={false} onSave={save} />);
@@ -167,7 +168,7 @@ it("saves current options while retaining the saved secret inside Runtime", asyn
   const request = save.mock.calls[0]![0];
   expect(request.expectedRevision).toBe(2);
   expect(request.config).toEqual({ ...connection.config, enabled: false });
-  expect(request).not.toHaveProperty("clientSecret");
+  expect(request.clientSecret).toBe("saved-client-secret");
 });
 
 it("creates a connection with just app credentials and the default model and permissions", async () => {
@@ -184,7 +185,7 @@ it("creates a connection with just app credentials and the default model and per
     clientSecret: "new-secret",
     config: { enabled: true, clientId: "new-app", modelId: model.id, projectId: null, approvalMode: "manual" },
   });
-  expect(screen.getByLabelText("Client Secret")).toHaveValue("");
+  expect(screen.getByLabelText("Client Secret")).toHaveValue("new-secret");
 });
 
 it("requires a danger confirmation before selecting full access and saves its confirmation", async () => {
@@ -360,6 +361,29 @@ it("saves reasoning, switches provider logos and clears the old model reasoning"
   const nextTrigger = screen.getByRole("button", { name: /MiniMax，MiniMax.*思考强度/ });
   expect(nextTrigger.querySelector("img")?.getAttribute("src")).toBe(minimaxLogo);
   await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ config: expect.objectContaining({ modelId: "minimax", reasoningSelection: null }) })));
+});
+
+it("selects a project under 所属项目 and allows reverting to 无项目", async () => {
+  const user = userEvent.setup();
+  const save = vi.fn().mockResolvedValue(true);
+  const sampleProject = { id: "proj-1", name: "Project Alpha" };
+  render(<ChannelForm connection={connection} models={[model]} projects={[sampleProject]} busy={false} onSave={save} />);
+  const projectSelect = screen.getByLabelText("所属项目");
+  expect(projectSelect).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "无项目" })).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "Project Alpha" })).toBeInTheDocument();
+  expect(screen.queryByText("独立工作区")).not.toBeInTheDocument();
+  expect(screen.queryByText("执行位置")).not.toBeInTheDocument();
+
+  await user.selectOptions(projectSelect, "proj-1");
+  await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({
+    config: expect.objectContaining({ projectId: "proj-1" }),
+  })));
+
+  await user.selectOptions(projectSelect, "");
+  await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({
+    config: expect.objectContaining({ projectId: null }),
+  })));
 });
 
 

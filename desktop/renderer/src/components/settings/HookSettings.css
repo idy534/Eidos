@@ -142,59 +142,85 @@
   overflow-wrap: anywhere;
 }
 
-.hook-source-body-inner {
+.hook-row-actions {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 0.65rem;
-  padding-top: 0.25rem;
-}
-
-.hook-source-status-callout {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: var(--radius-sm);
-  font-size: 0.8125rem;
-  line-height: 1.4;
-}
-
-.hook-source-status-callout p {
-  margin: 0;
-}
-
-.hook-status-dot {
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 50%;
   flex-shrink: 0;
-  background-color: currentColor;
 }
 
-.hook-source-status-callout.status--trusted {
-  background: var(--status-success-bg);
-  color: var(--status-success);
-  border: 1px solid rgba(36, 104, 69, 0.15);
+.hook-split-button-group {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-raised);
+  box-shadow: var(--apple-shadow-sm);
+  transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+  overflow: hidden;
 }
 
-.hook-source-status-callout.status--untrusted {
-  background: var(--status-warning-bg);
-  color: var(--status-warning);
-  border: 1px solid rgba(138, 103, 35, 0.15);
+.hook-split-button-group:hover {
+  border-color: var(--line-strong);
 }
 
-.hook-source-status-callout.status--error {
-  background: var(--status-danger-bg);
-  color: var(--status-danger);
-  border: 1px solid rgba(158, 53, 43, 0.15);
-}
-
-.hook-source-actions {
-  display: flex;
-  flex-wrap: wrap;
+.hook-split-button-main.btn {
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-radius: 0;
+  box-shadow: none !important;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  height: 28px;
+  padding: 0 10px;
+  display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.15rem;
+  justify-content: center;
+  user-select: none;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.hook-split-button-main.btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.hook-split-button-main.btn:active:not(:disabled) {
+  background: var(--surface-active, rgba(0, 0, 0, 0.05));
+}
+
+.hook-split-button-dropdown {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.hook-split-button-caret.dropdown-trigger {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  padding: 0 6px;
+  min-width: 22px;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: none !important;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.hook-split-button-caret.dropdown-trigger:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.hook-split-button-caret.dropdown-trigger:active:not(:disabled),
+.hook-split-button-caret.dropdown-trigger[aria-expanded="true"] {
+  background: var(--surface-active, rgba(0, 0, 0, 0.05));
+  color: var(--text);
 }
 
 /* Hook Review Modal Content */

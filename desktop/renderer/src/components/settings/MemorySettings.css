@@ -10,32 +10,35 @@
 }
 
 /* --------------------------------------------------------------------------
-   1. Policy & Scope Control Card
+   1. Header & Controls
    -------------------------------------------------------------------------- */
 
-.memory-policy-card {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  background: var(--surface-raised);
-  box-shadow: var(--apple-shadow-sm);
-  padding: 1.15rem 1.35rem;
+.memory-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.memory-header-info {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.memory-header-actions {
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
+  align-items: flex-end;
+  gap: 0.55rem;
+  flex-shrink: 0;
 }
 
-.memory-toolbar {
+.memory-header-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 1rem;
-}
-
-.memory-toolbar-controls {
-  display: flex;
-  align-items: center;
-  gap: 1.35rem;
+  justify-content: flex-end;
+  gap: 0.75rem;
   flex-wrap: wrap;
 }
 
@@ -99,42 +102,12 @@
   flex-shrink: 0;
 }
 
-.memory-toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.memory-policy-banner {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  padding: 0.55rem 0.85rem;
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  border: 1px solid var(--line);
-}
-
-.memory-policy-icon {
-  color: var(--accent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.memory-policy-description {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.8125rem;
-  line-height: 1.5;
-}
-
 /* --------------------------------------------------------------------------
-   2. Dual-Pane Memory Workbench
+   2. Dual-Pane Memory Workbench & Collapsible Sidebar
    -------------------------------------------------------------------------- */
 
 .memory-workspace {
+  position: relative;
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   border: 1px solid var(--line);
@@ -143,6 +116,59 @@
   box-shadow: var(--apple-shadow-sm);
   min-height: 32rem;
   overflow: hidden;
+  transition: grid-template-columns 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.memory-workspace--sidebar-collapsed {
+  grid-template-columns: 0px minmax(0, 1fr);
+}
+
+/* --------------------------------------------------------------------------
+   3. Collapsible Sidebar Toggle Handle (Divider)
+   -------------------------------------------------------------------------- */
+
+.memory-collapse-toggle {
+  position: absolute;
+  top: 180px;
+  left: 280px;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 42px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  color: var(--text-secondary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  cursor: pointer;
+  padding: 0;
+  transition: left 200ms cubic-bezier(0.16, 1, 0.3, 1), background-color 140ms ease, color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.memory-collapse-toggle:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.memory-collapse-toggle:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.memory-collapse-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+
+.memory-collapse-toggle--collapsed {
+  left: 8px;
+  transform: none;
 }
 
 /* --------------------------------------------------------------------------
@@ -155,6 +181,15 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  overflow: hidden;
+  transition: opacity 160ms ease, visibility 160ms ease;
+}
+
+.memory-workspace--sidebar-collapsed .memory-files {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  border-right: none;
 }
 
 .memory-files-tools {
@@ -413,6 +448,10 @@
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
+}
+
+.memory-workspace--sidebar-collapsed .memory-note {
+  padding-left: 2.25rem;
 }
 
 .memory-note-heading {

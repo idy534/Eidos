@@ -3,12 +3,31 @@ import type { HookConfigurationRequest, HookSourceReview } from "../../../../sha
 import { userFacingError } from "../../session-state.js";
 import { ToastContainer } from "../ToastContainer.js";
 import { Button } from "../Button.js";
+import { DropdownMenu, type DropdownMenuItem } from "../DropdownMenu.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { SettingRow } from "../SettingRow.js";
 import { SettingSection } from "../SettingSection.js";
 import { StatusBadge } from "../StatusBadge.js";
 import { Toggle } from "../Toggle.js";
 import { HookHistoryDialog } from "./HookHistoryDialog.js";
+import { ChevronDownIcon } from "./MemoryIcons.js";
+import { CodeIcon, FinderIcon } from "../MenuIcons.js";
+
+function getHookSourceTitle(source: HookSourceReview): string {
+  if (source.scope === "user") {
+    return "个人 Hook";
+  }
+  const firstPath = source.paths?.[0] || "";
+  const parts = firstPath.split("/").filter(Boolean);
+  const eidosIndex = parts.indexOf(".eidos");
+  if (eidosIndex > 0 && parts[eidosIndex - 1]) {
+    return parts[eidosIndex - 1]!;
+  }
+  if (parts.length >= 2 && parts[parts.length - 2]) {
+    return parts[parts.length - 2]!;
+  }
+  return "项目";
+}
 
 export function HookSourceSettings({ sessionId }: { sessionId?: string | undefined }) {
   const [sources, setSources] = useState<HookSourceReview[]>([]);
@@ -52,23 +71,62 @@ export function HookSourceSettings({ sessionId }: { sessionId?: string | undefin
     };
   }, [sessionId, available]);
 
-  async function change(source: HookSourceReview, request: HookConfigurationRequest) {
+  async function handleToggle(source: HookSourceReview, enabled: boolean) {
     const scope = scopeRevision.current;
     setBusy(true);
     setError(undefined);
     try {
-      await window.eidosRuntime.hookConfiguration({
-        ...request,
-        sourceId: source.id,
-        contentHash: source.contentHash,
-      });
+      if (enabled) {
+        if (!source.trusted) {
+          await window.eidosRuntime.hookConfiguration({
+            action: "trust",
+            sourceId: source.id,
+            contentHash: source.contentHash,
+            trusted: true,
+          });
+        }
+        await window.eidosRuntime.hookConfiguration({
+          action: "enable",
+          sourceId: source.id,
+          contentHash: source.contentHash,
+          enabled: true,
+        });
+      } else {
+        await window.eidosRuntime.hookConfiguration({
+          action: "enable",
+          sourceId: source.id,
+          contentHash: source.contentHash,
+          enabled: false,
+        });
+      }
       if (scope !== scopeRevision.current) return;
-      setReview(undefined);
       await load();
     } catch (cause) {
       if (scope === scopeRevision.current) setError(userFacingError(cause));
     } finally {
       if (scope === scopeRevision.current) setBusy(false);
+    }
+  }
+
+  async function handleOpenFile(path: string) {
+    try {
+      if (typeof window.eidosRuntime?.openPath === "function") {
+        await window.eidosRuntime.openPath(path);
+      } else if (typeof window.eidosRuntime?.showItemInFolder === "function") {
+        await window.eidosRuntime.showItemInFolder(path);
+      }
+    } catch (cause) {
+      setError(userFacingError(cause));
+    }
+  }
+
+  async function handleShowInFinder(path: string) {
+    try {
+      if (typeof window.eidosRuntime?.showItemInFolder === "function") {
+        await window.eidosRuntime.showItemInFolder(path);
+      }
+    } catch (cause) {
+      setError(userFacingError(cause));
     }
   }
 
@@ -79,7 +137,7 @@ export function HookSourceSettings({ sessionId }: { sessionId?: string | undefin
       <div inert={Boolean(review || history)}>
         <SettingSection
           title="Hook"
-          description="个人目录中的 hooks.json、config.toml，以及当前项目 .eidos 下的同名文件可以提供 Hook。配置变更后需要重新审阅。"
+          description="个人目录中的 hooks.json、config.toml，以及当前项目 .eidos 下的同名文件可以提供 Hook。"
           headerAction={
             <Button
               variant="secondary"
@@ -122,13 +180,31 @@ export function HookSourceSettings({ sessionId }: { sessionId?: string | undefin
 
           {sources.map((source) => {
             const isUser = source.scope === "user";
-            const statusTone = source.errorCode ? "danger" : source.trusted ? "success" : "warning";
-            const statusLabel = source.errorCode ? "配置无效" : source.trusted ? "已信任" : "待信任";
-            const statusText = source.errorCode
-              ? "配置无法读取或格式无效，请修正文件后刷新。"
-              : source.trusted
-              ? "当前配置已信任。"
-              : "当前配置尚未信任，不会执行。";
+            const title = getHookSourceTitle(source);
+            const isChecked = Boolean(source.trusted && source.enabled);
+            const firstPath = source.paths?.[0] || "";
+            const fileName = firstPath.split("/").filter(Boolean).at(-1) || "hooks.json";
+
+            const menuItems: DropdownMenuItem[] = [
+              {
+                key: "open-file",
+                label: `打开 ${fileName}`,
+                icon: <CodeIcon />,
+                disabled: !firstPath,
+                onClick: () => {
+                  void handleOpenFile(firstPath);
+                },
+              },
+              {
+                key: "show-in-finder",
+                label: "在 Finder 中显示",
+                icon: <FinderIcon />,
+                disabled: !firstPath,
+                onClick: () => {
+                  void handleShowInFinder(firstPath);
+                },
+              },
+            ];
 
             return (
               <SettingRow
@@ -150,10 +226,12 @@ export function HookSourceSettings({ sessionId }: { sessionId?: string | undefin
                         </svg>
                       )}
                     </div>
-                    <span className="hook-source-title-text">{isUser ? "个人 Hook" : "项目 Hook"}</span>
-                    <StatusBadge tone={statusTone} dot>
-                      {statusLabel}
-                    </StatusBadge>
+                    <span className="hook-source-title-text">{title}</span>
+                    {source.errorCode && (
+                      <StatusBadge tone="danger" dot>
+                        配置无效
+                      </StatusBadge>
+                    )}
                   </div>
                 }
                 description={
@@ -162,48 +240,43 @@ export function HookSourceSettings({ sessionId }: { sessionId?: string | undefin
                   </div>
                 }
                 action={
-                  <Toggle
-                    label={`启用或停用${isUser ? "个人" : "项目"} Hook`}
-                    checked={source.enabled ?? true}
-                    disabled={busy}
-                    onChange={(enabled) => void change(source, { action: "enable", enabled })}
-                  />
-                }
-              >
-                <div className="hook-source-body-inner">
-                  <div
-                    className={`hook-source-status-callout ${
-                      source.errorCode ? "status--error" : source.trusted ? "status--trusted" : "status--untrusted"
-                    }`}
-                  >
-                    <span className="hook-status-dot" aria-hidden="true" />
-                    <p>{statusText}</p>
-                  </div>
-                  <div className="hook-source-actions">
-                    <Button
-                      variant="secondary"
-                      size="small"
+                  <div className="hook-row-actions">
+                    <Toggle
+                      label={`启用或停用${title}`}
+                      checked={isChecked}
                       disabled={busy || Boolean(source.errorCode)}
-                      onClick={() => setReview(source)}
-                    >
-                      审阅 Hook
-                    </Button>
-                    <Button variant="secondary" size="small" onClick={() => setHistory(source.id)}>
-                      执行记录
-                    </Button>
-                    {source.trusted && (
+                      onChange={(enabled) => void handleToggle(source, enabled)}
+                    />
+                    <div className="hook-split-button-group">
                       <Button
                         variant="secondary"
                         size="small"
-                        disabled={busy}
-                        onClick={() => void change(source, { action: "trust", trusted: false })}
+                        className="hook-split-button-main"
+                        disabled={busy || Boolean(source.errorCode)}
+                        onClick={() => setReview(source)}
                       >
-                        撤销信任
+                        查看
                       </Button>
-                    )}
+                      <DropdownMenu
+                        className="hook-split-button-dropdown"
+                        triggerClassName="hook-split-button-caret"
+                        triggerAriaLabel={`更多 ${title} 选项`}
+                        align="right"
+                        trigger={<ChevronDownIcon width={13} height={13} className="split-button-caret-icon" />}
+                        items={menuItems}
+                      />
+                    </div>
+                    <Button
+                      variant="secondary"
+                      size="small"
+                      disabled={busy}
+                      onClick={() => setHistory(source.id)}
+                    >
+                      执行记录
+                    </Button>
                   </div>
-                </div>
-              </SettingRow>
+                }
+              />
             );
           })}
         </SettingSection>
@@ -211,15 +284,12 @@ export function HookSourceSettings({ sessionId }: { sessionId?: string | undefin
 
       <ConfirmDialog
         open={Boolean(review)}
-        title="审阅本地 Hook"
-        isDestructive={!review?.trusted}
+        title="查看本地 Hook"
         busy={busy}
         error={error}
-        confirmLabel={review?.trusted ? "关闭" : "信任此配置"}
-        cancelLabel="取消"
+        confirmLabel="关闭"
         description={
           <div className="hook-review-container">
-            <p className="hook-review-lead">这些处理器会在匹配事件时自动运行。系统会继续检查权限。</p>
             <div className="hook-review-list">
               {review?.definitions?.map((hook) => (
                 <div key={hook.key} className="hook-definition-card">
@@ -240,10 +310,7 @@ export function HookSourceSettings({ sessionId }: { sessionId?: string | undefin
           </div>
         }
         onCancel={() => setReview(undefined)}
-        onConfirm={() => {
-          if (review?.trusted) setReview(undefined);
-          else if (review) void change(review, { action: "trust", trusted: true });
-        }}
+        onConfirm={() => setReview(undefined)}
       />
 
       <HookHistoryDialog open={Boolean(history)} sourceId={history} onClose={() => setHistory(undefined)} />

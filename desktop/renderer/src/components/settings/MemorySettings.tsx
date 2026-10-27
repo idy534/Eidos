@@ -9,10 +9,11 @@ import {
   ExportIcon,
   IndexBookmarkIcon,
   DocumentTextIcon,
-  InfoCircleIcon,
   PlusIcon,
   SearchEmptyIcon,
   NotesEmptyIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
 } from "./MemoryIcons.js";
 import { useMemoryDocuments, type MemoryScopeChoice } from "./useMemoryDocuments.js";
 
@@ -24,12 +25,6 @@ const modeBadges: Record<MemoryMode, { tone: "neutral" | "info" | "success"; tex
   read: { tone: "info", text: "只读生效" },
   auto: { tone: "success", text: "自动记录" },
 };
-
-const descriptions = {
-  off: "模型不使用或自动更新这里的记忆。你仍可查看和编辑笔记。",
-  read: "模型可以使用已有记忆；用户明确要求时才会保存或修改。",
-  auto: "模型在当前对话中及时记下有长期价值的信息，保存后即可使用。",
-} as const;
 
 export function MemorySettings({
   sessionId,
@@ -44,6 +39,7 @@ export function MemorySettings({
   const [path, setPath] = useState<string | null>("MEMORY.md");
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [localToasts, setLocalToasts] = useState<ToastItem[]>([]);
 
   const library = useMemoryDocuments(sessionId, scope);
@@ -117,36 +113,16 @@ export function MemorySettings({
         <ToastContainer toasts={localToasts} onDismiss={dismissToast} />
       )}
 
-      <header className="settings-panel-header">
-        <h1>记忆</h1>
-        <p className="settings-panel-subtitle">
-          查看 Eidos 记住了什么，并直接修改笔记。
-        </p>
-      </header>
+      <header className="settings-panel-header memory-header">
+        <div className="memory-header-info">
+          <h1>记忆</h1>
+          <p className="settings-panel-subtitle">
+            查看 Eidos 记住了什么，并直接修改笔记。
+          </p>
+        </div>
 
-      {/* 顶部控制卡片 */}
-      <section className="memory-policy-card">
-        <div className="memory-toolbar">
-          <div className="memory-toolbar-controls">
-            {scopes.length > 1 && (
-              <label className="memory-control-group">
-                <span className="memory-control-label">记忆范围</span>
-                <div className="memory-select-wrapper">
-                  <select
-                    aria-label="记忆范围"
-                    value={scope}
-                    disabled={dirty || busy}
-                    onChange={(event) =>
-                      setScope(event.target.value as MemoryScopeChoice)
-                    }
-                  >
-                    <option value="current">当前项目</option>
-                    <option value="global">全局</option>
-                  </select>
-                </div>
-              </label>
-            )}
-
+        <div className="memory-header-actions">
+          <div className="memory-header-row memory-header-row--top">
             <label className="memory-control-group">
               <span className="memory-control-label">记忆模式</span>
               <div className="memory-select-wrapper">
@@ -172,7 +148,26 @@ export function MemorySettings({
             </label>
           </div>
 
-          <div className="memory-toolbar-actions">
+          <div className="memory-header-row memory-header-row--bottom">
+            {scopes.length > 1 && (
+              <label className="memory-control-group">
+                <span className="memory-control-label">记忆范围</span>
+                <div className="memory-select-wrapper">
+                  <select
+                    aria-label="记忆范围"
+                    value={scope}
+                    disabled={dirty || busy}
+                    onChange={(event) =>
+                      setScope(event.target.value as MemoryScopeChoice)
+                    }
+                  >
+                    <option value="current">当前项目</option>
+                    <option value="global">全局</option>
+                  </select>
+                </div>
+              </label>
+            )}
+
             <Button
               size="small"
               variant="secondary"
@@ -184,20 +179,26 @@ export function MemorySettings({
             </Button>
           </div>
         </div>
-
-        <div className="memory-policy-banner">
-          <span className="memory-policy-icon" aria-hidden="true">
-            <InfoIcon />
-          </span>
-          <p className="memory-policy-description">
-            {descriptions[currentMode]}
-          </p>
-        </div>
-      </section>
+      </header>
 
       {/* 现代双栏知识工作台 */}
-      <div className="memory-workspace">
-        <nav className="memory-files" aria-label="记忆文件">
+      <div className={`memory-workspace${sidebarCollapsed ? " memory-workspace--sidebar-collapsed" : ""}`}>
+        <button
+          type="button"
+          className={`memory-collapse-toggle${sidebarCollapsed ? " memory-collapse-toggle--collapsed" : ""}`}
+          aria-label={sidebarCollapsed ? "展开笔记列表" : "折叠笔记列表"}
+          aria-expanded={!sidebarCollapsed}
+          title={sidebarCollapsed ? "展开笔记列表" : "折叠笔记列表"}
+          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+        >
+          {sidebarCollapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
+        </button>
+
+        <nav
+          className="memory-files"
+          aria-label="记忆文件"
+          aria-hidden={sidebarCollapsed}
+        >
           <div className="memory-files-tools">
             <div className="memory-search-row">
               <SearchInput
@@ -343,25 +344,5 @@ export function MemorySettings({
         </main>
       </div>
     </div>
-  );
-}
-
-function InfoIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="14"
-      height="14"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="10" />
-      <line x1="12" y1="16" x2="12" y2="12" />
-      <line x1="12" y1="8" x2="12.01" y2="8" />
-    </svg>
   );
 }

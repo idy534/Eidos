@@ -37,14 +37,16 @@ class ChannelApplication:
     def read(self, channel: ChannelKind = "dingtalk") -> ChannelResponse:
         connection = self.repository.connection(channel)
         has_secret = False
+        secret_val = ""
         if connection:
             try:
-                self.secrets.read(connection.secret_ref)
-                has_secret = True
+                secret_val = self.secrets.read(connection.secret_ref)
+                has_secret = bool(secret_val)
             except (OSError, ValueError):
                 has_secret = False
+                secret_val = ""
         return ChannelResponse(connection=ChannelPublicConnection(channel=channel, id=connection.id, revision=connection.revision,
-            config=connection.config, has_secret=has_secret) if connection else None,
+            config=connection.config, has_secret=has_secret, client_secret=secret_val) if connection else None,
             deliveries=self.repository.deliveries(channel))
 
     def save(self, request: ChannelSaveRequest) -> ChannelResponse:
@@ -62,13 +64,10 @@ class ChannelApplication:
             raise ChannelError("请先配置渠道使用的模型。")
         if request.config.project_id:
             self.repository.project_root(request.config.project_id)
-        if request.client_secret is not None:
+        if request.client_secret:
             if len(request.client_secret.encode()) > 1024 or request.client_secret.strip() != request.client_secret:
                 raise ChannelError("Client Secret 无效。")
             reference = self.secrets.write(request.client_secret)
-        elif old and old.config.client_id == request.config.client_id:
-            self.secrets.read(old.secret_ref)
-            reference = old.secret_ref
         else:
             raise ChannelError("请填写 Client Secret。")
         value = ChannelConnection(channel=request.channel, id=old.id if old else str(uuid4()), revision=request.expected_revision + 1,

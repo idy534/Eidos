@@ -641,7 +641,7 @@ Runtime 初始化失败时，先检查启动终端中的 stderr 日志和 `runti
 
 Runtime 默认初始化 OpenTelemetry SDK，但 `OTEL_TRACES_EXPORTER` 默认值是 `none`，所以默认不会导出 Trace。
 
-启用 OTLP 且没有显式参数时，Runtime 使用 3 秒 exporter timeout 和 30 秒 batch schedule delay，主动 flush 最多等待 5 秒。维护者可以使用标准 `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT`、`OTEL_EXPORTER_OTLP_TIMEOUT` 和 `OTEL_BSP_SCHEDULE_DELAY` 覆盖导出参数。持续导出失败需要排查 collector；本地执行和持久化不依赖 collector 可用。
+启用 OTLP 且没有显式参数时，Runtime 使用 3 秒 exporter timeout 和 30 秒 batch schedule delay，主动 flush 最多等待 5 秒。维护者可以使用标准 `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT`、`OTEL_EXPORTER_OTLP_TIMEOUT` 和 `OTEL_BSP_SCHEDULE_DELAY` 覆盖导出参数。每个 Runtime 进程只记录首次临时导出失败，后续同类日志不会刷屏；SDK 仍会按配置导出和重试，collector 恢复后会继续发送新的 Trace。持续导出失败需要排查 collector；本地执行和持久化不依赖 collector 可用。
 
 在开发环境把 Trace 打到 Runtime stderr：
 

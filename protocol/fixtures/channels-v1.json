@@ -199,6 +199,7 @@
         "id": "feishu",
         "revision": 1,
         "hasSecret": true,
+        "clientSecret": "sample-secret",
         "config": {
           "clientId": "app",
           "modelId": "model",
@@ -213,6 +214,7 @@
         "id": "wecom",
         "revision": 1,
         "hasSecret": true,
+        "clientSecret": "sample-secret",
         "config": {
           "clientId": "app",
           "modelId": "model",
@@ -229,7 +231,7 @@
         "id": "feishu",
         "revision": 1,
         "hasSecret": true,
-        "clientSecret": "sample-secret",
+        "clientSecret": true,
         "config": {
           "clientId": "app",
           "modelId": "model",

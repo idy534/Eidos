@@ -20,29 +20,51 @@ afterEach(() => {
 
 function api(value: object) { Object.defineProperty(window, "eidosRuntime", { configurable: true, value }); }
 
-it("reviews exact local configuration and keeps enable and trust separate", async () => {
+it("reviews exact local configuration, supports open/reveal actions, and trusts on toggle", async () => {
   let current = source;
   const hookConfiguration = vi.fn(async (request: HookConfigurationRequest) => {
     if (request.action === "trust") current = { ...current, trusted: request.trusted ?? false };
+    if (request.action === "enable") current = { ...current, enabled: request.enabled ?? false };
     return { sources: [current] };
   });
-  api({ hookConfiguration });
+  const openPath = vi.fn().mockResolvedValue(undefined);
+  const showItemInFolder = vi.fn().mockResolvedValue(undefined);
+  api({ hookConfiguration, openPath, showItemInFolder });
+
   render(<HookSourceSettings sessionId="session-1" />);
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "审阅 Hook" }));
+
+  // 查看弹窗
+  await user.click(await screen.findByRole("button", { name: "查看" }));
   expect(screen.getByRole("alertdialog")).toHaveTextContent("python check.py");
-  await user.click(screen.getByRole("button", { name: "取消" }));
-  expect(hookConfiguration.mock.calls.every(([request]) => request.action === "read")).toBe(true);
-  await user.click(screen.getByRole("button", { name: "审阅 Hook" }));
-  await user.click(screen.getByRole("button", { name: "信任此配置" }));
-  await screen.findByText("当前配置已信任。");
-  expect(hookConfiguration).toHaveBeenCalledWith({ action: "trust", sourceId: source.id, contentHash: source.contentHash, trusted: true });
-  expect(hookConfiguration.mock.calls.some(([request]) => request.action === "enable")).toBe(false);
-  await user.click(screen.getByRole("button", { name: "撤销信任" }));
-  await screen.findByText("当前配置尚未信任，不会执行。");
+  await user.click(screen.getByRole("button", { name: "关闭" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+
+  // 下拉菜单操作：打开文件 & 在 Finder 中显示
+  await user.click(screen.getByRole("button", { name: "更多 project 选项" }));
+  await user.click(await screen.findByRole("menuitem", { name: "打开 hooks.json" }));
+  expect(openPath).toHaveBeenCalledWith("/project/.eidos/hooks.json");
+
+  await user.click(screen.getByRole("button", { name: "更多 project 选项" }));
+  await user.click(await screen.findByRole("menuitem", { name: "在 Finder 中显示" }));
+  expect(showItemInFolder).toHaveBeenCalledWith("/project/.eidos/hooks.json");
+
+  // 初始未审查/未信任，开关为关闭状态
+  const toggle = screen.getByRole("switch", { name: "启用或停用project" });
+  expect(toggle).not.toBeChecked();
+
+  // 开启开关自动触发 trust 并 enable
+  await user.click(toggle);
+  await waitFor(() => expect(hookConfiguration).toHaveBeenCalledWith({ action: "trust", sourceId: source.id, contentHash: source.contentHash, trusted: true }));
+  expect(hookConfiguration).toHaveBeenCalledWith({ action: "enable", sourceId: source.id, contentHash: source.contentHash, enabled: true });
+  await waitFor(() => expect(toggle).toBeChecked());
+
+  // 关闭开关触发 enable: false
+  await user.click(toggle);
+  await waitFor(() => expect(hookConfiguration).toHaveBeenCalledWith({ action: "enable", sourceId: source.id, contentHash: source.contentHash, enabled: false }));
 });
 
-it("keeps a changed-version error in the review and never claims trust", async () => {
+it("keeps a changed-version error and handles toggle failure safely", async () => {
   const hookConfiguration = vi.fn(async (request: HookConfigurationRequest) => {
     if (request.action === "trust") throw new Error("EIDOS_RUNTIME_ERROR:HOOK_CONFIGURATION_CHANGED");
     return { sources: [source] };
@@ -50,10 +72,13 @@ it("keeps a changed-version error in the review and never claims trust", async (
   api({ hookConfiguration });
   render(<HookSourceSettings />);
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "审阅 Hook" }));
-  await user.click(screen.getByRole("button", { name: "信任此配置" }));
-  await waitFor(() => expect(within(screen.getByRole("alertdialog")).getByRole("alert")).toHaveTextContent("请刷新后重新审阅"));
-  expect(screen.queryByText("当前配置已信任。")).not.toBeInTheDocument();
+
+  const toggle = await screen.findByRole("switch", { name: "启用或停用project" });
+  expect(toggle).not.toBeChecked();
+  await user.click(toggle);
+
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("请刷新后重新审阅"));
+  expect(toggle).not.toBeChecked();
 });
 
 it("ignores an old project's late mutation and does not reload its configuration", async () => {
@@ -66,8 +91,10 @@ it("ignores an old project's late mutation and does not reload its configuration
   api({ hookConfiguration });
   const view = render(<HookSourceSettings sessionId="one" />);
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "审阅 Hook" }));
-  await user.click(screen.getByRole("button", { name: "信任此配置" }));
+
+  const toggle = await screen.findByRole("switch", { name: "启用或停用project" });
+  await user.click(toggle);
+
   view.rerender(<HookSourceSettings sessionId="two" />);
   await screen.findByText("/other/.eidos/hooks.json");
   finish({ sources: [{ ...source, trusted: true }] });

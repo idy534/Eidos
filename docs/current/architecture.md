@@ -543,7 +543,7 @@ Run Span 记录 Run、Session、Model 和终态。Model Attempt Span 记录配�
 
 `OTEL_TRACES_EXPORTER` 默认是 `none`。当前支持 `console` 和 `otlp`；console exporter 写 stderr，OTLP 使用 HTTP Trace exporter。`OTEL_SDK_DISABLED` 可以关闭 SDK，`OTEL_SERVICE_NAME` 可以覆盖默认的 `eidos-runtime`，`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 可以设置 OTLP Trace endpoint。
 
-没有显式配置时，OTLP exporter 使用 3 秒导出预算，BatchSpanProcessor 使用 30 秒调度间隔。显式 OTEL timeout 和 schedule 环境变量继续生效。SDK 继续管理重试、队列和关闭。主动 flush 最多等待 5 秒。远端失败不会代替本地业务事实，也不会被报告成导出成功。
+没有显式配置时，OTLP exporter 使用 3 秒导出预算，BatchSpanProcessor 使用 30 秒调度间隔。显式 OTEL timeout 和 schedule 环境变量继续生效。SDK 继续管理重试、队列和关闭。Runtime 在进程内首次遇到 OTLP Trace 临时导出失败时保留日志，后续同类重试和批次超时日志不再重复输出；其他导出错误仍然输出。服务恢复后，新的 Trace 继续导出。主动 flush 最多等待 5 秒。远端失败不会代替本地业务事实，也不会被报告成导出成功。
 
 ## 13. Runtime Git Worktree Kernel
 

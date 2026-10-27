@@ -100,16 +100,18 @@ def test_full_access_save_requires_confirmation_persists_it_and_clears_on_downgr
     del raw["full_access_confirmation"]
     with pytest.raises(ValidationError):
         ChannelConnection.model_validate(raw)
-    application.save(ChannelSaveRequest(config=confirmed.config, expected_revision=2))
+    with pytest.raises(ChannelError, match="请填写 Client Secret。"):
+        application.save(ChannelSaveRequest(config=confirmed.config, expected_revision=2))
+    application.save(ChannelSaveRequest(config=confirmed.config, expected_revision=2, client_secret="channel-secret"))
     assert repository.connection().full_access_confirmation == "full-access-v1"
     with pytest.raises(ChannelError, match="不一致"):
-        application.save(ChannelSaveRequest(config=configuration(), expected_revision=3, full_access_confirmation="full-access-v1"))
-    application.save(ChannelSaveRequest(config=configuration(), expected_revision=3))
+        application.save(ChannelSaveRequest(config=configuration(), expected_revision=3, client_secret="channel-secret", full_access_confirmation="full-access-v1"))
+    application.save(ChannelSaveRequest(config=configuration(), expected_revision=3, client_secret="channel-secret"))
     restored = repository.connection()
     assert restored.config.approval_mode == "manual" and restored.full_access_confirmation is None
     assert "full_access_confirmation" not in restored.model_dump()
     with pytest.raises(ChannelError, match="由用户确认"):
-        application.save(ChannelSaveRequest(config=configuration(approval_mode="full_access"), expected_revision=4))
+        application.save(ChannelSaveRequest(config=configuration(approval_mode="full_access"), expected_revision=4, client_secret="channel-secret"))
 
 
 def test_inbound_dedup_and_atomic_run_origin(channels):
@@ -587,10 +589,10 @@ def test_real_runtime_receives_once_runs_and_persists_final_reply(tmp_path, appr
         assert application.repository.deliveries(channel)[0].text == "渠道任务已完成。"
         assert server.store.connection.execute("SELECT count(*) FROM runs WHERE id=?", (identifier.run_id,)).fetchone()[0] == 1
         assert server.store.approval_user_evidence(identifier.run_id) == ()
-        response = application.read(channel).model_dump_json()
-        assert "test-channel-secret" not in response
+        response = application.read(channel).model_dump_json(by_alias=True)
         assert "secret_ref" not in response
-        assert not hasattr(application.read(channel).connection, "client_secret")
+        assert application.read(channel).connection.client_secret == "test-channel-secret"
+        assert '"clientSecret":"test-channel-secret"' in response
         snapshot = server.store.read_session_snapshot(identifier.session_id)
         assert snapshot["runs"][0]["channelOrigin"]["senderId"] == "user"
     finally:
@@ -676,7 +678,7 @@ def test_channel_reasoning_rejects_unknown_values():
         ChannelConfig.model_validate(configuration().model_dump() | {"reasoningSelection": "ultra"})
 
 
-def test_channel_read_confirms_saved_secret_without_returning_it(channels):
+def test_channel_read_reveals_client_secret_for_local_display(channels):
     from eidos_runtime.application.channels import ChannelApplication
     store, repository, _, _ = channels
     secrets = ChannelSecrets(store.data_directory)
@@ -686,8 +688,7 @@ def test_channel_read_confirms_saved_secret_without_returning_it(channels):
     read_resp = application.read("dingtalk")
     assert read_resp.connection is not None
     assert read_resp.connection.has_secret is True
-    assert not hasattr(read_resp.connection, "client_secret")
+    assert read_resp.connection.client_secret == "my-super-secret-key"
     wire = read_resp.model_dump(mode="json", by_alias=True)
-    assert "clientSecret" not in wire["connection"]
+    assert wire["connection"]["clientSecret"] == "my-super-secret-key"
     assert "secret_ref" not in wire["connection"]
-    assert "my-super-secret-key" not in json.dumps(wire)

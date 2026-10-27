@@ -58,6 +58,7 @@ void test("IPC channel object provides central authoritative channels", () => {
   assert.equal(IPC.TERMINAL_DATA_EVENT, "terminal:data");
   assert.equal(IPC.TERMINAL_EXIT_EVENT, "terminal:exit");
   assert.equal(IPC.WORKSPACE_SHOW_IN_FINDER, "workspace:show-in-finder");
+  assert.equal(IPC.WORKSPACE_OPEN_PATH, "workspace:open-path");
   assert.equal("MODEL_PROFILE_TEST" in IPC, false);
 });
 

@@ -212,6 +212,31 @@ describe("local automation management", () => {
     expect(request).not.toHaveProperty("sessionId");
   });
 
+  it("places model and approval mode in one row and defaults status to ACTIVE without status select", async () => {
+    const save = vi.fn(async () => {});
+    render(<AutomationForm projects={[]} sessions={[session]} models={[model]} busy={false} onSave={save} />);
+
+    expect(screen.queryByLabelText("状态")).not.toBeInTheDocument();
+
+    const approvalSelect = screen.getByRole("combobox", { name: "审批模式" });
+    const row = approvalSelect.closest(".automation-fields");
+    expect(row).toBeInTheDocument();
+    expect(row?.querySelector(".model-selector-field")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "名称" }), { target: { value: "测试任务" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "任务内容" }), { target: { value: "测试内容" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存任务" }));
+
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ mode: "create", status: "ACTIVE" })));
+  });
+
+  it("places execution target and project in one row", () => {
+    render(<AutomationForm projects={[{ id: "p1", name: "项目一" }]} sessions={[session]} models={[model]} busy={false} onSave={vi.fn()} />);
+    const targetSelect = screen.getByRole("combobox", { name: "执行会话" });
+    const projectSelect = screen.getByRole("combobox", { name: "所属项目" });
+    expect(targetSelect.closest(".automation-fields")).toBe(projectSelect.closest(".automation-fields"));
+  });
+
   it("includes the selected existing Session explicitly", async () => {
     const save = vi.fn(async (_request: unknown) => {});
     render(<AutomationForm projects={[]} sessions={[session]} models={[model]} currentSessionId={session.id} busy={false} onSave={save} />);
@@ -267,6 +292,39 @@ describe("local automation management", () => {
     await waitFor(() => expect(window.eidosRuntime.automation).toHaveBeenCalledWith({ command: expect.objectContaining({ mode: "preview", kind: "cron" }) }));
     expect(save).not.toHaveBeenCalled();
     expect(await screen.findByRole("list")).toBeInTheDocument();
+  });
+
+  it("toggles and closes preview popover on click, escape, or expression change", async () => {
+    vi.mocked(window.eidosRuntime.automation).mockResolvedValue({ kind: "preview", nextRuns: ["2026-10-16T01:00:00Z", "2026-10-17T01:00:00Z"] } as AutomationResponse);
+    render(<AutomationForm projects={[]} sessions={[]} models={[model]} busy={false} onSave={vi.fn()} />);
+
+    const button = screen.getByRole("button", { name: "预览执行时间" });
+    const row = button.closest(".automation-rule-row");
+    expect(row).toBeInTheDocument();
+    expect(row?.querySelector("select")).toBeInTheDocument();
+    expect(row?.querySelector('input[aria-label="Cron 表达式"]')).toBeInTheDocument();
+
+    // Click to open popover
+    fireEvent.click(button);
+    const popover = await screen.findByRole("dialog", { name: "执行时间预览" });
+    expect(popover).toBeInTheDocument();
+    expect(within(popover).getByRole("list")).toBeInTheDocument();
+
+    // Click button again to toggle close
+    fireEvent.click(button);
+    expect(screen.queryByRole("dialog", { name: "执行时间预览" })).not.toBeInTheDocument();
+
+    // Open again and close via Escape
+    fireEvent.click(button);
+    expect(await screen.findByRole("dialog", { name: "执行时间预览" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "执行时间预览" })).not.toBeInTheDocument();
+
+    // Open again and close via editing expression
+    fireEvent.click(button);
+    expect(await screen.findByRole("dialog", { name: "执行时间预览" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Cron 表达式"), { target: { value: "0 10 * * *" } });
+    expect(screen.queryByRole("dialog", { name: "执行时间预览" })).not.toBeInTheDocument();
   });
 
   it("loads real revisions before pause and opens execution results", async () => {

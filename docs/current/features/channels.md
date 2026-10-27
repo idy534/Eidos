@@ -1,6 +1,6 @@
 # 当前渠道接入
 
-Eidos 在本机运行钉钉、飞书和企业微信机器人。用户可以在“设置 → 助理”为每个平台配置一个连接。各连接分别保存凭证、模型、执行位置、审批模式和回复记录。机器人默认支持单聊，群聊由平台的机器人提及规则触发。Eidos 不设置额外的用户或群白名单。应用的发布状态和可用范围决定哪些用户可以接触机器人。当前微信入口是企业微信，个人微信扫码登录尚未实现。
+Eidos 在本机运行钉钉、飞书和企业微信机器人。用户可以在“设置 → 助理”为每个平台配置一个连接。各连接分别保存凭证、模型、所属项目、审批模式和回复记录。机器人默认支持单聊，群聊由平台的机器人提及规则触发。Eidos 不设置额外的用户或群白名单。应用的发布状态和可用范围决定哪些用户可以接触机器人。当前微信入口是企业微信，个人微信扫码登录尚未实现。
 
 ## 飞书与企业微信
 
@@ -20,13 +20,13 @@ channel/read 与 channel/save 增加可选 channel。省略时仍为 dingtalk，
 
 用户需要先在钉钉开发者后台创建企业内部应用，开启机器人，选择 Stream 模式，发布应用，并将机器人加入所属组织的内部群。用户还需要为应用开通发送群聊或单聊消息所需的权限。具体权限和可用范围以当前钉钉后台为准。
 
-用户在本机选择已经配置的模型、独立工作区或一个现有 Project。Project 使用 Local 执行，不自动创建 Worktree。渠道审批模式默认 manual，也可以选择 auto_review 或 full_access。用户选择“完全访问”时，Desktop 展示与 Session、定时任务相同的危险确认弹窗。取消会保留原模式；确认后，用户仍需保存渠道配置。
+用户在本机选择已经配置的模型、所属项目（无项目或一个现有 Project）。Project 使用 Local 执行，不自动创建 Worktree。渠道审批模式默认 manual，也可以选择 auto_review 或 full_access。用户选择“完全访问”时，Desktop 展示与 Session、定时任务相同的危险确认弹窗。取消会保留原模式；确认后，用户仍需保存渠道配置。
 
 完全访问授权适用于该渠道今后收到的消息。弹窗会说明系统不再逐项请求批准，任务可以使用当前 macOS 用户的文件、命令和网络权限，也可能修改 Eidos 自身的数据。用户需要同时信任渠道和可向机器人发送消息的用户。Runtime 要求首次开启时提交 fullAccessConfirmation=full-access-v1，并将确认版本保存到连接及消息配置快照中。已确认的完全访问配置可以继续保存；切换回其他模式会清除确认，再次开启需要重新确认。渠道消息不能代替这个 Desktop 确认，也不能自行切换模式。
 
 应用凭证只需要 Client ID 和 Client Secret。用户不需要填写 RobotCode、CorpID、UserID 或 ConversationID，也不需要开启单聊开关。Stream 使用 Client ID 和 Secret 建立连接。Runtime 从该连接的消息回调读取 robotCode、senderCorpId、senderStaffId 和 conversationId。回复使用消息里的 robotCode，Session 使用消息里的 senderCorpId 区分组织。系统不通过 Client ID 猜测 RobotCode。字段来源见[官方 Stream 协议](https://open-dingtalk.github.io/developerpedia/docs/learn/stream/protocol/)与[官方 SDK 回调解析](https://github.com/open-dingtalk/dingtalk-stream-sdk-python/blob/main/dingtalk_stream/chatbot.py)。
 
-Client Secret 留空会保留同一 Client ID 已保存的凭证。更换 Client ID 必须填写新 Secret。Runtime 把 Secret 保存在数据目录的 channel-secrets 下，目录权限为 0700，文件权限为 0600。SQLite 只保存 UUID 引用。API 读取响应不返回 Secret 或其文件引用。SDK 原始日志被隔离，Eidos 只记录经过固定映射的连接事件和异常类型。AccessToken 只在内存缓存。
+桌面设置表单在读取配置时回显本机保存的 Client Secret 真实值，输入框默认以密码掩码隐藏，用户点击眼睛按钮后可切换为明文查看。系统彻底移除“留空保留已保存凭证”的逻辑，保存时以输入框当前真实值为准提交。Runtime 把 Secret 保存在数据目录的 channel-secrets 下，目录权限为 0700，文件权限为 0600。SQLite 只保存 UUID 引用。SDK 原始日志被隔离，Eidos 只记录经过固定映射的连接事件和异常类型。AccessToken 只在内存缓存。
 
 系统不开放本地 HTTP 服务。Desktop 仍通过 typed IPC 和 stdio JSON-RPC 管理 Runtime。Runtime 主动连接各平台。Eidos 完全退出、电脑休眠或网络不可用时，系统不能保证接收消息。平台不能保证补投机器人离线消息。同一应用应只在一台 Eidos 中启用。
 
@@ -38,7 +38,7 @@ Client Secret 留空会保留同一 Client ID 已保存的凭证。更换 Client
 
 Run 与渠道来源在同一 SQLite 事务中保存。Desktop 的回答会标记“钉钉消息”（或“飞书消息”、“企业微信消息”）。渠道输入不会进入本机用户授权证据，不参与自动记忆学习，也没有记忆写工具和定时任务管理工具。重新生成保留来源以维持这些约束，但不会自动向钉钉发送新生成的本地回答。
 
-模型需要人工审批或表单输入时，机器人提示用户在本机 Eidos 继续。系统不会把下一条钉钉消息解释为审批或表单答复。已经接纳的 Run 不会因为渠道被停用而自动取消；用户仍可以在本机停止它们。配置变化会阻止旧准备提交新的 Run。执行位置变化后，新消息使用新的 Session 映射。
+模型需要人工审批或表单输入时，机器人提示用户在本机 Eidos 继续。系统不会把下一条钉钉消息解释为审批或表单答复。已经接纳的 Run 不会因为渠道被停用而自动取消；用户仍可以在本机停止它们。配置变化会阻止旧准备提交新的 Run。所属项目变化后，新消息使用新的 Session 映射。
 
 ## 回复与恢复
 
