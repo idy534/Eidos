@@ -3,8 +3,8 @@ import type { MemoryReadResult } from "../../../../shared/memory.generated.js";
 import { Button } from "../Button.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { MarkdownContent } from "../MarkdownContent.js";
+import { MarkdownEditor } from "../MarkdownEditor.js";
 import { StatusBadge } from "../StatusBadge.js";
-import { EditPencilIcon, ClockHistoryIcon, ChevronDownIcon } from "./MemoryIcons.js";
 import type { MemoryScopeChoice } from "./useMemoryDocuments.js";
 
 export function MemoryNoteEditor({
@@ -36,7 +36,33 @@ export function MemoryNoteEditor({
   const [deleting, setDeleting] = useState(false);
   const [revision, setRevision] = useState<number | undefined>();
   const [reload, setReload] = useState(0);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const historyRef = useRef<HTMLDivElement>(null);
   const mounted = useRef(true);
+
+  useEffect(() => {
+    setHistoryOpen(false);
+  }, [path]);
+
+  useEffect(() => {
+    if (!historyOpen) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (historyRef.current && !historyRef.current.contains(event.target as Node)) {
+        setHistoryOpen(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setHistoryOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [historyOpen]);
 
   const dirty =
     editing &&
@@ -154,7 +180,7 @@ export function MemoryNoteEditor({
 
   return (
     <section
-      className="memory-note"
+      className={`memory-note ${editing ? "memory-note--editing" : ""}`}
       aria-label="记忆正文"
       aria-busy={loading || busy}
     >
@@ -182,17 +208,137 @@ export function MemoryNoteEditor({
           </p>
         </div>
 
-        {!index && !editing && read && current && (
-          <Button
-            size="small"
-            variant={read.document?.archived ? "primary" : "secondary"}
-            icon={read.document?.archived ? undefined : <EditPencilIcon />}
-            disabled={loading || busy}
-            onClick={() => read.document?.archived ? void save("write") : setEditing(true)}
-          >
-            {read.document?.archived ? (busy ? "正在恢复…" : "恢复笔记") : "编辑"}
-          </Button>
-        )}
+        {editing ? (
+          <div className="memory-note-actions-header">
+            {dirty && (
+              <span className="memory-dirty-indicator">尚未保存</span>
+            )}
+            <Button
+              type="button"
+              size="small"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => {
+                dirtyRef.current = false;
+                setEditing(false);
+                onDirty(false);
+                if (path === null) onSelect("MEMORY.md");
+                else setReload((value) => value + 1);
+              }}
+            >
+              取消编辑
+            </Button>
+            <Button
+              type="button"
+              size="small"
+              variant="primary"
+              disabled={
+                busy ||
+                !draft.content.trim() ||
+                (path === null && !draft.path.endsWith(".md"))
+              }
+              onClick={() => void save("write")}
+            >
+              {busy ? "正在保存…" : "保存笔记"}
+            </Button>
+          </div>
+        ) : read ? (
+          <div className="memory-note-actions-header">
+            {read.document && (
+              <div className="memory-popover-anchor" ref={historyRef}>
+                <Button
+                  size="small"
+                  variant="secondary"
+                  disabled={loading || busy}
+                  aria-expanded={historyOpen}
+                  aria-haspopup="dialog"
+                  onClick={() => setHistoryOpen(!historyOpen)}
+                >
+                  来源和版本
+                </Button>
+
+                {historyOpen && (
+                  <div
+                    className="memory-history-popover"
+                    role="dialog"
+                    aria-label="来源和版本"
+                  >
+                    <div className="memory-popover-section">
+                      <p className="memory-meta-updated">
+                        更新时间：{new Date(read.document.updatedAt).toLocaleString()}
+                      </p>
+                      <label className="memory-meta-version-select">
+                        <span>版本</span>
+                        <div className="memory-select-wrapper">
+                          <select
+                            aria-label="记忆版本"
+                            value={read.revision}
+                            onChange={(event) => {
+                              setRevision(Number(event.target.value));
+                              setHistoryOpen(false);
+                            }}
+                          >
+                            {(read.revisions ?? []).map((value) => (
+                              <option key={value} value={value}>
+                                v{value}
+                                {value === read.currentRevision ? "（当前）" : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </label>
+                    </div>
+
+                    <div className="memory-details-actions">
+                      <div className="memory-evidence-group">
+                        {(read.document.evidence ?? []).map((source) => (
+                          <Button
+                            key={source.itemId}
+                            variant="secondary"
+                            size="small"
+                            disabled={!onOpenSource}
+                            onClick={() => {
+                              setHistoryOpen(false);
+                              onOpenSource?.(source.sessionId);
+                            }}
+                          >
+                            查看来源对话
+                          </Button>
+                        ))}
+                      </div>
+
+                      {current && (
+                        <Button
+                          variant="danger"
+                          size="small"
+                          onClick={() => {
+                            setHistoryOpen(false);
+                            setDeleting(true);
+                          }}
+                        >
+                          删除笔记
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!index && current && (
+              <Button
+                size="small"
+                variant={read.document?.archived ? "primary" : "secondary"}
+                disabled={loading || busy}
+                onClick={() =>
+                  read.document?.archived ? void save("write") : setEditing(true)
+                }
+              >
+                {read.document?.archived ? (busy ? "正在恢复…" : "恢复笔记") : "编辑"}
+              </Button>
+            )}
+          </div>
+        ) : null}
       </header>
 
       {loading ? (
@@ -238,50 +384,19 @@ export function MemoryNoteEditor({
             />
           </label>
 
-          <label className="memory-form-item memory-form-item--grow">
-            <span className="memory-form-label">Markdown 正文</span>
-            <textarea
-              aria-label="笔记正文"
-              rows={16}
-              maxLength={65536}
-              placeholder="输入正文内容，支持标准 Markdown…"
+          <div className="memory-form-item memory-form-item--grow">
+            <MarkdownEditor
+              title="Markdown 正文"
+              ariaLabel="笔记正文"
               value={draft.content}
+              placeholder="输入正文内容，支持标准 Markdown…"
+              maxLength={65536}
               disabled={busy}
-              onChange={(event) =>
-                setDraft({ ...draft, content: event.target.value })
+              fillParent
+              onChange={(content) =>
+                setDraft((previous) => ({ ...previous, content }))
               }
             />
-          </label>
-
-          <div className="memory-note-actions">
-            <span className="memory-dirty-indicator">
-              {dirty ? "尚未保存" : ""}
-            </span>
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => {
-                dirtyRef.current = false;
-                setEditing(false);
-                onDirty(false);
-                if (path === null) onSelect("MEMORY.md");
-                else setReload((value) => value + 1);
-              }}
-            >
-              取消编辑
-            </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              disabled={
-                busy ||
-                !draft.content.trim() ||
-                (path === null && !draft.path.endsWith(".md"))
-              }
-            >
-              {busy ? "正在保存…" : "保存笔记"}
-            </Button>
           </div>
         </form>
       ) : (
@@ -291,67 +406,6 @@ export function MemoryNoteEditor({
             onNoteLink={onSelect}
           />
         </div>
-      )}
-
-      {read?.document && !editing && (
-        <details className="memory-note-details">
-          <summary className="memory-details-summary">
-            <div className="memory-details-summary-title">
-              <ClockHistoryIcon className="memory-summary-icon" />
-              <span>来源和版本</span>
-            </div>
-            <ChevronDownIcon className="memory-summary-chevron" />
-          </summary>
-
-          <div className="memory-details-body">
-            <div className="memory-meta-row">
-              <p className="memory-meta-updated">
-                更新时间：{new Date(read.document.updatedAt).toLocaleString()}
-              </p>
-              <label className="memory-meta-version-select">
-                <span>版本</span>
-                <select
-                  aria-label="记忆版本"
-                  value={read.revision}
-                  onChange={(event) => setRevision(Number(event.target.value))}
-                >
-                  {(read.revisions ?? []).map((value) => (
-                    <option key={value} value={value}>
-                      v{value}
-                      {value === read.currentRevision ? "（当前）" : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            <div className="memory-details-actions">
-              <div className="memory-evidence-group">
-                {(read.document.evidence ?? []).map((source) => (
-                  <Button
-                    key={source.itemId}
-                    variant="secondary"
-                    size="small"
-                    disabled={!onOpenSource}
-                    onClick={() => onOpenSource?.(source.sessionId)}
-                  >
-                    查看来源对话
-                  </Button>
-                ))}
-              </div>
-
-              {current && (
-                <Button
-                  variant="danger"
-                  size="small"
-                  onClick={() => setDeleting(true)}
-                >
-                  删除笔记
-                </Button>
-              )}
-            </div>
-          </div>
-        </details>
       )}
 
       <ConfirmDialog

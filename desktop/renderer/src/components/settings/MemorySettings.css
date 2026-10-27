@@ -4,9 +4,12 @@
 
 .memory-settings {
   width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+  padding-bottom: 0;
+  box-sizing: border-box;
 }
 
 /* --------------------------------------------------------------------------
@@ -14,8 +17,9 @@
    -------------------------------------------------------------------------- */
 
 .memory-header {
+  flex-shrink: 0;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 1.5rem;
   flex-wrap: wrap;
@@ -28,18 +32,11 @@
 
 .memory-header-actions {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.55rem;
-  flex-shrink: 0;
-}
-
-.memory-header-row {
-  display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.75rem;
+  gap: 0.85rem;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .memory-control-group {
@@ -98,10 +95,6 @@
   cursor: not-allowed;
 }
 
-.memory-mode-badge {
-  flex-shrink: 0;
-}
-
 /* --------------------------------------------------------------------------
    2. Dual-Pane Memory Workbench & Collapsible Sidebar
    -------------------------------------------------------------------------- */
@@ -110,11 +103,13 @@
   position: relative;
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background: var(--surface-raised);
   box-shadow: var(--apple-shadow-sm);
-  min-height: 32rem;
+  min-height: 28rem;
+  flex: 1 1 0;
   overflow: hidden;
   transition: grid-template-columns 200ms cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -167,8 +162,11 @@
 }
 
 .memory-collapse-toggle--collapsed {
-  left: 8px;
+  left: 0;
   transform: none;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: none;
 }
 
 /* --------------------------------------------------------------------------
@@ -436,18 +434,34 @@
 .memory-editor-area {
   min-width: 0;
   flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--surface-raised);
+  overflow: hidden;
 }
 
 .memory-note {
   padding: 1.5rem 1.85rem;
   min-width: 0;
   flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
+  overflow-y: auto;
+}
+
+.memory-note--editing {
+  overflow: hidden;
+  padding: 1.25rem 1.85rem 1.35rem;
+}
+
+.memory-note--editing .memory-note-heading {
+  margin-bottom: 0.85rem;
+  padding-bottom: 0.85rem;
 }
 
 .memory-workspace--sidebar-collapsed .memory-note {
@@ -455,6 +469,7 @@
 }
 
 .memory-note-heading {
+  flex-shrink: 0;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -462,6 +477,52 @@
   padding-bottom: 1.15rem;
   border-bottom: 1px solid var(--line);
   margin-bottom: 1.35rem;
+}
+
+.memory-note-actions-header {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-shrink: 0;
+}
+
+.memory-popover-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.memory-history-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 50;
+  width: 290px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
+  padding: 0.95rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  animation: memory-popover-fade 120ms ease;
+}
+
+@keyframes memory-popover-fade {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.memory-popover-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
 }
 
 .memory-note-title-wrap {
@@ -512,17 +573,27 @@
 .memory-note-form {
   display: flex;
   flex-direction: column;
-  gap: 1.1rem;
+  gap: 0.75rem;
+  flex: 1 1 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .memory-form-item {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.35rem;
+  flex-shrink: 0;
 }
 
 .memory-form-item--grow {
-  flex: 1 1 auto;
+  flex: 1 1 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .memory-form-label {
@@ -531,49 +602,29 @@
   color: var(--text-secondary);
 }
 
-.memory-note-form input,
-.memory-note-form textarea {
+.memory-note-form input {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
-  padding: 0.6rem 0.75rem;
-  font-size: 0.85rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.825rem;
   font-family: inherit;
   transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 
-.memory-note-form input:focus-visible,
-.memory-note-form textarea:focus-visible {
+.memory-note-form input:focus-visible {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-glow);
-}
-
-.memory-note-form textarea {
-  min-height: 19rem;
-  resize: vertical;
-  font-family: var(--font-code);
-  line-height: 1.65;
-}
-
-.memory-note-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 0.65rem;
-  padding-top: 0.85rem;
-  border-top: 1px solid var(--line);
 }
 
 .memory-dirty-indicator {
   color: var(--status-warning);
   font-size: 0.8rem;
   font-weight: 550;
-  margin-right: auto;
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
@@ -618,100 +669,26 @@
   border-radius: var(--radius-xs);
 }
 
-/* Metadata Drawer (.memory-note-details) */
-.memory-note-details {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  overflow: hidden;
-  margin-top: 2rem;
-  transition: border-color 140ms ease;
-}
-
-.memory-details-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.65rem 0.95rem;
-  font-size: 0.8125rem;
-  font-weight: 550;
-  color: var(--text-secondary);
-  cursor: pointer;
-  user-select: none;
-  transition: background-color 120ms ease;
-  list-style: none;
-}
-
-.memory-details-summary::-webkit-details-marker {
-  display: none;
-}
-
-.memory-details-summary:hover {
-  background: var(--surface-hover);
-}
-
-.memory-details-summary-title {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.memory-summary-icon {
-  width: 14px;
-  height: 14px;
-  color: var(--muted);
-}
-
-.memory-summary-chevron {
-  width: 14px;
-  height: 14px;
-  color: var(--muted);
-  transition: transform 160ms var(--apple-spring);
-}
-
-details[open] .memory-summary-chevron {
-  transform: rotate(180deg);
-}
-
-.memory-details-body {
-  padding: 0.95rem 1rem;
-  border-top: 1px solid var(--line);
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-  background: var(--surface-raised);
-}
-
-.memory-meta-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-}
-
 .memory-meta-updated {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: 0.775rem;
   color: var(--muted);
+  line-height: 1.4;
 }
 
 .memory-meta-version-select {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 0.5rem;
   font-size: 0.8rem;
-  color: var(--muted);
+  font-weight: 550;
+  color: var(--text-secondary);
 }
 
-.memory-meta-version-select select {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text);
-  padding: 0.25rem 0.55rem;
+.memory-meta-version-select .memory-select-wrapper select {
   font-size: 0.8rem;
-  font-family: inherit;
+  padding: 0.28rem 1.6rem 0.28rem 0.55rem;
 }
 
 .memory-details-actions {
@@ -719,9 +696,9 @@ details[open] .memory-summary-chevron {
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 0.75rem;
-  padding-top: 0.65rem;
-  border-top: 1px dashed var(--line);
+  gap: 0.65rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
 }
 
 .memory-evidence-group {

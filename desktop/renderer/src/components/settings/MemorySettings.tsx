@@ -2,11 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MemoryScope } from "../../../../shared/memory.generated.js";
 import { Button } from "../Button.js";
 import { SearchInput } from "../SearchInput.js";
-import { StatusBadge } from "../StatusBadge.js";
 import { ToastContainer, type ToastItem, type ToastType } from "../ToastContainer.js";
 import { MemoryNoteEditor } from "./MemoryNoteEditor.js";
 import {
-  ExportIcon,
   IndexBookmarkIcon,
   DocumentTextIcon,
   PlusIcon,
@@ -19,12 +17,6 @@ import { useMemoryDocuments, type MemoryScopeChoice } from "./useMemoryDocuments
 
 const modes = { off: "关闭", read: "只读", auto: "自动" } as const;
 type MemoryMode = MemoryScope["mode"];
-
-const modeBadges: Record<MemoryMode, { tone: "neutral" | "info" | "success"; text: string }> = {
-  off: { tone: "neutral", text: "已停用" },
-  read: { tone: "info", text: "只读生效" },
-  auto: { tone: "success", text: "自动记录" },
-};
 
 export function MemorySettings({
   sessionId,
@@ -104,7 +96,6 @@ export function MemorySettings({
   }
 
   const currentMode = selected?.mode ?? "auto";
-  const badgeConfig = modeBadges[currentMode];
 
   return (
     <div className="settings-panel memory-settings">
@@ -122,62 +113,51 @@ export function MemorySettings({
         </div>
 
         <div className="memory-header-actions">
-          <div className="memory-header-row memory-header-row--top">
+          <label className="memory-control-group">
+            <span className="memory-control-label">模式</span>
+            <div className="memory-select-wrapper">
+              <select
+                aria-label="模式"
+                value={currentMode}
+                disabled={!selected || busy || dirty}
+                onChange={(event) => void changeMode(event.target.value as MemoryMode)}
+              >
+                {Object.entries(modes).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </label>
+
+          {scopes.length > 1 && (
             <label className="memory-control-group">
-              <span className="memory-control-label">记忆模式</span>
+              <span className="memory-control-label">范围</span>
               <div className="memory-select-wrapper">
                 <select
-                  aria-label="记忆模式"
-                  value={currentMode}
-                  disabled={!selected || busy || dirty}
-                  onChange={(event) => void changeMode(event.target.value as MemoryMode)}
+                  aria-label="范围"
+                  value={scope}
+                  disabled={dirty || busy}
+                  onChange={(event) =>
+                    setScope(event.target.value as MemoryScopeChoice)
+                  }
                 >
-                  {Object.entries(modes).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
+                  <option value="current">当前项目</option>
+                  <option value="global">全局</option>
                 </select>
               </div>
-              <StatusBadge
-                tone={badgeConfig.tone}
-                className="memory-mode-badge"
-              >
-                {badgeConfig.text}
-              </StatusBadge>
             </label>
-          </div>
+          )}
 
-          <div className="memory-header-row memory-header-row--bottom">
-            {scopes.length > 1 && (
-              <label className="memory-control-group">
-                <span className="memory-control-label">记忆范围</span>
-                <div className="memory-select-wrapper">
-                  <select
-                    aria-label="记忆范围"
-                    value={scope}
-                    disabled={dirty || busy}
-                    onChange={(event) =>
-                      setScope(event.target.value as MemoryScopeChoice)
-                    }
-                  >
-                    <option value="current">当前项目</option>
-                    <option value="global">全局</option>
-                  </select>
-                </div>
-              </label>
-            )}
-
-            <Button
-              size="small"
-              variant="secondary"
-              icon={<ExportIcon />}
-              disabled={!selected || busy || dirty}
-              onClick={() => void exportNotes()}
-            >
-              导出 Markdown
-            </Button>
-          </div>
+          <Button
+            size="small"
+            variant="secondary"
+            disabled={!selected || busy || dirty}
+            onClick={() => void exportNotes()}
+          >
+            导出
+          </Button>
         </div>
       </header>
 

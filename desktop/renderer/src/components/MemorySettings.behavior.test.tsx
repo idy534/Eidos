@@ -54,7 +54,7 @@ it("shows one mode selector and opens a note from the Markdown index", async () 
   const { memory, onOpenSource } = mount();
   const user = userEvent.setup();
   await screen.findByRole("link", { name: note.path });
-  expect(screen.getByRole("combobox", { name: "记忆模式" })).toHaveValue("read");
+  expect(screen.getByRole("combobox", { name: "模式" })).toHaveValue("read");
   expect(screen.queryByText(/回填|预算|候选|重试任务|完整备份/)).not.toBeInTheDocument();
   await user.click(screen.getByRole("link", { name: note.path }));
   await screen.findByText("用户只在明确要求时运行全量测试。");
@@ -68,11 +68,11 @@ it("changes the selected scope mode and exports through the native save action",
   const { memory, exportMemoryNotes } = mount();
   const user = userEvent.setup();
   await screen.findByRole("link", { name: note.path });
-  await user.selectOptions(screen.getByRole("combobox", { name: "记忆模式" }), "auto");
+  await user.selectOptions(screen.getByRole("combobox", { name: "模式" }), "auto");
   await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/policy", { sessionId: "session", scope: "current", mode: "auto" }));
-  await user.selectOptions(screen.getByRole("combobox", { name: "记忆范围" }), "global");
+  await user.selectOptions(screen.getByRole("combobox", { name: "范围" }), "global");
   await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/list", expect.objectContaining({ scope: "global" })));
-  await user.click(screen.getByRole("button", { name: "导出 Markdown" }));
+  await user.click(screen.getByRole("button", { name: "导出" }));
   expect(exportMemoryNotes).toHaveBeenCalledWith("global", "session");
 });
 
@@ -90,7 +90,7 @@ it("loads every body page at the same revision and preserves the draft after a c
   expect(editor).toHaveValue("完整正文保留尾部");
   expect(memory).toHaveBeenCalledWith("memory/read", expect.objectContaining({ path: note.path, offset: 4, revision: 3 }));
   await user.type(editor, "补充");
-  expect(screen.getByRole("combobox", { name: "记忆范围" })).toBeDisabled();
+  expect(screen.getByRole("combobox", { name: "范围" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "保存笔记" }));
   await screen.findByRole("alert");
   expect(editor).toHaveValue("完整正文保留尾部补充");
@@ -253,14 +253,15 @@ it("places full backup in local data settings and reports a failure", async () =
   expect(screen.getByRole("button", { name: "备份本地数据" })).toBeEnabled();
 });
 
-it("removes the memory policy banner and places mode and export controls in the header", async () => {
+it("removes the memory policy banner and places mode and export controls in the header without status badge", async () => {
   mount();
   await screen.findByRole("link", { name: note.path });
   expect(screen.queryByText(/模型在当前对话中及时记下有长期价值的信息/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/自动记录|只读生效|已停用/)).not.toBeInTheDocument();
   const header = document.querySelector(".memory-header");
   expect(header).toBeInTheDocument();
-  expect(within(header as HTMLElement).getByRole("combobox", { name: "记忆模式" })).toBeInTheDocument();
-  expect(within(header as HTMLElement).getByRole("button", { name: "导出 Markdown" })).toBeInTheDocument();
+  expect(within(header as HTMLElement).getByRole("combobox", { name: "模式" })).toBeInTheDocument();
+  expect(within(header as HTMLElement).getByRole("button", { name: "导出" })).toBeInTheDocument();
 });
 
 it("collapses and expands the notes list using the divider toggle button", async () => {
@@ -286,4 +287,35 @@ it("collapses and expands the notes list using the divider toggle button", async
   expect(screen.getByRole("button", { name: "折叠笔记列表" })).toHaveAttribute("aria-expanded", "true");
   expect(workspace).not.toHaveClass("memory-workspace--sidebar-collapsed");
   expect(filesNav).toHaveAttribute("aria-hidden", "false");
+});
+
+it("places cancel and save buttons in top header row and allows Markdown preview in note editor", async () => {
+  const { memory } = mount();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("link", { name: note.path }));
+
+  // 进入编辑状态
+  await user.click(await screen.findByRole("button", { name: "编辑" }));
+
+  // 取消编辑和保存笔记按钮在顶部操作栏
+  const headerActions = document.querySelector(".memory-note-actions-header")!;
+  expect(headerActions).toBeInTheDocument();
+  expect(within(headerActions as HTMLElement).getByRole("button", { name: "取消编辑" })).toBeInTheDocument();
+  expect(within(headerActions as HTMLElement).getByRole("button", { name: "保存笔记" })).toBeInTheDocument();
+
+  // MarkdownEditor 源码与预览切换
+  expect(screen.getByRole("tab", { name: "源码" })).toBeInTheDocument();
+  const previewTab = screen.getByRole("tab", { name: "预览" });
+  await user.click(previewTab);
+  expect(screen.queryByRole("textbox", { name: "笔记正文" })).not.toBeInTheDocument();
+
+  // 切回源码
+  await user.click(screen.getByRole("tab", { name: "源码" }));
+  const textarea = screen.getByRole("textbox", { name: "笔记正文" });
+  expect(textarea).toBeInTheDocument();
+
+  // 点击顶部取消编辑
+  await user.click(within(headerActions as HTMLElement).getByRole("button", { name: "取消编辑" }));
+  expect(screen.queryByRole("button", { name: "保存笔记" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument();
 });

@@ -30,7 +30,7 @@ vi.mock("./useModelController.js", () => ({
   useModelController: () => [{}, { load: vi.fn() }],
 }));
 vi.mock("./useExtensionController.js", () => ({
-  useExtensionController: () => [{ plugins: [], skills: [], mcpServers: [], pendingAction: {} }, { load: vi.fn() }],
+  useExtensionController: () => [{ plugins: [], skills: [], pendingSkillIds: new Set(), mcpServers: [], pendingAction: {} }, { load: vi.fn() }],
 }));
 vi.mock("./useGitReviewController.js", () => ({ useGitReviewController: () => [{}, {}] }));
 vi.mock("./useResponseActionController.js", () => ({
@@ -217,10 +217,10 @@ describe("AppShell memory settings Session identity", () => {
         sessionId, scope, path: "MEMORY.md",
       })));
       expect(screen.queryByText("记忆无法读取，请重试。")).not.toBeInTheDocument();
-      fireEvent.change(screen.getByRole("combobox", { name: "记忆模式" }), { target: { value: "read" } });
+      fireEvent.change(screen.getByRole("combobox", { name: "模式" }), { target: { value: "read" } });
       await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/policy", { sessionId, scope, mode: "read" }));
-      await waitFor(() => expect(screen.getByRole("button", { name: "导出 Markdown" })).toBeEnabled());
-      fireEvent.click(screen.getByRole("button", { name: "导出 Markdown" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "导出" })).toBeEnabled());
+      fireEvent.click(screen.getByRole("button", { name: "导出" }));
       expect(window.eidosRuntime.exportMemoryNotes).toHaveBeenCalledWith(scope, sessionId ?? undefined);
     },
   );
