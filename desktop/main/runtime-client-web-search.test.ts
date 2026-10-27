@@ -35,6 +35,13 @@ void test(`${provider} settings return local keys, remain revision guarded and p
     assert.equal((await client.readWebSearch()).config.defaultProvider ?? null, null);
     const request = { expectedRevision: 0, config: { defaultProvider: provider },
       credentialChanges: [{ provider, action: "set" as const, value: "sample-search-secret" }] };
+    // JSON Schema cannot express every Python semantic validator. Exercise the
+    // actual Runtime rejection, then prove it neither saved nor advanced CAS.
+    await assert.rejects(client.saveWebSearch({ ...request,
+      credentialChanges: [{ provider, action: "set", value: "Bearer sample-search-secret" }],
+    }), (error: unknown) => error instanceof RuntimeRequestError
+      && error.rpcCode === -32602 && error.businessCode === "INVALID_PARAMS");
+    assert.equal((await client.readWebSearch()).revision, 0);
     const saved = await client.saveWebSearch(request);
     assert.equal(saved.revision, 1); assert.equal(saved.credentials[provider], "stored");
     assert.equal(saved.credentialValues?.[provider], "sample-search-secret");

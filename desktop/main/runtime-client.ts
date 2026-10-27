@@ -376,7 +376,7 @@ export class RuntimeRequestError extends Error {
   constructor(error: RpcError) {
     const businessCode = (RUNTIME_BUSINESS_CODES.has(error.data?.code ?? "") || /^(?:MEMORY_|DATA_BACKUP_)[A-Z_]{1,80}$/.test(error.data?.code ?? ""))
       ? error.data?.code
-      : "INTERNAL_ERROR";
+      : error.code === -32602 ? "INVALID_PARAMS" : "INTERNAL_ERROR";
     super(`EIDOS_RUNTIME_ERROR:${businessCode}`);
     this.name = "RuntimeRequestError";
     this.rpcCode = error.code;

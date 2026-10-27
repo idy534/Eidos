@@ -10,6 +10,7 @@ import type {
   WebSearchResponse,
   WebSearchSaveRequest,
 } from "../../../../shared/web-search.generated.js";
+import { runtimeBusinessCode } from "../../session-state.js";
 import { Button } from "../Button.js";
 import { StatusBadge } from "../StatusBadge.js";
 import { ToastContainer } from "../ToastContainer.js";
@@ -102,6 +103,13 @@ export function WebSearchSettings({
     credentialChanges: Credentialchanges = [],
   ): Promise<WebSearchResponse | undefined> {
     if (!savedRef.current) return;
+    if (credentialChanges.some((change) => change.action === "set" && (
+      /[\x00-\x20\x7f]/.test(change.value)
+      || new TextEncoder().encode(change.value).length > 1024
+    ))) {
+      triggerError("API Key 不能包含空格或控制字符，长度不能超过 1024 字节。请检查输入。页面保留了你的编辑。");
+      return;
+    }
 
     if (busyRef.current) {
       pendingConfigRef.current = nextConfig;
@@ -133,8 +141,13 @@ export function WebSearchSettings({
       }
       onShowToast?.("设置已保存", "success");
       return res;
-    } catch {
-      triggerError("网页搜索设置保存失败。你可以刷新配置后重试。页面保留了你的编辑。");
+    } catch (cause) {
+      const code = runtimeBusinessCode(cause);
+      triggerError(code === "INVALID_PARAMS"
+        ? "网页搜索参数无效。请检查 API Key、数值范围、日期和域名格式。页面保留了你的编辑。"
+        : code === "WEB_SEARCH_CONFIG_CONFLICT"
+        ? "网页搜索配置已经改变。请刷新配置后重新保存。页面保留了你的编辑。"
+        : "网页搜索设置保存失败。你可以刷新配置后重试。页面保留了你的编辑。");
     } finally {
       busyRef.current = false;
       setBusy(false);

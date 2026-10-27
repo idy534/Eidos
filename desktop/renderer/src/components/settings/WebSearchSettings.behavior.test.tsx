@@ -400,3 +400,53 @@ it("loads Doubao options and saves its time and domain filters through the share
   await user.click(within(section).getByRole("button", { name: /获取 API Key/ }));
   expect(api.openWebSearchOfficialPage).toHaveBeenCalledWith({ provider: "doubao", target: "keys" });
 });
+
+it.each([
+  ["默认结果条数", "0", "7", "defaultCount"],
+  ["请求超时（秒）", "121", "45", "timeoutSeconds"],
+  ["每条结果最多字符数", "99", "1500", "maxExcerptCharacters"],
+  ["默认结果条数", "1.5", "8", "defaultCount"],
+])("keeps invalid %s input local and saves a corrected integer", async (label, invalid, corrected, field) => {
+  const user = userEvent.setup();
+  const api = setup();
+  await screen.findByText("LangSearch 官方网页搜索 API");
+  const section = screen.getByRole("heading", { name: "LangSearch" }).closest("section")!;
+  await user.click(within(section).getByRole("button", { name: "其他设置" }));
+  const input = within(section).getByLabelText(label);
+  fireEvent.change(input, { target: { value: "" } });
+  expect(input).toHaveValue(null);
+  fireEvent.change(input, { target: { value: invalid } });
+  expect(input).toBeInvalid();
+  // A later Key save must still use the last valid options.
+  const key = within(section).getByLabelText("LangSearch API Key", { selector: "input" });
+  fireEvent.change(key, { target: { value: "valid-search-key" } });
+  fireEvent.blur(key);
+  await waitFor(() => expect(api.saveWebSearch).toHaveBeenCalledTimes(1));
+  expect(api.saveWebSearch.mock.calls[0][0].config.langsearch).toBeUndefined();
+  fireEvent.change(input, { target: { value: corrected } });
+  await waitFor(() => expect(api.saveWebSearch).toHaveBeenCalledTimes(2));
+  expect(api.saveWebSearch.mock.calls[1][0].config.langsearch[field]).toBe(Number(corrected));
+});
+
+it("keeps an invalid Key draft without submitting it and accepts its correction", async () => {
+  const api = setup();
+  const input = await screen.findByLabelText("豆包搜索 API Key", { selector: "input" });
+  fireEvent.change(input, { target: { value: "Bearer sample-key" } });
+  fireEvent.blur(input);
+  expect(await screen.findByRole("alert")).toHaveTextContent("API Key 不能包含空格");
+  expect(api.saveWebSearch).not.toHaveBeenCalled();
+  expect(input).toHaveValue("Bearer sample-key");
+  fireEvent.change(input, { target: { value: "sample-key" } });
+  fireEvent.blur(input);
+  await waitFor(() => expect(api.saveWebSearch).toHaveBeenCalledTimes(1));
+});
+
+it("reports Runtime parameter rejection without claiming an internal failure", async () => {
+  const api = setup();
+  api.saveWebSearch.mockRejectedValueOnce(new Error("Error invoking remote method 'web-search:save': Error: EIDOS_RUNTIME_ERROR:INVALID_PARAMS"));
+  const input = await screen.findByLabelText("LangSearch API Key", { selector: "input" });
+  fireEvent.change(input, { target: { value: "draft-key" } });
+  fireEvent.blur(input);
+  expect(await screen.findByRole("alert")).toHaveTextContent("网页搜索参数无效");
+  expect(input).toHaveValue("draft-key");
+});

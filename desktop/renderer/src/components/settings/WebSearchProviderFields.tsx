@@ -44,6 +44,34 @@ function parseFreshness(freshness: string | undefined): {
   };
 }
 
+function SearchNumberInput({ value, min, max, onChange }: {
+  value: number;
+  min: number;
+  max: number;
+  onChange: (value: number) => void;
+}) {
+  const [text, setText] = useState(String(value));
+  useEffect(() => setText(String(value)), [value]);
+  return (
+    <input
+      type="number"
+      min={min}
+      max={max}
+      step={1}
+      required
+      value={text}
+      onChange={(event) => {
+        const input = event.currentTarget;
+        setText(input.value);
+        if (input.validity.valid && Number.isInteger(input.valueAsNumber)) {
+          onChange(input.valueAsNumber);
+        }
+      }}
+      onBlur={(event) => { event.currentTarget.reportValidity(); }}
+    />
+  );
+}
+
 export function WebSearchProviderFields({
   provider,
   options,
@@ -121,35 +149,29 @@ export function WebSearchProviderFields({
         <div className="web-search-num-row">
           <label className="web-search-field-item">
             <span className="web-search-field-label">默认结果条数</span>
-            <input
-              type="number"
+            <SearchNumberInput
               min={1}
               max={50}
-              required
               value={values.defaultCount}
-              onChange={(event) => update({ defaultCount: Number(event.target.value) })}
+              onChange={(value) => update({ defaultCount: value })}
             />
           </label>
           <label className="web-search-field-item">
             <span className="web-search-field-label">请求超时（秒）</span>
-            <input
-              type="number"
+            <SearchNumberInput
               min={5}
               max={120}
-              required
               value={values.timeoutSeconds}
-              onChange={(event) => update({ timeoutSeconds: Number(event.target.value) })}
+              onChange={(value) => update({ timeoutSeconds: value })}
             />
           </label>
           <label className="web-search-field-item">
             <span className="web-search-field-label">每条结果最多字符数</span>
-            <input
-              type="number"
+            <SearchNumberInput
               min={100}
               max={10000}
-              required
               value={values.maxExcerptCharacters}
-              onChange={(event) => update({ maxExcerptCharacters: Number(event.target.value) })}
+              onChange={(value) => update({ maxExcerptCharacters: value })}
             />
           </label>
         </div>

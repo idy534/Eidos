@@ -1799,3 +1799,12 @@ test("rejects ordinary ToolCall unknown provenance at the Runtime Client boundar
     await rm(runtimeRoot, { recursive: true, force: true });
   }
 });
+
+test("JSON-RPC invalid params stays INVALID_PARAMS without exposing remote messages", () => {
+  const error = new RuntimeRequestError({ code: -32602, message: "untrusted-secret" });
+  assert.equal(error.businessCode, "INVALID_PARAMS");
+  assert.equal(error.rpcCode, -32602);
+  assert.equal(error.message, "EIDOS_RUNTIME_ERROR:INVALID_PARAMS");
+  const internal = new RuntimeRequestError({ code: -32603, message: "untrusted-secret" });
+  assert.equal(internal.businessCode, "INTERNAL_ERROR");
+});
