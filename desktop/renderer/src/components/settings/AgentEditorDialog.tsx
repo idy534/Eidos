@@ -9,8 +9,7 @@ import { Tooltip } from "../Tooltip.js";
 import { ModelSelector } from "../ModelSelector.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 import { userFacingError } from "../../session-state.js";
-import { MarkdownContent } from "../MarkdownContent.js";
-import { CodeIcon, CompressIcon, ExpandIcon, PreviewIcon } from "../MenuIcons.js";
+import { MarkdownEditor } from "../MarkdownEditor.js";
 
 export const agentRoleLabels: Record<string, string> = { default: "通用", explorer: "调查", worker: "工作" };
 const emptyDefinition: AgentDefinition = { schemaVersion: 1, name: "", description: "", instructions: "", baseRole: "default", enabled: true };
@@ -314,88 +313,23 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
 
             {/* Agent.md 格式指令区块 */}
             <div className="agent-editor__section agent-editor__section--instructions">
-              <div className="agent-editor__section-header-row">
-                <div className="agent-editor__title-group">
-                  <span className="agent-editor__label-title agent-editor__label-title--code">
-                    Agent.md <span className="field-required" aria-hidden="true">*</span>
-                  </span>
-                  <span className="agent-editor__bytes-badge" title="字符数">
-                    {draft.instructions.length}
-                  </span>
-                </div>
-
-                <div className="agent-editor__instructions-toolbar">
-                  <div className="agent-editor__segmented-bar agent-editor__segmented-bar--sm" role="tablist" aria-label="查看方式">
-                    <Tooltip content="查看与编辑源码">
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={viewMode === "edit"}
-                        className={`agent-editor__toolbar-tab ${viewMode === "edit" ? "agent-editor__toolbar-tab--active" : ""}`}
-                        onClick={() => setViewMode("edit")}
-                        title="查看与编辑源码"
-                      >
-                        <CodeIcon className="agent-editor__tab-icon" />
-                        <span>源码</span>
-                      </button>
-                    </Tooltip>
-                    <Tooltip content="预览 Markdown 效果">
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={viewMode === "preview"}
-                        className={`agent-editor__toolbar-tab ${viewMode === "preview" ? "agent-editor__toolbar-tab--active" : ""}`}
-                        onClick={() => setViewMode("preview")}
-                        title="预览 Markdown 效果"
-                      >
-                        <PreviewIcon className="agent-editor__tab-icon" />
-                        <span>预览</span>
-                      </button>
-                    </Tooltip>
-                  </div>
-
-                  <Tooltip content="放大编辑">
-                    <button
-                      type="button"
-                      className="agent-editor__icon-btn"
-                      onClick={() => setExpandedMd(true)}
-                      title="放大编辑"
-                      aria-label="放大编辑"
-                    >
-                      <ExpandIcon />
-                    </button>
-                  </Tooltip>
-                </div>
-              </div>
-
-              {viewMode === "edit" ? (
-                <label className="agent-editor__field agent-editor__field--instructions">
-                  <textarea
-                    ref={instructionsRef}
-                    aria-label="Agent.md"
-                    required
-                    maxLength={49152}
-                    rows={9}
-                    value={draft.instructions}
-                    placeholder={"# 角色定位\n你负责范围明确的实现、修复与验证。\n\n## 工作约束\n- 先探索并理解已有代码架构\n- 每次改动保持定向测试覆盖\n- 报告关键证据与改动点"}
-                    className="agent-editor__textarea"
-                    onChange={(event) => setDraft({ ...draft, instructions: event.target.value })}
-                  />
-                </label>
-              ) : (
-                <div className="agent-editor__preview-wrapper">
-                  {draft.instructions.trim() ? (
-                    <div className="agent-editor__preview-body eidos-chat-prose" tabIndex={0} role="region" aria-label="Agent.md 预览">
-                      <MarkdownContent content={draft.instructions} />
-                    </div>
-                  ) : (
-                    <div className="agent-editor__preview-empty">
-                      <p>暂无内容，请切换至「源码」编写 Markdown 格式的 Agent 指令。</p>
-                    </div>
-                  )}
-                </div>
-              )}
-              {attempted && <FieldError error={instructionsError} inline />}
+              <MarkdownEditor
+                title="Agent.md"
+                titleCodeStyle
+                required
+                ariaLabel="Agent.md"
+                maxLength={49152}
+                rows={9}
+                value={draft.instructions}
+                placeholder={"# 角色定位\n你负责范围明确的实现、修复与验证。\n\n## 工作约束\n- 先探索并理解已有代码架构\n- 每次改动保持定向测试覆盖\n- 报告关键证据与改动点"}
+                onChange={(instructions) => setDraft((previous) => ({ ...previous, instructions }))}
+                viewMode={viewMode}
+                onViewModeChange={setViewMode}
+                onExpandChange={setExpandedMd}
+                textareaRef={instructionsRef}
+                error={attempted ? instructionsError : undefined}
+                emptyPreviewText="暂无内容，请切换至「源码」编写 Markdown 格式的 Agent 指令。"
+              />
             </div>
           </fieldset>
         </div>
@@ -408,150 +342,6 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
         </footer>
       </form>
     </div>
-    {expandedMd && (
-      <AgentMdExpandedDialog
-        instructions={draft.instructions}
-        viewMode={viewMode}
-        onChangeInstructions={(instructions) => setDraft((previous) => ({ ...previous, instructions }))}
-        onChangeViewMode={setViewMode}
-        onClose={() => {
-          setExpandedMd(false);
-          setTimeout(() => instructionsRef.current?.focus(), 0);
-        }}
-      />
-    )}
   </>, document.body,
-  );
-}
-
-function AgentMdExpandedDialog({
-  instructions,
-  viewMode,
-  onChangeInstructions,
-  onChangeViewMode,
-  onClose,
-}: {
-  instructions: string;
-  viewMode: "edit" | "preview";
-  onChangeInstructions(instructions: string): void;
-  onChangeViewMode(mode: "edit" | "preview"): void;
-  onClose(): void;
-}) {
-  const titleId = useId();
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    if (viewMode === "edit") {
-      textareaRef.current?.focus();
-    }
-  }, [viewMode]);
-
-  return (
-    <div
-      className="agent-md-expanded-backdrop"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className="agent-md-expanded-dialog"
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            event.stopPropagation();
-            onClose();
-          }
-        }}
-      >
-        <header className="agent-md-expanded-header">
-          <div className="agent-editor__title-group">
-            <span id={titleId} className="agent-editor__label-title agent-editor__label-title--code">
-              Agent.md
-            </span>
-            <span className="agent-editor__bytes-badge" title="字符数">
-              {instructions.length}
-            </span>
-          </div>
-
-          <div className="agent-editor__instructions-toolbar">
-            <div className="agent-editor__segmented-bar agent-editor__segmented-bar--sm" role="tablist" aria-label="查看方式">
-              <Tooltip content="查看与编辑源码">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={viewMode === "edit"}
-                  className={`agent-editor__toolbar-tab ${viewMode === "edit" ? "agent-editor__toolbar-tab--active" : ""}`}
-                  onClick={() => onChangeViewMode("edit")}
-                  title="查看与编辑源码"
-                >
-                  <CodeIcon className="agent-editor__tab-icon" />
-                  <span>源码</span>
-                </button>
-              </Tooltip>
-              <Tooltip content="预览 Markdown 效果">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={viewMode === "preview"}
-                  className={`agent-editor__toolbar-tab ${viewMode === "preview" ? "agent-editor__toolbar-tab--active" : ""}`}
-                  onClick={() => onChangeViewMode("preview")}
-                  title="预览 Markdown 效果"
-                >
-                  <PreviewIcon className="agent-editor__tab-icon" />
-                  <span>预览</span>
-                </button>
-              </Tooltip>
-            </div>
-
-            <Tooltip content="收起">
-              <button
-                type="button"
-                className="agent-editor__icon-btn"
-                onClick={onClose}
-                title="收起"
-                aria-label="收起"
-              >
-                <CompressIcon />
-              </button>
-            </Tooltip>
-          </div>
-        </header>
-
-        <div className="agent-md-expanded-body">
-          {viewMode === "edit" ? (
-            <textarea
-              ref={textareaRef}
-              aria-label="Agent.md"
-              maxLength={49152}
-              value={instructions}
-              placeholder={"# 角色定位\n你负责范围明确的实现、修复与验证。\n\n## 工作约束\n- 先探索并理解已有代码架构\n- 每次改动保持定向测试覆盖\n- 报告关键证据与改动点"}
-              className="agent-md-expanded-textarea"
-              onChange={(event) => onChangeInstructions(event.target.value)}
-            />
-          ) : (
-            <div className="agent-md-expanded-preview-wrapper">
-              {instructions.trim() ? (
-                <div className="agent-md-expanded-preview-body eidos-chat-prose" tabIndex={0} role="region" aria-label="Agent.md 预览">
-                  <MarkdownContent content={instructions} />
-                </div>
-              ) : (
-                <div className="agent-editor__preview-empty">
-                  <p>暂无内容，请切换至「源码」编写 Markdown 格式的 Agent 指令。</p>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        <footer className="agent-md-expanded-footer">
-          <span className="agent-md-expanded-tip">按 Esc 或点击完成返回</span>
-          <Button variant="primary" size="small" onClick={onClose}>
-            完成
-          </Button>
-        </footer>
-      </div>
-    </div>
   );
 }

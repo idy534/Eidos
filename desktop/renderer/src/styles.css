@@ -18,6 +18,7 @@
 @import "./components/ProjectDialogs.css";
 @import "./components/ExecutionFeed.css";
 @import "./components/MarkdownContent.css";
+@import "./components/MarkdownEditor.css";
 @import "./components/CodeBlock.css";
 @import "./components/DiffViewer.css";
 @import "./components/MermaidBlock.css";
