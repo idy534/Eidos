@@ -184,6 +184,25 @@ describe("Skill settings", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("does not disable other skill switches when one skill is being toggled", async () => {
+    const user = userEvent.setup();
+    setRuntime(vi.fn().mockResolvedValue({}));
+    render(<SettingsPage {...props({
+      skills: [
+        skill({ qualifiedId: "user:writer", name: "Writer" }),
+        skill({ qualifiedId: "user:coder", name: "Coder" }),
+      ],
+      pendingAction: { type: "toggle_skill", qualifiedId: "user:writer" },
+    })} />);
+
+    await user.click(screen.getByRole("tab", { name: /技能/ }));
+    const writerSwitch = screen.getByRole("switch", { name: "启用或停用 Writer" });
+    const coderSwitch = screen.getByRole("switch", { name: "启用或停用 Coder" });
+
+    expect(writerSwitch).toBeDisabled();
+    expect(coderSwitch).not.toBeDisabled();
+  });
+
   it("requires confirmation before removing a personal skill", async () => {
     const user = userEvent.setup();
     const readSkillDetail = vi.fn().mockResolvedValue({

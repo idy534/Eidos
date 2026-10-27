@@ -24,6 +24,7 @@ interface PluginSettingsProps {
   mcpServers?: McpServerRecord[] | undefined;
   storageReady?: boolean | undefined;
   resourceError?: string | undefined;
+  pendingSkillIds?: ReadonlySet<string> | undefined;
   onToggleSkill?: ((qualifiedId: string, enabled: boolean) => Promise<void>) | undefined;
   onToggleMcp?: ((pluginId: string, serverId: string, enabled: boolean) => Promise<void>) | undefined;
   pendingAction: SettingsPendingAction;
@@ -43,6 +44,7 @@ export function PluginSettings({
   mcpServers = [],
   storageReady = true,
   resourceError,
+  pendingSkillIds,
   onToggleSkill,
   onToggleMcp,
   pendingAction,
@@ -301,6 +303,7 @@ export function PluginSettings({
         skills={skills}
         servers={mcpServers}
         pendingAction={pendingAction}
+        pendingSkillIds={pendingSkillIds}
         storageReady={storageReady}
         resourceError={resourceError}
         obscured={Boolean(review)}

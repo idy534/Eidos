@@ -37,6 +37,7 @@ interface SettingsPageProps {
   mcpServers: McpServerRecord[];
   extensionError?: string | undefined;
   pendingAction: SettingsPendingAction;
+  pendingSkillIds?: ReadonlySet<string> | undefined;
   hasBlockingModal?: boolean | undefined;
   onClose: () => void;
   onModelsChanged: () => Promise<void>;
@@ -67,6 +68,7 @@ export function SettingsPage({
   mcpServers,
   extensionError,
   pendingAction,
+  pendingSkillIds = EMPTY_PENDING_SKILL_IDS,
   hasBlockingModal = false,
   onClose,
   onModelsChanged,
@@ -201,6 +203,7 @@ export function SettingsPage({
                 storageReady={storageReady}
                 resourceError={extensionError}
                 pendingAction={pendingAction}
+                pendingSkillIds={pendingSkillIds}
                 onImportPlugin={onImportPlugin}
                 onInstallBuiltinPlugin={onInstallBuiltinPlugin}
                 onExtensionsChanged={onExtensionsChanged}
@@ -217,6 +220,7 @@ export function SettingsPage({
               <SkillSettings
                 skills={standaloneSkills}
                 pendingAction={pendingAction}
+                pendingSkillIds={pendingSkillIds}
                 storageReady={storageReady}
                 onToggleSkill={onToggleSkill}
                 onRemoveSkill={onRemoveSkill}
@@ -251,3 +255,5 @@ export function SettingsPage({
     </div>
   );
 }
+
+const EMPTY_PENDING_SKILL_IDS: ReadonlySet<string> = new Set();

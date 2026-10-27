@@ -13,6 +13,7 @@ import { userFacingError } from "../session-state.js";
 export interface ExtensionControllerState {
   plugins: PluginRecord[];
   skills: SkillMetadata[];
+  pendingSkillIds: ReadonlySet<string>;
   mcpServers: McpServerRecord[];
   loading: boolean;
   error: string | undefined;
@@ -38,12 +39,30 @@ export interface ExtensionControllerActions {
 export function useExtensionController(): [ExtensionControllerState, ExtensionControllerActions] {
   const [plugins, setPlugins] = useState<PluginRecord[]>([]);
   const [skills, setSkills] = useState<SkillMetadata[]>([]);
+  const [pendingSkillIds, setPendingSkillIds] = useState<ReadonlySet<string>>(new Set());
   const [mcpServers, setMcpServers] = useState<McpServerRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [pendingAction, setPendingAction] = useState<SettingsPendingAction>(undefined);
 
   const skillMutationRevision = useRef(0);
+  const pendingSkillIdsRef = useRef(new Set<string>());
+
+  const beginSkillMutation = useCallback((qualifiedId: string): boolean => {
+    if (pendingSkillIdsRef.current.has(qualifiedId)) return false;
+    const next = new Set(pendingSkillIdsRef.current);
+    next.add(qualifiedId);
+    pendingSkillIdsRef.current = next;
+    setPendingSkillIds(next);
+    return true;
+  }, []);
+
+  const finishSkillMutation = useCallback((qualifiedId: string): void => {
+    const next = new Set(pendingSkillIdsRef.current);
+    next.delete(qualifiedId);
+    pendingSkillIdsRef.current = next;
+    setPendingSkillIds(next);
+  }, []);
 
   const fetchAndApplySnapshot = async (): Promise<void> => {
     const revision = skillMutationRevision.current;
@@ -198,19 +217,31 @@ export function useExtensionController(): [ExtensionControllerState, ExtensionCo
   }, []);
 
   const setSkillEnabled = useCallback(async (qualifiedId: string, enabled: boolean): Promise<void> => {
+    if (!beginSkillMutation(qualifiedId)) throw new Error("该技能正在更新。");
+    const previousEnabled = skills.find((item) => item.qualifiedId === qualifiedId)?.enabled;
     skillMutationRevision.current += 1;
-    setPendingAction({ type: "toggle_skill", qualifiedId });
     setError(undefined);
+    setSkills((previous) => previous.map((item) => (item.qualifiedId === qualifiedId ? { ...item, enabled } : item)));
     try {
       const skill = await window.eidosRuntime.setSkillEnabled(qualifiedId, enabled);
-      setSkills((previous) => previous.map((item) => item.qualifiedId === qualifiedId ? skill : item));
+      setSkills((previous) => previous.map((item) => (item.qualifiedId === qualifiedId ? skill : item)));
+    } catch (cause) {
+      if (previousEnabled !== undefined) {
+        setSkills((previous) => previous.map((item) => (
+          item.qualifiedId === qualifiedId ? { ...item, enabled: previousEnabled } : item
+        )));
+      }
+      const msg = userFacingError(cause);
+      setError(msg);
+      throw cause;
     } finally {
       skillMutationRevision.current += 1;
-      setPendingAction(undefined);
+      finishSkillMutation(qualifiedId);
     }
-  }, []);
+  }, [beginSkillMutation, finishSkillMutation, skills]);
 
   const removeSkill = useCallback(async (qualifiedId: string): Promise<SkillRemoval> => {
+    if (!beginSkillMutation(qualifiedId)) throw new Error("该技能正在更新。");
     skillMutationRevision.current += 1;
     setPendingAction({ type: "remove_skill", qualifiedId });
     setError(undefined);
@@ -221,8 +252,9 @@ export function useExtensionController(): [ExtensionControllerState, ExtensionCo
     } finally {
       skillMutationRevision.current += 1;
       setPendingAction(undefined);
+      finishSkillMutation(qualifiedId);
     }
-  }, []);
+  }, [beginSkillMutation, finishSkillMutation]);
 
   const clearError = useCallback((): void => {
     setError(undefined);
@@ -231,6 +263,7 @@ export function useExtensionController(): [ExtensionControllerState, ExtensionCo
   const state: ExtensionControllerState = {
     plugins,
     skills,
+    pendingSkillIds,
     mcpServers,
     loading,
     error,

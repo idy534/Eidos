@@ -140,6 +140,25 @@ describe("Plugin resources", () => {
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 
+  it("disables the nested plugin-skill switch while that skill is updating", async () => {
+    const readSkillDetail = vi.fn().mockResolvedValue({
+      qualifiedId: ownSkill.qualifiedId,
+      content: "Review instructions",
+      body: "Review instructions",
+      directory: "/plugins/demo/skills/review",
+    });
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { readSkillDetail } });
+    setup(plugin, {
+      skills: [ownSkill],
+      pendingSkillIds: new Set([ownSkill.qualifiedId]),
+      onToggleSkill: vi.fn().mockResolvedValue(undefined),
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "查看 Demo 的资源" }));
+    await user.click(screen.getByRole("button", { name: /Review.*已开启/ }));
+    expect(await screen.findByRole("switch", { name: "启用或禁用 Review" })).toBeDisabled();
+  });
+
   it("requires MCP review, preserves errors, and never grants consent from opening details", async () => {
     const onToggleMcp = vi.fn().mockRejectedValueOnce(new Error("授权保存失败")).mockResolvedValue(undefined);
     const readMcpTools = vi.fn().mockResolvedValue({ state: "not_authorized", tools: [] });

@@ -44,6 +44,7 @@ export interface SkillDetailDialogProps {
     icon?: string | null | undefined;
   } | undefined;
   pendingAction?: SettingsPendingAction | undefined;
+  pendingSkillIds?: ReadonlySet<string> | undefined;
   storageReady?: boolean | undefined;
   onToggleSkill?: ((id: string, enabled: boolean) => Promise<void>) | undefined;
   onRemoveSkill?: ((id: string) => Promise<SkillRemoval>) | undefined;
@@ -97,6 +98,7 @@ export function extractFrontmatterDescription(content?: string): string | undefi
 export function SkillDetailDialog({
   skill,
   pendingAction,
+  pendingSkillIds,
   storageReady = true,
   onToggleSkill,
   onRemoveSkill,
@@ -114,9 +116,14 @@ export function SkillDetailDialog({
   const [reload, setReload] = useState(0);
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const busy = Boolean(pendingAction);
   const id = skill?.qualifiedId;
   const effectiveId = matchedMetadata?.qualifiedId || id;
+  const isPending =
+    effectiveId !== undefined &&
+    (pendingSkillIds?.has(effectiveId) ||
+      (pendingAction?.type === "toggle_skill" && pendingAction.qualifiedId === effectiveId) ||
+      (pendingAction?.type === "remove_skill" && pendingAction.qualifiedId === effectiveId));
+  const busy = isPending;
   const currentDetail =
     detail && (detail.qualifiedId === id || (effectiveId && detail.qualifiedId === effectiveId))
       ? detail

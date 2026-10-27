@@ -1509,6 +1509,7 @@ export function AppShell({ runtime }: AppShellProps) {
             mcpServers={extensionState.mcpServers}
             extensionError={extensionState.error}
             pendingAction={extensionState.pendingAction}
+            pendingSkillIds={extensionState.pendingSkillIds}
             hasBlockingModal={hasBlockingModal}
             onClose={() => setSettingsOpen(false)}
             onModelsChanged={() => modelActions.load()}

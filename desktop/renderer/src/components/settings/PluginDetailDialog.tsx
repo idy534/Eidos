@@ -20,6 +20,7 @@ interface PluginDetailDialogProps {
   skills: SkillMetadata[];
   servers: McpServerRecord[];
   pendingAction: SettingsPendingAction;
+  pendingSkillIds?: ReadonlySet<string> | undefined;
   storageReady: boolean;
   resourceError?: string | undefined;
   obscured: boolean;
@@ -37,6 +38,7 @@ export function PluginDetailDialog({
   skills,
   servers,
   pendingAction,
+  pendingSkillIds,
   storageReady,
   resourceError,
   obscured,
@@ -437,6 +439,7 @@ export function PluginDetailDialog({
       <SkillDetailDialog
         skill={selectedSkill}
         pendingAction={pendingAction}
+        pendingSkillIds={pendingSkillIds}
         storageReady={storageReady}
         onToggleSkill={onToggleSkill}
         onShowToast={(message, type = "info") => onShowToast(message, type)}

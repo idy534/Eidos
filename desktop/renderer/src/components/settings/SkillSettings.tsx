@@ -9,6 +9,7 @@ import { Toggle } from "../Toggle.js";
 
 interface SkillSettingsProps {
   skills: SkillMetadata[];
+  pendingSkillIds?: ReadonlySet<string> | undefined;
   pendingAction: SettingsPendingAction;
   storageReady: boolean;
   onToggleSkill: (qualifiedId: string, enabled: boolean) => Promise<void>;
@@ -17,11 +18,11 @@ interface SkillSettingsProps {
 }
 
 export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
-  const { onToggleSkill, pendingAction, storageReady, onShowToast } = actions;
+  const { onToggleSkill, pendingAction, pendingSkillIds = EMPTY_PENDING_SKILL_IDS, storageReady, onShowToast } = actions;
   const [category, setCategory] = useState<"personal" | "system">("personal");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string>();
-  const [togglingId, setTogglingId] = useState<string>();
+  const [togglingIds, setTogglingIds] = useState<ReadonlySet<string>>(() => new Set());
   const searchRef = useRef<HTMLInputElement>(null);
   const standalone = skills.filter((skill) => skill.sourceKind !== "plugin");
   const selected = standalone.find((skill) => skill.qualifiedId === selectedId);
@@ -31,11 +32,15 @@ export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
     && `${skill.name} ${skill.description}`.toLocaleLowerCase().includes(normalizedQuery)
   )).sort((a, b) => a.name.localeCompare(b.name));
 
-  const isBusy = Boolean(pendingAction) || Boolean(togglingId);
+  const isItemBusy = (qualifiedId: string) =>
+    togglingIds.has(qualifiedId) ||
+    pendingSkillIds.has(qualifiedId) ||
+    (pendingAction?.type === "toggle_skill" && pendingAction.qualifiedId === qualifiedId) ||
+    (pendingAction?.type === "remove_skill" && pendingAction.qualifiedId === qualifiedId);
 
   async function handleToggle(qualifiedId: string, enabled: boolean) {
-    if (isBusy || !onToggleSkill) return;
-    setTogglingId(qualifiedId);
+    if (!onToggleSkill || isItemBusy(qualifiedId)) return;
+    setTogglingIds((current) => new Set(current).add(qualifiedId));
     try {
       await onToggleSkill(qualifiedId, enabled);
       onShowToast(
@@ -45,7 +50,11 @@ export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
     } catch (cause) {
       onShowToast(userFacingError(cause), "error");
     } finally {
-      setTogglingId(undefined);
+      setTogglingIds((current) => {
+        const next = new Set(current);
+        next.delete(qualifiedId);
+        return next;
+      });
     }
   }
 
@@ -68,33 +77,36 @@ export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
           <button type="button" aria-pressed={category === "system"} onClick={() => setCategory("system")}>系统</button>
         </div>
         <div className="skill-grid">
-          {visible.map((skill) => (
-            <div
-              key={skill.qualifiedId}
-              className={`skill-card${skill.enabled ? "" : " skill-card--disabled"}`}
-            >
-              <button
-                type="button"
-                className="skill-card-main"
-                aria-label={`${skill.name}，${skill.enabled ? "已启用" : "已禁用"}，查看详情`}
-                onClick={() => setSelectedId(skill.qualifiedId)}
+          {visible.map((skill) => {
+            const itemBusy = isItemBusy(skill.qualifiedId);
+            return (
+              <div
+                key={skill.qualifiedId}
+                className={`skill-card${skill.enabled ? "" : " skill-card--disabled"}`}
               >
-                <SkillIcon name={skill.name} icon={skill.icon} />
-                <span className="skill-card-copy">
-                  <span className="skill-card-name">{skill.name}</span>
-                  <span className="skill-card-description">{skill.description || "未提供技能说明"}</span>
-                </span>
-              </button>
-              <div className="skill-card-action" onClick={(event) => event.stopPropagation()}>
-                <Toggle
-                  checked={Boolean(skill.enabled)}
-                  disabled={isBusy || !storageReady}
-                  label={`启用或停用 ${skill.name}`}
-                  onChange={(enabled) => void handleToggle(skill.qualifiedId, enabled)}
-                />
+                <button
+                  type="button"
+                  className="skill-card-main"
+                  aria-label={`${skill.name}，${skill.enabled ? "已启用" : "已禁用"}，查看详情`}
+                  onClick={() => setSelectedId(skill.qualifiedId)}
+                >
+                  <SkillIcon name={skill.name} icon={skill.icon} />
+                  <span className="skill-card-copy">
+                    <span className="skill-card-name">{skill.name}</span>
+                    <span className="skill-card-description">{skill.description || "未提供技能说明"}</span>
+                  </span>
+                </button>
+                <div className="skill-card-action" onClick={(event) => event.stopPropagation()}>
+                  <Toggle
+                    checked={Boolean(skill.enabled)}
+                    disabled={itemBusy || !storageReady}
+                    label={`启用或停用 ${skill.name}`}
+                    onChange={(enabled) => void handleToggle(skill.qualifiedId, enabled)}
+                  />
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         {visible.length === 0 && (
           <EmptyState
@@ -112,3 +124,5 @@ export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
     </div>
   );
 }
+
+const EMPTY_PENDING_SKILL_IDS: ReadonlySet<string> = new Set();
