@@ -166,7 +166,7 @@ class PreparedPatch:
 class ResolvedAuthorizedPath:
     root: Path
     relative_path: str
-    authority: Literal["workspace", "active_skill", "full_access"]
+    authority: Literal["workspace", "project_root", "active_skill", "full_access"]
     writable: bool
 
 
@@ -464,6 +464,16 @@ class ToolExecutor:
             supports_tool_grammar=supports_tool_grammar,
         )
 
+    def _project_writer(self, value: str | Path) -> WorkspaceIdentity | None:
+        path = Path(value)
+        if not path.is_absolute():
+            return None
+        for identity in sorted(self.workspace.additional_roots, key=lambda item: len(item.path.parts), reverse=True):
+            if path == identity.path or identity.path in path.parents:
+                resolve_workspace_write_path(str(path), identity.path)
+                return identity
+        return None
+
     def external_patch_paths(
         self, arguments: object, *, approval_roots: tuple[str, ...] = (),
     ) -> tuple[Path, ...]:
@@ -476,9 +486,11 @@ class ToolExecutor:
                 path = self.workspace.path / value
                 if ".." in path.parts or path.resolve(strict=False) != path:
                     raise WorkspacePathError("workspace_boundary_violation")
-                if not path.is_relative_to(self.workspace.path) or any(
+                root = self._project_writer(path)
+                authorized_root = root.path if root else self.workspace.path
+                if not path.is_relative_to(authorized_root) or any(
                     part in _PROTECTED_WORKSPACE_METADATA_NAMES
-                    for part in path.relative_to(self.workspace.path).parts
+                    for part in path.relative_to(authorized_root).parts
                 ) or any(
                     path.is_relative_to(root) for root in approval_roots
                 ):
@@ -515,6 +527,15 @@ class ToolExecutor:
 
     def _resolve_write_path(self, value: str) -> str:
         absolute = str(self.workspace.path / value)
+        project = self._project_writer(absolute)
+        if project is not None:
+            with WorkspaceReader(project):
+                pass
+            if not self._protected_write_allowed(Path(absolute)) and _is_protected_workspace_metadata_path(Path(absolute), project.path):
+                raise WorkspacePathError("permission_not_requestable")
+            if self.write_permissions is not None and not self.write_permissions.allows_file_write(Path(absolute)):
+                raise WorkspacePathError("permission_not_requestable")
+            return absolute
         resolved = absolute if absolute in self._external_writers else resolve_workspace_write_path(value, self.workspace.path)
         target = self.workspace.path / resolved
         if not self._protected_write_allowed(target) and _is_protected_workspace_metadata_path(target, self.workspace.path):
@@ -640,6 +661,10 @@ class ToolExecutor:
 
     def shell_cwd(self, value: str) -> WorkspaceIdentity:
         self._verify_root()
+        project = self._project_writer(value)
+        if project is not None:
+            with ToolExecutor(project) as selected:
+                return selected.shell_cwd(value)
         if self.full_access and Path(value).is_absolute():
             resolve_read_path(value, self.workspace.path, (Path("/"),))
             with ToolExecutor(Path(value)) as external:
@@ -684,6 +709,9 @@ class ToolExecutor:
         kept for post-execution mutation and safety reconciliation.
         """
         self._verify_root()
+        for root in self.workspace.additional_roots:
+            with WorkspaceReader(root):
+                pass
         cwd = self.shell_cwd(value)
         self._verify_root()
         return cwd
@@ -998,9 +1026,10 @@ class ToolExecutor:
         change: FileChange,
         cancel: threading.Event,
     ) -> dict[str, object]:
-        external = self._external_writers.get(change.path)
+        project = self._project_writer(change.path)
+        external = self._external_writers.get(change.path) or project
         if external is not None:
-            if not self.external_write_approved:
+            if project is None and not self.external_write_approved:
                 return _error(tool_name, "approval_required", "External file write requires approval")
             try:
                 self.verify_write_scope()
@@ -1637,6 +1666,9 @@ class ToolExecutor:
         )
 
     def _resolve_read_path(self, value: str) -> ResolvedAuthorizedPath:
+        project = self._project_writer(value)
+        if project is not None:
+            return ResolvedAuthorizedPath(project.path, Path(value).relative_to(project.path).as_posix(), "project_root", True)
         if self.full_access:
             # Validate using the same canonical syntax, then scope the reader to the selected target.
             resolved = resolve_read_path(value, self.workspace.path, (Path("/"),))
@@ -1658,7 +1690,8 @@ class ToolExecutor:
         if resolved.authority == "workspace":
             yield self.reader
             return
-        reader = WorkspaceReader(resolved.root)
+        project = next((root for root in self.workspace.additional_roots if root.path == resolved.root), None)
+        reader = WorkspaceReader(project or resolved.root)
         try:
             yield reader
         finally:
@@ -1731,7 +1764,7 @@ class ToolExecutor:
         *,
         allow_missing_parents: bool = False,
     ) -> tuple[bytes, int] | None:
-        external = self._external_writers.get(path)
+        external = self._external_writers.get(path) or self._project_writer(path)
         if external is not None:
             with ToolExecutor(external) as reader:
                 return reader._read_existing_for_change(

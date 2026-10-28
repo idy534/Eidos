@@ -179,7 +179,7 @@ function renderShell() { return render(shell()); }
 
 describe("AppShell memory settings Session identity", () => {
   it.each(["empty", "projectless draft", "project draft", "persisted"] as const)(
-    "opens memory with a persisted Session or global scope for %s",
+    "opens memory independently of Session identity for %s",
     async (kind) => {
       const persisted = fixture.snapshot!;
       if (kind !== "persisted") {
@@ -192,10 +192,11 @@ describe("AppShell memory settings Session identity", () => {
           }
         }
       }
-      const sessionId = kind === "persisted" ? persisted.session.id : null;
-      const scope = kind === "persisted" ? "current" : "global";
+      localStorage.removeItem("eidos.memory.location.v1");
+      const projectId = null;
+      const scope = "global";
       const memory = vi.fn(async (method: string, request: Record<string, unknown>) => {
-        if (request.sessionId !== null && request.sessionId !== persisted.session.id) {
+        if (request.sessionId != null) {
           throw new Error("EIDOS_RUNTIME_ERROR:MEMORY_SESSION_NOT_FOUND");
         }
         if (method === "memory/read") return {
@@ -209,19 +210,20 @@ describe("AppShell memory settings Session identity", () => {
       });
       window.eidosRuntime.memory = memory as typeof window.eidosRuntime.memory;
       window.eidosRuntime.exportMemoryNotes = vi.fn(async () => {});
+      window.eidosRuntime.listProjects = vi.fn(async () => ({ items: [] }));
       window.eidosRuntime.listModelPresets = vi.fn(async () => ({ providers: [] }));
       renderShell();
       fireEvent.click(screen.getByRole("button", { name: "打开设置" }));
       fireEvent.click(screen.getByRole("tab", { name: "记忆" }));
       await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/read", expect.objectContaining({
-        sessionId, scope, path: "MEMORY.md",
+        projectId, scope, path: "MEMORY.md",
       })));
       expect(screen.queryByText("记忆无法读取，请重试。")).not.toBeInTheDocument();
       fireEvent.change(screen.getByRole("combobox", { name: "模式" }), { target: { value: "read" } });
-      await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/policy", { sessionId, scope, mode: "read" }));
+      await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/policy", { projectId, scope, mode: "read" }));
       await waitFor(() => expect(screen.getByRole("button", { name: "导出" })).toBeEnabled());
       fireEvent.click(screen.getByRole("button", { name: "导出" }));
-      expect(window.eidosRuntime.exportMemoryNotes).toHaveBeenCalledWith(scope, sessionId ?? undefined);
+      expect(window.eidosRuntime.exportMemoryNotes).toHaveBeenCalledWith({ scope, projectId });
     },
   );
 });

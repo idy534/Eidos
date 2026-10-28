@@ -6,7 +6,7 @@
 
 ## 数据与升级
 
-`state.sqlite` schema v43 是唯一业务事实来源。它保存作用域、模式、笔记版本、来源记录、操作结果、归档状态与隐私撤销版本。正文位于数据目录 `memory/scopes/<scope UUID>/revisions/<revision UUID>.md`。用户和模型使用相对笔记路径。SQLite 把路径映射到有效版本；孤立文件不能成为记忆。
+`state.sqlite` schema v44 是唯一业务事实来源。它保存作用域、模式、笔记版本、来源记录、操作结果、归档状态与隐私撤销版本。正文位于数据目录 `memory/scopes/<scope UUID>/revisions/<revision UUID>.md`。用户和模型使用相对笔记路径。SQLite 把路径映射到有效版本；孤立文件不能成为记忆。
 
 Runtime 按生效笔记的路径和摘要生成 `MEMORY.md`。索引最多 200 行、约 24 KiB，末尾保留搜索和分页提示。模型不维护另一份摘要文件，也不直接修改派生索引。归档笔记不进入索引。
 
@@ -89,13 +89,17 @@ ContextBuilder 只自动注入短索引，正文按需读取。索引最多使�
 
 `StorageMaintenance` 由现有 Supervisor 管理。它只清理撤销载荷、失效文件和 Blob，不调用模型，也不产生新记忆。启动时，快照外置流程跳过已经撤销的记录，避免把清空的载荷重新写成 Blob。真实撤销仍按原有流程清理，孤立文件保留一小时宽限，准备中的文件受到保护。关闭仍由资源注册表统一取消和等待。
 
-记忆页复用范围、模式、文件列表、编辑区域、来源与版本、删除确认及 Markdown 导出。用户编辑时，页面不切换范围或覆盖草稿。冲突会保留草稿。归档恢复和彻底遗忘不增加设置开关。Main 校验 `memory/changed` 通知，页面据此刷新，并在恢复可见或获得焦点时刷新。页面不定时轮询任务。
+记忆页通过独立的“位置”选择项目或无项目，不再从聊天页选中的 Session 或草稿推导管理范围。页面首次进入显示“无项目 / 全局”，并在本机记住上次选择的位置和范围。用户选择项目后默认查看“所选项目”，也可以切换到“全局”。无项目固定使用全局记忆；不同项目页面的全局选项管理同一份全局记忆。没有 Session 的项目也可以管理记忆，项目 Worktree 仍共享项目记忆。
+
+记忆页复用模式、文件列表、编辑区域、来源与版本、删除确认及 Markdown 导出。位置与范围切换会清空搜索和分页，并打开 `MEMORY.md`。页面在编辑内容未保存或操作进行中禁用位置与范围切换，并提示先保存或取消编辑。项目列表和记忆读取失败后可以重试；已删除的所选项目显示失效提示，页面不会自动回退到全局，也不会启用保存、模式修改或导出。用户编辑时，页面不切换范围或覆盖草稿。冲突会保留草稿。归档恢复和彻底遗忘不增加设置开关。Main 校验 `memory/changed` 通知，页面据此刷新，并在恢复可见或获得焦点时刷新。页面不定时轮询任务。
 
 ## 备份与契约
 
 Markdown 导出只包含生效笔记。Main 分页写入临时文件，并核对同一 generation 与递增游标，全部成功后才原子发布。完整 ZIP 备份位于“运行时 → 本地数据”，同时保存归档笔记和历史。
 
-完整备份格式是 `eidos-data-backup-v2`。恢复接受 schema v40/v41/v42/v43，逐级升级后导入一个不存在的新目录，并把记忆模式设为 read。恢复检查归档路径、重复成员、符号链接、体积、SQLite 完整性、记忆引用和 Blob，修复文件时间元数据。备份不包含 Workspace 或模型凭据配置。ZIP 未加密，旧备份可能恢复备份之后被遗忘的资料。
+完整备份格式是 `eidos-data-backup-v2`。恢复接受 schema v40/v41/v42/v43/v44，逐级升级后导入一个不存在的新目录，并把记忆模式设为 read。恢复检查归档路径、重复成员、符号链接、体积、SQLite 完整性、记忆引用和 Blob，修复文件时间元数据。备份不包含 Workspace 或模型凭据配置。ZIP 未加密，旧备份可能恢复备份之后被遗忘的资料。
+
+Desktop 的列表、读取、编辑、模式修改和导出接口支持显式 `projectId`。Runtime 校验项目存在，并拒绝同时提供 `sessionId` 与 `projectId`。旧的 Session 管理请求继续兼容；旧操作的重放指纹保持不变。模型工具不开放项目选择，模型读取和自动保存入口拒绝管理用的项目参数。对话中的记忆仍按 Run 所属项目选择。此变化不增加数据库字段，也不迁移或清除已有笔记。
 
 Python 严格 DTO 生成 Desktop 类型与 JSON Schema。两端共同验证 `protocol/fixtures/memory-v2.json`，模型结果另用 `memory-tool-model-v1.json`。运行方法见[记忆专题](../../development/README.md#记忆系统)。真实 Provider 的长期记忆质量仍需独立评测，脚本模型测试不能替代该证据。
 
@@ -140,3 +144,18 @@ Python 严格 DTO 生成 Desktop 类型与 JSON Schema。两端共同验证 `pro
 独立 Electron 记忆页面在 320、768、1024、1440 宽度下没有横向溢出或控件裁切。页面恢复失败后的重试通过，控制台没有错误。键盘打开笔记和恢复操作由 Renderer 行为测试验证。图生成脚本重新生成并校验了 21 张架构图与离线图集。该检查使用合成数据，不代表日常数据的人工验收。
 
 两组 Python 依赖审计通过。Node 生产依赖仍有 2 项 low 和 2 项 moderate，没有 high/critical 项。本次没有运行 Full Suite、真实 Provider 质量评测、Seatbelt、完整应用启动/退出 smoke 或打包验证。所有执行验证使用临时数据。本次没有手动修改日常数据；新版启动时会升级至 v43，并保留 v42 的现有笔记与历史。
+
+
+## 2026-10-28 独立记忆管理位置
+
+本次修改让设置页直接选择项目或无项目，并在本机保存位置与范围。页面不再使用聊天页的 Session 身份决定管理范围。Runtime 管理请求增加可选项目身份，并复用已有项目/全局记忆。原有版本检查、归档、隐私撤销、审批和模型工具范围规则继续保留。本次没有新增依赖、修改锁文件、迁移数据库或清除笔记。
+
+以下定向验证均退出 0：
+
+- `uv run --locked pytest runtime/tests/test_memory_management_target.py runtime/tests/test_memory.py runtime/tests/test_memory_flow.py runtime/tests/test_memory_runtime.py -q`：72 项通过。测试覆盖无 Session 项目、已有范围复用、项目隔离、全局共享、重启、CAS、归档恢复、失效目标、旧操作重放及原有撤销/恢复路径。
+- `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/MemorySettings.behavior.test.tsx desktop/renderer/src/app/AppShell.behavior.test.tsx`：54 项通过。补充键盘焦点断言后，记忆页 22 项再次通过。测试覆盖 Session/草稿独立、位置记忆、目标切换、草稿保护、迟到响应和失败重试。
+- `pnpm build` 和构建后的 `node --test dist/main/memory-contract.test.js dist/main/memory-export.test.js dist/main/runtime-client-memory.test.js`：构建和 8 项测试通过。Main 测试包含真实 stdio 的无 Session 项目管理与重启，以及原有两种模式的记忆审批。
+- `pnpm test:contracts`：4 项测试及两端结构检查通过。`pnpm exec electron scripts/test-memory-settings.cjs`：隔离页面的 320、768、1024、1440px 顶部控件、范围切换、读取失败重试和控制台检查通过；开发者已检查 320 与 1440px 截图。
+- Ruff、生产代码 Deptry、两组 Python 依赖审计、`pnpm test:electron-smoke` 和 `git diff --check` 通过。Node 生产依赖审计退出 0，仍报告 2 项 low 和 2 项 moderate。
+
+独立 Agent 只读审查未发现已确认问题。本次没有运行 Full Suite、真实 Provider 质量评测、日常数据人工验收或安装包验证。所有运行验证使用临时数据。回退时可以还原本次源码并重新构建；本次没有数据迁移，已有记忆仍由原有范围保存。

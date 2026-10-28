@@ -578,6 +578,7 @@ def test_v39_upgrade_discards_legacy_memory_and_preserves_chat(tmp_path):
             "INSERT INTO hook_pending_events VALUES(?,'post:item',?)",
             (run["id"], '{"tool_name":"memory_record"}'),
         )
+        connection.execute("DROP TABLE personalization_settings")
         connection.execute("PRAGMA user_version=39")
     (root / "memory").mkdir()
     (root / "memory" / "old.md").write_text("旧记忆")

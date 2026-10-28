@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.db.project_workspaces_migration import PROJECT_WORKSPACES_SCHEMA_SQL
+
 from eidos_runtime.db.web_search_migration import WEB_SEARCH_SCHEMA_SQL
 from eidos_runtime.db.shell_environment_migration import SHELL_ENVIRONMENT_SCHEMA_SQL
 from eidos_runtime.db.hooks_migration import HOOKS_SCHEMA_SQL
@@ -24,9 +26,12 @@ from eidos_runtime.memory.document_schema import RESET_DOCUMENT_MEMORY_SQL
 from eidos_runtime.memory.revocation_migration import MEMORY_SOURCE_REVOCATION_SQL
 from eidos_runtime.memory.remove_temporary_migration import REMOVE_TEMPORARY_MEMORY_SQL
 from eidos_runtime.memory.flow_migration import MEMORY_FLOW_SQL
+from eidos_runtime.db.personalization_migration import PERSONALIZATION_SCHEMA_SQL
 
 
-SCHEMA_VERSION = 43
+SCHEMA_VERSION = 45
+V44_SCHEMA_VERSION = 44
+V43_SCHEMA_VERSION = 43
 V42_SCHEMA_VERSION = 42
 V41_SCHEMA_VERSION = 41
 V40_SCHEMA_VERSION = 40
@@ -65,7 +70,7 @@ V8_SCHEMA_VERSION = 8
 V7_SCHEMA_VERSION = 7
 V6_SCHEMA_VERSION = 6
 V5_SCHEMA_VERSION = 5
-PREVIOUS_SCHEMA_VERSION = V42_SCHEMA_VERSION
+PREVIOUS_SCHEMA_VERSION = V44_SCHEMA_VERSION
 LEGACY_SCHEMA_VERSION = 1
 
 TOOL_CALL_PAYLOAD_KIND_COLUMN = (
@@ -1575,7 +1580,9 @@ V39_SCHEMA_SQL = V38_SCHEMA_SQL + HOOK_LIFECYCLE_SCHEMA_SQL + HOOK_INVOCATION_EX
 V40_SCHEMA_SQL = V39_SCHEMA_SQL + RESET_DOCUMENT_MEMORY_SQL
 V41_SCHEMA_SQL = V40_SCHEMA_SQL + MEMORY_SOURCE_REVOCATION_SQL
 V42_SCHEMA_SQL = V41_SCHEMA_SQL + REMOVE_TEMPORARY_MEMORY_SQL
-SCHEMA_SQL = V42_SCHEMA_SQL + MEMORY_FLOW_SQL
+V43_SCHEMA_SQL = V42_SCHEMA_SQL + MEMORY_FLOW_SQL
+V44_SCHEMA_SQL = V43_SCHEMA_SQL + PERSONALIZATION_SCHEMA_SQL
+SCHEMA_SQL = V44_SCHEMA_SQL + PROJECT_WORKSPACES_SCHEMA_SQL
 
 # Test/upgrade fixture for schema v5. Schema v5 still kept the rebuildable
 # repository index in the state database.

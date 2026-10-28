@@ -385,3 +385,7 @@
   color: var(--accent);
   background: var(--surface-hover);
 }
+
+.workspace-multi-root { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.workspace-root-picker { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 0.8rem; }
+.workspace-root-picker select { flex: 1; min-width: 0; padding: 0.35rem; border: 1px solid var(--line); border-radius: var(--radius); color: var(--text); background: var(--surface-raised); font: inherit; }

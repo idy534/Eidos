@@ -26,6 +26,14 @@
   gap: 0.75rem;
 }
 
+.markdown-editor__header--toolbar-only {
+  justify-content: flex-end;
+}
+
+.markdown-editor__header--toolbar-only .markdown-editor__toolbar {
+  margin-left: auto;
+}
+
 .markdown-editor__title-group {
   display: flex;
   align-items: center;

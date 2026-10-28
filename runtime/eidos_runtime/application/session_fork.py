@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.persistence.project_workspaces import project_for_session
+
 import uuid
 import sqlite3
 import threading
@@ -201,7 +203,7 @@ class SessionForkApplication:
                     )
                 else:
                     snapshot = snapshots.save_local(
-                        manager.project(source.project.id),
+                        project_for_session(manager.project(source.project.id), source.session),
                         workspace_root=Path(source.session.workspace_root),
                         session_id=source.session.id,
                         snapshot_id=snapshot_id,
@@ -210,6 +212,7 @@ class SessionForkApplication:
             plan = manager.prepare_create(
                 source.project.workspace_root, base_ref=snapshot.head
             )
+            plan = plan.model_copy(update={"project_id": source.project.id})
             now = datetime.now(UTC).replace(microsecond=0)
             operation = lifecycle.prepare(
                 WorktreeLifecycleOperation(

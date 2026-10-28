@@ -1191,3 +1191,7 @@
   container-type: inline-size;
   container-name: git-review;
 }
+
+.git-repository-panel { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.git-repository-picker { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 0.8rem; }
+.git-repository-picker select { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); padding: 0.35rem; color: var(--text); background: var(--surface-raised); font: inherit; }

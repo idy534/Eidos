@@ -49,7 +49,7 @@ class WorktreeSnapshotService:
         if source.changes is None:
             raise WorktreeError("worktree_snapshot_required")
         artifact = self.artifacts.write(snapshot_id, source.changes)
-        project = self.manager.project(worktree.project_id)
+        project = self.manager.source_project(worktree.id)
         self.manager.git.create_snapshot_anchor(
             Path(project.workspace_root), snapshot_id, source.head
         )
@@ -65,6 +65,8 @@ class WorktreeSnapshotService:
             workspace_root=str(root.resolve()),
             session_id=self.session_for_worktree(worktree.id),
             project_id=worktree.project_id,
+            repository_root=project.workspace_root,
+            git_common_dir=source.discovery.git_common_dir,
             base_ref=worktree.base_ref,
             base_commit=worktree.base_commit,
             head=source.head,
@@ -136,6 +138,8 @@ class WorktreeSnapshotService:
             workspace_root=str(workspace_root.resolve()),
             session_id=session_id,
             project_id=project.id,
+            repository_root=source.discovery.repository_root,
+            git_common_dir=source.discovery.git_common_dir,
             base_ref=source.head,
             base_commit=source.head,
             head=source.head,
@@ -196,6 +200,8 @@ class WorktreeSnapshotService:
 
     def read_anchor(self, snapshot: WorktreeSnapshot) -> str | None:
         project = self.manager.project(snapshot.project_id)
+        if snapshot.repository_root:
+            project = project.model_copy(update={"workspace_root": snapshot.repository_root, "git_repository_root": snapshot.repository_root, "git_common_dir": snapshot.git_common_dir})
         try:
             return self.manager.git.snapshot_anchor(
                 Path(project.workspace_root), snapshot.id
@@ -205,6 +211,8 @@ class WorktreeSnapshotService:
 
     def delete_anchor_if_expected(self, snapshot: WorktreeSnapshot) -> None:
         project = self.manager.project(snapshot.project_id)
+        if snapshot.repository_root:
+            project = project.model_copy(update={"workspace_root": snapshot.repository_root, "git_repository_root": snapshot.repository_root, "git_common_dir": snapshot.git_common_dir})
         root = Path(project.workspace_root)
         try:
             actual = self.manager.git.snapshot_anchor(root, snapshot.id)

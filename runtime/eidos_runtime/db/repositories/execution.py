@@ -442,6 +442,12 @@ class ExecutionRepository(Repository):
             raise StorageError("run_resolution_snapshot_invalid") from None
         identity = snapshot.workspace_identity
         return WorkspaceIdentity(
+            root_id=identity.root_id or "",
+            additional_roots=tuple(WorkspaceIdentity(
+                root_id=root.root_id or "", path=Path(root.path), device=root.device,
+                inode=root.inode, owner=root.owner, git_dir=Path(root.git_dir) if root.git_dir else None,
+                git_common_dir=Path(root.git_common_dir) if root.git_common_dir else None,
+            ) for root in (identity.additional_roots or ())),
             path=Path(identity.path),
             device=identity.device,
             inode=identity.inode,
@@ -532,6 +538,7 @@ class ExecutionRepository(Repository):
                     tool_definitions=(),
                     instructions=InstructionResolver().resolve(
                         rule_snapshot=rule_resolution_snapshot,
+                        personalization=run_snapshot.personalization.preferences if run_snapshot.personalization is not None else None,
                     ),
                     workspace_version=int(run["workspace_version"]),
                     effective_cwd=rule_resolution_snapshot.cwd,

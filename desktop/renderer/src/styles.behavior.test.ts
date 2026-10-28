@@ -210,8 +210,9 @@ describe("interactive color tokens", () => {
   it("applies low-saturation links and distinct inline code pill background in markdown", () => {
     expect(styles).toMatch(/--link-color:\s*#2b5da7;/);
     expect(styles).toMatch(/--code-inline-bg:\s*#eef0f2;/);
+    expect(styles).not.toMatch(/--code-inline-border/);
     expect(styles).toMatch(/\.markdown-body code\s*\{[^}]*background:\s*var\(--code-inline-bg/s);
-    expect(styles).toMatch(/\.markdown-body code\s*\{[^}]*border:\s*1px solid var\(--code-inline-border/s);
+    expect(styles).not.toMatch(/\.markdown-body code\s*\{[^}]*border:/s);
     expect(styles).toMatch(/\.markdown-file-link\s*\{[^}]*color:\s*var\(--link-color/s);
     expect(styles).not.toMatch(/\.markdown-file-link\s*\{[^}]*color:\s*#1d4ed8;/s);
     expect(styles).toMatch(/\.markdown-file-link\s*\{[^}]*vertical-align:\s*-0\.15em;/s);

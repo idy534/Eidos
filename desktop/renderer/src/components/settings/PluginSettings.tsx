@@ -158,7 +158,7 @@ export function PluginSettings({
           <div>
             <h1>Plugins 扩展</h1>
             <p className="settings-panel-subtitle">
-              导入本地 Eidos 或 Codex 插件，也可以导入新版本完成更新。Hook 和 MCP 服务分别审阅授权。
+              导入本地Eidos插件(兼容Codex)，也可以导入新版本完成更新。
             </p>
           </div>
           <div className="plugin-header-actions">

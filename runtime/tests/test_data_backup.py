@@ -54,7 +54,7 @@ def test_backup_preserves_archived_notes_and_shared_body_versions(tmp_path):
         reopened.close()
 
 
-@pytest.mark.parametrize("schema_version", [40, 41, 42, SCHEMA_VERSION])
+@pytest.mark.parametrize("schema_version", [40, 41, 42, 43, SCHEMA_VERSION])
 def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(
     tmp_path, schema_version
 ):
@@ -83,7 +83,9 @@ def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(
         state = tmp_path / "legacy.sqlite"
         state.write_bytes(entries["state.sqlite"])
         with sqlite3.connect(state) as connection:
-            connection.execute("ALTER TABLE memory_documents DROP COLUMN archived")
+            connection.execute("DROP TABLE personalization_settings")
+            if schema_version < 43:
+                connection.execute("ALTER TABLE memory_documents DROP COLUMN archived")
             if schema_version < 42:
                 connection.execute(
                     "ALTER TABLE memory_sources ADD COLUMN temporary INTEGER NOT NULL DEFAULT 0"

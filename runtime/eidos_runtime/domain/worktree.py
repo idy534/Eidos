@@ -56,6 +56,8 @@ class Worktree(EidosFrozenStrictModel):
 
     id: str = Field(min_length=1)
     project_id: str = Field(min_length=1)
+    repository_root: str | None = None
+    git_common_dir: str | None = None
     worktree_root: str = Field(min_length=1, max_length=4096)
     git_dir: str = Field(min_length=1, max_length=4096)
     base_ref: str = Field(min_length=1, max_length=4096)

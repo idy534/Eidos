@@ -7,6 +7,8 @@ from eidos_runtime.domain.collaboration import MAX_ACTIVE_AGENTS
 from eidos_runtime.domain.agents import AgentCatalogSnapshot
 from eidos_runtime.persistence.agent_catalog import AgentSnapshotRepository
 from eidos_runtime.domain.input_reference import InputReference
+from eidos_runtime.domain.personalization import PersonalizationSettings
+from eidos_runtime.persistence.personalization import PersonalizationRepository
 
 import json
 from pathlib import Path
@@ -97,11 +99,15 @@ class RunRepository(Repository):
                 """
                 SELECT 1 FROM runs r
                 JOIN sessions s ON s.id = r.session_id
-                WHERE s.workspace_root = ?
+                JOIN run_resolution_snapshots snap ON snap.run_id=r.id
+                WHERE (json_extract(snap.snapshot_json,'$.workspace_identity.path') = ?
+                    OR substr(json_extract(snap.snapshot_json,'$.workspace_identity.path'),1,length(?)+1)=?||'/'
+                    OR EXISTS (SELECT 1 FROM json_each(snap.snapshot_json,'$.workspace_identity.additional_roots') root
+                        WHERE json_extract(root.value,'$.path')=? OR substr(json_extract(root.value,'$.path'),1,length(?)+1)=?||'/'))
                   AND r.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing')
                 LIMIT 1
                 """,
-                (workspace_root,),
+                (workspace_root,) * 6,
             ).fetchone()
         return row is not None
 
@@ -143,6 +149,8 @@ class RunRepository(Repository):
         item_id: str | None = None,
         transaction_connection: sqlite3.Connection | None = None,
         regenerate_source_run_id: str | None = None,
+        personalization: PersonalizationSettings | None = None,
+        channel_context: bool = False,
     ) -> tuple[dict[str, object], dict[str, object]]:
         references = references or []
         references_json = json.dumps([value.to_wire_dict() for value in references], ensure_ascii=False)
@@ -175,7 +183,7 @@ class RunRepository(Repository):
                 SELECT id, workspace_root, title,
                        NOT EXISTS (
                            SELECT 1 FROM projects p
-                           WHERE p.workspace_root = sessions.workspace_root
+                           WHERE p.id = sessions.project_id OR (sessions.project_id IS NULL AND p.workspace_root = sessions.workspace_root)
                        ) AS projectless
                 FROM sessions WHERE id = ?
                 """,
@@ -256,12 +264,27 @@ class RunRepository(Repository):
             from eidos_runtime.persistence.planning import PlanningRepository
             PlanningRepository.bind_run(connection, run_id=run_id, session_id=session_id,
                 work_mode=work_mode, plan_id=plan_id, plan_revision=plan_revision)
+            personal_settings = personalization if personalization is not None else PersonalizationRepository(self.database).read()
+            channel_bound = connection.execute(
+                "SELECT 1 FROM channel_run_origins WHERE run_id=? "
+                "UNION ALL SELECT 1 FROM channel_sessions WHERE session_id=? LIMIT 1",
+                (run_id, session_id),
+            ).fetchone() is not None
+            if channel_context or channel_bound:
+                personal_settings = personal_settings.for_channel()
             run_resolution = create_run_resolution_snapshot(
                 run_id=run_id,
                 model_profile=profile,
                 approval_mode=approval_mode,
+                personalization=personal_settings,
                 extension_snapshot=json.loads(extension_snapshot_json),
                 workspace_identity=WorkspaceIdentitySnapshot(
+                    root_id=execution_workspace.root_id or None,
+                    additional_roots=tuple(WorkspaceIdentitySnapshot(
+                        root_id=root.root_id or None, path=str(root.path), device=root.device,
+                        inode=root.inode, owner=root.owner, git_dir=str(root.git_dir) if root.git_dir else None,
+                        git_common_dir=str(root.git_common_dir) if root.git_common_dir else None,
+                    ) for root in execution_workspace.additional_roots) or None,
                     path=str(execution_workspace.path),
                     device=execution_workspace.device,
                     inode=execution_workspace.inode,
@@ -585,12 +608,12 @@ class RunRepository(Repository):
         if raw_cwd is None:
             return workspace_root
         cwd = Path(raw_cwd)
-        try:
-            cwd.resolve().relative_to(workspace_root.resolve())
-        except ValueError:
-            # cwd is outside workspace_root — fall back to workspace root
-            return workspace_root
-        return cwd
+        from eidos_runtime.db.repositories.workspace import execution_workspace_for_run
+        with self.lock:
+            workspace = execution_workspace_for_run(self._connection(), run_id)
+        if any(cwd.resolve().is_relative_to(root.path) for root in (workspace, *workspace.additional_roots)):
+            return cwd
+        return workspace_root
 
     def set_run_effective_cwd(self, run_id: str, cwd: Path) -> None:
         """Persist the effective working directory for a run."""

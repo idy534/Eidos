@@ -332,7 +332,6 @@
   padding: 0.15rem 0.35rem;
   border-radius: var(--radius-sm);
   background: var(--code-inline-bg);
-  border: 1px solid var(--code-inline-border);
   color: var(--text-secondary);
 }
 

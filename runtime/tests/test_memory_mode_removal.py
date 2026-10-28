@@ -62,6 +62,7 @@ def test_v41_upgrade_removes_mode_preserves_notes_and_keeps_old_sources_revoked(
     with sqlite3.connect(directory / "state.sqlite") as connection:
         # Recreate the actual v41 columns before running all later migrations.
         connection.execute("ALTER TABLE memory_documents DROP COLUMN archived")
+        connection.execute("DROP TABLE personalization_settings")
         connection.execute(
             "ALTER TABLE memory_sources ADD COLUMN temporary INTEGER NOT NULL DEFAULT 0"
         )

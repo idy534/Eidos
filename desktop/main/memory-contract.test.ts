@@ -27,7 +27,7 @@ test("document memory rejects obsolete methods and invented scope or revision fi
   assert.equal(isMemoryMethod("memory/list"), true);
   for (const name of ["memory/backfill", "memory/jobsRetry", "memory/remember", "memory/manage", "memory/toString", "memory/temporary"]) assert.equal(isMemoryMethod(name), false);
   assert.equal(isMemoryRequest("memory/list", { scope: "allowed" }), true);
-  assert.equal(isMemoryRequest("memory/list", { projectId: "another-project" }), false);
+  assert.equal(isMemoryRequest("memory/list", { projectId: "another-project" }), true);
   const note = { path: "feedback_testing.md", summary: "只运行相关测试", content: "只运行相关测试。", operationId: "one", expectedRevision: 0 };
   assert.equal(isMemoryRequest("memory/edit", note), true);
   assert.equal(isMemoryRequest("memory/edit", { ...note, expectedRevision: Number.MAX_SAFE_INTEGER + 1 }), false);

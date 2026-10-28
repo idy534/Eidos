@@ -336,7 +336,7 @@ class FileChangeToolHandler:
             ) if call.name == "apply_patch" else ()
             if call.name != "apply_patch":
                 target = executor.workspace.path / call.arguments["path"]
-                if not target.is_relative_to(executor.workspace.path) or any(
+                if not any(target.is_relative_to(Path(root)) for root in base.workspace_roots) or any(
                     target == Path(root) or target.is_relative_to(root)
                     for root in (*base.protected_write_paths, *base.approval_write_roots)
                 ) or any(name in target.parts for name in (".git", ".agents", ".eidos")):

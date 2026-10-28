@@ -115,7 +115,12 @@ def _include_detached_worktree_branch(
         worktree_value["branch"] = None
 
 
+class _GitRootRequest(MethodRequestDto):
+    root_id: StrictStr | None = Field(default=None, alias="rootId", min_length=1, max_length=256)
+
+
 class SessionCreateRequestDto(_OperationRequest):
+    project_id: StrictStr | None = Field(default=None, alias="projectId", min_length=1, max_length=256)
     workspace_name_hint: StrictStr | None = Field(
         default=None, alias="workspaceNameHint", max_length=512
     )
@@ -142,7 +147,7 @@ class SessionCreateBranchRequestDto(_OperationRequest):
     )
 
 
-class _SessionGitBranchRequest(_OperationRequest):
+class _SessionGitBranchRequest(_GitRootRequest, _OperationRequest):
     operation_id: StrictStr = Field(alias="operationId")
     session_id: StrictStr = Field(alias="sessionId")
     branch: StrictStr = Field(min_length=1, max_length=4096)
@@ -209,12 +214,12 @@ class ToolTextReadRequestDto(_CanonicalIdRequest):
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id", "tool_call_id")
 
 
-class SessionGitStatusRequestDto(_CanonicalIdRequest):
+class SessionGitStatusRequestDto(_GitRootRequest, _CanonicalIdRequest):
     session_id: StrictStr = Field(alias="sessionId")
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
 
 
-class SessionGitDiffRequestDto(_CanonicalIdRequest):
+class SessionGitDiffRequestDto(_GitRootRequest, _CanonicalIdRequest):
     session_id: StrictStr = Field(alias="sessionId")
     scope: Literal["head", "baseline"] = "head"
     compare_ref: StrictStr | None = Field(
@@ -255,7 +260,7 @@ class WorkspaceReadAssetResponseDto(MethodResultDto):
     complete: bool
 
 
-class _SessionGitPathsRequest(_OperationRequest):
+class _SessionGitPathsRequest(_GitRootRequest, _OperationRequest):
     session_id: StrictStr = Field(alias="sessionId")
     paths: list[StrictStr] = Field(min_length=1, max_length=512)
     _canonical_id_fields: ClassVar[tuple[str, ...]] = (
@@ -276,7 +281,7 @@ class SessionGitStageRequestDto(_SessionGitPathsRequest):
     pass
 
 
-class SessionGitCommitRequestDto(_OperationRequest):
+class SessionGitCommitRequestDto(_GitRootRequest, _OperationRequest):
     session_id: StrictStr = Field(alias="sessionId")
     message: StrictStr = Field(min_length=1, max_length=65536)
     _canonical_id_fields: ClassVar[tuple[str, ...]] = (
@@ -292,12 +297,12 @@ class SessionGitCommitRequestDto(_OperationRequest):
         return value
 
 
-class SessionGitRemoteStatusRequestDto(_CanonicalIdRequest):
+class SessionGitRemoteStatusRequestDto(_GitRootRequest, _CanonicalIdRequest):
     session_id: StrictStr = Field(alias="sessionId")
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
 
 
-class SessionGitFetchRequestDto(_OperationRequest):
+class SessionGitFetchRequestDto(_GitRootRequest, _OperationRequest):
     operation_id: StrictStr = Field(alias="operationId")
     session_id: StrictStr = Field(alias="sessionId")
     remote: StrictStr | None = Field(default=None, min_length=1, max_length=255)
@@ -307,7 +312,7 @@ class SessionGitFetchRequestDto(_OperationRequest):
     )
 
 
-class SessionGitPullRequestDto(_OperationRequest):
+class SessionGitPullRequestDto(_GitRootRequest, _OperationRequest):
     operation_id: StrictStr = Field(alias="operationId")
     session_id: StrictStr = Field(alias="sessionId")
     _canonical_id_fields: ClassVar[tuple[str, ...]] = (
@@ -316,7 +321,7 @@ class SessionGitPullRequestDto(_OperationRequest):
     )
 
 
-class SessionGitPushRequestDto(_OperationRequest):
+class SessionGitPushRequestDto(_GitRootRequest, _OperationRequest):
     operation_id: StrictStr = Field(alias="operationId")
     session_id: StrictStr = Field(alias="sessionId")
     remote: StrictStr | None = Field(default=None, min_length=1, max_length=255)
@@ -326,7 +331,7 @@ class SessionGitPushRequestDto(_OperationRequest):
     )
 
 
-class SessionGitMergeRequestDto(_OperationRequest):
+class SessionGitMergeRequestDto(_GitRootRequest, _OperationRequest):
     operation_id: StrictStr = Field(alias="operationId")
     session_id: StrictStr = Field(alias="sessionId")
     target: StrictStr = Field(min_length=1, max_length=1024)
@@ -343,7 +348,7 @@ class SessionGitMergeRequestDto(_OperationRequest):
         return value
 
 
-class SessionGitMergeAbortRequestDto(_OperationRequest):
+class SessionGitMergeAbortRequestDto(_GitRootRequest, _OperationRequest):
     operation_id: StrictStr = Field(alias="operationId")
     session_id: StrictStr = Field(alias="sessionId")
     _canonical_id_fields: ClassVar[tuple[str, ...]] = (

@@ -12,10 +12,17 @@ export interface MarkdownEditorProps {
   titleCodeStyle?: boolean | undefined;
   /** 是否必填字段（显示红色星号） */
   required?: boolean | undefined;
+  /** 是否隐藏标题 */
+  hideTitle?: boolean | undefined;
+  /** 是否显示字数/字符数计数徽标（默认 true） */
+  showCount?: boolean | undefined;
+  /** 是否隐藏字数/字符数计数徽标 */
+  hideCount?: boolean | undefined;
   /** Markdown 文本内容 */
   value: string;
   /** 内容变更回调 */
   onChange: (value: string) => void;
+  onBlur?: (() => void) | undefined;
   /** 占位符文本 */
   placeholder?: string | undefined;
   /** 无障碍标签（默认使用 title 或 "Markdown 正文"） */
@@ -50,8 +57,12 @@ export function MarkdownEditor({
   title,
   titleCodeStyle,
   required,
+  hideTitle = false,
+  showCount = true,
+  hideCount = false,
   value,
   onChange,
+  onBlur,
   placeholder,
   ariaLabel,
   maxLength = 65536,
@@ -103,31 +114,38 @@ export function MarkdownEditor({
   }
 
   const effectiveAriaLabel = ariaLabel ?? title ?? "Markdown 正文";
+  const shouldShowTitle = Boolean(title) && !hideTitle;
+  const shouldShowCount = showCount && !hideCount;
+  const hasTitleGroup = shouldShowTitle || shouldShowCount;
 
   return (
     <div
       className={`markdown-editor ${fillParent ? "markdown-editor--fill" : ""} ${className ?? ""}`}
     >
-      <div className="markdown-editor__header agent-editor__section-header-row">
-        <div className="markdown-editor__title-group agent-editor__title-group">
-          {title ? (
-            <span
-              className={`markdown-editor__label-title ${
-                titleCodeStyle ? "markdown-editor__label-title--code agent-editor__label-title--code" : ""
-              }`}
-            >
-              {title}
-              {required && (
-                <span className="field-required" aria-hidden="true">
-                  *
-                </span>
-              )}
-            </span>
-          ) : null}
-          <span className="markdown-editor__bytes-badge agent-editor__bytes-badge" title="字符数">
-            {value.length}
-          </span>
-        </div>
+      <div className={`markdown-editor__header agent-editor__section-header-row ${!hasTitleGroup ? "markdown-editor__header--toolbar-only" : ""}`}>
+        {hasTitleGroup ? (
+          <div className="markdown-editor__title-group agent-editor__title-group">
+            {shouldShowTitle ? (
+              <span
+                className={`markdown-editor__label-title ${
+                  titleCodeStyle ? "markdown-editor__label-title--code agent-editor__label-title--code" : ""
+                }`}
+              >
+                {title}
+                {required && (
+                  <span className="field-required" aria-hidden="true">
+                    *
+                  </span>
+                )}
+              </span>
+            ) : null}
+            {shouldShowCount ? (
+              <span className="markdown-editor__bytes-badge agent-editor__bytes-badge" title="字符数">
+                {value.length}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="markdown-editor__toolbar agent-editor__instructions-toolbar">
           <div
@@ -196,6 +214,7 @@ export function MarkdownEditor({
             disabled={disabled}
             className="markdown-editor__textarea agent-editor__textarea"
             onChange={(event) => onChange(event.target.value)}
+            onBlur={onBlur}
           />
         ) : (
           <div className="markdown-editor__preview-wrapper agent-editor__preview-wrapper">
@@ -224,6 +243,9 @@ export function MarkdownEditor({
           <MarkdownEditorExpandedDialog
             title={title}
             titleCodeStyle={titleCodeStyle}
+            hideTitle={hideTitle}
+            showCount={showCount}
+            hideCount={hideCount}
             ariaLabel={effectiveAriaLabel}
             value={value}
             maxLength={maxLength}
@@ -232,6 +254,7 @@ export function MarkdownEditor({
             emptyPreviewText={emptyPreviewText}
             viewMode={viewMode}
             onChange={onChange}
+            onBlur={onBlur}
             onChangeViewMode={handleViewModeChange}
             onClose={handleCloseExpand}
           />,
@@ -244,6 +267,9 @@ export function MarkdownEditor({
 function MarkdownEditorExpandedDialog({
   title,
   titleCodeStyle,
+  hideTitle,
+  showCount,
+  hideCount,
   ariaLabel,
   value,
   maxLength,
@@ -252,11 +278,15 @@ function MarkdownEditorExpandedDialog({
   emptyPreviewText,
   viewMode,
   onChange,
+  onBlur,
   onChangeViewMode,
   onClose,
 }: {
   title?: string | undefined;
   titleCodeStyle?: boolean | undefined;
+  hideTitle?: boolean | undefined;
+  showCount?: boolean | undefined;
+  hideCount?: boolean | undefined;
   ariaLabel: string;
   value: string;
   maxLength?: number | undefined;
@@ -265,11 +295,15 @@ function MarkdownEditorExpandedDialog({
   emptyPreviewText: string;
   viewMode: "edit" | "preview";
   onChange: (value: string) => void;
+  onBlur?: (() => void) | undefined;
   onChangeViewMode: (mode: "edit" | "preview") => void;
   onClose: () => void;
 }) {
   const titleId = useId();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const shouldShowTitle = Boolean(title) && !hideTitle;
+  const shouldShowCount = showCount !== false && !hideCount;
+  const hasTitleGroup = shouldShowTitle || shouldShowCount;
 
   useEffect(() => {
     if (viewMode === "edit") {
@@ -287,7 +321,8 @@ function MarkdownEditorExpandedDialog({
       <div
         role="dialog"
         aria-modal="true"
-        aria-labelledby={titleId}
+        aria-labelledby={shouldShowTitle ? titleId : undefined}
+        aria-label={!shouldShowTitle ? ariaLabel : undefined}
         className="markdown-editor-expanded-dialog agent-md-expanded-dialog"
         onKeyDown={(event) => {
           if (event.key === "Escape") {
@@ -296,20 +331,26 @@ function MarkdownEditorExpandedDialog({
           }
         }}
       >
-        <header className="markdown-editor-expanded-header agent-md-expanded-header">
-          <div className="markdown-editor__title-group agent-editor__title-group">
-            <span
-              id={titleId}
-              className={`markdown-editor__label-title ${
-                titleCodeStyle ? "markdown-editor__label-title--code agent-editor__label-title--code" : ""
-              }`}
-            >
-              {title ?? "Markdown 编辑"}
-            </span>
-            <span className="markdown-editor__bytes-badge agent-editor__bytes-badge" title="字符数">
-              {value.length}
-            </span>
-          </div>
+        <header className={`markdown-editor-expanded-header agent-md-expanded-header ${!hasTitleGroup ? "markdown-editor__header--toolbar-only" : ""}`}>
+          {hasTitleGroup ? (
+            <div className="markdown-editor__title-group agent-editor__title-group">
+              {shouldShowTitle ? (
+                <span
+                  id={titleId}
+                  className={`markdown-editor__label-title ${
+                    titleCodeStyle ? "markdown-editor__label-title--code agent-editor__label-title--code" : ""
+                  }`}
+                >
+                  {title ?? "Markdown 编辑"}
+                </span>
+              ) : null}
+              {shouldShowCount ? (
+                <span className="markdown-editor__bytes-badge agent-editor__bytes-badge" title="字符数">
+                  {value.length}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="markdown-editor__toolbar agent-editor__instructions-toolbar">
             <div
@@ -374,6 +415,7 @@ function MarkdownEditorExpandedDialog({
               disabled={disabled}
               className="markdown-editor-expanded-textarea agent-md-expanded-textarea"
               onChange={(event) => onChange(event.target.value)}
+              onBlur={onBlur}
             />
           ) : (
             <div className="markdown-editor-expanded-preview-wrapper agent-md-expanded-preview-wrapper">
@@ -438,7 +480,7 @@ function PreviewIcon({ className }: { className?: string }) {
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <path d="M1.5 8s2.5-4.5 6.5-4.5 6.5 4.5 6.5 4.5-2.5 4.5-6.5 4.5-6.5-4.5z" />
+      <path d="M1.5 8C3 5 5.2 3.5 8 3.5S13 5 14.5 8C13 11 10.8 12.5 8 12.5S3 11 1.5 8Z" />
       <circle cx="8" cy="8" r="2" />
     </svg>
   );

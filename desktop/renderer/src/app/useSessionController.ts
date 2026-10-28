@@ -69,6 +69,7 @@ export interface SessionControllerActions {
   createSession: (
     workspaceRoot?: string | null,
     options?: {
+      projectId?: string;
       workspaceNameHint?: string;
       executionMode?: "local" | "worktree";
       baseRef?: string;
@@ -235,6 +236,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     const session: Session = {
       id: `draft-${crypto.randomUUID()}`,
       workspaceRoot: project?.workspaceRoot ?? "",
+      ...(project?.roots ? { roots: project.roots } : {}),
       ...(project
         ? {
             project: {
@@ -367,6 +369,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
   const createSession = useCallback(async (
     workspaceRoot?: string | null,
     options: {
+      projectId?: string;
       workspaceNameHint?: string;
       executionMode?: "local" | "worktree";
       baseRef?: string;
@@ -430,6 +433,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     const projectRoot = currentDraft.session.project?.workspaceRoot ?? null;
     return createSession(projectRoot, {
       executionMode: currentDraft.session.executionMode ?? "local",
+      ...(currentDraft.session.project ? { projectId: currentDraft.session.project.id } : {}),
       ...(projectRoot === null ? { workspaceNameHint: workspaceNameHint ?? "新会话" } : {}),
     });
   }, [createSession, draft]);

@@ -38,7 +38,6 @@
   --link-color: #2b5da7;
   --link-hover: #1e447b;
   --code-inline-bg: #eef0f2;
-  --code-inline-border: rgba(0, 0, 0, 0.04);
 
   /* Primary Action Button Tokens */
   --primary-action-bg: var(--accent-soft);

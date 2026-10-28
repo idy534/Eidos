@@ -4,6 +4,19 @@ export const searchSchema = {
     "FileFindRequest": {
       "additionalProperties": false,
       "properties": {
+        "workspaceRoot": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workspaceroot"
+        },
         "sessionId": {
           "maxLength": 256,
           "minLength": 1,

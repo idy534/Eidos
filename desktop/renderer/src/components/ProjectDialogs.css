@@ -855,3 +855,29 @@
   background: rgba(246, 246, 248, 0.7);
 }
 
+
+.project-editor-dialog { width: min(100%, 34rem); }
+.project-editor-folders { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface-raised); }
+.project-editor-folders ul { margin: 0; padding: 0; list-style: none; max-height: min(42vh, 24rem); overflow: auto; }
+.project-editor-folder-row { display: flex; align-items: center; gap: 0.65rem; min-height: 4rem; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--line); }
+.project-editor-folder-icon { display: inline-flex; width: 1.2rem; height: 1.2rem; color: var(--muted); flex: none; }
+.project-editor-folder-icon svg { width: 100%; height: 100%; }
+.project-editor-folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9rem; }
+.project-editor-folder-path { display: block; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 0.72rem; margin-top: 0.2rem; }
+.project-editor-primary, .project-editor-make-primary { flex: none; padding: 0.3rem 0.55rem; border-radius: var(--radius); font-size: 0.78rem; white-space: nowrap; }
+.project-editor-primary { border: 1px solid var(--line); color: var(--muted); }
+.project-editor-make-primary { color: var(--text); border: 0; background: var(--surface-muted); cursor: pointer; opacity: 0; }
+.project-editor-folder-row:hover .project-editor-make-primary, .project-editor-folder-row:focus-within .project-editor-make-primary { opacity: 1; }
+.project-editor-remove-folder { flex: none; border: 0; background: transparent; color: var(--muted); font-size: 1.15rem; cursor: pointer; padding: 0.2rem; }
+.project-editor-remove-folder:disabled { opacity: 0.35; cursor: default; }
+.project-editor-add-folder { display: flex; align-items: center; gap: 0.65rem; width: 100%; min-height: 3.4rem; padding: 0.7rem 0.8rem; border: 0; color: var(--text); background: transparent; cursor: pointer; font: inherit; font-size: 0.9rem; }
+.project-editor-add-folder:hover:not(:disabled), .project-editor-remove-folder:hover:not(:disabled) { background: var(--surface-hover); }
+.project-editor-note { color: var(--muted); font-size: 0.75rem; line-height: 1.5; margin: 0.75rem 0 0; }
+.project-editor-footer { flex-wrap: wrap; }
+.project-editor-footer-spacer { flex: 1; }
+.project-editor-dialog button:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+@media (max-width: 480px) {
+  .project-editor-folder-row { gap: 0.4rem; padding-inline: 0.6rem; }
+  .project-editor-primary, .project-editor-make-primary { padding: 0.25rem 0.35rem; font-size: 0.72rem; }
+  .project-editor-make-primary { opacity: 1; }
+}

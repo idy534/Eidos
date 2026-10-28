@@ -36,7 +36,32 @@
   justify-content: flex-end;
   gap: 0.85rem;
   flex-wrap: wrap;
-  flex-shrink: 0;
+  flex-shrink: 1;
+  max-width: 100%;
+}
+
+.memory-location-select {
+  min-width: 0;
+  max-width: min(16rem, 60vw);
+}
+
+.memory-location-select select {
+  width: 100%;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+
+.memory-location-status {
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+}
+
+.memory-location-status:empty {
+  display: none;
+}
+
+.memory-location-status p {
+  margin: 0;
 }
 
 .memory-control-group {
@@ -664,7 +689,6 @@
   font-family: var(--font-code);
   font-size: 0.825rem;
   background: var(--code-inline-bg);
-  border: 1px solid var(--code-inline-border);
   padding: 0.15rem 0.4rem;
   border-radius: var(--radius-xs);
 }

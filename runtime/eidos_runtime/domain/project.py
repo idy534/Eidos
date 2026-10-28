@@ -6,6 +6,7 @@ import hashlib
 from pydantic import Field, field_validator, model_validator
 
 from eidos_runtime.models import EidosFrozenStrictModel
+from eidos_runtime.domain.project_workspace import ProjectRoot
 
 
 class Project(EidosFrozenStrictModel):
@@ -18,6 +19,9 @@ class Project(EidosFrozenStrictModel):
     git_common_dir: str | None = Field(default=None, max_length=4096)
     created_at: datetime
     updated_at: datetime
+    revision: int = Field(default=1, ge=1)
+    primary_root_id: str | None = None
+    roots: tuple[ProjectRoot, ...] = ()
 
     @field_validator("workspace_root", "git_repository_root", "git_common_dir")
     @classmethod

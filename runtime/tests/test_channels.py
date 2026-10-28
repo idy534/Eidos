@@ -551,6 +551,12 @@ def test_real_runtime_receives_once_runs_and_persists_final_reply(tmp_path, appr
     try:
         server.handle({"jsonrpc": "2.0", "id": "client-init", "method": "initialize", "params": {"protocolVersion": 1, "client": {"name": "test", "version": "1"}}})
         assert server.initialized, output.getvalue()
+        from eidos_runtime.domain.personalization import PersonalizationPreferences
+        from eidos_runtime.persistence.personalization import PersonalizationRepository
+        PersonalizationRepository(server.store.database).save(PersonalizationPreferences(
+            response_language="zh-CN", preferred_name="PRIVATE NAME", role="PRIVATE ROLE",
+            familiar_topics="PRIVATE TOPICS", custom_instructions="PRIVATE INSTRUCTIONS",
+        ), 0)
         service = server.channel_service
         service.active = lambda: False
         configured = server.model_config.create(provider_id="deepseek", model_id=DEFAULT_MODEL_ID, api_key="test-key")
@@ -574,6 +580,10 @@ def test_real_runtime_receives_once_runs_and_persists_final_reply(tmp_path, appr
         assert server.store.read_run(identifier.run_id).get("approvalMode", "manual") == approval_mode
         source = [item["content"] for context in model.contexts for item in context if item.get("sectionId") == "channel-origin"]
         assert source
+        assert "PRIVATE" not in json.dumps(model.contexts)
+        shared = server.store.read_run_resolution_snapshot(identifier.run_id).personalization
+        assert shared.preferences.response_language == "zh-CN"
+        assert "PRIVATE" not in shared.model_dump_json()
         assert all(("do not request per-operation approvals" in text) == (approval_mode == "full_access") for text in source)
         if approval_mode == "full_access":
             assert target.read_text() == "channel-full-access"

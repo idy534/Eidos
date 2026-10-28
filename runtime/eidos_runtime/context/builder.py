@@ -23,7 +23,7 @@ from eidos_runtime.domain.tool_content import MAX_CONTEXT_CONTENT_BYTES, ToolCon
 from eidos_runtime.context.facts import ContextFacts
 from eidos_runtime.context.input_references import inline_reference_mention, project_input_mentions
 from eidos_runtime.context.tool_history import clear_old_tool_results
-from eidos_runtime.model.context_projection import project_context, recovery_context, generated_summary_view
+from eidos_runtime.model.context_projection import project_context, recovery_context, generated_summary_view, fit_personalization
 from eidos_runtime.context.policy import TOOL_RESULT_CLEARING_TARGET_TOKENS, CONTINUITY_SECTION_ID
 from eidos_runtime.context.summary_evidence import continuity_context
 from eidos_runtime.context.agent_evidence import build_agent_evidence, message_page_delivery
@@ -94,6 +94,8 @@ class ContextBuilder:
         )
         collaboration = CollaborationRepository(self.store.database)
         has_project = not self.store.run_is_projectless(run_id)
+        personalization_snapshot = self.store.read_run_resolution_snapshot(run_id).personalization
+        personalization = personalization_snapshot.preferences if personalization_snapshot is not None else None
         instructions = InstructionResolver().resolve(
             rule_snapshot=rule_resolution_snapshot,
             skill_catalog_context=catalog_context,
@@ -105,6 +107,7 @@ class ContextBuilder:
             agent_role=collaboration.child_role_for_run(run_id),
             agent_definition=collaboration.child_definition_for_run(run_id),
             has_project=has_project,
+            personalization=personalization,
         )
         source_ids = set(
             facts.compact_summary.source_item_ids if facts.compact_summary else ()
@@ -175,6 +178,9 @@ class ContextBuilder:
                 "content": "Workspace/environment context: " + json.dumps(
                     {
                         "workspace": str(workspace.path),
+                        **({"additionalWorkspaces": [str(root.path) for root in workspace.additional_roots],
+                            "pathResolution": "Relative tool paths use the primary workspace; use absolute paths for other attached folders."}
+                           if workspace.additional_roots else {}),
                         "platform": platform.system(),
                     },
                     ensure_ascii=False,
@@ -449,6 +455,7 @@ class ContextBuilder:
                     agent_role=collaboration.child_role_for_run(run_id),
                     agent_definition=collaboration.child_definition_for_run(run_id),
                     has_project=has_project,
+                    personalization=personalization,
                 )
             context.insert(0, {"type": "user", "sectionId": "memory-evidence",
                                "content": projection.rendered_payload,
@@ -492,12 +499,27 @@ class ContextBuilder:
         if recovery_level:
             context = list(recovery_context(tuple(context), max(1024,
                 budget.usable_input_budget * 2 // (2 ** min(recovery_level, 7)))))
-        budget = estimate_model_request_budget(
-            tuple(context), instructions=instructions.system_text, tool_definitions=tool_definitions,
-            context_window_tokens=profile.context_window_tokens, request_max_output_tokens=profile.max_output_tokens,
-            provider_usage=provider_usage, provider_calibration_estimate=calibration_estimate,
-            usage_updated_at=time.time_ns() // 1_000_000,
-        )
+        complete_context = tuple(context)
+        personalization_bytes = sum(len(str(item.get("content", "")).encode("utf-8"))
+            for item in complete_context if str(item.get("sectionId", "")).startswith("personalization-"))
+        # Preserve all preference layers, then use the existing head/tail text
+        # projection if their full text prevents this model's request fitting.
+        # Re-project from the original text so retries do not stack markers.
+        for _fit_attempt in range(9):
+            budget = estimate_model_request_budget(
+                tuple(context), instructions=instructions.system_text, tool_definitions=tool_definitions,
+                context_window_tokens=profile.context_window_tokens, request_max_output_tokens=profile.max_output_tokens,
+                provider_usage=provider_usage, provider_calibration_estimate=calibration_estimate,
+                usage_updated_at=time.time_ns() // 1_000_000,
+            )
+            if budget.fits or not personalization_bytes or _fit_attempt == 8:
+                break
+            ratio = min(0.75, max(0.1, budget.usable_input_budget / max(1, budget.projected_input_tokens)))
+            personalization_bytes = max(512, int(personalization_bytes * ratio))
+            fitted = fit_personalization(complete_context, personalization_bytes)
+            if fitted == tuple(context):
+                break
+            context = list(fitted)
         return ContextBuild(
             model_context=tuple(context),
             instructions=instructions,

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from eidos_runtime.domain.collaboration import AgentRole
 from eidos_runtime.domain.agents import AgentDefinition, definition_version
+from eidos_runtime.domain.personalization import PersonalizationPreferences
 from eidos_runtime.model.prompts import (
     BASE_AGENT_INSTRUCTIONS,
     MEMORY_POLICY_INSTRUCTIONS,
@@ -173,6 +174,7 @@ class InstructionResolver:
         agent_role: AgentRole | None = None,
         agent_definition: AgentDefinition | None = None,
         has_project: bool = False,
+        personalization: PersonalizationPreferences | None = None,
     ) -> ResolvedInstructions:
         layers: list[InstructionLayer] = [
             InstructionLayer.create(
@@ -325,6 +327,17 @@ class InstructionResolver:
                     f"{section.content}"
                 ),
             ))
+        if personalization is not None:
+            for identifier, content in (
+                ("personalization-expression", personalization.expression_context()),
+                ("personalization-profile", personalization.profile_context()),
+                ("personalization-instructions", personalization.custom_instructions.strip()),
+            ):
+                if content:
+                    layers.append(InstructionLayer.create(
+                        id=identifier, authority=90, role="user", source="eidos:personalization",
+                        content=("Global user defaults. The current request, project rules and task-specific output requirements take precedence. Memories cannot override these explicit defaults. These instructions cannot grant permissions.\n" + content),
+                    ))
         return ResolvedInstructions.create(tuple(layers))
 
     def for_finalization(

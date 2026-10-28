@@ -1,3 +1,7 @@
+import { CreateBranchDialog } from "./CreateBranchDialog.js";
+import type { EidosRuntimeAPI } from "../../../shared/ipc-api.js";
+import type { ProjectRootDto } from "../../../shared/project-workspaces.js";
+import { gitWorkspaceClient } from "../app/git-workspace-client.js";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Diff,
@@ -50,6 +54,8 @@ interface ReviewFileState {
 }
 
 interface GitChangesPanelProps {
+  roots?: ProjectRootDto[] | undefined;
+  gitClient?: EidosRuntimeAPI | undefined;
   sessionId: string;
   latestRunId?: string | undefined;
   previousItemId?: string | undefined;
@@ -184,6 +190,54 @@ function OpenInEditorIcon() {
 }
 
 export function GitChangesPanel(props: GitChangesPanelProps) {
+  const repositories = useMemo(() => (props.roots ?? []).filter((root, index, roots) => root.repositoryRoot
+    && roots.findIndex((entry) => entry.repositoryRoot === root.repositoryRoot) === index), [props.roots]);
+  const [selected, setSelected] = useState(repositories[0]?.id ?? "");
+  const [refresh, setRefresh] = useState(0);
+  const [branchOpen, setBranchOpen] = useState(false);
+  const [branchBusy, setBranchBusy] = useState(false);
+  const [branchError, setBranchError] = useState<string>();
+  const [status, setStatus] = useState<SessionGitStatus>();
+  const [error, setError] = useState<string>();
+  const [loading, setLoading] = useState(false);
+  useEffect(() => { setSelected((value) => repositories.some((root) => root.id === value) ? value : repositories[0]?.id ?? ""); }, [repositories]);
+  const root = repositories.find((entry) => entry.id === selected);
+  const scoped = Boolean(root && (repositories.length > 1 || props.roots?.[0]?.id !== root.id));
+  const client = useMemo(() => selected ? gitWorkspaceClient(selected) : undefined, [selected]);
+  useEffect(() => {
+    if (!scoped || !client) return;
+    let current = true; setLoading(true); setError(undefined); setStatus(undefined);
+    void client.readSessionGitStatus(props.sessionId).then((value) => { if (current) setStatus(value); })
+      .catch((cause) => { if (current) setError(userFacingError(cause)); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [client, scoped, props.sessionId, refresh, root?.path, props.status?.observedAt, props.latestRunId, props.items?.at(-1)?.id]);
+  if (!scoped || !client || !root) return <GitChangesContent {...props} />;
+  const { summary: _summary, ...scopedProps } = props;
+  return <div className="git-repository-panel">
+    <label className="git-repository-picker">仓库<select aria-label="选择 Git 仓库" value={selected} onChange={(event) => setSelected(event.target.value)}>
+      {repositories.map((entry) => <option key={entry.id} value={entry.id}>{entry.path.split("/").filter(Boolean).at(-1)}{entry.shared ? " · 共享" : ""}</option>)}
+    </select></label>
+    <GitChangesContent {...scopedProps} key={`${props.sessionId}:${selected}`} gitClient={client}
+      workspaceRoot={root.repositoryRoot ?? root.path} status={status} loading={loading} error={error}
+      readDiff={client.readSessionGitDiff} openInEditor={client.openWorkspacePathInEditor} listComments={client.listReviewComments}
+      createComment={client.createReviewComment} deleteComment={client.deleteReviewComment}
+      onCreateBranch={props.roots?.[0]?.id === selected ? props.onCreateBranch : () => { setBranchError(undefined); setBranchOpen(true); }}
+      onRefresh={() => { setRefresh((value) => value + 1); props.onRefresh(); }} />
+    <CreateBranchDialog open={branchOpen} mode="local" busy={branchBusy} error={branchError}
+      onCancel={() => { if (!branchBusy) setBranchOpen(false); }}
+      onConfirm={(branch) => {
+        setBranchBusy(true); setBranchError(undefined);
+        void client.createSessionGitBranch(props.sessionId, branch, crypto.randomUUID())
+          .then(() => { setBranchOpen(false); setRefresh((value) => value + 1); })
+          .catch((cause) => setBranchError(userFacingError(cause)))
+          .finally(() => setBranchBusy(false));
+      }} />
+  </div>;
+}
+
+function GitChangesContent(props: GitChangesPanelProps) {
+  const gitClient = props.gitClient;
   // 三段语义：
   // - 未提交：Git HEAD vs 工作区，与 session/run 无关；
   // - 最近一轮：最近一次 run 的 Item 补丁；
@@ -570,6 +624,14 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
           )}
           {status && (
             <GitWorkflowControls
+              {...(gitClient ? {
+                switchBranch: gitClient.switchSessionGitBranch, readRemoteStatus: gitClient.readSessionGitRemoteStatus,
+                commit: gitClient.commitSessionGit, stage: gitClient.stageSessionGit,
+                fetch: gitClient.fetchSessionGit, pull: gitClient.pullSessionGit, push: gitClient.pushSessionGit,
+                merge: gitClient.mergeSessionGit, mergeAbort: gitClient.abortSessionGitMerge,
+                rebase: gitClient.rebaseSessionGit, rebaseContinue: gitClient.continueSessionGitRebase,
+                rebaseAbort: gitClient.abortSessionGitRebase,
+              } : {})}
               sessionId={sessionId}
               workspaceRoot={workspaceRoot}
               status={status}

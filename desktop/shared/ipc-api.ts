@@ -1,4 +1,6 @@
+import type { ProjectUpdateRequest, ProjectCreateFoldersRequest, GitWorkspaceRequest, GitWorkspaceContract } from "./project-workspaces.js";
 import type { ShellEnvironmentReadRequest, ShellEnvironmentRefreshRequest, ShellEnvironmentSaveRequest, ShellEnvironmentResponse } from "./shell-environment.js";
+import type { PersonalizationReadRequest, PersonalizationSaveRequest, PersonalizationResponse } from "./personalization.js";
 import type { HookActivityPage, HookConfigurationRequest, HookHistoryRequest, HookSourceList } from "./hooks.js";
 import type { WebSearchReadRequest, WebSearchSaveRequest, WebSearchResponse, WebSearchOfficialPageRequest } from "./web-search.js";
 import type { CustomProviderRequest, CustomProviderResult } from "./custom-models.js";
@@ -91,6 +93,8 @@ export interface EidosRuntimeAPI {
   searchSessions(request: import("./search.js").SearchRequest): Promise<import("./search.js").SearchResponse>;
   readSessionAround(request: import("./search.js").ReadAroundRequest): Promise<SessionSnapshot>;
   readShellEnvironment(request?: ShellEnvironmentReadRequest): Promise<ShellEnvironmentResponse>;
+  readPersonalization(request?: PersonalizationReadRequest): Promise<PersonalizationResponse>;
+  savePersonalization(request: PersonalizationSaveRequest): Promise<PersonalizationResponse>;
   saveShellEnvironment(request: ShellEnvironmentSaveRequest): Promise<ShellEnvironmentResponse>;
   refreshShellEnvironment(request?: ShellEnvironmentRefreshRequest): Promise<ShellEnvironmentResponse>;
   readWebSearch(request?: WebSearchReadRequest): Promise<WebSearchResponse>;
@@ -102,7 +106,7 @@ export interface EidosRuntimeAPI {
   automationHistory(request: AutomationHistoryRequest): Promise<AutomationResponse>;
   automationRunNow(request: AutomationRunNowRequest): Promise<AutomationResponse>;
   backupData(): Promise<void>;
-  exportMemoryNotes(scope: "current" | "global", sessionId?: string): Promise<void>;
+  exportMemoryNotes(request: import("./memory.generated.js").MemoryExportRequest): Promise<void>;
   memory<K extends keyof MemoryMethods>(method: K, request: MemoryMethods[K]["request"]): Promise<MemoryMethods[K]["response"]>;
 
   // Runtime
@@ -144,7 +148,7 @@ export interface EidosRuntimeAPI {
     workspaceRoot?: string,
     projectId?: string,
   ): Promise<WorkspaceFilePreview>;
-  openWorkspacePathInEditor(sessionId: string, path: string): Promise<void>;
+  openWorkspacePathInEditor(sessionId: string, path: string, rootId?: string): Promise<void>;
   showItemInFolder(path: string): Promise<void>;
   openPath(path: string): Promise<void>;
 
@@ -165,6 +169,10 @@ export interface EidosRuntimeAPI {
   setSidebarPinned(request: SidebarSetPinnedRequest): Promise<SidebarPinsResponse>;
   createProject(name: string | undefined, workspaceRoot: string): Promise<Project>;
   listProjects(): Promise<ProjectListResult>;
+  createProjectFolders(request: ProjectCreateFoldersRequest): Promise<Project>;
+  repositoryGit(request: GitWorkspaceRequest): Promise<GitWorkspaceContract["response"]>;
+  readProject(projectId: string): Promise<Project>;
+  updateProject(request: ProjectUpdateRequest): Promise<Project>;
   deleteProject(projectId: string): Promise<DeleteProjectResult>;
   listSessions(cursor?: string): Promise<SessionListResult>;
   readSession(sessionId: string, options?: { itemLimit?: number; beforeItemId?: string }): Promise<SessionSnapshot>;
@@ -173,6 +181,7 @@ export interface EidosRuntimeAPI {
   createSession(
     workspaceRoot: string | null,
     options?: {
+      projectId?: string;
       workspaceNameHint?: string;
       executionMode?: "local" | "worktree";
       baseRef?: string;

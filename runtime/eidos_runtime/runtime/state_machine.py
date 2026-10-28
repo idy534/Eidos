@@ -74,9 +74,11 @@ class OperationStatus(StrEnum):
 class EventType(StrEnum):
     HOOK_SOURCES_CHANGED = "hook_sources.changed"
     SHELL_ENVIRONMENT_CHANGED = "shell_environment.settings_changed"
+    PERSONALIZATION_CHANGED = "personalization.settings_changed"
     WEB_SEARCH_CHANGED = "web_search.settings_changed"
     CHANNEL_CHANGED = "channel.changed"
     AUTOMATION_CHANGED = "automation.changed"
+    PROJECT_UPDATED = "project.updated"
     SIDEBAR_PINS_CHANGED = "sidebar.pins_changed"
     SESSION_CREATED = "session.created"
     SESSION_TITLE_UPDATED = "session.title_updated"

@@ -57,12 +57,10 @@ class ProjectWorktreeRepository(Repository):
             git_repository_root = None
             git_common_dir = None
         else:
-            canonical_workspace = _canonical_workspace_root(
-                git_discovery.repository_root
-            )
-            git_repository_root = canonical_workspace
+            canonical_workspace = _canonical_workspace_root(workspace_root)
+            git_repository_root = _canonical_workspace_root(git_discovery.repository_root)
             git_common_dir = _canonical_workspace_root(git_discovery.git_common_dir)
-            project_id = _project_id(git_common_dir)
+            project_id = direct_project_id(canonical_workspace)
         now = now_utc_millis()
         project_name = (name or default_project_name(canonical_workspace)).strip()
         if not project_name:
@@ -81,11 +79,6 @@ class ProjectWorktreeRepository(Repository):
                 "SELECT * FROM projects WHERE workspace_root = ?",
                 (candidate.workspace_root,),
             ).fetchone()
-            if existing is None and candidate.git_common_dir is not None:
-                existing = connection.execute(
-                    "SELECT * FROM projects WHERE git_common_dir = ?",
-                    (candidate.git_common_dir,),
-                ).fetchone()
             if existing is not None:
                 project = project_from_row(existing)
                 if (
@@ -118,7 +111,8 @@ class ProjectWorktreeRepository(Repository):
                     project = project.model_copy(
                         update={"name": project_name, "updated_at": utc_datetime_from_millis(now)}
                     )
-                return project
+                from eidos_runtime.persistence.project_workspaces import ensure_project_root
+                return ensure_project_root(connection, project, git_dir=git_discovery.git_dir if git_discovery else None)
             try:
                 connection.execute(
                     """
@@ -139,6 +133,8 @@ class ProjectWorktreeRepository(Repository):
                 )
             except sqlite3.IntegrityError as error:
                 raise StorageError("project_persistence_conflict") from error
+            from eidos_runtime.persistence.project_workspaces import ensure_project_root
+            candidate = ensure_project_root(connection, candidate, git_dir=git_discovery.git_dir if git_discovery else None)
         return candidate
 
     def read_project(self, project_id: str) -> Project | None:
@@ -146,14 +142,18 @@ class ProjectWorktreeRepository(Repository):
             row = self._connection().execute(
                 "SELECT * FROM projects WHERE id = ?", (project_id,)
             ).fetchone()
-        return project_from_row(row) if row is not None else None
+        if row is None:
+            return None
+        from eidos_runtime.persistence.project_workspaces import complete_project
+        return complete_project(self._connection(), row)
 
     def list_projects(self) -> tuple[Project, ...]:
         with self.lock:
             rows = self._connection().execute(
                 "SELECT * FROM projects ORDER BY created_at ASC, id ASC"
             ).fetchall()
-        return tuple(project_from_row(row) for row in rows)
+        from eidos_runtime.persistence.project_workspaces import complete_project
+        return tuple(complete_project(self._connection(), row) for row in rows)
 
     def delete_project(
         self,
@@ -263,8 +263,8 @@ class ProjectWorktreeRepository(Repository):
                         id, project_id, worktree_root, git_dir, base_ref,
                         base_commit, branch, checkout_branch, branch_ownership,
                         ownership, state, created_at, updated_at
-                        , last_used_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        , last_used_at, repository_root, git_common_dir
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         worktree.id,
@@ -281,6 +281,7 @@ class ProjectWorktreeRepository(Repository):
                         utc_datetime_to_millis(worktree.created_at),
                         utc_datetime_to_millis(worktree.updated_at),
                         utc_datetime_to_millis(worktree.last_used_at),
+                        worktree.repository_root, worktree.git_common_dir,
                     ),
                 )
             except sqlite3.IntegrityError as error:

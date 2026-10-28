@@ -56,7 +56,15 @@ class MemoryRepository:
         connection: sqlite3.Connection,
         session_id: str | None,
         selection: str = "allowed",
+        *,
+        project_id: str | None = None,
     ) -> list[MemoryScope]:
+        if project_id is not None and session_id is not None:
+            raise MemoryRejected("memory_target_ambiguous")
+        if project_id is not None and connection.execute(
+            "SELECT 1 FROM projects WHERE id=?", (project_id,)
+        ).fetchone() is None:
+            raise MemoryRejected("memory_project_not_found")
         ids = [GLOBAL_SCOPE_ID]
         if session_id:
             root = self.root_session(connection, session_id)
@@ -64,17 +72,18 @@ class MemoryRepository:
                 "SELECT COALESCE(w.project_id,p.id) FROM sessions s LEFT JOIN worktrees w ON w.id=s.worktree_id LEFT JOIN projects p ON p.workspace_root=s.workspace_root WHERE s.id=?",
                 (root,),
             ).fetchone()
-            if project and project[0]:
-                row = connection.execute(
-                    "SELECT id FROM memory_scopes WHERE project_id=?", (project[0],)
-                ).fetchone()
-                identifier = row[0] if row else str(uuid.uuid4())
-                if row is None:
-                    connection.execute(
-                        "INSERT INTO memory_scopes(id,kind,project_id,mode,enabled_after) VALUES(?,'project',?,'auto',CAST((SELECT value FROM memory_metadata WHERE key='created_after') AS INTEGER))",
-                        (identifier, project[0]),
-                    )
-                ids.append(identifier)
+            project_id = project[0] if project else None
+        if project_id is not None:
+            row = connection.execute(
+                "SELECT id FROM memory_scopes WHERE project_id=?", (project_id,)
+            ).fetchone()
+            identifier = row[0] if row else str(uuid.uuid4())
+            if row is None:
+                connection.execute(
+                    "INSERT INTO memory_scopes(id,kind,project_id,mode,enabled_after) VALUES(?,'project',?,'auto',CAST((SELECT value FROM memory_metadata WHERE key='created_after') AS INTEGER))",
+                    (identifier, project_id),
+                )
+            ids.append(identifier)
         if selection == "global":
             ids = ids[:1]
         elif selection == "current":

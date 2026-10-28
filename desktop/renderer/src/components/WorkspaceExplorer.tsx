@@ -1,3 +1,5 @@
+import type { ProjectRootDto } from "../../../shared/project-workspaces.js";
+import { ArtifactProvider } from "./ArtifactContext.js";
 import { FileFind } from "./FileFind.js";
 import { useInputContext } from "./InputContext.js";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -32,6 +34,7 @@ export interface WorkspaceFileOpenRequest extends WorkspaceFilePosition {
 }
 
 interface WorkspaceExplorerProps {
+  roots?: ProjectRootDto[] | undefined;
   sessionId: string;
   executionKey?: string;
   layout?: "side" | "expanded";
@@ -40,10 +43,12 @@ interface WorkspaceExplorerProps {
   listDirectory?: (
     sessionId: string,
     path: string,
+    workspaceRoot?: string,
   ) => Promise<WorkspaceDirectoryListing>;
   readPreview?: (
     sessionId: string,
     path: string,
+    workspaceRoot?: string,
   ) => Promise<WorkspaceFilePreview>;
   subscribeChanges?: (
     sessionId: string,
@@ -58,10 +63,10 @@ const EXPANDED_SPLIT_MIN = 13 * 16;
 const EXPANDED_SPLIT_DEFAULT = 18 * 16;
 const INVALID_FILE_PATH_ERROR = "文件路径无效。请从当前文件树重新选择。";
 
-const defaultListDirectory = (sessionId: string, path: string) =>
-  window.eidosRuntime.listWorkspaceDirectory(sessionId, path);
-const defaultReadPreview = (sessionId: string, path: string) =>
-  window.eidosRuntime.readWorkspaceFilePreview(sessionId, path);
+const defaultListDirectory = (sessionId: string, path: string, workspaceRoot?: string) =>
+  window.eidosRuntime.listWorkspaceDirectory(sessionId, path, undefined, workspaceRoot);
+const defaultReadPreview = (sessionId: string, path: string, workspaceRoot?: string) =>
+  window.eidosRuntime.readWorkspaceFilePreview(sessionId, path, workspaceRoot);
 const defaultSubscribeChanges = (
   sessionId: string,
   callback: (paths: string[]) => void,
@@ -138,7 +143,37 @@ function previewReadError(cause: unknown): string {
     : "文件预览读取失败";
 }
 
-export function WorkspaceExplorer({
+export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
+  const roots = props.roots ?? [];
+  const [selected, setSelected] = useState(roots[0]?.id ?? "");
+  const [localRequest, setLocalRequest] = useState<WorkspaceFileOpenRequest>();
+  const sequence = useRef(0);
+  const actions = useArtifacts();
+  useEffect(() => {
+    setSelected((current) => roots.some((root) => root.id === current) ? current : roots[0]?.id ?? "");
+  }, [props.roots]);
+  useEffect(() => { if (props.openRequest?.rootId) setSelected(props.openRequest.rootId); }, [props.openRequest?.requestId]);
+  const root = roots.find((entry) => entry.id === selected) ?? roots[0];
+  const list = useCallback((id: string, path: string) => (props.listDirectory ?? defaultListDirectory)(id, path, root?.path), [props.listDirectory, root?.path]);
+  const read = useCallback((id: string, path: string) => (props.readPreview ?? defaultReadPreview)(id, path, root?.path), [props.readPreview, root?.path]);
+  if (roots.length < 2 || !root) return <WorkspaceExplorerContent {...props} />;
+  const requested = localRequest?.rootId === selected ? localRequest : props.openRequest?.rootId === selected
+    || (!props.openRequest?.rootId && root.id === roots[0]?.id) ? props.openRequest : undefined;
+  const content = <WorkspaceExplorerContent {...props} key={`${props.sessionId}:${root.id}`} executionKey={`${props.executionKey}:${root.id}:${root.path}`}
+    openRequest={requested} listDirectory={list} readPreview={read} />;
+  return <div className="workspace-multi-root">
+    <label className="workspace-root-picker">文件夹<select aria-label="选择项目文件夹" value={root.id} onChange={(event) => { setSelected(event.target.value); setLocalRequest(undefined); }}>
+      {roots.map((entry, index) => <option key={entry.id} value={entry.id}>{entry.path.split("/").filter(Boolean).at(-1)}{index === 0 ? " · 主要" : entry.shared ? " · 共享" : ""}</option>)}
+    </select></label>
+    <ArtifactProvider value={actions ? { ...actions, executionRoot: root.path,
+      openFile: (path, position) => setLocalRequest({ path, ...position, rootId: root.id, requestId: ++sequence.current }),
+      openExternal: actions.openExternal ? (path) => actions.openExternal?.(`${root.path}/${path}`) : undefined,
+      showInFinder: actions.showInFinder ? (path) => actions.showInFinder?.(`${root.path}/${path}`) : undefined,
+    } : undefined}>{content}</ArtifactProvider>
+  </div>;
+}
+
+function WorkspaceExplorerContent({
   sessionId,
   executionKey = sessionId,
   layout = "expanded",
@@ -886,7 +921,7 @@ function WorkspacePreview({ preview, navigation }: { preview: WorkspaceFilePrevi
     setFindPreview(undefined); setFindNotice("");
     if (findRequested && preview.truncated && preview.version && actions?.sessionId) {
       setFindNotice("正在读取文件正文…");
-      void window.eidosRuntime.readWorkspaceFileForFind({ sessionId: actions.sessionId, path: preview.path, version: preview.version }).then((result) => {
+      void window.eidosRuntime.readWorkspaceFileForFind({ sessionId: actions.sessionId, path: preview.path, version: preview.version, workspaceRoot: actions.executionRoot }).then((result) => {
         if (current) { setFindPreview(result); setFindNotice(result.truncated ? "文件超过 2 MiB，仅查找已读取部分" : ""); }
       }).catch((cause) => { if (current) setFindNotice(userFacingError(cause)); });
     }

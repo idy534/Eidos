@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MemoryScope } from "../../../../shared/memory.generated.js";
 import { Button } from "../Button.js";
 import { SearchInput } from "../SearchInput.js";
-import { ToastContainer, type ToastItem, type ToastType } from "../ToastContainer.js";
+import { ToastContainer, type ToastItem } from "../ToastContainer.js";
 import { MemoryNoteEditor } from "./MemoryNoteEditor.js";
 import {
   IndexBookmarkIcon,
@@ -14,27 +14,36 @@ import {
   ChevronRightIcon,
 } from "./MemoryIcons.js";
 import { useMemoryDocuments, type MemoryScopeChoice } from "./useMemoryDocuments.js";
+import { useMemoryLocation } from "./useMemoryLocation.js";
 
 const modes = { off: "关闭", read: "只读", auto: "自动" } as const;
 type MemoryMode = MemoryScope["mode"];
 
-export function MemorySettings({
-  sessionId,
-  onOpenSource,
-  onShowToast,
-}: {
-  sessionId?: string | undefined;
+export function MemorySettings(props: {
   onOpenSource?: ((id: string) => void) | undefined;
   onShowToast?: ((message: string, type: "success" | "info" | "error") => void) | undefined;
 }) {
-  const [scope, setScope] = useState<MemoryScopeChoice>(sessionId ? "current" : "global");
+  const location = useMemoryLocation();
+  return <MemorySettingsContent key={`${location.projectId}:${location.scope}`} {...props} location={location} />;
+}
+
+function MemorySettingsContent({
+  location,
+  onOpenSource,
+  onShowToast,
+}: {
+  location: ReturnType<typeof useMemoryLocation>;
+  onOpenSource?: ((id: string) => void) | undefined;
+  onShowToast?: ((message: string, type: "success" | "info" | "error") => void) | undefined;
+}) {
+  const { projectId, scope, valid } = location;
   const [path, setPath] = useState<string | null>("MEMORY.md");
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [localToasts, setLocalToasts] = useState<ToastItem[]>([]);
 
-  const library = useMemoryDocuments(sessionId, scope);
+  const library = useMemoryDocuments(projectId ?? undefined, scope, valid);
   const scopes = library.state?.scopes ?? [];
   const selected = scope === "global" ? scopes[0] : scopes.at(-1);
   const setEditorDirty = useCallback((value: boolean) => setDirty(value), []);
@@ -63,16 +72,11 @@ export function MemorySettings({
     lastLibraryErrorRef.current = library.error;
   }, [library.error, handleShowToast]);
 
-  useEffect(() => {
-    setPath("MEMORY.md");
-    setDirty(false);
-  }, [sessionId, scope]);
-
   async function changeMode(mode: MemoryMode) {
     setBusy(true);
     try {
       await window.eidosRuntime.memory("memory/policy", {
-        sessionId: sessionId ?? null,
+        projectId,
         scope,
         mode,
       });
@@ -87,7 +91,7 @@ export function MemorySettings({
   async function exportNotes() {
     setBusy(true);
     try {
-      await window.eidosRuntime.exportMemoryNotes(scope, sessionId);
+      await window.eidosRuntime.exportMemoryNotes({ scope, projectId });
     } catch {
       handleShowToast("导出未完成，请重试。", "error");
     } finally {
@@ -114,12 +118,44 @@ export function MemorySettings({
 
         <div className="memory-header-actions">
           <label className="memory-control-group">
+            <span className="memory-control-label">位置</span>
+            <div className="memory-select-wrapper memory-location-select">
+              <select aria-label="位置" value={projectId ?? ""}
+                title={location.projects.find((project) => project.id === projectId)?.workspaceRoot}
+                disabled={dirty || busy}
+                onChange={(event) => location.selectProject(event.target.value || null)}>
+                <option value="">无项目</option>
+                {projectId && !valid && <option value={projectId}>{location.loaded ? "项目已不存在" : "正在读取项目…"}</option>}
+                {location.projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name ?? project.workspaceRoot.split("/").filter(Boolean).at(-1)} · {project.workspaceRoot}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </label>
+
+          {projectId ? (
+            <label className="memory-control-group">
+              <span className="memory-control-label">范围</span>
+              <div className="memory-select-wrapper">
+                <select aria-label="范围" value={scope} disabled={dirty || busy}
+                  onChange={(event) => location.selectScope(event.target.value as MemoryScopeChoice)}>
+                  <option value="current">所选项目</option>
+                  <option value="global">全局</option>
+                </select>
+              </div>
+            </label>
+          ) : (
+            <div className="memory-control-group"><span className="memory-control-label">范围</span><span>全局</span></div>
+          )}
+          <label className="memory-control-group">
             <span className="memory-control-label">模式</span>
             <div className="memory-select-wrapper">
               <select
                 aria-label="模式"
                 value={currentMode}
-                disabled={!selected || busy || dirty}
+                disabled={!valid || !selected || busy || dirty}
                 onChange={(event) => void changeMode(event.target.value as MemoryMode)}
               >
                 {Object.entries(modes).map(([value, label]) => (
@@ -131,35 +167,26 @@ export function MemorySettings({
             </div>
           </label>
 
-          {scopes.length > 1 && (
-            <label className="memory-control-group">
-              <span className="memory-control-label">范围</span>
-              <div className="memory-select-wrapper">
-                <select
-                  aria-label="范围"
-                  value={scope}
-                  disabled={dirty || busy}
-                  onChange={(event) =>
-                    setScope(event.target.value as MemoryScopeChoice)
-                  }
-                >
-                  <option value="current">当前项目</option>
-                  <option value="global">全局</option>
-                </select>
-              </div>
-            </label>
-          )}
 
           <Button
             size="small"
             variant="secondary"
-            disabled={!selected || busy || dirty}
+            disabled={!valid || !selected || busy || dirty}
             onClick={() => void exportNotes()}
           >
             导出
           </Button>
         </div>
       </header>
+
+      <div className="memory-location-status">
+        {dirty ? <p role="status">请先保存或取消编辑，再切换位置或范围。</p>
+          : !projectId ? <p>无项目对话使用全局记忆。</p>
+          : scope === "global" ? <p>所有项目和无项目对话共用这份全局记忆。</p> : null}
+        {location.error ? <p role="alert">{location.error} <Button size="small" variant="ghost" onClick={location.refresh}>重试项目列表</Button></p>
+          : projectId && !valid && <p role="status">{location.loaded ? "所选项目已不存在，请重新选择位置。" : "正在读取项目列表…"}</p>}
+        {library.error && <p role="alert">{library.error} <Button size="small" variant="ghost" onClick={library.refresh}>重新读取</Button></p>}
+      </div>
 
       {/* 现代双栏知识工作台 */}
       <div className={`memory-workspace${sidebarCollapsed ? " memory-workspace--sidebar-collapsed" : ""}`}>
@@ -199,7 +226,7 @@ export function MemorySettings({
                 variant="secondary"
                 size="small"
                 icon={<PlusIcon />}
-                disabled={dirty || busy}
+                disabled={!valid || !selected || dirty || busy}
                 onClick={() => setPath(null)}
               >
                 新建笔记
@@ -303,10 +330,10 @@ export function MemorySettings({
         </nav>
 
         <main className="memory-editor-area">
-          {selected && (
+          {selected && (valid || dirty) && (
             <MemoryNoteEditor
-              key={`${sessionId}:${selected.id}:${path}`}
-              sessionId={sessionId}
+              key={`${projectId}:${selected.id}:${path}`}
+              projectId={projectId ?? undefined}
               scope={scope}
               path={path}
               generation={selected.generation}

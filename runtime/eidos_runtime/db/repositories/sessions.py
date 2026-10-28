@@ -54,7 +54,7 @@ SESSION_CURSOR_PREFIX = "session-v2:"
 MAX_SNAPSHOT_BYTES = 768 * 1024
 
 SESSION_SELECT = """
-    SELECT s.creation_seq, s.id, s.workspace_root, s.worktree_id,
+    SELECT s.creation_seq, s.id, s.workspace_root, s.worktree_id, s.project_id, s.workspace_roots_json,
            s.associated_worktree_id,
            s.execution_mode, s.title,
            (SELECT source_json FROM session_forks WHERE session_id=s.id) AS fork_source_json,
@@ -90,13 +90,13 @@ SESSION_SELECT = """
             ORDER BY CASE active.status WHEN 'waiting_approval' THEN 0 ELSE 1 END,
                      active.creation_seq DESC LIMIT 1) AS active_run_status,
            COALESCE(p.id, direct_p.id) AS projection_project_id,
-           COALESCE(p.workspace_root, direct_p.workspace_root)
-               AS projection_workspace_root,
-           CASE WHEN COALESCE(
-               p.git_repository_root, direct_p.git_repository_root
-           ) IS NOT NULL THEN 1 ELSE 0 END AS projection_git_available,
+           s.workspace_root AS projection_workspace_root,
+           CASE WHEN json_array_length(s.workspace_roots_json)>0
+                THEN json_extract(s.workspace_roots_json,'$[0].repository_root') IS NOT NULL
+                ELSE COALESCE(w.repository_root,p.git_repository_root,direct_p.git_repository_root) IS NOT NULL
+           END AS projection_git_available,
            w.id AS projection_worktree_id,
-           p.workspace_root AS projection_repository_root,
+           COALESCE(w.repository_root,p.git_repository_root,p.workspace_root) AS projection_repository_root,
            w.worktree_root AS projection_worktree_root,
            w.base_ref AS projection_base_ref,
            w.base_commit AS projection_base_commit,
@@ -105,7 +105,7 @@ SESSION_SELECT = """
     FROM sessions s
     LEFT JOIN worktrees w ON w.id = s.worktree_id
     LEFT JOIN projects p ON p.id = w.project_id
-    LEFT JOIN projects direct_p ON direct_p.workspace_root = s.workspace_root
+    LEFT JOIN projects direct_p ON direct_p.id = s.project_id OR (s.project_id IS NULL AND direct_p.workspace_root = s.workspace_root)
     LEFT JOIN automation_run_origins automation_source ON automation_source.run_id = (
         SELECT r.id FROM runs r JOIN automation_run_origins a ON a.run_id=r.id
         WHERE r.session_id=s.id ORDER BY r.creation_seq LIMIT 1
@@ -185,19 +185,13 @@ class SessionRepository(Repository):
             raise ValueError("worktree Session must have a Worktree binding")
         if execution_mode is SessionExecutionMode.WORKTREE:
             associated_worktree_id = worktree_id
-        session = session_from_row({
-            "id": session_id,
-            "workspace_root": str(workspace),
-            "worktree_id": worktree_id,
-            "associated_worktree_id": associated_worktree_id,
-            "execution_mode": execution_mode.value,
-            "title": title,
-            "task_status": "new",
-            "created_at": now,
-            "updated_at": now,
-        })
 
         def write(connection: sqlite3.Connection) -> CommittedMutation[Session]:
+            session = session_from_row({
+                "id": session_id, "workspace_root": str(workspace), "worktree_id": worktree_id,
+                "associated_worktree_id": associated_worktree_id, "execution_mode": execution_mode.value,
+                "title": title, "task_status": "new", "created_at": now, "updated_at": now,
+            })
             if projectless_creation_id is not None:
                 reservation = connection.execute(
                     "SELECT * FROM projectless_workspace_creations WHERE operation_id = ?",
@@ -235,10 +229,8 @@ class SessionRepository(Repository):
                 ).fetchone()
                 if project is None:
                     raise ResourceNotFoundError("project not found")
-                if project["workspace_root"] != str(workspace):
-                    raise WorkspaceBoundaryError(
-                        "session workspace does not match project"
-                    )
+                if project["workspace_root"] != str(workspace) and transaction_connection is None:
+                    raise WorkspaceBoundaryError("session workspace does not match project")
             elif not projectless:
                 connection.execute(
                     """
@@ -277,6 +269,22 @@ class SessionRepository(Repository):
                     now,
                 ),
             )
+            if not projectless:
+                from eidos_runtime.persistence.project_workspaces import ensure_project_root, project_roots, capture_session_roots
+                from eidos_runtime.persistence.mappers.worktree import project_from_row
+                bound_project = project_id
+                if bound_project is None and worktree_id is not None:
+                    bound_project = connection.execute("SELECT project_id FROM worktrees WHERE id=?", (worktree_id,)).fetchone()[0]
+                if bound_project is None:
+                    bound_project = connection.execute("SELECT id FROM projects WHERE workspace_root=?", (str(workspace),)).fetchone()[0]
+                project_row = connection.execute("SELECT * FROM projects WHERE id=?", (bound_project,)).fetchone()
+                saved = ensure_project_root(connection, project_from_row(project_row))
+                roots = capture_session_roots(project_roots(connection, bound_project))
+                roots = tuple(sorted(roots, key=lambda root: root.id != saved.primary_root_id))
+                connection.execute("UPDATE sessions SET project_id=?,workspace_roots_json=? WHERE id=?", (
+                    bound_project, json.dumps([root.model_dump(mode="json") for root in roots]), session_id,
+                ))
+                session = session.model_copy(update={"project_id": bound_project, "roots": roots})
             event = append_event(
                 connection,
                 EventType.SESSION_CREATED,

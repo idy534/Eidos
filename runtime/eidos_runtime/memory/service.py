@@ -131,6 +131,8 @@ class MemoryService:
             )
 
     def list(self, request: MemoryListRequest, *, for_use: bool = False) -> MemoryState:
+        if for_use and request.project_id is not None:
+            raise MemoryRejected("memory_model_target_forbidden")
         with self.database.transaction() as connection:
             if (
                 for_use
@@ -138,9 +140,9 @@ class MemoryService:
                 and not self.access(request.session_id).available
             ):
                 raise MemoryRejected("memory_child_disabled")
-            scopes = self.repository.scopes(connection, request.session_id)
+            scopes = self.repository.scopes(connection, request.session_id, project_id=request.project_id)
             selected = self.repository.scopes(
-                connection, request.session_id, request.scope
+                connection, request.session_id, request.scope, project_id=request.project_id
             )
             ids = [scope.id for scope in selected if not for_use or scope.mode != "off"]
             if for_use and not ids:
@@ -206,6 +208,8 @@ class MemoryService:
     def read(
         self, request: MemoryReadRequest, *, for_use: bool = False
     ) -> MemoryReadResult:
+        if for_use and request.project_id is not None:
+            raise MemoryRejected("memory_model_target_forbidden")
         with self.database.transaction() as connection:
             if (
                 for_use
@@ -214,7 +218,7 @@ class MemoryService:
             ):
                 raise MemoryRejected("memory_child_disabled")
             scope = self.repository.scopes(
-                connection, request.session_id, request.scope
+                connection, request.session_id, request.scope, project_id=request.project_id
             )[0]
             if for_use and scope.mode == "off":
                 raise MemoryRejected("memory_read_disabled")
@@ -270,8 +274,10 @@ class MemoryService:
         request: MemoryEditRequest,
         automatic: bool,
     ) -> tuple[MemoryScope, list[MemoryEvidence], MemoryDocument | None, str]:
+        if automatic and request.project_id is not None:
+            raise MemoryRejected("memory_model_target_forbidden")
         self.repository.assert_writable(connection, request.session_id)
-        scope = self.repository.scopes(connection, request.session_id, request.scope)[0]
+        scope = self.repository.scopes(connection, request.session_id, request.scope, project_id=request.project_id)[0]
         if automatic and scope.mode != "auto":
             raise MemoryRejected("memory_automatic_disabled")
         if automatic and any(
@@ -407,7 +413,11 @@ class MemoryService:
     ) -> MemoryActionResult:
         archive = archive and request.action == "delete"
         fingerprint = hashlib.sha256(
-            (request.model_dump_json() + (":archive" if archive else "")).encode()
+            (
+                request.model_dump_json(
+                    exclude={"project_id"} if request.project_id is None else None
+                ) + (":archive" if archive else "")
+            ).encode()
         ).hexdigest()
         with self.database.transaction() as connection:
             replay = connection.execute(
@@ -619,7 +629,7 @@ class MemoryService:
         with self.database.transaction() as connection:
             self.repository.assert_writable(connection, request.session_id)
             scope = self.repository.scopes(
-                connection, request.session_id, request.scope
+                connection, request.session_id, request.scope, project_id=request.project_id
             )[0]
             if scope.mode != request.mode:
                 connection.execute(
@@ -629,7 +639,7 @@ class MemoryService:
                 self._cancel_revoked(connection)
         self.cleanup()
         return self.list(
-            MemoryListRequest(session_id=request.session_id, scope=request.scope)
+            MemoryListRequest(session_id=request.session_id, project_id=request.project_id, scope=request.scope)
         )
 
     def export(self, request: MemoryExportRequest) -> MemoryExport:
@@ -637,6 +647,7 @@ class MemoryService:
         state = self.list(
             MemoryListRequest(
                 session_id=request.session_id,
+                project_id=request.project_id,
                 scope=request.scope,
                 cursor=request.cursor,
                 limit=16,
@@ -646,7 +657,7 @@ class MemoryService:
         with self.database.transaction() as connection:
             if request.cursor == 0:
                 selected = self.repository.scopes(
-                    connection, request.session_id, request.scope
+                    connection, request.session_id, request.scope, project_id=request.project_id
                 )[0]
                 documents, more = self._index_documents(connection, selected.id)
                 files.append(
@@ -662,7 +673,7 @@ class MemoryService:
                 _, body = self.repository.document(connection, row)
                 files.append(MemoryExportFile(path=document.path, content=body))
             generation = self.repository.scopes(
-                connection, request.session_id, request.scope
+                connection, request.session_id, request.scope, project_id=request.project_id
             )[0].generation
         return MemoryExport(
             files=files, generation=generation, next_cursor=state.next_cursor

@@ -103,6 +103,7 @@ class McpConnection:
         *,
         plugin_root: Path,
         workspace_root: Path,
+        additional_workspace_roots: tuple[Path, ...] = (),
         config: McpServerConfigV1,
         env_values: dict[str, str] | None = None,
         on_list_changed: Callable[[], None],
@@ -114,6 +115,7 @@ class McpConnection:
     ) -> None:
         self.plugin_root = plugin_root
         self.workspace_root = workspace_root
+        self.additional_workspace_roots = additional_workspace_roots
         self.config = config
         self.remote_client = remote_client
         self.remote_check = remote_check
@@ -543,6 +545,16 @@ class McpConnection:
                 if self.config.permission_profile == "connector"
                 else "mcp_workspace_read.sbpl"
             )
+            if self.config.permission_profile != "connector" and self.additional_workspace_roots:
+                import json
+                extra = "\n".join(
+                    '(allow file-read* file-test-existence (subpath ' + json.dumps(str(root), ensure_ascii=False) + '))\n'
+                    '(allow file-read-metadata file-test-existence (path-ancestors ' + json.dumps(str(root), ensure_ascii=False) + '))'
+                    for root in self.additional_workspace_roots
+                )
+                compiled = self.runtime_root / "workspace.sbpl"
+                compiled.write_text(profile.read_text() + "\n" + extra)
+                profile = compiled
             arguments = [
                 "-f", str(profile),
                 f"-DPLUGIN_ROOT={self.plugin_root}",
@@ -633,6 +645,7 @@ class McpManager:
         snapshot: dict[str, object],
         workspace_root: Path,
         *,
+        additional_workspace_roots: tuple[Path, ...] = (),
         async_kernel: RuntimeAsyncKernel | None = None,
         sandbox: bool = True,
         resource_registry: ResourceRegistry | None = None,
@@ -640,6 +653,7 @@ class McpManager:
         self.plugins = plugins
         self.snapshot = snapshot
         self.workspace_root = workspace_root
+        self.additional_workspace_roots = additional_workspace_roots
         self.async_kernel = async_kernel
         self.sandbox = sandbox
         self.resources = resource_registry
@@ -694,6 +708,7 @@ class McpManager:
                 connection = McpConnection(
                     plugin_root=plugin_root,
                     workspace_root=self.workspace_root,
+                    additional_workspace_roots=self.additional_workspace_roots,
                     config=config,
                     env_values=env_values,
                     async_kernel=self.async_kernel,

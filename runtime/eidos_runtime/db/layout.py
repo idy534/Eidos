@@ -748,6 +748,7 @@ def _migrate_state_schema(state: StateDatabase) -> None:
         40,
         41,
         42,
+        43,
     }:
         raise StorageError("schema_revision_unsupported")
     try:
@@ -869,6 +870,9 @@ def _migrate_state_schema(state: StateDatabase) -> None:
             if connection.execute("PRAGMA user_version").fetchone()[0] == 42:
                 from eidos_runtime.memory.flow_migration import migrate_memory_flow
                 migrate_memory_flow(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == 43:
+                from eidos_runtime.db.personalization_migration import migrate_personalization
+                migrate_personalization(connection)
     except sqlite3.Error as error:
         try:
             state.connection().rollback()

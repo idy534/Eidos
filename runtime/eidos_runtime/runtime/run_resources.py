@@ -127,6 +127,7 @@ class RunResources:
                 self.skills.plugins,
                 self.extension_snapshot,
                 workspace.path,
+                additional_workspace_roots=tuple(root.path for root in workspace.additional_roots),
                 async_kernel=self.async_kernel,
                 sandbox=self.mcp_sandbox and not self.tool_executor.full_access,
                 resource_registry=self.resources,

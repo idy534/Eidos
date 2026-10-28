@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from eidos_runtime.protocol import project_workspaces as project_workspace_dtos
+from eidos_runtime.protocol import schemas as schema_dtos
+
 import json
 import logging
 import os
@@ -21,6 +24,9 @@ from eidos_runtime import __version__
 from eidos_runtime.application.channels import ChannelApplication
 from eidos_runtime.domain.channels import ChannelError
 from eidos_runtime.application.shell_environment import ShellEnvironmentApplication
+from eidos_runtime.application.personalization import PersonalizationApplication
+from eidos_runtime.persistence.personalization import PersonalizationRepository
+from eidos_runtime.protocol.personalization import PersonalizationReadRequest, PersonalizationSaveRequest, PersonalizationResponse
 from eidos_runtime.persistence.shell_environment import ShellEnvironmentRepository
 from eidos_runtime.protocol.shell_environment import ShellEnvironmentReadRequest, ShellEnvironmentRefreshRequest, ShellEnvironmentSaveRequest, ShellEnvironmentResponse
 from eidos_runtime.application.web_search import WebSearchApplication
@@ -382,7 +388,7 @@ class _DeferredGitFetchAdapter:
         request_id: str,
         request: method_dtos.SessionGitFetchRequestDto,
     ) -> BaseModel | DeferredMethodResult:
-        result = self._server._applications_or_error().sessions.prepare_git_fetch(
+        result = self._server._applications_or_error().sessions.for_git_request(request).prepare_git_fetch(
             request, request_id=request_id
         )
         if isinstance(result, method_dtos.SessionGitFetchResponseDto):
@@ -426,7 +432,7 @@ class _DeferredGitPullAdapter:
         request_id: str,
         request: method_dtos.SessionGitPullRequestDto,
     ) -> BaseModel | DeferredMethodResult:
-        result = self._server._applications_or_error().sessions.prepare_git_pull(
+        result = self._server._applications_or_error().sessions.for_git_request(request).prepare_git_pull(
             request, request_id=request_id
         )
         if isinstance(result, method_dtos.SessionGitPullResponseDto):
@@ -470,7 +476,7 @@ class _DeferredGitPushAdapter:
         request_id: str,
         request: method_dtos.SessionGitPushRequestDto,
     ) -> BaseModel | DeferredMethodResult:
-        result = self._server._applications_or_error().sessions.prepare_git_push(
+        result = self._server._applications_or_error().sessions.for_git_request(request).prepare_git_push(
             request, request_id=request_id
         )
         if isinstance(result, method_dtos.SessionGitPushResponseDto):
@@ -571,9 +577,9 @@ class _DeferredGitObserveAdapter:
     def __call__(
         self, request_id: str, request: BaseModel
     ) -> BaseModel | DeferredMethodResult:
-        method = getattr(
-            self._server._applications_or_error().sessions, self._method_name
-        )
+        def method(value):
+            application = self._server._applications_or_error().sessions.for_git_request(value)
+            return getattr(application, self._method_name)(value)
 
         def _run(_cancel: threading.Event) -> None:
             try:
@@ -904,6 +910,8 @@ class RuntimeServer:
         handlers: tuple[
             tuple[str, type[BaseModel], type[method_dtos.MethodResultDto], Any], ...
         ] = (
+            ("personalization/read", PersonalizationReadRequest, PersonalizationResponse, lambda _id, _request: self._personalization_application().read()),
+            ("personalization/save", PersonalizationSaveRequest, PersonalizationResponse, lambda _id, request: self._personalization_save(request)),
             ("shellEnvironment/read", ShellEnvironmentReadRequest, ShellEnvironmentResponse, lambda _id, _request: self._shell_environment_application().read()),
             ("shellEnvironment/save", ShellEnvironmentSaveRequest, ShellEnvironmentResponse, lambda _id, request: self._shell_environment_save(request)),
             ("shellEnvironment/refresh", ShellEnvironmentRefreshRequest, ShellEnvironmentResponse, lambda _id, _request: self._shell_environment_application().refresh()),
@@ -966,6 +974,24 @@ class RuntimeServer:
                 lambda _id, request: self._applications_or_error().sidebar.set_pinned(request),
             ),
             (
+                "project/createFolders",
+                project_workspace_dtos.ProjectCreateFoldersRequest,
+                schema_dtos.ProjectDto,
+                lambda _id, request: self._applications_or_error().projects.create_folders(request),
+            ),
+            (
+                "project/read",
+                project_workspace_dtos.ProjectReadRequest,
+                schema_dtos.ProjectDto,
+                lambda _id, request: self._applications_or_error().projects.read(request),
+            ),
+            (
+                "project/update",
+                project_workspace_dtos.ProjectUpdateRequest,
+                schema_dtos.ProjectDto,
+                lambda _id, request: self._applications_or_error().projects.update(request),
+            ),
+            (
                 "project/list",
                 method_dtos.ProjectListRequestDto,
                 method_dtos.ProjectListResponseDto,
@@ -1013,7 +1039,7 @@ class RuntimeServer:
                 "session/gitSwitchBranch",
                 method_dtos.SessionGitSwitchBranchRequestDto,
                 method_dtos.SessionGitSwitchBranchResponseDto,
-                lambda _id, request: self._applications_or_error().sessions.git_switch_branch(
+                lambda _id, request: self._applications_or_error().sessions.for_git_request(request).git_switch_branch(
                     request
                 ),
             ),
@@ -1021,7 +1047,7 @@ class RuntimeServer:
                 "session/gitCreateBranch",
                 method_dtos.SessionGitCreateBranchRequestDto,
                 method_dtos.SessionGitCreateBranchResponseDto,
-                lambda _id, request: self._applications_or_error().sessions.git_create_branch(
+                lambda _id, request: self._applications_or_error().sessions.for_git_request(request).git_create_branch(
                     request
                 ),
             ),
@@ -1084,7 +1110,7 @@ class RuntimeServer:
                 "review/listComments",
                 review_dtos.ReviewCommentListRequestDto,
                 review_dtos.ReviewCommentListResponseDto,
-                lambda _id, request: self._applications_or_error().review.list_comments(
+                lambda _id, request: self._applications_or_error().review.for_git_request(request).list_comments(
                     request
                 ),
             ),
@@ -1092,7 +1118,7 @@ class RuntimeServer:
                 "review/createComment",
                 review_dtos.ReviewCommentCreateRequestDto,
                 review_dtos.ReviewCommentCreateResponseDto,
-                lambda _id, request: self._applications_or_error().review.create_comment(
+                lambda _id, request: self._applications_or_error().review.for_git_request(request).create_comment(
                     request
                 ),
             ),
@@ -1100,7 +1126,7 @@ class RuntimeServer:
                 "review/deleteComment",
                 review_dtos.ReviewCommentDeleteRequestDto,
                 review_dtos.ReviewCommentDeleteResponseDto,
-                lambda _id, request: self._applications_or_error().review.delete_comment(
+                lambda _id, request: self._applications_or_error().review.for_git_request(request).delete_comment(
                     request
                 ),
             ),
@@ -1108,7 +1134,7 @@ class RuntimeServer:
                 "session/gitStage",
                 method_dtos.SessionGitStageRequestDto,
                 method_dtos.SessionGitStageResponseDto,
-                lambda _id, request: self._applications_or_error().sessions.git_stage(
+                lambda _id, request: self._applications_or_error().sessions.for_git_request(request).git_stage(
                     request
                 ),
             ),
@@ -1116,7 +1142,7 @@ class RuntimeServer:
                 "session/gitCommit",
                 method_dtos.SessionGitCommitRequestDto,
                 method_dtos.SessionGitCommitResponseDto,
-                lambda _id, request: self._applications_or_error().sessions.git_commit(
+                lambda _id, request: self._applications_or_error().sessions.for_git_request(request).git_commit(
                     request
                 ),
             ),
@@ -1124,7 +1150,7 @@ class RuntimeServer:
                 "session/gitMerge",
                 method_dtos.SessionGitMergeRequestDto,
                 method_dtos.SessionGitMergeResponseDto,
-                lambda _id, request: self._applications_or_error().sessions.git_merge(
+                lambda _id, request: self._applications_or_error().sessions.for_git_request(request).git_merge(
                     request
                 ),
             ),
@@ -1132,7 +1158,7 @@ class RuntimeServer:
                 "session/gitMergeAbort",
                 method_dtos.SessionGitMergeAbortRequestDto,
                 method_dtos.SessionGitMergeAbortResponseDto,
-                lambda _id, request: self._applications_or_error().sessions.git_merge_abort(
+                lambda _id, request: self._applications_or_error().sessions.for_git_request(request).git_merge_abort(
                     request
                 ),
             ),
@@ -1140,7 +1166,7 @@ class RuntimeServer:
                 "session/gitRebase",
                 method_dtos.SessionGitRebaseRequestDto,
                 method_dtos.SessionGitRebaseResponseDto,
-                lambda _id, request: self._applications_or_error().sessions.git_rebase(
+                lambda _id, request: self._applications_or_error().sessions.for_git_request(request).git_rebase(
                     request
                 ),
             ),
@@ -1148,7 +1174,7 @@ class RuntimeServer:
                 "session/gitRebaseContinue",
                 method_dtos.SessionGitRebaseContinueRequestDto,
                 method_dtos.SessionGitRebaseContinueResponseDto,
-                lambda _id, request: self._applications_or_error().sessions.git_rebase_continue(
+                lambda _id, request: self._applications_or_error().sessions.for_git_request(request).git_rebase_continue(
                     request
                 ),
             ),
@@ -1156,7 +1182,7 @@ class RuntimeServer:
                 "session/gitRebaseAbort",
                 method_dtos.SessionGitRebaseAbortRequestDto,
                 method_dtos.SessionGitRebaseAbortResponseDto,
-                lambda _id, request: self._applications_or_error().sessions.git_rebase_abort(
+                lambda _id, request: self._applications_or_error().sessions.for_git_request(request).git_rebase_abort(
                     request
                 ),
             ),
@@ -1165,7 +1191,7 @@ class RuntimeServer:
                 method_dtos.SessionGitRemoteStatusRequestDto,
                 method_dtos.SessionGitRemoteStatusResponseDto,
                 lambda _id,
-                request: self._applications_or_error().sessions.git_remote_status(
+                request: self._applications_or_error().sessions.for_git_request(request).git_remote_status(
                     request
                 ),
             ),
@@ -1722,6 +1748,14 @@ class RuntimeServer:
 
     def _shell_environment_application(self) -> ShellEnvironmentApplication:
         return ShellEnvironmentApplication(ShellEnvironmentRepository(self.store.database))
+
+    def _personalization_application(self) -> PersonalizationApplication:
+        return PersonalizationApplication(PersonalizationRepository(self.store.database), self._scan_text)
+
+    def _personalization_save(self, request: PersonalizationSaveRequest) -> PersonalizationResponse:
+        result = self._personalization_application().save(request)
+        self.supervisor.events.deliver_pending()
+        return result
 
     def _shell_environment_save(self, request: ShellEnvironmentSaveRequest) -> ShellEnvironmentResponse:
         response = self._shell_environment_application().save(request)

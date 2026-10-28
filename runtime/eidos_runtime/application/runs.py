@@ -485,6 +485,7 @@ class RunApplication:
                         channel_run_id = ChannelRepository(store.database).accept(channel_message_id, request.session_id,
                             lambda connection: str(RunRepository(store.database).create_run(
                                 request.session_id, user_input, queued=True,
+                                channel_context=True,
                                 model_id=model_id, model_profile=model_profile, approval_mode=request.approval_mode,
                                 extension_snapshot=extension_snapshot, agent_catalog=agent_snapshot,
                                 expected_workspace_identity=expected_workspace_identity, transaction_connection=connection,

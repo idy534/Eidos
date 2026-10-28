@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
+import json
+
+from eidos_runtime.domain.project_workspace import SessionRoot
 import sqlite3
 import stat
 
@@ -9,9 +13,9 @@ from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
 
 
 _SESSION_WORKSPACE_SELECT = """
-    SELECT s.id, s.workspace_root, s.workspace_dev, s.workspace_inode,
+    SELECT s.id, s.workspace_root, s.workspace_dev, s.workspace_inode, s.workspace_roots_json,
            s.workspace_uid, s.worktree_id, s.execution_mode,
-           w.worktree_root, w.state, w.git_dir,
+           w.worktree_root, w.state, w.git_dir, w.repository_root, w.git_common_dir AS worktree_common_dir,
            p.workspace_root AS project_workspace_root, p.git_common_dir
     FROM sessions s
     LEFT JOIN worktrees w ON w.id = s.worktree_id
@@ -26,7 +30,7 @@ def execution_workspace_for_session(
     row = connection.execute(_SESSION_WORKSPACE_SELECT, (session_id,)).fetchone()
     if row is None:
         raise ResourceNotFoundError("session not found")
-    return _identity_from_session_row(row)
+    return _with_roots(row, _identity_from_session_row(row))
 
 
 def execution_workspace_for_run(
@@ -40,7 +44,7 @@ def execution_workspace_for_run(
     ).fetchone()
     if row is None:
         raise ResourceNotFoundError("run not found")
-    return _identity_from_session_row(row)
+    return _with_roots(row, _identity_from_session_row(row))
 
 
 def _identity_from_session_row(row: sqlite3.Row) -> WorkspaceIdentity:
@@ -67,7 +71,6 @@ def _identity_from_session_row(row: sqlite3.Row) -> WorkspaceIdentity:
     if (
         row["worktree_root"] is None
         or row["workspace_root"] is None
-        or row["project_workspace_root"] != row["workspace_root"]
     ):
         raise StorageError("session worktree repository mismatch")
     if row["state"] != "active":
@@ -96,11 +99,33 @@ def _identity_from_session_row(row: sqlite3.Row) -> WorkspaceIdentity:
             else None
         ),
         git_common_dir=(
-            Path(row["git_common_dir"]).resolve(strict=False)
-            if row["git_common_dir"] is not None
+            Path(row["worktree_common_dir"] or row["git_common_dir"]).resolve(strict=False)
+            if (row["worktree_common_dir"] or row["git_common_dir"]) is not None
             else None
         ),
     )
+
+
+
+def _with_roots(row: sqlite3.Row, primary: WorkspaceIdentity) -> WorkspaceIdentity:
+    from eidos_runtime.workspace.reader import capture_workspace_identity
+    roots = tuple(SessionRoot.model_validate(value) for value in json.loads(row["workspace_roots_json"]))
+    if not roots:
+        return primary
+    identities = []
+    for root in roots:
+        if row["worktree_root"] is not None and row["execution_mode"] == "worktree" and root.repository_root == row["repository_root"]:
+            relative = Path(root.path).relative_to(root.repository_root)
+            identity = capture_workspace_identity(Path(row["worktree_root"]) / relative)
+            identity = replace(identity, git_dir=primary.git_dir, git_common_dir=primary.git_common_dir)
+        else:
+            identity = WorkspaceIdentity(
+                path=Path(root.path), device=root.device, inode=root.inode, owner=root.owner,
+                git_dir=Path(root.git_dir) if root.git_dir else None,
+                git_common_dir=Path(root.git_common_dir) if root.git_common_dir else None,
+            )
+        identities.append(replace(identity, root_id=root.id))
+    return replace(identities[0], additional_roots=tuple(identities[1:]))
 
 
 __all__ = [

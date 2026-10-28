@@ -10,6 +10,7 @@ from eidos_runtime.domain.worktree import WorktreeState
 from eidos_runtime.domain.session_fork import SessionForkSource
 from eidos_runtime.domain.automation import AutomationOrigin
 from eidos_runtime.models import EidosFrozenStrictModel
+from eidos_runtime.domain.project_workspace import SessionRoot
 
 
 class SessionTaskStatus(StrEnum):
@@ -26,6 +27,8 @@ class SessionExecutionMode(StrEnum):
 
 
 class Session(EidosFrozenStrictModel):
+    project_id: str | None = None
+    roots: tuple[SessionRoot, ...] = ()
     forked_from: SessionForkSource | None = None
     automation_origin: AutomationOrigin | None = None
     id: str = Field(min_length=1)
@@ -128,7 +131,8 @@ class SessionProjection(EidosFrozenStrictModel):
             raise ValueError("managed Session Worktree projection is inconsistent")
         if self.worktree.project_id != self.project.id:
             raise ValueError("managed Session Project projection is inconsistent")
-        if self.worktree.repository_root != self.session.workspace_root:
+        if (self.worktree.repository_root != self.session.workspace_root
+                and not any(root.path == self.session.workspace_root and root.repository_root == self.worktree.repository_root for root in self.session.roots)):
             raise ValueError("managed Session repository projection is inconsistent")
         if not self.project.git_available:
             raise ValueError("managed Session Project must expose Git")

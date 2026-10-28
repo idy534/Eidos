@@ -1,4 +1,6 @@
+import type { ProjectUpdateRequest, ProjectCreateFoldersRequest, GitWorkspaceRequest } from "../shared/project-workspaces.js";
 import type { ShellEnvironmentReadRequest, ShellEnvironmentRefreshRequest, ShellEnvironmentSaveRequest, ShellEnvironmentResponse } from "../shared/shell-environment.js";
+import type { PersonalizationReadRequest, PersonalizationSaveRequest, PersonalizationResponse } from "../shared/personalization.js";
 import type { WebSearchReadRequest, WebSearchSaveRequest, WebSearchResponse, WebSearchOfficialPageRequest } from "../shared/web-search.js";
 import type { CustomProviderRequest, CustomProviderResult } from "../shared/custom-models.js";
 import type { ChannelResponse, ChannelSaveRequest, ChannelReadRequest } from "../shared/channels.js";
@@ -130,8 +132,8 @@ const api: EidosRuntimeAPI = {
     projectId?: string,
   ): Promise<WorkspaceFilePreview> =>
     ipcRenderer.invoke(IPC.WORKSPACE_READ_FILE_PREVIEW, sessionId, path, workspaceRoot, projectId),
-  openWorkspacePathInEditor: (sessionId: string, path: string): Promise<void> =>
-    ipcRenderer.invoke(IPC.WORKSPACE_OPEN_IN_EDITOR, sessionId, path),
+  openWorkspacePathInEditor: (sessionId: string, path: string, rootId?: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.WORKSPACE_OPEN_IN_EDITOR, sessionId, path, rootId),
   showItemInFolder: (path: string): Promise<void> =>
     ipcRenderer.invoke(IPC.WORKSPACE_SHOW_IN_FINDER, path),
   openPath: (path: string): Promise<void> =>
@@ -164,6 +166,8 @@ const api: EidosRuntimeAPI = {
   },
 
   readShellEnvironment: (request: ShellEnvironmentReadRequest = {}): Promise<ShellEnvironmentResponse> => ipcRenderer.invoke(IPC.SHELL_ENVIRONMENT_READ, request),
+  readPersonalization: (request: PersonalizationReadRequest = {}): Promise<PersonalizationResponse> => ipcRenderer.invoke(IPC.PERSONALIZATION_READ, request),
+  savePersonalization: (request: PersonalizationSaveRequest): Promise<PersonalizationResponse> => ipcRenderer.invoke(IPC.PERSONALIZATION_SAVE, request),
   saveShellEnvironment: (request: ShellEnvironmentSaveRequest): Promise<ShellEnvironmentResponse> => ipcRenderer.invoke(IPC.SHELL_ENVIRONMENT_SAVE, request),
   refreshShellEnvironment: (request: ShellEnvironmentRefreshRequest = {}): Promise<ShellEnvironmentResponse> => ipcRenderer.invoke(IPC.SHELL_ENVIRONMENT_REFRESH, request),
   readWebSearch: (request: WebSearchReadRequest = {}): Promise<WebSearchResponse> => ipcRenderer.invoke(IPC.WEB_SEARCH_READ, request),
@@ -190,6 +194,10 @@ const api: EidosRuntimeAPI = {
   createProject: (name: string | undefined, workspaceRoot: string): Promise<Project> =>
     ipcRenderer.invoke(IPC.PROJECT_CREATE, name, workspaceRoot),
   listProjects: (): Promise<ProjectListResult> => ipcRenderer.invoke(IPC.PROJECT_LIST),
+  createProjectFolders: (request: ProjectCreateFoldersRequest): Promise<Project> => ipcRenderer.invoke(IPC.PROJECT_CREATE_FOLDERS, request),
+  repositoryGit: (request: GitWorkspaceRequest) => ipcRenderer.invoke(IPC.GIT_REPOSITORY_REQUEST, request),
+  readProject: (projectId: string): Promise<Project> => ipcRenderer.invoke(IPC.PROJECT_READ, { projectId }),
+  updateProject: (request: ProjectUpdateRequest): Promise<Project> => ipcRenderer.invoke(IPC.PROJECT_UPDATE, request),
   deleteProject: (projectId: string): Promise<DeleteProjectResult> =>
     ipcRenderer.invoke(IPC.PROJECT_DELETE, projectId),
   listSessions: (cursor?: string): Promise<SessionListResult> => ipcRenderer.invoke(IPC.SESSION_LIST, cursor),
@@ -200,7 +208,7 @@ const api: EidosRuntimeAPI = {
   createSession: (
     workspaceRoot: string | null,
     options?: {
-      workspaceNameHint?: string;
+      projectId?: string; workspaceNameHint?: string;
       executionMode?: "local" | "worktree";
       baseRef?: string;
       includeLocalChanges?: boolean;
@@ -347,7 +355,7 @@ const api: EidosRuntimeAPI = {
   readAgents: (sessionId: string): Promise<CollaborationState> => ipcRenderer.invoke(IPC.AGENT_READ, sessionId),
   stopAgent: (parentRunId: string, agentId: string): Promise<CollaborationState> => ipcRenderer.invoke(IPC.AGENT_STOP, parentRunId, agentId),
   backupData: (): Promise<void> => ipcRenderer.invoke(IPC.DATA_BACKUP),
-  exportMemoryNotes: (scope: "current" | "global", sessionId?: string): Promise<void> => ipcRenderer.invoke(IPC.MEMORY_EXPORT, scope, sessionId),
+  exportMemoryNotes: (request: import("../shared/memory.generated.js").MemoryExportRequest): Promise<void> => ipcRenderer.invoke(IPC.MEMORY_EXPORT, request),
   memory: <K extends keyof MemoryMethods>(method: K, request: MemoryMethods[K]["request"]): Promise<MemoryMethods[K]["response"]> => ipcRenderer.invoke(IPC.MEMORY_REQUEST, method, request),
   readPlanning: (sessionId: string): Promise<PlanningReadResponse> => ipcRenderer.invoke(IPC.PLANNING_READ, sessionId),
   answerUserInput: (request: AnswerInputRequest): Promise<UserInputRequest> => ipcRenderer.invoke(IPC.PLANNING_ANSWER, request),

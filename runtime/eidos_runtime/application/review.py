@@ -51,6 +51,19 @@ class ReviewApplication:
         self._git = git
         self._scan_text = scan_text
 
+    def for_git_request(self, request):
+        if request.root_id is None:
+            return self
+        from copy import copy
+        from eidos_runtime.protocol.methods import SessionGitStatusRequestDto
+        original = self._git._repository.read_session(request.session_id)
+        selected = self._git.for_git_request(SessionGitStatusRequestDto(sessionId=request.session_id, rootId=request.root_id))
+        result = copy(self)
+        result._git = selected
+        result._repository = copy(self._repository)
+        result._repository.root_id = "" if original.roots and original.roots[0].id == request.root_id else request.root_id
+        return result
+
     def list_comments(
         self, request: ReviewCommentListRequestDto
     ) -> ReviewCommentListResponseDto:

@@ -1,3 +1,4 @@
+import type { ProjectDto as GeneratedProject, ProjectRootDto } from "./project-workspaces.generated.js";
 import type { CustomModelSettings } from "./custom-models.js";
 import type { HookActivity, PluginCompatibility, PluginHookReview } from "./hooks.js";
 import type { PluginPresentation } from "./plugins.js";
@@ -44,14 +45,10 @@ export interface SessionProject {
   gitAvailable: boolean;
 }
 
-export interface Project extends SessionProject {
-  /** Explicit display name chosen when the Project is created. */
-  name?: string;
-  createdAt: number;
-  updatedAt: number;
-}
+export type Project = Omit<GeneratedProject, "name"> & { name?: string };
 
 export interface Session {
+  roots?: ProjectRootDto[];
   forkedFrom?: SessionForkSource;
   automationOrigin?: import("./automation.generated.js").AutomationOrigin;
   id: string;
@@ -713,6 +710,7 @@ export type RuntimeNotification =
   | { method: "sidebar/pinsChanged"; params: { eventId: number } }
   | { method: "run/queueChanged"; params: import("./queued-runs.js").QueuedRunChangeResponse }
   | { method: "workspace/changed"; params: { sessionId: string; paths: string[] } }
+  | { method: "project/updated"; params: { id: string } }
   | { method: "session/titleUpdated"; params: { sessionId: string; title: string } }
   | { method: "run/started"; params: { sessionId: string; run: Run } }
   | { method: "run/updated"; params: { sessionId: string; run: Run } }

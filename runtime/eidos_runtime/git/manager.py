@@ -410,7 +410,7 @@ class WorktreeManager:
             )
             return ProjectResolution(project=project, git=None)
         project = self.repository.get_or_create_project(
-            discovery.repository_root, discovery, name=project_name
+            workspace, discovery, name=project_name
         )
         return ProjectResolution(project=project, git=discovery)
 
@@ -431,11 +431,12 @@ class WorktreeManager:
         self,
         repository_root: Path | str,
         base_ref: str | None = None,
+        *, project: Project | None = None,
     ) -> Worktree:
         """Resolve all managed Worktree identity before Git changes state."""
 
         discovery = self.discovery.discover(repository_root)
-        project = self.repository.get_or_create_project(
+        project = project or self.repository.get_or_create_project(
             discovery.repository_root, discovery
         )
         if base_ref is not None:
@@ -464,6 +465,8 @@ class WorktreeManager:
         return Worktree(
             id=worktree_id,
             project_id=project.id,
+            repository_root=discovery.repository_root,
+            git_common_dir=discovery.git_common_dir,
             worktree_root=str(worktree_root),
             git_dir=str(worktree_root / ".git"),
             base_ref=resolved_base_ref,
@@ -492,11 +495,12 @@ class WorktreeManager:
         """
 
         started = time.monotonic()
-        project = self.repository.read_project(plan.project_id)
-        if project is None:
-            raise WorktreeError("worktree_repository_mismatch")
+        project = self._project_for(plan)
         self._ensure_managed_root()
-        candidate = plan
+        candidate = plan.model_copy(update={
+            "repository_root": plan.repository_root or project.git_repository_root or project.workspace_root,
+            "git_common_dir": plan.git_common_dir or project.git_common_dir,
+        })
         existing = self.repository.read_worktree(plan.id)
         if existing is not None:
             if not _same_prepared_worktree(existing, plan):
@@ -686,6 +690,8 @@ class WorktreeManager:
         return Worktree(
             id=operation.worktree_id,
             project_id=operation.project_id,
+            repository_root=operation.repository_root,
+            git_common_dir=(self.discovery.discover(operation.repository_root).git_common_dir if operation.repository_root else None),
             worktree_root=operation.worktree_root,
             git_dir=str(Path(operation.worktree_root) / ".git"),
             base_ref=operation.base_ref,
@@ -2059,10 +2065,19 @@ class WorktreeManager:
     ) -> tuple[GitWorktreeEntry, ...]:
         return self._worktree_entries(project)
 
+    def source_project(self, worktree_id: str) -> Project:
+        return self._project_for(self._read_worktree(worktree_id))
+
     def _project_for(self, worktree: Worktree) -> Project:
         project = self.repository.read_project(worktree.project_id)
         if project is None:
             raise WorktreeError("worktree_repository_mismatch")
+        if worktree.repository_root is not None:
+            project = project.model_copy(update={
+                "workspace_root": worktree.repository_root,
+                "git_repository_root": worktree.repository_root,
+                "git_common_dir": worktree.git_common_dir,
+            })
         return project
 
     def _read_worktree(self, worktree_id: str) -> Worktree:

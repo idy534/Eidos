@@ -5,6 +5,8 @@ import json
 
 from pydantic import ValidationError
 
+from eidos_runtime.domain.project_workspace import SessionRoot
+
 from eidos_runtime.domain.session import (
     DeletedSession,
     Session,
@@ -91,6 +93,8 @@ def session_from_row(row: RowValues | Mapping[str, object]) -> Session:
                 title = task.session_title()
         return Session(
             id=session_id,
+            project_id=values.optional_text("project_id") if "project_id" in row.keys() else None,
+            roots=tuple(SessionRoot.model_validate(root) for root in json.loads(row["workspace_roots_json"])) if "workspace_roots_json" in row.keys() else (),
             automation_origin=automation_origin,
             forked_from=(SessionForkSource.model_validate_json(values.text("fork_source_json"))
                          if "fork_source_json" in row.keys() and row["fork_source_json"] is not None else None),

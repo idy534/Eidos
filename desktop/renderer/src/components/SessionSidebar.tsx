@@ -64,6 +64,8 @@ interface Props {
   onRename: (session: Session) => void;
   onDelete: (session: Session) => void;
   onDeleteProject: (project: Project) => void;
+  onEditProject?: ((project: Project) => void) | undefined;
+  onCreateInProjectById?: ((projectId: string) => void) | undefined;
   onShowInFinder?: (project: Project) => void;
   onOpenSettings: () => void;
   onOpenAutomations?: () => void;
@@ -93,7 +95,7 @@ export function SessionSidebar({
   sessions, projects: catalogProjects, selectedId, disabled, readCompletedSessions,
   pins = [], pinningDisabled = false, pendingPinTargets, onSetPinned,
   runtimePresentation, isSelectingSessionId, gitStatusBySessionId = new Map(),
-  onCreate, onCreateInProject, onSelect, onRename, onDelete, onDeleteProject, onShowInFinder, onOpenSettings,
+  onCreate, onCreateInProject, onSelect, onRename, onDelete, onDeleteProject, onEditProject, onCreateInProjectById, onShowInFinder, onOpenSettings,
   navigationSlot, onOpenAutomations, onOpenAutomation, onSearch,
 }: Props) {
   const visibleSessions = sessions.filter(
@@ -533,7 +535,7 @@ export function SessionSidebar({
                     saveCollapsedProjects(next);
                     return next;
                   });
-                  onCreateInProject(project.workspaceRoot);
+                  (onCreateInProjectById && project.projectId ? onCreateInProjectById(project.projectId) : onCreateInProject(project.workspaceRoot));
                 }}
                 onMouseEnter={(e) => {
                   const rowElement = (e.currentTarget.closest(".workspace-title-row") as HTMLElement) ?? e.currentTarget;
@@ -735,6 +737,10 @@ export function SessionSidebar({
                 const target: SidebarTarget = { kind: "project", id: contextMenu.project.id };
                 requestPin(target, contextMenu.element);
               },
+            },
+            {
+              key: "edit-project", label: "编辑项目", icon: <EditIcon />, disabled: !onEditProject,
+              onClick: () => { setContextMenu(undefined); onEditProject?.(contextMenu.project); },
             },
             {
               key: "show-in-finder",

@@ -401,12 +401,14 @@ Desktop 验收需要覆盖 `+`、`@`、`$`、`/`、中文输入法、键盘焦�
 契约修改后运行 `node scripts/generate-memory-contracts.mjs` 并提交三份 `desktop/shared/memory*.generated.ts`。两端共享 `protocol/fixtures/memory-v2.json`。开发过程使用定向验证，不默认运行 Full Suite：
 
 ```bash
-uv run --locked pytest runtime/tests/test_memory.py runtime/tests/test_memory_flow.py runtime/tests/test_memory_runtime.py runtime/tests/test_memory_revocation_migration.py runtime/tests/test_memory_mode_removal.py runtime/tests/test_data_backup.py runtime/tests/test_storage_maintenance.py runtime/tests/test_session_conversation_fork.py
-pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/MemorySettings.behavior.test.tsx desktop/renderer/src/components/SessionSidebar.behavior.test.tsx
+uv run --locked pytest runtime/tests/test_memory_management_target.py runtime/tests/test_memory.py runtime/tests/test_memory_flow.py runtime/tests/test_memory_runtime.py runtime/tests/test_memory_revocation_migration.py runtime/tests/test_memory_mode_removal.py runtime/tests/test_data_backup.py runtime/tests/test_storage_maintenance.py runtime/tests/test_session_conversation_fork.py
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/MemorySettings.behavior.test.tsx desktop/renderer/src/app/AppShell.behavior.test.tsx desktop/renderer/src/components/SessionSidebar.behavior.test.tsx
 pnpm build:main
 node --test dist/main/memory-contract.test.js dist/main/memory-export.test.js dist/main/runtime-client-memory.test.js
 pnpm test:contracts
 ```
+
+开发者可以运行 `pnpm exec electron scripts/test-memory-settings.cjs` 检查独立位置选择、项目/全局切换、读取失败重试和 320、768、1024、1440px 下的顶部控件布局。开发者可以用 `EIDOS_MEMORY_SCREENSHOT_DIR` 指定截图目录。测试使用临时 user-data 和合成记忆，不读取真实聊天或调用 Provider。Runtime 目标测试还覆盖无 Session 项目、项目隔离、重启、版本冲突、归档恢复、失效项目和旧操作重放。
 
 模型工具结果另用 `protocol/fixtures/memory-tool-model-v1.json` 校验。该视图不改变 Desktop DTO，也不需要重新生成 Desktop 记忆契约。修改投影或私有读取保护时，开发者运行：
 
@@ -418,7 +420,7 @@ uv run --locked pytest runtime/tests/test_memory_tool_projection.py runtime/test
 
 人工验收使用临时数据目录和已配置模型：
 
-1. 用户打开“设置 → 记忆”。新范围默认 auto。页面显示 `MEMORY.md` 索引，用户可以从索引打开主题笔记，也可以新建和直接编辑。
+1. 用户打开“设置 → 记忆”。页面首次显示“无项目 / 全局”。用户通过“位置”选择项目，页面默认显示“所选项目”，也可以选择“全局”。没有 Session 的项目也应可用。用户重新进入页面后，上次的位置和范围应保留，聊天页的 Session 与草稿选择不应改变管理范围。新范围默认 auto。页面显示 `MEMORY.md` 索引，用户可以从索引打开主题笔记，也可以新建和直接编辑。
 2. 用户在当前 Run 中表达长期做法。模型应在当前 Run 保存，工具返回后记忆即可读取。系统不应等待空闲，也不应产生整理模型调用或候选任务。
 3. 用户切换 off/read/auto，检查模型读取、自动保存和明确保存的不同路径。用户检查 Project 与 Projectless 的范围。子 Agent 不应获得记忆工具或自动索引。会话菜单不应显示临时记忆入口，打开菜单也不应读取记忆状态。
 4. 用户更正、查看来源和历史、删除笔记。旧版本只读。分页读取应覆盖正文尾部。并发修改后保存应报冲突并保留草稿。
@@ -429,6 +431,7 @@ uv run --locked pytest runtime/tests/test_memory_tool_projection.py runtime/test
 9. 开发者使用 v42 数据升级为 v43。已有笔记与历史应保留，已遗忘与隔离数据不能复活。模型读后自动更正用户笔记时，不应填写内部来源 ID、更新版本或显式保存标志，也不应额外弹出自动记忆审批。
 10. 模型归档笔记后，默认索引应移除它。设置页应显示“已归档”，键盘可以打开笔记，用户可以恢复或确认彻底删除。恢复冲突不能清空正文。新笔记可以不填摘要。
 11. 开发者同时更正不同笔记，两次写入与索引条目都应保留。同一笔记的过期更新仍应报冲突。普通聊天删除或来源更正后，已保存笔记应保留；彻底遗忘和关闭记忆仍应撤销在途请求。
+12. 用户切换位置或范围后，搜索和分页应重置，页面应打开 `MEMORY.md`。未保存内容应禁用切换。用户检查模式修改、恢复、删除和导出都作用于所选范围。用户删除项目后，旧选择应显示失效提示，页面不能自动切到全局。
 
 真实模型验收脚本只使用合成对话和临时数据。脚本只读模型配置，API Key 不进入报告。它向前台模型提供记忆工具，并使用 `full_access` 避免人工审批等待。每次最多 36 个模型调用，每个 Run 最多等待 90 秒。该操作会产生实际模型费用，开发者应主动选择执行：
 

@@ -67,6 +67,7 @@ def v40_memory(tmp_path):
             connection.execute(f"DROP TRIGGER {name}")
             connection.execute(sql)
         connection.execute("ALTER TABLE memory_documents DROP COLUMN archived")
+        connection.execute("DROP TABLE personalization_settings")
         connection.execute("PRAGMA user_version=40")
         connection.execute(
             "UPDATE items SET content='来源已更正' WHERE id=?", (source,)

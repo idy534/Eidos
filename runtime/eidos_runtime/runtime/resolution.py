@@ -8,6 +8,7 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from eidos_runtime.domain.approval_policy import ApprovalMode, FULL_ACCESS_WARNING_VERSION
+from eidos_runtime.domain.personalization import PersonalizationSettings
 from eidos_runtime.model.client import (
     ModelContextItem,
     ModelProfileSnapshot,
@@ -46,6 +47,8 @@ class _FrozenModel(BaseModel):
 
 
 class WorkspaceIdentitySnapshot(_FrozenModel):
+    root_id: str | None = None
+    additional_roots: tuple[WorkspaceIdentitySnapshot, ...] | None = None
     path: str
     device: int
     inode: int
@@ -161,6 +164,7 @@ class RunResolutionSnapshot(_FrozenModel):
     permission_profile_json: str
     sandbox_policy_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     sandbox_policy_json: str
+    personalization: PersonalizationSettings | None = None
     created_at: int = Field(ge=0)
 
     @classmethod
@@ -307,6 +311,7 @@ def create_run_resolution_snapshot(
     created_at: int,
     projectless: bool = False,
     approval_mode: ApprovalMode = "manual",
+    personalization: PersonalizationSettings | None = None,
 ) -> RunResolutionSnapshot:
     model_value = model_profile.model_dump(mode="json")
     model_hash = canonical_sha256(model_value)
@@ -315,6 +320,20 @@ def create_run_resolution_snapshot(
         Path(workspace_identity.path),
         data_directory,
     )
+    if workspace_identity.additional_roots:
+        from eidos_runtime.sandbox.permissions import BasePermissionProfile
+        extra = tuple(Path(root.path) for root in workspace_identity.additional_roots)
+        extra_protected = tuple(
+            str(path) for root in workspace_identity.additional_roots
+            for path in (Path(root.path) / ".git", Path(root.path) / ".agents", Path(root.path) / ".eidos",
+                         *((Path(root.git_dir),) if root.git_dir else ()),
+                         *((Path(root.git_common_dir),) if root.git_common_dir else ()))
+        )
+        base_permissions = BasePermissionProfile.for_workspace(
+            workspace_root=Path(workspace_identity.path), additional_roots=extra,
+            protected_paths=tuple(Path(entry.path) for entry in base_permissions.permanent_denies),
+            protected_write_paths=tuple(Path(value) for value in (*base_permissions.protected_write_paths, *extra_protected)),
+        )
     if approval_mode == "full_access":
         base_permissions = base_permissions.with_full_access()
     permission_json = canonical_json(
@@ -343,6 +362,7 @@ def create_run_resolution_snapshot(
         permission_profile_json=permission_json,
         sandbox_policy_hash=canonical_sha256(sandbox_policy),
         sandbox_policy_json=sandbox_json,
+        **({"personalization": personalization} if personalization is not None else {}),
         created_at=created_at,
     )
 

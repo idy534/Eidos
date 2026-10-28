@@ -351,7 +351,7 @@ export function McpSettings({
           <div>
             <h1>MCP Servers 扩展</h1>
             <p className="settings-panel-subtitle">
-              MCP (Model Context Protocol) 允许 Agent 访问外部工具或数据源。启用敏感 Server 前需进行安全审阅与授权。
+              MCP (Model Context Protocol) 允许 Agent 访问外部工具或数据源。
             </p>
           </div>
           <Button

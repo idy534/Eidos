@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import fcntl
 import hashlib
 import json
@@ -119,6 +119,8 @@ class WorkspaceIdentity:
     owner: int
     git_dir: Path | None = None
     git_common_dir: Path | None = None
+    root_id: str = field(default="", compare=False)
+    additional_roots: tuple[WorkspaceIdentity, ...] = ()
 
 
 class Database:
@@ -203,6 +205,8 @@ class Database:
                     40,
                     41,
                     42,
+                    43,
+                    44,
                     SCHEMA_VERSION,
                     4,
                 }
@@ -488,6 +492,18 @@ class Database:
                 from eidos_runtime.memory.flow_migration import migrate_memory_flow
                 try:
                     migrate_memory_flow(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == 43:
+                from eidos_runtime.db.personalization_migration import migrate_personalization
+                try:
+                    migrate_personalization(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == 44:
+                from eidos_runtime.db.project_workspaces_migration import migrate_project_workspaces
+                try:
+                    migrate_project_workspaces(connection)
                 except sqlite3.Error as error:
                     raise StorageError("schema_migration_failed") from error
             _verify_integrity(connection)

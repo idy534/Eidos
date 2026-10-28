@@ -40,6 +40,8 @@ def worktree_from_row(row: Mapping[str, object]) -> Worktree:
     return Worktree(
         id=str(row["id"]),
         project_id=str(row["project_id"]),
+        repository_root=str(row["repository_root"]) if "repository_root" in row.keys() and row["repository_root"] else None,
+        git_common_dir=str(row["git_common_dir"]) if "git_common_dir" in row.keys() and row["git_common_dir"] else None,
         worktree_root=str(row["worktree_root"]),
         git_dir=str(row["git_dir"]),
         base_ref=str(row["base_ref"]),

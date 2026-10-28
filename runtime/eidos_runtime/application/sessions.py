@@ -576,6 +576,11 @@ class SessionApplication:
         self._logger = logging.getLogger(__name__)
 
     def create(self, request: SessionCreateRequestDto) -> SessionCreateResponseDto:
+        if request.project_id is not None:
+            project = self._require_manager().project(request.project_id)
+            if request.workspace_root is not None and request.workspace_root != project.workspace_root:
+                raise ApplicationError("PROJECT_CONFIGURATION_CONFLICT", "project folder changed")
+            request = request.model_copy(update={"workspace_root": project.workspace_root})
         execution_mode = SessionExecutionMode(request.execution_mode)
         if request.workspace_root is None:
             if execution_mode is not SessionExecutionMode.LOCAL:
@@ -622,7 +627,12 @@ class SessionApplication:
                 else nullcontext()
             )
             with operation_guard:
-                resolution = self._resolve_project(request.workspace_root)
+                if request.project_id is not None:
+                    project = self._require_manager().project(request.project_id)
+                    discovery = self._require_manager().discover(project.workspace_root) if project.has_git else None
+                    resolution = ProjectResolution(project=project, git=discovery)
+                else:
+                    resolution = self._resolve_project(request.workspace_root)
                 if execution_mode is SessionExecutionMode.WORKTREE:
                     if resolution.git is None:
                         raise ApplicationError(
@@ -712,6 +722,21 @@ class SessionApplication:
         )
         runtime.activate_workspace(root)
         return result
+
+    def _resolve_session_project(self, session: Session) -> ProjectResolution:
+        manager = self._require_manager()
+        if session.project_id is None:
+            return manager.resolve_project(session.workspace_root)
+        project = manager.project(session.project_id)
+        root = session.roots[0] if session.roots else None
+        git = manager.discover(session.workspace_root) if (root.repository_root if root else project.has_git) else None
+        if root and git and (git.repository_root != root.repository_root or git.git_common_dir != root.git_common_dir):
+            raise WorktreeError("workspace_identity_changed")
+        return ProjectResolution(project=project.model_copy(update={
+            "workspace_root": session.workspace_root,
+            "git_repository_root": git.repository_root if git else None,
+            "git_common_dir": git.git_common_dir if git else None,
+        }), git=git)
 
     def _resolve_project(self, workspace_root: str) -> ProjectResolution:
         manager = self._worktree_manager
@@ -975,10 +1000,16 @@ class SessionApplication:
         worktree: Worktree | None = None
         try:
             if lifecycle_operation is None:
-                plan = manager.prepare_create(
-                    discovery.repository_root,
-                    base_ref=request.base_ref,
-                )
+                if request.project_id is not None:
+                    plan = manager.prepare_create(
+                        discovery.repository_root, base_ref=request.base_ref,
+                        project=resolution.project,
+                    )
+                else:
+                    plan = manager.prepare_create(
+                        discovery.repository_root,
+                        base_ref=request.base_ref,
+                    )
                 source_snapshot = manager.source_snapshot(
                     Path(discovery.repository_root),
                     include_local_changes=request.include_local_changes,
@@ -1058,7 +1089,7 @@ class SessionApplication:
                     lifecycle_operation_id,
                     WorktreeLifecycleState.WORKTREE_CREATED,
                 )
-            project = manager.project(worktree.project_id)
+            project = manager.source_project(worktree.id)
             session_id = lifecycle_operation.session_id
             if session_id is None:
                 raise ApplicationError(
@@ -1264,6 +1295,10 @@ class SessionApplication:
         projected_snapshot["session"] = self._project_session(projection)
         return _result(SessionReadResponseDto, projected_snapshot)
 
+    def for_git_request(self, request):
+        from eidos_runtime.application.git_workspace import scoped_git_application
+        return scoped_git_application(self, request)
+
     def git_status(
         self, request: SessionGitStatusRequestDto
     ) -> SessionGitStatusResponseDto:
@@ -1283,7 +1318,7 @@ class SessionApplication:
             if session.worktree_id is not None:
                 status = manager.status(session.worktree_id)
             else:
-                resolution = manager.resolve_project(session.workspace_root)
+                resolution = self._resolve_session_project(session)
                 if resolution.git is None:
                     raise WorktreeError("not_a_git_repository")
                 status = manager.local_status(Path(resolution.git.repository_root))
@@ -1335,7 +1370,7 @@ class SessionApplication:
                     path=request.path,
                 )
             else:
-                resolution = manager.resolve_project(session.workspace_root)
+                resolution = self._resolve_session_project(session)
                 if resolution.git is None:
                     raise WorktreeError("not_a_git_repository")
                 diff = manager.local_diff(
@@ -2093,7 +2128,7 @@ class SessionApplication:
         operation_id: str,
     ) -> HandoffPlan:
         manager = self._require_manager()
-        resolution = manager.resolve_project(session.workspace_root)
+        resolution = self._resolve_session_project(session)
         if resolution.git is None:
             raise WorktreeError("handoff_not_supported")
         project = resolution.project
@@ -2102,6 +2137,7 @@ class SessionApplication:
             source = manager.source_snapshot(local_root, include_local_changes=True)
             if session.associated_worktree_id is None:
                 prepared = manager.prepare_create(source.discovery.repository_root)
+                prepared = prepared.model_copy(update={"project_id": project.id})
                 target_root = Path(prepared.worktree_root)
                 target_head = prepared.base_commit
                 target_branch = prepared.checkout_branch
@@ -2376,6 +2412,8 @@ class SessionApplication:
                     Worktree(
                         id=operation.associated_worktree_id,
                         project_id=operation.project_id,
+                        repository_root=operation.source_root,
+                        git_common_dir=operation.source_common_dir,
                         worktree_root=operation.target_root,
                         git_dir=str(Path(operation.target_root) / ".git"),
                         base_ref=operation.target_base_ref or "HEAD",
@@ -2773,7 +2811,7 @@ class SessionApplication:
                                     "WORKTREE_RESTORE_REQUIRED",
                                     "deleted Worktree snapshot is no longer ready",
                                 )
-                            project = manager.project(worktree_projection.project_id)
+                            project = manager.source_project(worktree_projection.worktree_id)
                             lifecycle_operation_id = request.operation_id or (
                                 f"session-delete-{uuid.uuid4().hex}"
                             )
@@ -2840,7 +2878,7 @@ class SessionApplication:
                                     "WORKTREE_RECOVERY_REQUIRED",
                                     "deleted Worktree has no durable Session delete intent",
                                 )
-                            project = manager.project(worktree_projection.project_id)
+                            project = manager.source_project(worktree_projection.worktree_id)
                             now = datetime.now(UTC).replace(microsecond=0)
                             lifecycle_operation_id = request.operation_id or (
                                 f"session-delete-{uuid.uuid4().hex}"
@@ -3009,6 +3047,18 @@ class SessionApplication:
                 branch=worktree.branch,
                 state=worktree.state.value,
             )
+        if session.roots:
+            value["roots"] = []
+            for root in session.roots:
+                path = root.path
+                shared = False
+                if projection.worktree is not None:
+                    if root.repository_root == projection.worktree.repository_root:
+                        path = str(Path(projection.worktree.worktree_root) / Path(root.path).relative_to(root.repository_root))
+                    else:
+                        shared = True
+                value["roots"].append({"id": root.id, "path": path, "repositoryRoot": root.repository_root,
+                                       "shared": shared})
         projected = SessionDto.model_validate(value).to_json_value()
         if projection.worktree is not None and projection.worktree.branch is None:
             worktree_value = projected.setdefault("worktree", {})

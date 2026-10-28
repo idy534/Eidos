@@ -160,6 +160,8 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 
 ## Project Rules
 
+- 设置页提供“个性化”，包含语言与表达、关于你和自定义指令。Runtime 把全局偏好保存在 SQLite，并在创建 Run 时固定到指令来源快照。后续修改不会改变已创建的任务，子 Agent 继承父任务配置。具体范围见[个性化说明](features/personalization.md)。
+
 - ProjectRuleResolver 支持 `EIDOS.override.md`、`EIDOS.md`、`AGENTS.override.md`、`AGENTS.md` 和 `CLAUDE.md`。
 - Resolver 从 Workspace root 到 effective cwd 逐目录解析。
 - 每个目录只选一个最高优先级的非空候选。

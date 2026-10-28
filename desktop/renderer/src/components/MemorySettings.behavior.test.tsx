@@ -20,7 +20,9 @@ const state: MemoryState = {
 };
 type Handler = (method: string, request: Record<string, unknown>) => Promise<unknown>;
 
-function mount(handler?: Handler) {
+function mount(handler?: Handler, selection: { projectId: string | null; scope: "current" | "global" } | null = { projectId: "project", scope: "current" }) {
+  if (selection) localStorage.setItem("eidos.memory.location.v1", JSON.stringify(selection));
+  else localStorage.removeItem("eidos.memory.location.v1");
   let notify: ((notice: RuntimeNotification) => void) | undefined;
   const memory = vi.fn<Handler>(handler ?? (async (method, request) => {
     if (method === "memory/list" || method === "memory/policy") return structuredClone(state);
@@ -29,13 +31,17 @@ function mount(handler?: Handler) {
   }));
   const exportMemoryNotes = vi.fn(async () => {});
   const unsubscribe = vi.fn();
+  const listProjects = vi.fn(async () => ({ items: [
+    { id: "project", name: "Eidos", workspaceRoot: "/workspace", gitAvailable: true, createdAt: 1, updatedAt: 1 },
+    { id: "other", name: "Other", workspaceRoot: "/other", gitAvailable: false, createdAt: 1, updatedAt: 1 },
+  ] }));
   window.eidosRuntime = {
-    memory: memory as EidosRuntimeAPI["memory"], exportMemoryNotes, backupData: vi.fn(async () => {}),
+    memory: memory as EidosRuntimeAPI["memory"], listProjects, exportMemoryNotes, backupData: vi.fn(async () => {}),
     onNotification: vi.fn((callback) => { notify = callback; return unsubscribe; }),
   } as unknown as EidosRuntimeAPI;
   const onOpenSource = vi.fn();
-  return { ...render(<MemorySettings sessionId="session" onOpenSource={onOpenSource} />), memory, exportMemoryNotes,
-    onOpenSource, unsubscribe, notify: (notice: RuntimeNotification) => notify?.(notice) };
+  return { ...render(<MemorySettings onOpenSource={onOpenSource} />), memory, exportMemoryNotes,
+    onOpenSource, unsubscribe, listProjects, notify: (notice: RuntimeNotification) => notify?.(notice) };
 }
 
 function read(request: Record<string, unknown>, content = "用户只在明确要求时运行全量测试。", nextOffset: number | null = null): MemoryReadResult {
@@ -48,7 +54,7 @@ function read(request: Record<string, unknown>, content = "用户只在明确要
   };
 }
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(() => { cleanup(); localStorage.clear(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 it("shows one mode selector and opens a note from the Markdown index", async () => {
   const { memory, onOpenSource } = mount();
@@ -69,11 +75,11 @@ it("changes the selected scope mode and exports through the native save action",
   const user = userEvent.setup();
   await screen.findByRole("link", { name: note.path });
   await user.selectOptions(screen.getByRole("combobox", { name: "模式" }), "auto");
-  await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/policy", { sessionId: "session", scope: "current", mode: "auto" }));
+  await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/policy", { projectId: "project", scope: "current", mode: "auto" }));
   await user.selectOptions(screen.getByRole("combobox", { name: "范围" }), "global");
   await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/list", expect.objectContaining({ scope: "global" })));
   await user.click(screen.getByRole("button", { name: "导出" }));
-  expect(exportMemoryNotes).toHaveBeenCalledWith("global", "session");
+  expect(exportMemoryNotes).toHaveBeenCalledWith({ scope: "global", projectId: "project" });
 });
 
 it("loads every body page at the same revision and preserves the draft after a conflict", async () => {
@@ -214,14 +220,17 @@ describe("memory refresh", () => {
     vi.useFakeTimers();
     const { memory, notify, unmount, unsubscribe } = mount();
     await advance();
+    await advance();
     const lists = () => memory.mock.calls.filter(([method]) => method === "memory/list").length;
     expect(lists()).toBe(1);
     await advance(60_000);
     expect(lists()).toBe(1);
     act(() => notify({ method: "memory/changed", params: { scopeId: "project", generation: 3 } }));
     await advance();
+    await advance();
     expect(lists()).toBe(2);
     fireEvent(window, new Event("focus"));
+    await advance();
     await advance();
     expect(lists()).toBe(3);
     unmount();
@@ -231,6 +240,7 @@ describe("memory refresh", () => {
   it("debounces a Chinese search and keeps the latest query", async () => {
     vi.useFakeTimers();
     const { memory } = mount();
+    await advance();
     await advance();
     const search = screen.getByRole("searchbox", { name: "搜索记忆" });
     fireEvent.change(search, { target: { value: "全" } });
@@ -318,4 +328,83 @@ it("places cancel and save buttons in top header row and allows Markdown preview
   await user.click(within(headerActions as HTMLElement).getByRole("button", { name: "取消编辑" }));
   expect(screen.queryByRole("button", { name: "保存笔记" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument();
+});
+
+it("starts with projectless global memory and remembers an explicit project and scope", async () => {
+  const { memory, unmount } = mount(undefined, null);
+  const user = userEvent.setup();
+  await screen.findByRole("link", { name: note.path });
+  await user.tab();
+  expect(screen.getByRole("combobox", { name: "位置" })).toHaveFocus();
+  expect(screen.getByRole("combobox", { name: "位置" })).toHaveValue("");
+  expect(screen.queryByRole("combobox", { name: "范围" })).not.toBeInTheDocument();
+  expect(screen.getByText("无项目对话使用全局记忆。")).toBeInTheDocument();
+  expect(memory).toHaveBeenCalledWith("memory/list", expect.objectContaining({ projectId: null, scope: "global" }));
+  await user.selectOptions(screen.getByRole("combobox", { name: "位置" }), "other");
+  await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/read", expect.objectContaining({ projectId: "other", scope: "current", path: "MEMORY.md" })));
+  await user.selectOptions(screen.getByRole("combobox", { name: "范围" }), "global");
+  await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/list", expect.objectContaining({ projectId: "other", scope: "global" })));
+  unmount();
+  render(<MemorySettings />);
+  expect(screen.getByRole("combobox", { name: "位置" })).toHaveValue("other");
+  expect(screen.getByRole("combobox", { name: "范围" })).toHaveValue("global");
+});
+
+it("resets search and the open note when changing project and protects unsaved edits", async () => {
+  const { memory } = mount();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("link", { name: note.path }));
+  await user.click(await screen.findByRole("button", { name: "编辑" }));
+  await user.type(screen.getByRole("textbox", { name: "笔记正文" }), "补充");
+  expect(screen.getByRole("combobox", { name: "位置" })).toBeDisabled();
+  expect(screen.getByRole("combobox", { name: "范围" })).toBeDisabled();
+  expect(screen.getByText("请先保存或取消编辑，再切换位置或范围。")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "取消编辑" }));
+  await user.type(screen.getByRole("searchbox", { name: "搜索记忆" }), "约定");
+  await user.selectOptions(screen.getByRole("combobox", { name: "位置" }), "other");
+  expect(screen.getByRole("searchbox", { name: "搜索记忆" })).toHaveValue("");
+  await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/read", expect.objectContaining({ projectId: "other", scope: "current", path: "MEMORY.md" })));
+  await waitFor(() => expect(screen.getByRole("button", { name: "导出" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "导出" }));
+  expect(window.eidosRuntime.exportMemoryNotes).toHaveBeenCalledWith({ projectId: "other", scope: "current" });
+});
+
+it("keeps a missing saved project explicit and never falls back to global", async () => {
+  const { memory } = mount(undefined, { projectId: "deleted", scope: "current" });
+  await screen.findByText("所选项目已不存在，请重新选择位置。");
+  expect(memory).not.toHaveBeenCalled();
+  expect(screen.getByRole("combobox", { name: "模式" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "新建笔记" })).toBeDisabled();
+  await userEvent.selectOptions(screen.getByRole("combobox", { name: "位置" }), "");
+  await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/list", expect.objectContaining({ projectId: null, scope: "global" })));
+});
+
+it("preserves the selected project while retrying a failed project list", async () => {
+  const { listProjects, memory } = mount(undefined, { projectId: "project", scope: "current" });
+  listProjects.mockRejectedValueOnce(new Error("offline"));
+  // The first request is already resolved; a focus refresh exercises a failure.
+  await screen.findByRole("link", { name: note.path });
+  fireEvent(window, new Event("focus"));
+  await screen.findByText("项目列表无法读取，请重试。");
+  expect(screen.getByRole("combobox", { name: "位置" })).toHaveValue("project");
+  await userEvent.click(screen.getByRole("button", { name: "重试项目列表" }));
+  await waitFor(() => expect(screen.queryByText("项目列表无法读取，请重试。")).not.toBeInTheDocument());
+  expect(memory.mock.calls.every(([, request]) => request.projectId === "project")).toBe(true);
+});
+
+it("ignores a late response from the previously selected project", async () => {
+  let release!: (value: MemoryState) => void;
+  const { memory } = mount(async (method, request) => {
+    if (method === "memory/list") {
+      if (request.projectId === "project") return new Promise<MemoryState>((resolve) => { release = resolve; });
+      return { ...state, documents: [] };
+    }
+    return read(request);
+  });
+  await waitFor(() => expect(release).toBeDefined());
+  await userEvent.selectOptions(screen.getByRole("combobox", { name: "位置" }), "other");
+  await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/read", expect.objectContaining({ projectId: "other" })));
+  await act(async () => release(state));
+  expect(within(screen.getByRole("navigation", { name: "记忆文件" })).queryByText(note.path)).not.toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "位置" })).toHaveValue("other");
 });

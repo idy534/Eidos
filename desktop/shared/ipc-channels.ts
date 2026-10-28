@@ -7,6 +7,8 @@
 
 export const IPC = {
   SHELL_ENVIRONMENT_READ: "shell-environment:read",
+  PERSONALIZATION_READ: "personalization:read",
+  PERSONALIZATION_SAVE: "personalization:save",
   SHELL_ENVIRONMENT_SAVE: "shell-environment:save",
   SHELL_ENVIRONMENT_REFRESH: "shell-environment:refresh",
   WEB_SEARCH_READ: "web-search:read",
@@ -53,6 +55,10 @@ export const IPC = {
   SIDEBAR_SET_PINNED: "sidebar:set-pinned",
   PROJECT_CREATE: "project:create",
   PROJECT_LIST: "project:list",
+  PROJECT_CREATE_FOLDERS: "project:create-folders",
+  GIT_REPOSITORY_REQUEST: "git:repository-request",
+  PROJECT_READ: "project:read",
+  PROJECT_UPDATE: "project:update",
   PROJECT_DELETE: "project:delete",
   SESSION_LIST: "session:list",
   SESSION_READ: "session:read",

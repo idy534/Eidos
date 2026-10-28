@@ -16,6 +16,7 @@ def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 def downgrade_document_memory_schema():
     """Restore the v39 memory shape expected by the v40 migration."""
     def downgrade(connection: sqlite3.Connection) -> None:
+        connection.execute("DROP TABLE IF EXISTS personalization_settings")
         for trigger in (
             "memory_source_insert",
             "memory_source_change",
@@ -68,6 +69,7 @@ def downgrade_document_memory_schema():
 @pytest.fixture
 def downgrade_hooks_schema():
     def downgrade(connection: sqlite3.Connection) -> None:
+        connection.execute("DROP TABLE IF EXISTS personalization_settings")
         connection.execute("DROP TABLE IF EXISTS hook_sources")
         connection.execute("DROP TABLE IF EXISTS mcp_connections")
         connection.execute("DROP TABLE IF EXISTS plugin_versions")

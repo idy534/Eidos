@@ -1,0 +1,28 @@
+{
+  "validReadRequests": [{}],
+  "invalidReadRequests": [{"sessionId":"unexpected"},null,[]],
+  "validRequests": [
+    {"expectedRevision":0,"preferences":{}},
+    {"expectedRevision":1,"preferences":{"responseLanguage":"zh-CN","tone":"direct","responseLength":"concise","outputFormat":"conclusion_first","preferredName":"小李","role":"开发者","familiarTopics":"TypeScript 和产品设计","customInstructions":"请使用短句。"}},
+    {"expectedRevision":2,"preferences":{"responseLanguage":"custom","customLanguage":"Español"}}
+  ],
+  "invalidRequests": [
+    {"expectedRevision":-1,"preferences":{}},
+    {"expectedRevision":true,"preferences":{}},
+    {"expectedRevision":9007199254740992,"preferences":{}},
+    {"expectedRevision":0,"preferences":{"responseLanguage":"unsupported"}},
+    {"expectedRevision":0,"preferences":{"tone":"unsupported"}},
+    {"expectedRevision":0,"preferences":{"responseLength":"unlimited"}},
+    {"expectedRevision":0,"preferences":{"outputFormat":"unsupported"}},
+    {"expectedRevision":0,"preferences":{"role":1}},
+    {"expectedRevision":0,"preferences":{"responseLanguage":"custom"}},
+    {"expectedRevision":0,"preferences":{"responseLanguage":"custom","customLanguage":"  "}},
+    {"expectedRevision":0,"preferences":{"approvalMode":"full_access"}},
+    {"expectedRevision":0,"preferences":{},"unexpected":true}
+  ],
+  "validResponses": [
+    {"revision":0,"preferences":{}},
+    {"revision":1,"preferences":{"responseLanguage":"en","customInstructions":"Prefer paragraphs."}}
+  ],
+  "invalidResponses": [{"revision":-1,"preferences":{}},{"revision":0,"preferences":{"tone":"unsupported"}},{"revision":0,"preferences":{},"apiKey":"unexpected"}]
+}
