@@ -1,13 +1,18 @@
 import type { EidosRuntimeAPI } from "../../../shared/ipc-api.js";
+import type { ProjectRootDto } from "../../../shared/project-workspaces.js";
 import type { GitDiffScope, ReviewCommentCreateInput } from "../contracts.js";
 
 /** Bind UI calls to one root; Runtime still resolves and verifies the checkout. */
-export function gitWorkspaceClient(rootId: string, checkout?: { mountedPath: string; repositoryPath: string }, projectId?: string): EidosRuntimeAPI {
+export function gitWorkspaceClient(rootId: string, checkout?: { roots: readonly ProjectRootDto[]; repositoryPath: string }, projectId?: string): EidosRuntimeAPI {
   const client = window.eidosRuntime;
   const draftBinding = (sessionId: string) => sessionId.startsWith("draft-") && projectId ? { projectId } : {};
   return {
     ...client,
-    openWorkspacePathInEditor: (sessionId: string, path: string) => client.openWorkspacePathInEditor(sessionId, checkout ? gitFilePath(path, checkout.repositoryPath, checkout.mountedPath) : path, rootId),
+    openWorkspacePathInEditor: async (sessionId: string, path: string) => {
+      const target = checkout ? gitFileTarget(path, checkout.repositoryPath, checkout.roots) : { path, rootId };
+      if (!target) throw new Error("这个文件不在项目添加的文件夹中。");
+      await client.openWorkspacePathInEditor(sessionId, target.path, target.rootId);
+    },
     listReviewComments: (sessionId: string, path?: string, scope?: GitDiffScope) => sessionId.startsWith("draft-") ? Promise.resolve([]) : client.repositoryGit({ rootId, method: "review/listComments", parameters: { sessionId, ...(path && scope ? { path, scope } : {}) } }).then((result) => "comments" in result ? result.comments : []),
     createReviewComment: (sessionId: string, input: ReviewCommentCreateInput, operationId: string) => client.repositoryGit({ rootId, method: "review/createComment", parameters: { sessionId, operationId, ...input } }).then((result) => { if (!("comment" in result)) throw new Error("评论响应无效。"); return result.comment; }),
     deleteReviewComment: (sessionId: string, commentId: string, operationId: string) => client.repositoryGit({ rootId, method: "review/deleteComment", parameters: { sessionId, commentId, operationId } }).then((result) => { if (!("commentId" in result)) throw new Error("评论响应无效。"); return result.commentId; }),
@@ -29,9 +34,13 @@ export function gitWorkspaceClient(rootId: string, checkout?: { mountedPath: str
   };
 }
 
-export function gitFilePath(path: string, repositoryPath: string, mountedPath: string): string {
-  if (!path || path.startsWith("/") || path.includes("\0") || path.split("/").some(part => !part || part === "." || part === "..")) throw new Error("Git 文件路径无效。");
-  const absolute = `${repositoryPath}/${path}`;
-  if (!absolute.startsWith(`${mountedPath}/`)) throw new Error("这个文件不在项目添加的文件夹中。");
-  return absolute.slice(mountedPath.length + 1);
+export function gitFileTarget(path: string, repositoryPath: string, roots: readonly Pick<ProjectRootDto, "id" | "path">[]): { path: string; rootId: string } | undefined {
+  if (!path || path.startsWith("/") || path.includes("\0")
+    || path.split("/").some(part => !part || part === "." || part === "..")) return undefined;
+  const absolute = `${repositoryPath.replace(/\/$/, "")}/${path}`;
+  for (const root of [...roots].sort((a, b) => b.path.length - a.path.length)) {
+    const prefix = root.path.endsWith("/") ? root.path : `${root.path}/`;
+    if (absolute.startsWith(prefix)) return { path: absolute.slice(prefix.length), rootId: root.id };
+  }
+  return undefined;
 }

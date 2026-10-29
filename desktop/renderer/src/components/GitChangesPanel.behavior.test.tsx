@@ -461,6 +461,36 @@ describe("GitChangesPanel", () => {
     ));
   });
 
+  it("opens files through every mounted folder of the selected checkout", async () => {
+    const paths = ["src/main.ts", "tests/main.ts", "README.md"];
+    const repositoryStatus = { ...status, stagedFiles: paths, unstagedFiles: [], untrackedFiles: [], conflictFiles: [] };
+    const repositoryGit = vi.fn<EidosRuntimeAPI["repositoryGit"]>(async (request) => {
+      if (request.method === "session/gitStatus") return repositoryStatus;
+      if (request.method === "session/gitDiff") return summaryDiff({ changedFiles: paths });
+      if (request.method === "review/listComments") return { comments: [] };
+      throw new Error(`Unexpected repository request: ${request.method}`);
+    });
+    const openWorkspacePathInEditor = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("eidosRuntime", { repositoryGit, openWorkspacePathInEditor });
+    renderPanel({ workspaceRoot: "/repo", roots: [
+      { id: "src", path: "/repo/src", repositoryRoot: "/repo" },
+      { id: "tests", path: "/repo/tests", repositoryRoot: "/repo" },
+      { id: "other", path: "/another-checkout", repositoryRoot: "/another-checkout" },
+    ] });
+
+    const sourceButton = await screen.findByRole("button", { name: "在编辑器中打开 src/main.ts" });
+    const testButton = screen.getByRole("button", { name: "在编辑器中打开 tests/main.ts" });
+    expect(sourceButton).toBeEnabled();
+    expect(testButton).toBeEnabled();
+    expect(screen.getByRole("button", { name: "在编辑器中打开 README.md" })).toBeDisabled();
+    fireEvent.click(sourceButton);
+    fireEvent.click(testButton);
+    await waitFor(() => {
+      expect(openWorkspacePathInEditor).toHaveBeenCalledWith("session-a", "main.ts", "src");
+      expect(openWorkspacePathInEditor).toHaveBeenCalledWith("session-a", "main.ts", "tests");
+    });
+  });
+
   it("does not offer index or discard actions for a conflict", async () => {
     renderPanel();
     fireEvent.click(screen.getByRole("button", { name: "conflict.txt" }));

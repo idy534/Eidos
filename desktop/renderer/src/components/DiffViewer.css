@@ -84,7 +84,7 @@
   margin: 0;
   border: 0;
   border-radius: 0;
-  padding: 0.35rem 0;
+  padding: 0 0 0.35rem 0;
   background: var(--surface);
   flex: 1 1 auto;
   min-height: 0;
@@ -92,6 +92,12 @@
   overflow: auto;
   font: var(--font-size-code)/var(--line-height-code) var(--font-code);
   tab-size: 2;
+}
+.diff-file-card pre.diff-file-body code,
+.diff-file-body code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
 }
 .diff-file-card:hover .diff-file-body::-webkit-scrollbar-thumb,
 .diff-file-body:hover::-webkit-scrollbar-thumb {
@@ -108,8 +114,8 @@
 .diff-row {
   display: flex;
   align-items: stretch;
-  min-width: max-content;
   width: 100%;
+  min-width: 100%;
   border-left: 3px solid transparent;
   transition: background-color 80ms ease;
 }

@@ -18,6 +18,8 @@ Eidos 的项目保存稳定的 Project ID、名称、多个文件夹、一个主
 
 `gitWriteAccess=request` 选择本次 cwd 所属的仓库，并要求 `justification`。Runtime 从 Session 固定的 Git metadata 目录身份创建 Run 快照，并在审批前、启动前和命令结束后核对身份。普通 Shell 也会在启动前核对所有冻结根的 Git metadata 身份。Git metadata 被同路径替换时，Shell 不会启动；命令运行时身份发生变化会要求后续对账。项目的主要文件夹可以没有 Git；次文件夹仍可独立申请 Git 写入。多个已绑定文件夹相互嵌套时，cwd 解析后优先使用最深目录的身份。Runtime 不解析 Shell 命令中的 `cd` 或 `git -C` 来推断授权仓库。Agent 需要把 cwd 设到目标仓库或其子目录。Shell 启动前会在环境准备前后核对所有冻结的根；目录被替换时，命令返回 `workspace_identity_changed`，并且不会启动。
 
+普通 Shell 的 Git metadata 检查只核对固定路径和目录身份，不加载各个仓库的 Git 配置。属于其他仓库的次目录即使 Git 配置损坏，也不会阻止主目录中的普通命令。Git 写权限申请仍会解析并核对本次 cwd 的仓库。Runtime 在同一个检查点内只核验一次相同路径与身份；审批前、启动前和执行后的复核继续分别保留。
+
 Files 面板提供文件夹选择器。文件预览、资源读取、文件内查找和通知按具体根处理。文件引用候选包含各个根，并用路径区分同名文件。文件链接携带根身份。MCP 在启动和调用前核验固定的目录身份。Hook 的改动观察复用现有 fd 扫描，并在扫描前后核对根。Shell 的改动观察同时覆盖各根；嵌套根中同一文件只报告一次，并沿用主要根的相对路径；不完整观察继续报告未知范围。
 
 首次 Shell 调用可能没有完整的执行前清单。命令仍可执行，结果通过 `workspaceChangeState=unknown` 和不完整清单字段说明观察范围。调用者不能仅凭此时的 `workspaceChanged=false` 判断文件没有变化。次目录中的长命令继续使用同一个 Run 的 `write_stdin`、取消和退出结果落库流程。Runtime 重启不会重放这些命令。
@@ -25,6 +27,8 @@ Files 面板提供文件夹选择器。文件预览、资源读取、文件内�
 ## Git 与 Worktree
 
 Review 面板按 checkout 选择 Git 目标。每个 checkout 保留独立状态、Diff、分支操作和评论。系统不会因为两个 checkout 共用 Git common directory 就合并它们。Git 控件作用于所选的整个仓库，包括只挂载仓库子目录的情况。文件和 Agent Shell 的基础权限仍限制在已添加的目录；Git 目标不会扩大这些权限。界面显示 Git 操作对应的仓库路径。
+
+Review 的编辑器入口会在所选 checkout 的全部已挂载目录中匹配文件。同一仓库同时挂载多个子目录时，各子目录内的文件都可以打开。嵌套挂载使用最深的匹配目录及其根 ID。未挂载文件和其他 checkout 的目录不会因此获得访问权限。
 
 草稿聊天可以打开审查，切换项目中的 Git 仓库，查看当前工作区状态和文件 Diff。草稿请求通过 `projectId` 和 `rootId` 绑定已保存的项目。Runtime 从项目配置核对所选根；打开审查不会创建 Session、Worktree 或额外项目。草稿选择 Worktree 模式时，审查仍预览源目录。正式 Worktree 在创建聊天时建立。草稿不请求会话评论或远程 Git 工作流；界面在创建聊天后再开放评论、Git 写操作和编辑器入口。正式会话继续使用冻结的根，不受草稿参数影响。
 
@@ -41,5 +45,7 @@ Checkpoint 和 Rewind 继续覆盖主仓库现有 Git 能力可保存的内容�
 SQLite Schema v45 增加多目录模型，v46 固定未完成 Worktree 创建操作的目录快照，并为旧 Project Session 回填 Git metadata 目录身份。v47 保存 Worktree 私有 gitdir 的目录身份，并为有效的旧 Worktree 回填。系统可以从 v44、v45 或 v46 升级。迁移保留原 Project、Session、Worktree 和快照 ID，并为原单目录项目补齐文件夹记录。已经有 Session 的旧创建记录会从该 Session 的已保存目录快照补齐。未完成 Fork 和 Checkpoint Fork 会从有效 Git 快照关联的源 Session 读取根快照。缺少有效源快照或根快照的旧 Worktree 创建会进入 `cleanup_required`，重试会返回 `WORKTREE_RECOVERY_REQUIRED`；系统不会按升级后的项目配置静默绑定。旧 Session 和 Worktree 的 Git metadata 只有在路径、目录身份和仓库绑定都能核实时才会回填；无法核实的根会让 Git 操作 fail closed。会话通过 `project_id` 保留项目归属。Worktree 和快照保存独立来源字段。迁移失败会回滚 Schema；系统不会把部分迁移当作成功。
 
 旧的单目录创建接口仍可使用。新建多目录项目使用 `project/createFolders`；读取和修改使用 `project/read` 与 `project/update`。Python Schema 生成 Desktop 的项目与 Git 请求契约。项目更新和 Event/Outbox 在同一事务提交。项目会话的本地创建操作按 Project ID 去重，不按可变的主要目录去重。旧版已完成操作会先核对持久 Session 的 Project 绑定再重放。会话创建在准备时固定根快照，Worktree 创建期间的项目编辑不会改变它。重启后的操作重试也使用已保存的快照。同一创建操作的恢复和首次请求使用同一把操作锁。Git 创建前后核对源目录和 Git metadata 身份。显式切换同仓库中的主子目录会被视为不同请求。定时任务与渠道通过 Project ID 创建新会话。Hook 的改动观察覆盖所有根；观察不完整时，系统使 Run 的 Workspace 缓存失效。旧 Run 的单根快照继续可读。
+
+旧 Run 快照缺少 Git metadata 身份时，Runtime 只从目录路径、设备、inode、所有者及 Git 路径都完全匹配的已持久 Session 绑定中补充读取视图。Runtime 不按当前文件系统重新接受目录，也不改写原 Run 快照。无法找到匹配绑定时，Shell 继续拒绝缺少身份的 Git 目录。
 
 实现者通过多目录专题测试、相关 Git/Worktree/恢复测试、两端协议检查、真实 Seatbelt 和隔离 Electron 界面检查验证本次改动。测试记录只说明实际执行范围，不表示 Full Suite、真实 Provider/MCP 服务或发布包已经通过。

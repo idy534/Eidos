@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { gitFilePath } from "./git-workspace-client.js";
+import { gitFileTarget } from "./git-workspace-client.js";
 import { ProjectMutationRetry } from "./project-mutation-retry.js";
 
 test("project edit retry reuses an operation ID until the command changes or resets", () => {
@@ -14,8 +14,13 @@ test("project edit retry reuses an operation ID until the command changes or res
 });
 
 test("Git paths stay relative to the mounted subdirectory", () => {
-  assert.equal(gitFilePath("src/main.ts", "/work/repo", "/work/repo/src"), "main.ts");
-  assert.equal(gitFilePath("src/main.ts", "/managed/task", "/managed/task/src"), "main.ts");
-  assert.throws(() => gitFilePath("README.md", "/work/repo", "/work/repo/src"), /不在项目/);
-  assert.throws(() => gitFilePath("src/../secret", "/work/repo", "/work/repo/src"));
+  const roots = [{ id: "src", path: "/work/repo/src" }, { id: "tests", path: "/work/repo/tests" }];
+  assert.deepEqual(gitFileTarget("src/main.ts", "/work/repo", roots), { path: "main.ts", rootId: "src" });
+  assert.deepEqual(gitFileTarget("tests/main.ts", "/work/repo", roots), { path: "main.ts", rootId: "tests" });
+  assert.deepEqual(gitFileTarget("src/main.ts", "/managed/task", [{ id: "src", path: "/managed/task/src" }]), { path: "main.ts", rootId: "src" });
+  for (const path of ["README.md", "src/../secret", "src-other/file", "/src/file", "src/\0file"]) {
+    assert.equal(gitFileTarget(path, "/work/repo", roots), undefined);
+  }
+  assert.deepEqual(gitFileTarget("main.ts", "/", [{ id: "filesystem", path: "/" }]), { path: "main.ts", rootId: "filesystem" });
+  assert.deepEqual(gitFileTarget("src/main.ts", "/work/repo", [...roots, { id: "repo", path: "/work/repo" }]), { path: "main.ts", rootId: "src" });
 });

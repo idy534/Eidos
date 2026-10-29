@@ -14,6 +14,7 @@ from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedMod
 from eidos_runtime.protocol.methods import SessionCreateRequestDto
 from eidos_runtime.runtime.engine import RuntimeEngine
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
+from eidos_runtime.runtime.resolution import RunResolutionSnapshot, WorkspaceIdentitySnapshot, canonical_json
 from eidos_runtime.sandbox.seatbelt import is_seatbelt_usable
 from test_multi_workspace_execution import _create_project, _repository, _runtime
 
@@ -131,6 +132,80 @@ def test_ordinary_shell_allows_unbound_nested_git_cwd(tmp_path: Path) -> None:
 
         assert result["code"] == "ok", result
         assert Path(result["data"]["stdout"].strip()) == outer / "nested"
+    finally:
+        store.close()
+
+
+def test_ordinary_shell_does_not_require_secondary_git_configuration(tmp_path: Path) -> None:
+    primary = _repository(tmp_path / "primary", "primary\n")
+    secondary = _repository(tmp_path / "secondary", "secondary\n")
+    store, _manager, projects, sessions = _runtime(tmp_path)
+    try:
+        project = _create_project(projects, [("primary", primary), ("secondary", secondary)], "primary")
+        session = sessions.create(SessionCreateRequestDto(projectId=project.id)).root
+        (secondary / ".git" / "config").write_text("[invalid config\n")
+        _run_id, result = _run(store, session["id"], {"command": "printf primary-ok"}, mode="full_access", warmup=False)
+        assert result["code"] == "ok", result
+        assert result["data"]["stdout"] == "primary-ok"
+
+        from eidos_runtime.runtime.shell_orchestration import GitWriteAccessError, resolve_git_write_roots
+        secondary_identity = store.workspace_for_session(session["id"]).additional_roots[0]
+        with pytest.raises(GitWriteAccessError, match="git_repository_unavailable"):
+            resolve_git_write_roots(secondary_identity)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("execution_mode", ["local", "worktree"])
+@pytest.mark.parametrize("changed_binding", [False, True])
+def test_legacy_run_uses_only_matching_persisted_git_identities(
+    tmp_path: Path, execution_mode: str, changed_binding: bool,
+) -> None:
+    repository = _repository(tmp_path / "repository", "base\n")
+    store, _manager, projects, sessions = _runtime(tmp_path)
+    try:
+        project = _create_project(projects, [("root", repository)], "root")
+        session = sessions.create(SessionCreateRequestDto(projectId=project.id, executionMode=execution_mode)).root
+        run, _ = store.enqueue_run(session["id"], "continue old Run", approval_mode="full_access")
+        snapshot = store.read_run_resolution_snapshot(run["id"])
+        values = snapshot.model_dump(mode="json", exclude={"id", "snapshot_hash"}, exclude_none=True)
+        values["workspace_identity"].pop("git_dir_identity")
+        values["workspace_identity"].pop("git_common_identity")
+        values["workspace_identity"] = WorkspaceIdentitySnapshot.model_validate(values["workspace_identity"])
+        legacy = RunResolutionSnapshot.create(**values)
+        legacy_json = canonical_json(legacy.model_dump(mode="json"))
+        with store.connection:
+            store.connection.execute(
+                "UPDATE run_resolution_snapshots SET id=?, snapshot_hash=?, snapshot_json=? WHERE run_id=?",
+                (legacy.id, legacy.snapshot_hash, legacy_json, run["id"]),
+            )
+        identity = store.workspace_for_run(run["id"])
+        assert identity.git_dir_identity is not None
+        if changed_binding:
+            git_dir = identity.git_dir
+            assert git_dir is not None
+            git_dir.rename(git_dir.with_name(git_dir.name + "-old"))
+            git_dir.mkdir()
+        # Reopen persisted state before continuing the old Run.
+        store.close()
+        store, _manager, _projects, _sessions = _runtime(tmp_path)
+        if changed_binding:
+            from eidos_runtime.runtime.shell_orchestration import GitWriteAccessError, verify_git_metadata_identities
+            with pytest.raises(GitWriteAccessError, match="git_repository_identity_changed"):
+                verify_git_metadata_identities(store.workspace_for_run(run["id"]))
+            return
+        claimed = store.claim_next_run()
+        assert claimed is not None and claimed["id"] == run["id"]
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall("shell", "run_shell", {"command": "printf resumed"}),)),
+            ModelResponse(text="Checked"),
+        ])
+        RuntimeEngine(store, model, lambda _: None, shell_available=True).run(run["id"], threading.Event())
+        result = _result(store, run["id"])
+        assert result["code"] == "ok", result
+        assert result["data"]["stdout"] == "resumed"
+        saved_json = store.connection.execute("SELECT snapshot_json FROM run_resolution_snapshots WHERE run_id=?", (run["id"],)).fetchone()[0]
+        assert saved_json == legacy_json
     finally:
         store.close()
 

@@ -980,8 +980,9 @@ def test_worktree_root_rejects_replaced_symlink_parent(tmp_path: Path) -> None:
         store.close()
 
 
+@pytest.mark.parametrize("missing_common_dir", ["none", "worktree", "both"])
 def test_v46_migration_pins_existing_worktree_gitdir_identity(
-    tmp_path: Path,
+    tmp_path: Path, missing_common_dir: str,
 ) -> None:
     from eidos_runtime.git.errors import WorktreeError
 
@@ -1002,6 +1003,10 @@ def test_v46_migration_pins_existing_worktree_gitdir_identity(
         worktree_id = session["worktree"]["worktreeId"]
         connection = store.connection
         assert connection is not None
+        if missing_common_dir != "none":
+            connection.execute("UPDATE worktrees SET git_common_dir=NULL WHERE id=?", (worktree_id,))
+        if missing_common_dir == "both":
+            connection.execute("UPDATE projects SET git_repository_root=NULL, git_common_dir=NULL WHERE id=?", (project.id,))
         connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_uid")
         connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_inode")
         connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_dev")
@@ -1019,6 +1024,11 @@ def test_v46_migration_pins_existing_worktree_gitdir_identity(
             managed_root=tmp_path / "managed-worktrees",
         )
         worktree = migrated_manager.read_worktree(worktree_id)
+        if missing_common_dir == "both":
+            assert worktree.git_dir_identity is None
+            with pytest.raises(WorktreeError):
+                migrated_manager.execution_identity(worktree_id)
+            return
         assert worktree.git_dir_identity is not None
         private_git_dir = Path(worktree.git_dir)
         displaced = private_git_dir.with_name(private_git_dir.name + "-displaced")
@@ -1029,6 +1039,21 @@ def test_v46_migration_pins_existing_worktree_gitdir_identity(
             migrated_manager.execution_identity(worktree_id)
     finally:
         store.close()
+
+
+def test_worktree_git_status_accepts_the_frozen_checkout(tmp_path: Path) -> None:
+    repository = _repository(tmp_path / "repository", "base\n")
+    store, _manager, projects, sessions = _runtime(tmp_path)
+    try:
+        project = _create_project(projects, [("root", repository)], "root")
+        session = sessions.create(SessionCreateRequestDto(projectId=project.id, executionMode="worktree")).root
+        request = SessionGitStatusRequestDto(sessionId=session["id"], rootId="root")
+        status = sessions.for_git_request(request).git_status(request).root
+        assert status["head"] == _git(repository, "rev-parse", "HEAD")
+    finally:
+        store.close()
+
+
 def test_worktree_rejects_symlinked_parent_of_mapped_secondary_root(tmp_path: Path) -> None:
     repository = _repository(tmp_path / "repository", "primary\n")
     nested = repository / "docs" / "sub"

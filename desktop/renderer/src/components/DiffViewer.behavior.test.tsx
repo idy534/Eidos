@@ -26,8 +26,8 @@ describe("tool diff filenames", () => {
   it("keeps multi-file titles paired with their respective open actions", () => {
     const openFile = vi.fn();
     render(<DiffViewer diff={added + added.replaceAll(path, "build/selftest.py")} onOpenFile={openFile} />);
-    fireEvent.click(screen.getByRole("button", { name: path }));
-    fireEvent.click(screen.getByRole("button", { name: "build/selftest.py" }));
+    fireEvent.click(screen.getByRole("button", { name: "receipt.py" }));
+    fireEvent.click(screen.getByRole("button", { name: "selftest.py" }));
     expect(openFile.mock.calls).toEqual([[path], ["build/selftest.py"]]);
     expect(screen.getAllByRole("button", { name: "复制代码差异" })).toHaveLength(2);
   });
@@ -44,7 +44,7 @@ describe("tool diff filenames", () => {
       onOpenFile={openFile} />);
     container.querySelectorAll("details").forEach((details) => { details.open = true; });
     const tool = container.querySelector(".tool-item")!;
-    expect(tool.querySelector(".diff-file-name")).toHaveTextContent(path);
+    expect(tool.querySelector(".diff-file-name")).toHaveTextContent("receipt.py");
     expect(tool.querySelector(".tool-file-list") !== null).toBe(toolName !== "apply_patch");
     const link = tool.querySelector(".diff-file-name-link") ?? tool.querySelector(".tool-file-link");
     expect(link).not.toBeNull();
@@ -59,8 +59,30 @@ describe("tool diff filenames", () => {
     }) });
     render(<ToolTextView sessionId="session" toolCallId="tool" field="diff" sha256={"a".repeat(64)} totalBytes={100_000} onOpenFile={openFile} />);
     fireEvent.click(screen.getByRole("button", { name: "查看完整补丁" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: path })).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: path }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "receipt.py" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "receipt.py" }));
     expect(openFile).toHaveBeenCalledWith(path);
+  });
+
+  it("renders only filename in diff header when path is a full absolute path and shows full path in link tooltip on hover", async () => {
+    const openFile = vi.fn();
+    const fullPath = "/Users/xielei/Documents/AF/appforge-service/internal/app/workflow/version/service_test.go";
+    const absDiff = `diff --git a/${fullPath} b/${fullPath}\n--- a/${fullPath}\n+++ b/${fullPath}\n@@ -0,0 +1 @@\n+package version\n`;
+    const { container } = render(<DiffViewer diff={absDiff} onOpenFile={openFile} />);
+    const button = screen.getByRole("button", { name: "service_test.go" });
+    expect(button).toBeInTheDocument();
+    expect(container.querySelector(".diff-file-name")).toHaveTextContent("service_test.go");
+    expect(button).toHaveAttribute("title", `打开当前文件：${fullPath}`);
+
+    fireEvent.mouseEnter(button);
+    await waitFor(() => {
+      const tooltip = screen.getByRole("tooltip");
+      expect(tooltip).toBeInTheDocument();
+      expect(tooltip).toHaveTextContent(`打开当前文件：${fullPath}`);
+      expect(tooltip).toHaveClass("eidos-link-tooltip");
+    });
+
+    fireEvent.click(button);
+    expect(openFile).toHaveBeenCalledWith(fullPath);
   });
 });

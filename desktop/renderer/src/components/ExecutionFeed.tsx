@@ -37,7 +37,7 @@ import { CopyIcon, CheckmarkIcon, AutomationsIcon, CloseIcon } from "./MenuIcons
 import { ForkIcon } from "./ForkIcon.js";
 import { TurnResults } from "./TurnResults.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
-import { DiffViewer } from "./DiffViewer.js";
+import { DiffViewer, parseMultiFileDiff } from "./DiffViewer.js";
 import { AutomationToolCard } from "./automations/AutomationToolCard.js";
 import { Tooltip } from "./Tooltip.js";
 import { SkillIcon, AgentIcon as SubagentToolIcon, MemoryIcon } from "./InputPicker.js";
@@ -1883,10 +1883,10 @@ function ToolItem({
                         title={`打开当前文件：${path}`}
                         onClick={() => onOpenFile(path)}
                       >
-                        {path}
+                        {item.kind === "file_change" ? pathBasename(path) : path}
                       </button>
                     ) : (
-                      <span className="tool-file-link" title={path}>{path}</span>
+                      <span className="tool-file-link" title={path}>{item.kind === "file_change" ? pathBasename(path) : path}</span>
                     )}
                   </div>
                 ))}
@@ -2269,6 +2269,25 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
   const rawImagePath = stringField(args, "path") || stringField(args, "filePath") || stringField(data, "path");
   const imageFileName = rawImagePath ? pathBasename(rawImagePath) : "";
   const path = stringField(args, "path") || stringField(args, "filePath");
+  let editRawPath = path;
+  let patchFileCount = 0;
+  if (!editRawPath && toolCall.toolName === "apply_patch") {
+    const patchFiles = toolFilePaths(toolCall);
+    patchFileCount = patchFiles.length;
+    if (patchFiles.length === 1) {
+      editRawPath = patchFiles[0]!;
+    } else if (patchFiles.length === 0) {
+      const patchText = stringField(args, "patch");
+      if (patchText) {
+        const parsed = parseMultiFileDiff(patchText);
+        patchFileCount = parsed.length;
+        if (parsed.length === 1 && parsed[0]?.filename) {
+          editRawPath = parsed[0].filename;
+        }
+      }
+    }
+  }
+  const editFileName = editRawPath ? pathBasename(editRawPath) : "";
   const query = stringField(args, "query") || stringField(args, "pattern") || stringField(data, "query");
   const running = status === "in_progress";
   const subagentInfo = isSubagentTool(toolCall.toolName)
@@ -2282,6 +2301,10 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
   const skillName = skillInfo?.name || "";
   const isPermissions = toolCall.toolName === "request_permissions";
   const permissionName = isPermissions ? formatPermissionNames(args, data) : "";
+
+  const applyPatchLabel = patchFileCount > 1
+    ? (running ? `正在编辑 ${patchFileCount} 个文件` : `已编辑 ${patchFileCount} 个文件`)
+    : (running ? `正在编辑 ${editFileName || "文件"}` : `已编辑 ${editFileName || "文件"}`);
 
   const baseLabels: Record<string, string> = {
     automation: "定时任务",
@@ -2331,9 +2354,9 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
     tool_search: running
       ? (query ? `正在搜索工具 [${query}]` : "正在搜索工具")
       : (query ? `已搜索工具 [${query}]` : "已搜索工具"),
-    write_file: running ? `正在编辑 ${path || "文件"}` : `已编辑 ${path || "文件"}`,
-    apply_patch: running ? `正在编辑 ${path || "文件"}` : `已编辑 ${path || "文件"}`,
-    delete_file: running ? `正在删除 ${path || "文件"}` : `已删除 ${path || "文件"}`,
+    write_file: running ? `正在编辑 ${editFileName || "文件"}` : `已编辑 ${editFileName || "文件"}`,
+    apply_patch: applyPatchLabel,
+    delete_file: running ? `正在删除 ${editFileName || "文件"}` : `已删除 ${editFileName || "文件"}`,
     declare_outputs: running ? "正在声明产物" : result.outcome === "success" ? "已声明产物" : "产物声明未完成",
     read_tool_output: "正在查看工具输出",
     skill_read: running

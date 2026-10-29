@@ -1,7 +1,7 @@
 import { CreateBranchDialog } from "./CreateBranchDialog.js";
 import type { EidosRuntimeAPI } from "../../../shared/ipc-api.js";
 import type { ProjectRootDto } from "../../../shared/project-workspaces.js";
-import { gitFilePath, gitWorkspaceClient } from "../app/git-workspace-client.js";
+import { gitFileTarget, gitWorkspaceClient } from "../app/git-workspace-client.js";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Diff,
@@ -68,7 +68,7 @@ interface GitChangesPanelProps {
   } | undefined;
   items?: import("../contracts.js").Item[] | undefined;
   workspaceRoot: string;
-  editorMountedPath?: string | undefined;
+  editorRoots?: ProjectRootDto[] | undefined;
   scope: GitDiffScope;
   status: SessionGitStatus | undefined;
   summary?: SessionGitDiff | undefined;
@@ -209,7 +209,8 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
   const root = repositories.find((entry) => entry.id === selected);
   const scoped = Boolean(root);
   const repositoryPath = root?.repositoryRoot === props.roots?.[0]?.repositoryRoot ? props.workspaceRoot : root?.repositoryRoot;
-  const client = useMemo(() => selected && root && repositoryPath ? gitWorkspaceClient(selected, { mountedPath: root.path, repositoryPath }, props.projectId) : undefined, [selected, root?.path, repositoryPath, props.projectId]);
+  const editorRoots = useMemo(() => (props.roots ?? []).filter((entry) => entry.repositoryRoot === root?.repositoryRoot), [props.roots, root?.repositoryRoot]);
+  const client = useMemo(() => selected && root && repositoryPath ? gitWorkspaceClient(selected, { roots: editorRoots, repositoryPath }, props.projectId) : undefined, [selected, editorRoots, repositoryPath, props.projectId]);
   useEffect(() => {
     if (!scoped || !client) return;
     let current = true; setLoading(true); setError(undefined); setStatus(undefined);
@@ -223,7 +224,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
   return <div className="git-repository-panel">
     <GitChangesContent {...scopedProps} key={`${props.sessionId}:${selected}`} gitClient={client}
       repositories={repositories} selectedRepositoryId={selected} onSelectRepository={setSelected}
-      workspaceRoot={repositoryPath ?? root.path} editorMountedPath={root.path}
+      workspaceRoot={repositoryPath ?? root.path} editorRoots={editorRoots}
       status={status} loading={loading} error={error}
       readDiff={client.readSessionGitDiff} openInEditor={client.openWorkspacePathInEditor} listComments={client.listReviewComments}
       createComment={client.createReviewComment} deleteComment={client.deleteReviewComment}
@@ -257,7 +258,7 @@ function GitChangesContent(props: GitChangesPanelProps) {
   const {
     sessionId,
     workspaceRoot,
-    editorMountedPath,
+    editorRoots,
     scope,
     status,
     summary,
@@ -736,14 +737,7 @@ function GitChangesContent(props: GitChangesPanelProps) {
                 comment.status === "stale"
               ));
               const draftAnchor = draft?.key === key ? draft.anchor : undefined;
-              let editorPathAllowed = true;
-              if (editorMountedPath) {
-                try {
-                  gitFilePath(path, workspaceRoot, editorMountedPath);
-                } catch {
-                  editorPathAllowed = false;
-                }
-              }
+              const editorPathAllowed = !editorRoots || Boolean(gitFileTarget(path, workspaceRoot, editorRoots));
               return (
                 <article className="git-review-file" key={key}>
                   <header className="git-review-file-header">

@@ -6,6 +6,7 @@ from eidos_runtime.persistence.hooks import HookRepository
 from eidos_runtime.model.context_projection import model_result_json
 
 import hashlib
+from dataclasses import replace
 import json
 from pathlib import Path
 import sqlite3
@@ -28,6 +29,7 @@ from eidos_runtime.db.errors import (
     RunCompletionDeferred,
     ResourceNotFoundError,
     StorageError,
+    WorkspaceIdentityChangedError,
 )
 from eidos_runtime.db.events import append_event
 from eidos_runtime.db.mappers import (
@@ -427,8 +429,9 @@ class ExecutionRepository(Repository):
         with self.lock:
             row = self._connection().execute(
                 """
-                SELECT snapshot_json FROM run_resolution_snapshots
-                WHERE run_id = ?
+                SELECT snap.snapshot_json, r.session_id
+                FROM run_resolution_snapshots snap JOIN runs r ON r.id = snap.run_id
+                WHERE snap.run_id = ?
                 """,
                 (run_id,),
             ).fetchone()
@@ -441,7 +444,7 @@ class ExecutionRepository(Repository):
         except (TypeError, ValueError):
             raise StorageError("run_resolution_snapshot_invalid") from None
         identity = snapshot.workspace_identity
-        return WorkspaceIdentity(
+        workspace = WorkspaceIdentity(
             root_id=identity.root_id or "",
             additional_roots=tuple(WorkspaceIdentity(
                 root_id=root.root_id or "", path=Path(root.path), device=root.device,
@@ -463,6 +466,38 @@ class ExecutionRepository(Repository):
             git_dir_identity=identity.git_dir_identity,
             git_common_identity=identity.git_common_identity,
         )
+        roots = (workspace, *workspace.additional_roots)
+        if not any(
+            (root.git_dir is not None and root.git_dir_identity is None)
+            or (root.git_common_dir is not None and root.git_common_identity is None)
+            for root in roots
+        ):
+            return workspace
+        # Older Run snapshots lack Git directory identities. Reuse only the
+        # migrated Session's persisted identity for the exact same binding.
+        with self.lock:
+            try:
+                saved = execution_workspace_for_session(self._connection(), row["session_id"])
+            except (StorageError, WorkspaceIdentityChangedError):
+                return workspace
+
+        def pin(root: WorkspaceIdentity) -> WorkspaceIdentity:
+            for candidate in (saved, *saved.additional_roots):
+                binding = replace(
+                    candidate,
+                    git_dir_identity=root.git_dir_identity,
+                    git_common_identity=root.git_common_identity,
+                    additional_roots=(),
+                )
+                if binding == replace(root, additional_roots=()):
+                    return replace(
+                        root,
+                        git_dir_identity=root.git_dir_identity or candidate.git_dir_identity,
+                        git_common_identity=root.git_common_identity or candidate.git_common_identity,
+                    )
+            return root
+
+        return replace(pin(workspace), additional_roots=tuple(pin(root) for root in workspace.additional_roots))
 
     def workspace_for_session(self, session_id: str) -> WorkspaceIdentity:
         with self.lock:

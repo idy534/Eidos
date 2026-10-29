@@ -831,12 +831,12 @@
   min-width: 0;
 }
 
-.sidebar-hover-card__title-group {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  min-width: 0;
+.sidebar-hover-card__header--project .sidebar-hover-card__title {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar-hover-card__meta-group {

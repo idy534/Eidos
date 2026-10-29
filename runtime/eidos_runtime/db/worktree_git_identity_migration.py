@@ -48,7 +48,7 @@ def _backfill_worktree_git_identity(connection: sqlite3.Connection) -> None:
     for row in rows:
         if row[4] == "deleted":
             continue
-        expected_common = row[3] or row[6]
+        expected_common = row[3] or row[5]
         if row[1] is None or row[2] is None or expected_common is None:
             continue
         try:

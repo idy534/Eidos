@@ -272,14 +272,9 @@ export function SidebarTooltip({ state, sourceSession, onOpenSourceSession, onOp
       {state.kind === "project" ? (
         <>
           <div className="sidebar-hover-card__header sidebar-hover-card__header--project">
-            <div className="sidebar-hover-card__title-group">
-              <span className="sidebar-hover-card__icon sidebar-hover-card__icon--project" aria-hidden="true">
-                <FolderIconSvg />
-              </span>
-              <span className="sidebar-hover-card__title" title={state.projectName}>
-                {state.projectName}
-              </span>
-            </div>
+            <span className="sidebar-hover-card__title" title={state.projectName}>
+              {state.projectName}
+            </span>
             {state.projectless ? (
               <span className="sidebar-hover-card__badge">最近会话</span>
             ) : (

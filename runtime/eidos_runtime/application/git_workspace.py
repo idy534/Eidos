@@ -65,9 +65,7 @@ def scoped_git_application(application, request):
             )
         except (WorkspacePathError, WorktreeError) as error:
             raise ApplicationError("WORKSPACE_IDENTITY_CHANGED") from error
-        if worktree_identity.git_common_dir != str(
-            Path(root.git_common_dir).resolve(strict=False)
-        ):
+        if worktree_identity.git_common_dir != Path(root.git_common_dir).resolve(strict=False):
             raise ApplicationError("WORKSPACE_IDENTITY_CHANGED")
         return application
     try:

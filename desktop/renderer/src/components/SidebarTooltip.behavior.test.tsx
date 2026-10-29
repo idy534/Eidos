@@ -80,6 +80,8 @@ describe("SidebarTooltip rendering", () => {
     expect(screen.getByText("3 次对话")).toBeInTheDocument();
     expect(screen.getByLabelText("已置顶")).toBeInTheDocument();
     expect(screen.getByText("~/Projects/Eidos")).toBeInTheDocument();
+    const header = tooltip.querySelector(".sidebar-hover-card__header");
+    expect(header?.querySelector(".sidebar-hover-card__icon--project")).toBeNull();
   });
 
   it("renders Project hover tooltip with multiple roots, session count and pin", () => {

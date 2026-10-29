@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 
@@ -45,20 +45,15 @@ def resolve_git_write_roots(workspace: WorkspaceIdentity) -> tuple[str, ...]:
         git_common_dir = Path(discovery.git_common_dir).resolve(strict=True)
         if (
             workspace.git_dir is not None
-            and git_dir != workspace.git_dir.resolve(strict=True)
+            and git_dir != workspace.git_dir
         ):
             raise GitWriteAccessError("git_repository_identity_changed")
         if (
             workspace.git_common_dir is not None
-            and git_common_dir != workspace.git_common_dir.resolve(strict=True)
+            and git_common_dir != workspace.git_common_dir
         ):
             raise GitWriteAccessError("git_repository_identity_changed")
-        _verify_git_directory_identity(
-            workspace.git_dir, workspace.git_dir_identity
-        )
-        _verify_git_directory_identity(
-            workspace.git_common_dir, workspace.git_common_identity
-        )
+        verify_git_metadata_identities(replace(workspace, additional_roots=()))
         return tuple(dict.fromkeys((str(git_dir), str(git_common_dir))))
     except GitWriteAccessError:
         raise
@@ -67,16 +62,16 @@ def resolve_git_write_roots(workspace: WorkspaceIdentity) -> tuple[str, ...]:
 
 
 def verify_git_metadata_identities(workspace: WorkspaceIdentity) -> None:
-    """Check frozen Git metadata even when a Shell does not request Git writes."""
+    """Verify frozen directories without loading repository configuration."""
+    checked: set[tuple[Path | None, DirectoryIdentity | None]] = set()
     for root in (workspace, *workspace.additional_roots):
-        if not any((
-            root.git_dir,
-            root.git_common_dir,
-            root.git_dir_identity,
-            root.git_common_identity,
-        )):
-            continue
-        resolve_git_write_roots(root)
+        for binding in (
+            (root.git_dir, root.git_dir_identity),
+            (root.git_common_dir, root.git_common_identity),
+        ):
+            if binding not in checked:
+                _verify_git_directory_identity(*binding)
+                checked.add(binding)
 
 
 def _verify_git_directory_identity(
@@ -92,7 +87,7 @@ def _verify_git_directory_identity(
         actual = capture_directory_identity(path)
     except WorkspacePathError as error:
         raise GitWriteAccessError("git_repository_identity_changed") from error
-    if actual.path != path.resolve(strict=True) or (
+    if actual.path != path or (
         actual.device,
         actual.inode,
         actual.owner,
