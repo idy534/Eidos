@@ -143,7 +143,7 @@ def test_custom_child_runs_through_existing_engine(setup):
     write_definition(root, model=False)
     parent = parent_run(store, session, catalog)
     child, _, _ = spawn(store, parent)
-    assert store.claim_next_run()["id"] == child.run_id
+    assert store.claim_next_run_committed().value["id"] == child.run_id
     model = ScriptedModel([ModelResponse(text="Evidence reviewed.")])
     app = CollaborationApplication(store, lambda: None, lambda _run: None, lambda: None)
     RuntimeEngine(store, model, lambda _event: None, collaboration=app).run(
@@ -266,7 +266,7 @@ def test_catalog_is_frozen_and_followup_keeps_definition_and_model(setup):
     path.unlink()
     child, item, request = spawn(store, parent)
     assert store.read_run(child.run_id)["workMode"] == "plan"
-    assert store.claim_next_run()["id"] == child.run_id
+    assert store.claim_next_run_committed().value["id"] == child.run_id
     store.fail_run(child.run_id, "fixture_finished")
     before = store.read_model_profile(child.run_id)
     followup = store.create_tool_item(
@@ -458,7 +458,6 @@ def test_unknown_parent_side_effect_does_not_block_custom_agent_spawn(setup):
 
     assert child.parent_run_id == parent["id"]
     assert store.read_run(parent["id"])["reconciliationRequired"]
-    assert not store.side_effects_blocked(parent["id"])
 
 
 def test_shared_custom_agent_fixture_matches_python_contracts():
@@ -514,7 +513,7 @@ def test_custom_children_keep_parent_cancellation_and_late_message_rules(setup):
     write_definition(root, model=False)
     parent = parent_run(store, session, catalog)
     child, _, _ = spawn(store, parent)
-    assert store.claim_next_run()["id"] == child.run_id
+    assert store.claim_next_run_committed().value["id"] == child.run_id
     supervisor = object.__new__(RunSupervisor)
     supervisor.store = store
     supervisor.lock = threading.RLock()

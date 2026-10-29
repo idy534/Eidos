@@ -194,8 +194,8 @@ def test_legacy_run_uses_only_matching_persisted_git_identities(
             with pytest.raises(GitWriteAccessError, match="git_repository_identity_changed"):
                 verify_git_metadata_identities(store.workspace_for_run(run["id"]))
             return
-        claimed = store.claim_next_run()
-        assert claimed is not None and claimed["id"] == run["id"]
+        claimed = store.claim_next_run_committed()
+        assert claimed is not None and claimed.value["id"] == run["id"]
         model = ScriptedModel([
             ModelResponse(tool_calls=(ModelToolCall("shell", "run_shell", {"command": "printf resumed"}),)),
             ModelResponse(text="Checked"),

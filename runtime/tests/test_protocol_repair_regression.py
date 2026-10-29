@@ -73,7 +73,6 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
                 self.assertEqual(attempts[0]["providerResponseId"], "truncated-response")
                 self.assertEqual(attempts[0]["protocolDiagnostics"]["code"], "length")
                 self.assertIn({"type": "protocol_error", "code": "length"}, model.contexts[1])
-                self.assertFalse(self.store.side_effects_blocked(run["id"]))
                 assert self.store.connection is not None
                 for table in ("tool_calls JOIN items ON items.id = tool_calls.item_id", "durable_intents", "approvals"):
                     self.assertEqual(self.store.connection.execute(

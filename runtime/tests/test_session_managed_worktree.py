@@ -633,8 +633,9 @@ def test_session_create_rollback_removes_a_detached_head_that_advanced(
         execution_mode: str | None = None,
         project_id: str | None = None,
         session_id: str | None = None,
+        workspace_roots: object = None,
     ) -> object:
-        del operation_id, execution_mode, project_id, session_id
+        del operation_id, execution_mode, project_id, session_id, workspace_roots
         assert worktree_id is not None
         worktree = manager.repository.read_worktree(worktree_id)
         assert worktree is not None

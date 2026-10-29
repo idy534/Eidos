@@ -144,7 +144,6 @@ def test_unknown_effect_does_not_block_following_write_or_completion(run_store):
         "SELECT status FROM durable_intents WHERE tool_call_id=?", (uncertain["toolCall"]["id"],),
     ).fetchone()
     assert intent[0] == "uncertain"
-    assert not store.side_effects_blocked(run["id"])
     assert store.read_run(run["id"])["reconciliationRequired"]
 
 

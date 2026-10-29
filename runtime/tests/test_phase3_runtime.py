@@ -378,7 +378,6 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             completed = store.read_run(run["id"])
             self.assertEqual(completed["status"], "succeeded")
             self.assertTrue(completed["sideEffectsMayExist"])
-            self.assertFalse(store.side_effects_blocked(run["id"]))
             self.assertTrue(completed["reconciliationRequired"])
             self.assertTrue(
                 store.context_projection_facts(

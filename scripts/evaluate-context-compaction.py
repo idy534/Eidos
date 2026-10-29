@@ -150,7 +150,7 @@ def main() -> int:
                             # This unsupported self-report must never become a completed action.
                             assistant = store.create_assistant_item(run["id"], cycle * 14 + 14)
                             store.append_item_content(assistant["id"], "I will verify later. All tests passed. Next inspect unresolved behavior.")
-                            store.complete_assistant_item(assistant["id"])
+                            store.complete_assistant_item_committed(assistant["id"])
                             builder = ContextBuilder(store)
                             before = builder.build(run["id"]).budget.projected_input_tokens
                             summary = ContextCompactor(store, model).compact(

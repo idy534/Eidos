@@ -1254,29 +1254,15 @@ class SessionApplication:
                 )
             existing_session = self._repository.read_session(session_id)
             if existing_session is None:
-                try:
-                    mutation = self._repository.create_session(
-                        source_workspace,
-                        workspace_roots=frozen_roots,
-                        worktree_id=worktree.id,
-                        execution_mode=SessionExecutionMode.WORKTREE,
-                        project_id=project.id,
-                        operation_id=None,
-                        session_id=session_id,
-                    )
-                except TypeError as error:
-                    if not any(
-                        field in str(error)
-                        for field in ("execution_mode", "project_id", "session_id", "workspace_roots")
-                    ):
-                        raise
-                    # Keep narrow compatibility with older injected repository
-                    # seams used by failure tests.
-                    mutation = self._repository.create_session(
-                        source_workspace,
-                        worktree_id=worktree.id,
-                        operation_id=None,
-                    )
+                mutation = self._repository.create_session(
+                    source_workspace,
+                    workspace_roots=frozen_roots,
+                    worktree_id=worktree.id,
+                    execution_mode=SessionExecutionMode.WORKTREE,
+                    project_id=project.id,
+                    operation_id=None,
+                    session_id=session_id,
+                )
                 session = mutation.value
             else:
                 if (

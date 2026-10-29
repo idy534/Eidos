@@ -362,7 +362,7 @@ def test_compaction_does_not_turn_assistant_plans_into_completed_work(history_st
     )
     item = store.create_assistant_item(previous["id"], 1)
     store.append_item_content(item["id"], "I will fix every test. Next, run the suite.")
-    store.complete_assistant_item(item["id"])
+    store.complete_assistant_item_committed(item["id"])
     store.fail_run(previous["id"], "fixture")
     current, _ = store.create_run(session["id"], "只分析，等我确认。")
     summary = ContextCompactor(store).compact(current["id"], "pre_turn")

@@ -40,6 +40,7 @@ from eidos_runtime.tools.contracts import (  # noqa: E402
 )
 from eidos_runtime.tools.registry import (  # noqa: E402
     StepToolBinding,
+    ToolArgumentValidationResult,
     ToolProvenance,
     ToolConcurrencyPolicy,
     ToolRegistryEntry,
@@ -115,8 +116,8 @@ class _ApprovalHandler(_Handler):
 
 
 class _Dispatcher:
-    def validate_execution(self, call, plan) -> bool:
-        return call.name == "read_file" and plan.descriptor is not None
+    def validate_execution(self, call, plan) -> ToolArgumentValidationResult | None:
+        return ToolArgumentValidationResult(valid=True) if call.name == "read_file" and plan.descriptor is not None else None
 
     def validate_result(self, _tool_name, result):
         return result_model(ReadFileResultData).model_validate(
@@ -559,7 +560,6 @@ class ToolExecutionControllerTests(unittest.TestCase):
         self.assertEqual(outcome.result["code"], "TOOL_EXECUTION_FAILED")
         self.assertFalse(outcome.result["sideEffectsMayExist"])
         self.assertFalse(outcome.result["reconciliationRequired"])
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         following = controller.execute(
             run_id=self.run["id"], item=self._item(1), call=self.call,
             plan=_plan("read", 5, "none", False),
@@ -604,7 +604,6 @@ class ToolExecutionControllerTests(unittest.TestCase):
             cancel=threading.Event(), deadline=None,
         )
         self.assertEqual(outcome.result["code"], "ok")
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         self.assertEqual(self.store.connection.execute(
             "SELECT COUNT(*) FROM durable_intents",
         ).fetchone()[0], 0)
@@ -619,7 +618,6 @@ class ToolExecutionControllerTests(unittest.TestCase):
         )
         self.assertEqual(outcome.result["code"], "TOOL_EXECUTION_CONTRACT_VIOLATION")
         self.assertTrue(self.store.read_run(self.run["id"])["reconciliationRequired"])
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_skipped_execution_cannot_override_side_effect_evidence(self) -> None:
         for evidence in ("started", "workspace_changed", "sideEffectsMayExist", "reconciliationRequired"):
@@ -654,7 +652,6 @@ class ToolExecutionControllerTests(unittest.TestCase):
                 )
                 self.assertEqual(outcome.result["code"], "TOOL_EXECUTION_CONTRACT_VIOLATION")
                 self.assertTrue(self.store.read_run(run["id"])["reconciliationRequired"])
-                self.assertFalse(self.store.side_effects_blocked(run["id"]))
 
     def test_failure_after_execution_started_remains_uncertain(self) -> None:
         handler = _Handler()
@@ -678,7 +675,6 @@ class ToolExecutionControllerTests(unittest.TestCase):
         )
         self.assertTrue(outcome.result["reconciliationRequired"])
         self.assertTrue(self.store.read_run(self.run["id"])["reconciliationRequired"])
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_projection_failure_preserves_known_execution_result(self) -> None:
         handler = _Handler()
@@ -697,7 +693,6 @@ class ToolExecutionControllerTests(unittest.TestCase):
         )
         self.assertEqual(outcome.result["code"], "TOOL_RESULT_PROJECTION_FAILED")
         self.assertFalse(outcome.result["reconciliationRequired"])
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_cancel_after_known_shell_result_preserves_certainty(self) -> None:
         handler = _Handler()
@@ -760,7 +755,6 @@ class ToolExecutionControllerTests(unittest.TestCase):
             self.store.read_item(item["id"])["toolCall"]["resultJson"]
         )
         self.assertIn("sk-1234567890123456", json.dumps(persisted))
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_oversized_output_preserves_explicit_clear_reconciliation_fact(self) -> None:
         result = {
@@ -807,7 +801,6 @@ class ToolExecutionControllerTests(unittest.TestCase):
         self.assertLess(len(json.dumps(model_result).encode()), 50 * 1024)
         self.assertEqual(model_result["readBack"]["itemId"], item["id"])
         self.assertNotIn("sha256", model_result.get("data", {}))
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_unknown_result_does_not_block_authorized_mutation(self) -> None:
         self.store.connection.execute(

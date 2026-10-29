@@ -47,7 +47,6 @@ def test_unchanged_patch_allows_following_shell_and_run_completion(
         RuntimeEngine(store, model, lambda _: None, shell_available=True).run(run["id"], threading.Event())
         fact = store.read_run(run["id"])
         assert fact["status"] == "succeeded"
-        assert not store.side_effects_blocked(run["id"])
         tools = [item["toolCall"] for item in store.read_session_snapshot(session["id"])["items"]
                  if "toolCall" in item]
         unchanged, executed = [json.loads(tool["resultJson"]) for tool in tools]
@@ -107,7 +106,6 @@ def test_real_file_operations_still_commit_a_durable_intent(tmp_path: Path, oper
             "SELECT status FROM durable_intents WHERE run_id=?", (run["id"],),
         ).fetchall()
         assert [row[0] for row in intent] == ["completed"]
-        assert not store.side_effects_blocked(run["id"])
         if operation == "empty_add":
             assert (workspace / "empty.txt").read_bytes() == b""
         elif operation == "same_content_move":

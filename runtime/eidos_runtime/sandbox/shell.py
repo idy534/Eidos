@@ -674,12 +674,6 @@ def _shell_failure_summary(
     return f"Command did not succeed (termination={termination})"
 
 
-def _summary_with_termination(summary: str, termination: str) -> str:
-    if f"termination={termination}" in summary:
-        return summary
-    return f"{summary} (termination={termination})"
-
-
 def _terminate_group(process_group: int) -> None:
     hit_fault("shell_ignore_sigterm")
     try:

@@ -679,15 +679,10 @@ class _ServerRunEnvironment:
             or bool(self._server.model_config.list())
         )
 
-    def model_config(self, model_id: str) -> ModelConfig:
-        config = self._server.model_config.get(model_id)
-        if config is None:
-            raise ModelConfigError("model is not configured")
-        return config
+    def model_config(self, model_id: str) -> ModelConfig | None:
+        return self._server.model_config.get(model_id)
 
-    def model_for(self, model_id: str) -> ModelClient:
-        if self._server.model is None:
-            raise ModelConfigError("configured models use the model gateway")
+    def model_for(self, model_id: str) -> ModelClient | None:
         return self._server.model
 
     def freeze_model_config(self, run_id: str, config: ModelConfig) -> None:

@@ -184,8 +184,7 @@ class RuntimeEngine:
         ):
             workspace = self.store.workspace_for_run(run_id)
             repository_state = self.repository_runtime.available_for_run(workspace.path)
-            capture_for_run = getattr(repository_state, "capture_for_run")
-            repository_capture = capture_for_run()
+            repository_capture = repository_state.capture_for_run()
             repository_snapshot = repository_capture.snapshot
         if (
             repository_state is not None
@@ -570,7 +569,7 @@ class RuntimeEngine:
                     step_policy=step_policy,
                     repository_context=None if projectless else repository_context,
                     projectless=projectless,
-                    recovery_level=getattr(self, "context_recovery_level", 0),
+                    recovery_level=self.context_recovery_level,
                 )
 
             built = build_current_context()
@@ -641,7 +640,7 @@ class RuntimeEngine:
                 if _projection_state(built) == pending_projection_marker:
                     raise ContextLimitExceeded("internal_projection_limit")
                 pending_projection_marker = None
-            if built.facts.candidate_overflow and not getattr(self, "context_recovery_level", 0):
+            if built.facts.candidate_overflow and not self.context_recovery_level:
                 pending_projection_marker = _projection_state(built)
                 phase = (
                     "mid_turn"
@@ -698,7 +697,7 @@ class RuntimeEngine:
             )
             if context_decision.action == LoopAction.CANCEL:
                 raise RuntimeCancelled
-            if context_decision.action == LoopAction.COMPACT and not getattr(self, "context_recovery_level", 0):
+            if context_decision.action == LoopAction.COMPACT and not self.context_recovery_level:
                 pending_compaction_baseline = built.budget.projected_input_tokens
                 pending_provider_recovery = False
                 phase = (
@@ -1073,13 +1072,14 @@ class RuntimeEngine:
                         )
                     )
                 )
-                and dispatcher.validate_execution(
+                and (poll_validation := dispatcher.validate_execution(
                     poll_call,
                     dispatcher.plan(
                         poll_call,
                         step.tool_snapshot.binding(poll_call.name) or "missing",
                     ),
-                )
+                )) is not None
+                and poll_validation.valid
             )
             repeated = None if managed_poll else guard.observe_tool_calls(
                 validation.tool_calls,

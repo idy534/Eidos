@@ -86,7 +86,6 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             tool_status="completed",
         )
 
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         self.assertEqual(
             self.store.connection.execute(
                 "SELECT status FROM durable_intents WHERE tool_call_id = ?",
@@ -114,7 +113,6 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             tool_status="failed",
         )
 
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_known_shell_exit_without_explicit_flag_does_not_open_barrier(self) -> None:
         item = self.store.create_tool_item(
@@ -134,7 +132,6 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             tool_status="completed",
         )
 
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_explicit_reconciliation_preserves_running_status_and_unknown_facts(self) -> None:
         item = self.store.create_tool_item(
@@ -155,7 +152,6 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         )
 
         self.assertEqual(self.store.read_run(self.run["id"])["status"], "running")
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_managed_shell_commits_exit_without_rewriting_model_observation(self) -> None:
         index = self.store.increment_model_step(self.run["id"])
@@ -172,7 +168,6 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertEqual(json.loads(row[0])["data"]["executionStatus"], "exited")
         self.assertEqual(json.loads(row[1])["data"]["executionStatus"], "running")
         self.assertEqual(self.store.connection.execute("SELECT status FROM durable_intents WHERE tool_call_id = ?", (item["toolCall"]["id"],)).fetchone()[0], "completed")
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_shell_exit_and_poll_share_one_reconciliation_origin(self) -> None:
         index = self.store.increment_model_step(self.run["id"])
@@ -260,7 +255,6 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ).fetchone()[0],
             "completed",
         )
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         self.assertEqual(
             connection.execute(
                 "SELECT status FROM durable_intents WHERE tool_call_id = ?",
@@ -347,7 +341,6 @@ class ReconciliationConsistencyTests(unittest.TestCase):
 
         persisted = self.store.read_run(self.run["id"])
         self.assertEqual(persisted["status"], "succeeded")
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         self.assertEqual(persisted["modelStepCount"], 1)
         self.assertEqual(
             self.store.context_projection_facts(
@@ -711,7 +704,6 @@ class ReconciliationConsistencyTests(unittest.TestCase):
 
         persisted = self.store.read_run(self.run["id"])
         self.assertEqual(persisted["status"], "succeeded")
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         self.assertEqual(start.call_count, 2)
         self.assertGreaterEqual(len(model.run_statuses), 2)
         self.assertEqual(model.run_statuses[1], "running")
@@ -809,7 +801,6 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         persisted = self.store.read_run(self.run["id"])
         self.assertEqual(persisted["status"], "succeeded")
         self.assertTrue(persisted["sideEffectsMayExist"])
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         self.assertTrue(persisted["reconciliationRequired"])
         self.assertTrue(
             self.store.context_projection_facts(
@@ -918,7 +909,6 @@ class ReconciliationConsistencyTests(unittest.TestCase):
 
         persisted = self.store.read_run(self.run["id"])
         self.assertEqual(persisted["status"], "succeeded")
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         self.assertTrue(persisted["reconciliationRequired"])
         self.assertTrue(
             self.store.context_projection_facts(
@@ -1005,7 +995,6 @@ class ReconciliationConsistencyTests(unittest.TestCase):
 
         persisted = self.store.read_run(self.run["id"])
         self.assertEqual(persisted["status"], "succeeded")
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         self.assertTrue(persisted["reconciliationRequired"])
         self.assertTrue(
             self.store.context_projection_facts(
@@ -1148,7 +1137,6 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             persisted = store.read_run(run["id"])
             self.assertEqual(persisted["status"], "succeeded")
             self.assertTrue(persisted["sideEffectsMayExist"])
-            self.assertFalse(store.side_effects_blocked(run["id"]))
             self.assertTrue(
                 store.context_projection_facts(
                     run["id"]
@@ -1200,7 +1188,6 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             item_status="failed",
             tool_status="failed",
         )
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         pending_epoch = self.store.context_projection_facts(
             self.run["id"]
         ).reconciliation_epoch
@@ -1221,12 +1208,10 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             }),
         )
         self.store.complete_current_step(self.run["id"], "completed")
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         mutation = self.store.clear_reconciliation_after_workspace_refresh_committed(
             self.run["id"], pending_epoch
         )
         self.assertIsNotNone(mutation)
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         self.assertEqual(
             self.store.context_projection_facts(
                 self.run["id"]

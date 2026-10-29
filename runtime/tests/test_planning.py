@@ -253,7 +253,7 @@ def test_ready_plan_waits_for_children_and_preserves_cancellation(planning_runti
     runtime.collaboration = app
     item = store.create_tool_item(run_id, 1, 42, 'spawn', 'spawn_agent', '{}')
     child = app.repository.spawn(run_id, item['id'], SpawnAgent(task_name='explore', message='Inspect evidence', role='explorer'))
-    assert store.claim_next_run()['id'] == child.run_id
+    assert store.claim_next_run_committed().value['id'] == child.run_id
     waiting = threading.Event()
     original = app.repository.inspect_wait
 
@@ -338,7 +338,7 @@ def test_answer_resumes_original_tool_and_persists_model_result(planning_runtime
     repository.answer(request.id, UserInputResponse(status='answered', answers=[
         InputAnswer(question_id='genre', text='散文，约800字'),
     ]))
-    assert store.claim_next_run()['id'] == run_id
+    assert store.claim_next_run_committed().value['id'] == run_id
     outcome = _execute_planning(planning_runtime, 'request_user_input', arguments, store.read_item(request.item_id))
     assert outcome.result['outcome'] == 'success'
     persisted = store.connection.execute('SELECT result_json, model_result_json FROM tool_calls WHERE item_id=?', (request.item_id,)).fetchone()

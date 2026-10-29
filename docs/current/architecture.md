@@ -1,5 +1,15 @@
 # Eidos 当前架构
 
+## 后端代码精简（2026-10-29）
+
+Runtime 已移除无人调用的私有函数、存储入口和 `context` 包重导出。存储测试与离线评测直接使用现有 committed 入口；生产调度和流式输出继续使用原来的事务、Event 与 Outbox。
+
+`ToolDispatcher.validate_execution` 统一返回参数校验结果或无法匹配的空结果。Controller 复用该结果生成错误反馈，不在失败反馈中重复校验参数。工具绑定、输入类别、规范化参数、权限、Intent 和执行核验继续生效。PreToolUse 改写参数后，Controller 仍重新校验；PostToolUse 继续按原来的调用条件检查。
+
+Run 环境接口用 `None` 表示没有持久模型配置或注入模型。Application 不再捕获任意配置读取异常并将其当作配置缺失。Session 创建也不再根据 `TypeError` 文本删参数重试；测试替身遵循当前 Repository 接口。
+
+未知结果仍保存为持久事实。旧 `side_effects_blocked` 兼容入口只查询 Run 是否存在并返回 `False`，现已删除。测试同时删除了该入口的恒定返回值断言，继续检查实际执行结果、取消和未知记录。本轮没有新增测试用例、依赖、协议字段或数据库迁移。
+
 ## Harness 架构阅读入口（2026-10-25）
 
 维护者可以从 [Harness 组成总览](../architecture/harness-overview.md)阅读十二个组成部分，再看[离线架构图集](../architecture/harness-atlas.html)。各专题补充记忆、上下文压缩算法、多提供商模型、工具、权限、持久化恢复、代码检索、扩展、协作、持续任务入口和交付证据，并列出源码、测试与当前边界。

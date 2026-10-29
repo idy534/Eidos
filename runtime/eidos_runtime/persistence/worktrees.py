@@ -499,12 +499,6 @@ class ProjectWorktreeRepository(Repository):
         return worktree_from_row(row)
 
 
-def _project_id(git_common_dir: str) -> str:
-    import hashlib
-
-    return f"project_{hashlib.sha256(git_common_dir.encode('utf-8')).hexdigest()}"
-
-
 def _deleted_project_to_dict(value: DeletedProject) -> dict[str, object]:
     return {"deletedProjectId": value.deleted_project_id}
 

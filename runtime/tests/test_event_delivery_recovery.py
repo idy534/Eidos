@@ -181,7 +181,7 @@ class EventDeliveryTests(unittest.TestCase):
 
     def test_natural_completion_and_terminal_watermark_survive_broken_notifications(self) -> None:
         run, _ = self.store.enqueue_run(self.session["id"], "complete")
-        claimed = self.store.claim_next_run()
+        claimed = self.store.claim_next_run_committed()
         assert claimed is not None
         assert self.store.connection is not None
         RuntimeEngine(
@@ -309,7 +309,6 @@ class FinalizingRecoveryTests(unittest.TestCase):
         self.assertEqual(recovered["status"], "interrupted")
         self.assertTrue(recovered["sideEffectsMayExist"])
         self.assertTrue(recovered["reconciliationRequired"])
-        self.assertFalse(self.store.side_effects_blocked(run["id"]))
         assert self.store.connection is not None
         self.assertEqual(
             self.store.connection.execute(

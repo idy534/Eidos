@@ -27,7 +27,7 @@ def history(tmp_path: Path):
 def assistant(store, run, step, content):
     item = store.create_assistant_item(run["id"], step)
     store.append_item_content(item["id"], content)
-    store.complete_assistant_item(item["id"])
+    store.complete_assistant_item_committed(item["id"])
     return item["id"]
 
 

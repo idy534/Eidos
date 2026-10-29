@@ -332,9 +332,9 @@ def test_dispatcher_keeps_custom_input_raw_and_rejects_function_payload() -> Non
         ),),
     ))
     assert oversized.error_code is None
-    assert dispatcher.argument_validation(oversized.tool_calls[0], dispatcher.plan(oversized.tool_calls[0])).valid is False
+    assert dispatcher.validate_execution(oversized.tool_calls[0], dispatcher.plan(oversized.tool_calls[0])).valid is False
     plan = dispatcher.plan(response.tool_calls[0])
-    assert dispatcher.validate_execution(response.tool_calls[0], plan)
+    assert dispatcher.validate_execution(response.tool_calls[0], plan).valid
 
 
 def test_native_apply_patch_preparation_preserves_raw_patch(tmp_path: Path) -> None:

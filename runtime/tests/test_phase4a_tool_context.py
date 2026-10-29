@@ -697,7 +697,6 @@ class Phase4ASideEffectContractTests(unittest.TestCase):
         )
         self.assertTrue(outcome.result["sideEffectsMayExist"])
         self.assertFalse(outcome.result["reconciliationRequired"])
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_cancel_after_verified_file_write_preserves_changes_without_reconciliation(self) -> None:
         data = {"path": "a.txt", "changes": [{"path": "a.txt", "kind": "update"}]}

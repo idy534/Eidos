@@ -316,7 +316,7 @@ def test_child_runs_have_no_memory_tools_index_or_direct_access(setup):
         spawn["id"],
         SpawnAgent(task_name="inspect", message="分析指定文件", role="explorer"),
     )
-    assert store.claim_next_run()["id"] == child.run_id
+    assert store.claim_next_run_committed().value["id"] == child.run_id
     model = ScriptedModel([ModelResponse(text="完成分析")])
     RuntimeEngine(store, model, lambda _: None).run(child.run_id, threading.Event())
     assert not any(

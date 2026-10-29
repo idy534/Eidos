@@ -309,7 +309,7 @@ class ToolDispatcher:
         # evidence checks. Every contract field except this flag must match.
         return self.plan(call, entry.contract_fingerprint)
 
-    def argument_validation(
+    def validate_execution(
         self, call: ModelToolCall, plan: ToolDispatchPlan
     ) -> ToolArgumentValidationResult | None:
         if (
@@ -324,44 +324,27 @@ class ToolDispatcher:
             plan.descriptor.spec.input_kind == "function"
             and isinstance(call.payload, FunctionToolPayload)
         ):
-            return plan.descriptor.validate_arguments(call.payload.arguments)
-        if (
+            validation = plan.descriptor.validate_arguments(call.payload.arguments)
+            normalized = (
+                FunctionToolPayload(arguments=validation.normalized_arguments)
+                if validation.valid and validation.normalized_arguments is not None
+                else None
+            )
+        elif (
             plan.descriptor.spec.input_kind == "custom"
             and isinstance(call.payload, CustomToolPayload)
         ):
-            return plan.descriptor.validate_custom_input(call.payload.input)
-        return None
-
-    def validate_execution(self, call: ModelToolCall, plan: ToolDispatchPlan) -> bool:
-        validation = self.argument_validation(call, plan)
-        normalized = None
-        if validation is not None and plan.descriptor is not None:
-            if (
-                plan.descriptor.spec.input_kind == "function"
-                and validation.valid
-                and validation.normalized_arguments is not None
-            ):
-                normalized = FunctionToolPayload(
-                    arguments=validation.normalized_arguments
-                )
-            elif (
-                plan.descriptor.spec.input_kind == "custom"
-                and validation.valid
-                and validation.normalized_input is not None
-            ):
-                normalized = CustomToolPayload(
-                    input=validation.normalized_input
-                )
-        return (
-            plan.binding is not None
-            and plan.descriptor is not None
-            and plan.binding.tool_name == call.name
-            and plan.binding.contract_fingerprint
-            == plan.descriptor.contract_fingerprint
-            and validation is not None
-            and validation.valid
-            and normalized == call.payload
-        )
+            validation = plan.descriptor.validate_custom_input(call.payload.input)
+            normalized = (
+                CustomToolPayload(input=validation.normalized_input)
+                if validation.valid and validation.normalized_input is not None
+                else None
+            )
+        else:
+            return None
+        if validation.valid and normalized != call.payload:
+            return None
+        return validation
 
     def validate_result(
         self, tool_name: str, result: object

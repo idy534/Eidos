@@ -116,7 +116,7 @@ def test_subagent_start_uses_parent_session_and_context(tmp_path):
     try:
         item = store.create_tool_item(parent["id"], 1, 0, "spawn", "spawn_agent", "{}")
         child = CollaborationRepository(store.database).spawn(parent["id"], item["id"], SpawnAgent(task_name="inspect", message="Read", role="explorer"))
-        assert store.claim_next_run()["id"] == child.run_id
+        assert store.claim_next_run_committed().value["id"] == child.run_id
         model = ScriptedModel([ModelResponse(text="done")])
         RuntimeEngine(store, model, lambda _: None).run(child.run_id, threading.Event())
         activity = HookRepository(store.database).activities(run_id=child.run_id).items

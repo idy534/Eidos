@@ -83,8 +83,6 @@ class RunStorePort(Protocol):
 
     def read_session(self, session_id: str) -> dict[str, object] | None: ...
 
-    def session_model_id(self, session_id: str) -> str | None: ...
-
     def operation_result(
         self, operation_id: str, scope: str, request: dict[str, object]
     ) -> object | None: ...
@@ -161,9 +159,9 @@ class RunStartEnvironmentPort(Protocol):
 
     def model_is_configured(self) -> bool: ...
 
-    def model_config(self, model_id: str) -> ModelConfig: ...
+    def model_config(self, model_id: str) -> ModelConfig | None: ...
 
-    def model_for(self, model_id: str) -> ModelClient: ...
+    def model_for(self, model_id: str) -> ModelClient | None: ...
 
     def freeze_model_config(self, run_id: str, config: ModelConfig) -> None: ...
 
@@ -308,10 +306,10 @@ class RunApplication:
         return [value.reference.id for value in InputContextRepository(self._store.database).for_run(run_id)]
 
     def select_automation_model(self, model: AutomationModel) -> AutomationModel:
-        store, _runtime, environment, _scan = self._start_dependencies()
+        _store, _runtime, environment, _scan = self._start_dependencies()
         request = RunStartRequestDto(sessionId="00000000-0000-0000-0000-000000000000", userInput="scheduled task",
             modelId=model.model_id, reasoningSelection=model.reasoning_selection)
-        model_id, profile, _config = self._select_model(request, store=store, environment=environment)
+        model_id, profile, _config = self._select_model(request, environment=environment)
         return AutomationModel(model_id=model_id, reasoning_selection=profile.reasoning_selection)
 
     def start(self, request: RunStartRequestDto, *, automation_occurrence_id: str | None = None, regenerate_source_run_id: str | None = None, agent_source_run_id: str | None = None, channel_message_id: str | None = None) -> RunStartOutcome:
@@ -340,7 +338,6 @@ class RunApplication:
 
         model_id, model_profile, model_config = self._select_model(
             request,
-            store=store,
             environment=environment,
         )
         try:
@@ -602,9 +599,8 @@ class RunApplication:
                     pass
         except WorkspacePathError as error:
             raise WorkspaceIdentityChangedError(error.code) from error
-        touch = getattr(manager, "touch_last_used", None)
-        if touch_last_used and touch is not None:
-            touch(projection.worktree.worktree_id)
+        if touch_last_used:
+            manager.touch_last_used(projection.worktree.worktree_id)
         return identity
 
     def cancel(self, request: RunCancelRequestDto) -> RunCancelResponseDto:
@@ -723,15 +719,10 @@ class RunApplication:
         self,
         request: RunStartRequestDto,
         *,
-        store: RunStorePort,
         environment: RunStartEnvironmentPort,
     ) -> tuple[str, ModelProfileSnapshot, ModelConfig | None]:
         model_id = request.model_id
-        config: ModelConfig | None = None
-        try:
-            config = environment.model_config(model_id)
-        except Exception:
-            config = None
+        config = environment.model_config(model_id)
         try:
             selected_reasoning = MODEL_CATALOG.reasoning_selection(
                 model_id, request.reasoning_selection, config=config
@@ -744,10 +735,7 @@ class RunApplication:
             raise ApplicationError(
                 "INVALID_PARAMS", "reasoning selection is unsupported for this model"
             ) from error
-        try:
-            run_model = environment.model_for(model_id)
-        except ModelConfigError:
-            run_model = None
+        run_model = environment.model_for(model_id)
         if run_model is not None:
             profile = getattr(run_model, "profile_snapshot", None)
             base_profile = profile or default_profile_snapshot(model_id)

@@ -93,8 +93,6 @@ from eidos_runtime.persistence.context_snapshots import ContextSnapshotRepositor
 from eidos_runtime.persistence.verified_compaction import VerifiedCompactionRepository
 from eidos_runtime.persistence.checkpoints import CheckpointRepository
 from eidos_runtime.persistence.session_handoff import SessionHandoffRepository
-from eidos_runtime.persistence.worktree_snapshots import WorktreeSnapshotRepository
-from eidos_runtime.persistence.worktree_settings import WorktreeSettingsRepository
 from eidos_runtime.context.plan import ContextSnapshot
 from eidos_runtime.context.budget import ContextBudget
 from eidos_runtime.runtime.long_task import LongTaskRepository
@@ -144,8 +142,6 @@ class SessionStore:
         self._long_task_repository: LongTaskRepository | None = None
         self._checkpoint_repository: CheckpointRepository | None = None
         self._session_handoff_repository: SessionHandoffRepository | None = None
-        self._worktree_snapshot_repository: WorktreeSnapshotRepository | None = None
-        self._worktree_settings_repository: WorktreeSettingsRepository | None = None
 
     def initialize(self) -> None:
         with startup_phase("storage.state_database"):
@@ -239,8 +235,6 @@ class SessionStore:
         self._long_task_repository = None
         self._checkpoint_repository = None
         self._session_handoff_repository = None
-        self._worktree_snapshot_repository = None
-        self._worktree_settings_repository = None
         self._runtime_dependencies = None
         if self._persistence_layout is not None:
             self._persistence_layout.close()
@@ -356,22 +350,6 @@ class SessionStore:
                 self._database
             )
         return self._session_handoff_repository
-
-    def worktree_snapshot_repository(self) -> WorktreeSnapshotRepository:
-        self._repository(self._sessions)
-        if self._worktree_snapshot_repository is None:
-            self._worktree_snapshot_repository = WorktreeSnapshotRepository(
-                self._database
-            )
-        return self._worktree_snapshot_repository
-
-    def worktree_settings_repository(self) -> WorktreeSettingsRepository:
-        self._repository(self._sessions)
-        if self._worktree_settings_repository is None:
-            self._worktree_settings_repository = WorktreeSettingsRepository(
-                self._database
-            )
-        return self._worktree_settings_repository
 
     def health(self) -> dict[str, object]:
         return self._database.health()
@@ -514,9 +492,6 @@ class SessionStore:
     def read_session(self, session_id: str) -> dict[str, object] | None:
         session = self._repository(self._sessions).read_session(session_id)
         return session_to_legacy_dict(session) if session is not None else None
-
-    def session_model_id(self, session_id: str) -> str | None:
-        return self._repository(self._sessions).session_model_id(session_id)
 
     def rename_session(
         self,
@@ -662,9 +637,6 @@ class SessionStore:
             item_id=item_id,
         )
 
-    def claim_next_run(self) -> dict[str, object] | None:
-        return self._repository(self._runs).claim_next_run()
-
     def claim_next_run_committed(
         self, excluded_run_ids: tuple[str, ...] = (),
     ) -> CommittedMutation[dict[str, object]] | None:
@@ -697,10 +669,6 @@ class SessionStore:
         return self._repository(self._runs).effective_cwd_for_run(
             run_id, workspace_root=workspace_root
         )
-
-    def set_run_effective_cwd(self, run_id: str, cwd: Path) -> None:
-        """Persist the effective working directory for a run."""
-        self._repository(self._runs).set_run_effective_cwd(run_id, cwd)
 
     def skill_states(self) -> tuple[SkillState, ...]:
         return self._repository(self._extensions).skill_states()
@@ -1049,11 +1017,6 @@ class SessionStore:
             model_attempt_id=model_attempt_id,
         )
 
-    def create_finalization_assistant_item(self, run_id: str) -> dict[str, object]:
-        return self._repository(self._execution).create_finalization_assistant_item(
-            run_id
-        )
-
     def create_finalization_assistant_item_committed(
         self, run_id: str
     ) -> CommittedMutation[dict[str, object]]:
@@ -1078,18 +1041,12 @@ class SessionStore:
             first_sequence,
         )
 
-    def complete_assistant_item(self, item_id: str) -> dict[str, object]:
-        return self._repository(self._execution).complete_assistant_item(item_id)
-
     def complete_assistant_item_committed(
         self, item_id: str
     ) -> CommittedMutation[dict[str, object]]:
         return self._repository(self._execution).complete_assistant_item_committed(
             item_id
         )
-
-    def mark_assistant_incomplete(self, item_id: str) -> dict[str, object]:
-        return self._repository(self._execution).mark_assistant_incomplete(item_id)
 
     def mark_assistant_incomplete_committed(
         self, item_id: str
@@ -1359,20 +1316,11 @@ class SessionStore:
     def rejected_approval(self, run_id: str, fingerprint: str) -> Approval | None:
         return self._repository(self._runs).rejected_approval(run_id, fingerprint)
 
-    def approval_prompt_blocked(self, run_id: str, fingerprint: str) -> bool:
-        return self._repository(self._runs).approval_prompt_blocked(run_id, fingerprint)
-
     def record_sensitive_tool_input(self, run_id: str) -> int:
         return self._repository(self._runs).record_sensitive_tool_input(run_id)
 
     def clear_sensitive_tool_inputs(self, run_id: str) -> None:
         return self._repository(self._runs).clear_sensitive_tool_inputs(run_id)
-
-    def side_effects_blocked(self, run_id: str) -> bool:
-        return self._repository(self._runs).side_effects_blocked(run_id)
-
-    def reconciliation_intent_scopes(self, run_id: str) -> frozenset[str]:
-        return self._repository(self._execution).reconciliation_intent_scopes(run_id)
 
     def reconciliation_file_paths(self, run_id: str) -> frozenset[str] | None:
         return self._repository(self._execution).reconciliation_file_paths(run_id)
@@ -1429,9 +1377,6 @@ class SessionStore:
 
     def read_finalization_attempts(self, run_id: str) -> tuple[dict[str, object], ...]:
         return self._repository(self._runs).read_finalization_attempts(run_id)
-
-    def stop_run(self, run_id: str, reason: str) -> dict[str, object]:
-        return self._repository(self._runs).stop_run(run_id, reason)
 
     def stop_run_committed(
         self, run_id: str, reason: str

@@ -260,15 +260,15 @@ class EventAndOperationTests(unittest.TestCase):
         session = self.store.create_session(str(self.workspace))
         first, _ = self.store.enqueue_run(session["id"], "first")
         second, _ = self.store.enqueue_run(session["id"], "second")
-        claimed = self.store.claim_next_run()
-        self.assertEqual(claimed["id"], first["id"])
+        claimed = self.store.claim_next_run_committed()
+        self.assertEqual(claimed.value["id"], first["id"])
         self.assertEqual(self.store.read_run(second["id"])["status"], "queued")
         self.store.fail_run(first["id"], "fixture")
         self.store.close()
         self.store = SessionStore(self.data)
         self.store.initialize()
-        claimed_after_restart = self.store.claim_next_run()
-        self.assertEqual(claimed_after_restart["id"], second["id"])
+        claimed_after_restart = self.store.claim_next_run_committed()
+        self.assertEqual(claimed_after_restart.value["id"], second["id"])
 
     def test_canceling_queued_run_does_not_change_remaining_fifo_order(self) -> None:
         session = self.store.create_session(str(self.workspace))
@@ -276,9 +276,9 @@ class EventAndOperationTests(unittest.TestCase):
         second, _ = self.store.enqueue_run(session["id"], "second")
         third, _ = self.store.enqueue_run(session["id"], "third")
         self.store.cancel_run(second["id"])
-        self.assertEqual(self.store.claim_next_run()["id"], first["id"])
+        self.assertEqual(self.store.claim_next_run_committed().value["id"], first["id"])
         self.store.fail_run(first["id"], "fixture")
-        self.assertEqual(self.store.claim_next_run()["id"], third["id"])
+        self.assertEqual(self.store.claim_next_run_committed().value["id"], third["id"])
 
     def test_claim_skips_active_session_but_claims_another_session(self) -> None:
         first_session = self.store.create_session(str(self.workspace))
@@ -290,10 +290,10 @@ class EventAndOperationTests(unittest.TestCase):
         blocked, _ = self.store.enqueue_run(first_session["id"], "blocked")
         eligible, _ = self.store.enqueue_run(second_session["id"], "eligible")
 
-        claimed = self.store.claim_next_run()
+        claimed = self.store.claim_next_run_committed()
 
         self.assertIsNotNone(claimed)
-        self.assertEqual(claimed["id"], eligible["id"])
+        self.assertEqual(claimed.value["id"], eligible["id"])
         self.assertEqual(self.store.read_run(blocked["id"])["status"], "queued")
         self.assertEqual(self.store.read_run(active["id"])["status"], "running")
 
@@ -315,10 +315,10 @@ class EventAndOperationTests(unittest.TestCase):
         blocked, _ = self.store.enqueue_run(first_session["id"], "blocked")
         eligible, _ = self.store.enqueue_run(second_session["id"], "eligible")
 
-        claimed = self.store.claim_next_run()
+        claimed = self.store.claim_next_run_committed()
 
         self.assertIsNotNone(claimed)
-        self.assertEqual(claimed["id"], eligible["id"])
+        self.assertEqual(claimed.value["id"], eligible["id"])
         self.assertEqual(self.store.read_run(blocked["id"])["status"], "queued")
         self.assertEqual(
             self.store.read_run(waiting["id"])["status"], "waiting_approval"

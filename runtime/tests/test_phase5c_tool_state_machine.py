@@ -40,6 +40,7 @@ from eidos_runtime.tools.contracts import (  # noqa: E402
 )
 from eidos_runtime.tools.registry import (  # noqa: E402
     StepToolBinding,
+    ToolArgumentValidationResult,
     ToolProvenance,
     ToolRegistryEntry,
     ToolSpec,
@@ -61,8 +62,8 @@ _SUCCESS = {
 
 class _Dispatcher:
     @staticmethod
-    def validate_execution(_call, _plan) -> bool:
-        return True
+    def validate_execution(_call, _plan) -> ToolArgumentValidationResult:
+        return ToolArgumentValidationResult(valid=True)
 
     @staticmethod
     def validate_result(_tool_name, result):

@@ -53,6 +53,9 @@ class _Environment:
     def model_is_configured(self) -> bool:
         return True
 
+    def model_config(self, _model_id: str) -> None:
+        return None
+
     def model_for(self, _model_id: str) -> _Model:
         return _Model()
 
@@ -82,7 +85,7 @@ class _Runtime:
         self.store = store
 
     def prepare_next(self) -> object | None:
-        return self.store.claim_next_run()
+        return self.store.claim_next_run_committed()
 
     def release(self, _start: object | None) -> None:
         pass

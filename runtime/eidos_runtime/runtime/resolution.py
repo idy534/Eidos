@@ -312,7 +312,6 @@ def create_run_resolution_snapshot(
     workspace_identity: WorkspaceIdentitySnapshot,
     data_directory: Path | None,
     created_at: int,
-    projectless: bool = False,
     approval_mode: ApprovalMode = "manual",
     personalization: PersonalizationSettings | None = None,
 ) -> RunResolutionSnapshot:

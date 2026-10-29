@@ -1265,7 +1265,6 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result["data"]["termination"], "not_started")
         self.assertNotIn("internal seatbelt diagnostic", result_json)
         self.assertNotEqual(result["code"], "TOOL_EXECUTION_FAILED")
-        self.assertFalse(self.store.side_effects_blocked(run["id"]))
         self.assertEqual(
             self.store.connection.execute(
                 "SELECT status FROM durable_intents WHERE run_id = ?",

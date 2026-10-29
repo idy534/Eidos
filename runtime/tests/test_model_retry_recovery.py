@@ -476,7 +476,7 @@ def _assert_recovered_retry(store, run, old, exhausted, steering):
         assert len(store.read_model_attempts(run["id"])) == 6
         return
     assert store.read_run(run["id"])["status"] == "queued"
-    assert store.claim_next_run()["id"] == run["id"]
+    assert store.claim_next_run_committed().value["id"] == run["id"]
     if steering:
         store.enqueue_input(run["id"], "steering-new")
     model = Disconnected(0 if steering else 100)

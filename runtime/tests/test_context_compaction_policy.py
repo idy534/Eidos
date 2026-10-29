@@ -30,7 +30,7 @@ def seed_history(store, session, count):
     for index in range(count):
         item = store.create_assistant_item(previous["id"], index + 1)
         store.append_item_content(item["id"], f"Observed entry {index}\n" + "x" * (160_000 // count))
-        store.complete_assistant_item(item["id"])
+        store.complete_assistant_item_committed(item["id"])
     store.fail_run(previous["id"], "fixture")
 
 

@@ -59,7 +59,7 @@ def test_messages_over_one_page_are_delivered_before_completion(state, monkeypat
     store, _session, run = state
     child = spawn(store, run, 0)
     repository = CollaborationRepository(store.database)
-    assert store.claim_next_run()['id'] == child.run_id
+    assert store.claim_next_run_committed().value['id'] == child.run_id
     for index in range(33):
         item = store.create_tool_item(child.run_id, 1, index, f'message-{index}', 'send_message', '{}')
         repository.send(child.run_id, item['id'], 'parent', f'Evidence number {index}')
@@ -185,7 +185,7 @@ def test_unused_skill_removal_survives_restart_without_changing_frozen_catalog(s
     reopened.initialize()
     restored = SkillCatalog(PluginCatalog(reopened)).catalog_snapshot(reopened.read_run_extension_snapshot(run['id']))
     assert restored == frozen
-    assert reopened.claim_next_run()['id'] == run['id']
+    assert reopened.claim_next_run_committed().value['id'] == run['id']
     model = ScriptedModel([ModelResponse(text='Proceed with other evidence')])
     RuntimeEngine(reopened, model, lambda _event: None).run(run['id'], threading.Event())
     assert reopened.read_run(run['id'])['status'] == 'succeeded'

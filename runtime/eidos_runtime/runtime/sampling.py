@@ -200,7 +200,6 @@ class SamplingRuntime:
             decision = _terminal_retry_decision(
                 error,
                 failure,
-                had_progress=had_progress,
                 canceled=isinstance(error, SamplingCancelled),
                 policy=RetryPolicy(
                     max_attempts=min(6, step.model_profile.retry_max_attempts),
@@ -483,7 +482,6 @@ def _terminal_retry_decision(
     error: SamplingError,
     failure: ModelRequestFailure | None,
     *,
-    had_progress: bool,
     canceled: bool,
     policy: RetryPolicy,
     attempt_number: int,

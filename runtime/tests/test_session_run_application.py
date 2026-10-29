@@ -253,10 +253,10 @@ class _RuntimePort:
         self.aborted: list[_WorkerStart | None] = []
 
     def prepare_next(self) -> _WorkerStart | None:
-        claimed = self.store.claim_next_run()
+        claimed = self.store.claim_next_run_committed()
         if claimed is None:
             return None
-        start = _WorkerStart(str(claimed["id"]))
+        start = _WorkerStart(str(claimed.value["id"]))
         self.prepared.append(start)
         return start
 
@@ -279,8 +279,8 @@ class _RunStartEnvironment:
     def model_is_configured(self) -> bool:
         return True
 
-    def profile_is_selectable(self, _profile: object) -> bool:
-        return True
+    def model_config(self, _model_id: str) -> None:
+        return None
 
     def model_for(self, _model_id: str) -> object:
         return _LegacyModel()

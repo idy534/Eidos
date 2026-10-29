@@ -74,7 +74,7 @@ def test_mcp_approval_policy_uses_only_explicit_read_only_hint(annotations, requ
         call = ModelToolCall('pending', entry.spec.name, {})
         assert dispatcher.plan(call, legacy.contract_fingerprint).descriptor is None
         restored = dispatcher.plan_pending_approval(call, legacy.contract_fingerprint)
-        assert restored.descriptor is not None and dispatcher.validate_execution(call, restored)
+        assert restored.descriptor is not None and dispatcher.validate_execution(call, restored).valid
         changed_contract = replace(legacy, spec=legacy.spec.model_copy(update={'description': 'Changed description'}))
         assert dispatcher.plan_pending_approval(call, changed_contract.contract_fingerprint).descriptor is None
         changed_source = replace(legacy, provenance=legacy.provenance.model_copy(update={'content_hash': 'd' * 64}))

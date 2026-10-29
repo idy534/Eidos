@@ -295,11 +295,6 @@ class WorktreeRetentionService:
             )
         return worktree
 
-    def _save_snapshot(self, worktree: Worktree, snapshot_id: str) -> WorktreeSnapshot:
-        """Compatibility seam for recovery tests; ownership lives in snapshot service."""
-
-        return self.snapshot_service.save(worktree, snapshot_id)
-
     def _protected_reason(self, worktree: Worktree) -> str | None:
         if worktree.state is WorktreeState.INVALID:
             return "worktree_recovery_required"
