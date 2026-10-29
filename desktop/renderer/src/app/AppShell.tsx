@@ -997,6 +997,7 @@ export function AppShell({ runtime }: AppShellProps) {
     currentSnapshot && !isDraft ? currentSnapshot.session.id : undefined,
     currentSnapshot?.items ?? [],
     currentSnapshot?.previousItemId,
+    currentSnapshot?.runs ?? [],
   );
   const outputArtifacts = collectOutputArtifacts(completeSessionItems.items);
   const { approvals, respondingApprovalIds, respondingKindByApprovalId, errorsByApprovalId } = approvalState;
@@ -1688,6 +1689,8 @@ export function AppShell({ runtime }: AppShellProps) {
                   searchTarget={searchTarget}
                   items={currentSnapshot.items.filter((item) => !currentSnapshot.runs.some((run) => run.id === item.runId && isQueuedMessage(run)))}
                   resultItems={completeSessionItems.items}
+                  allRuns={completeSessionItems.runs}
+                  onEnsureItemMounted={sessionActions.ensureItemLoaded}
                   contextCompactions={currentSnapshot.contextCompactions}
                   runs={currentSnapshot.runs.filter((run) => !isQueuedMessage(run))}
                   models={feedModels}

@@ -56,6 +56,8 @@ Renderer 是展示边界。Renderer 不能直接访问 Node 系统能力，也�
 
 `ExecutionFeed → useFeedScroll` 分开保存底部跟随意图和实际底部位置。原生 `ResizeObserver` 同时观察 `.feed-content` 和 Feed 视口，覆盖处理过程与工具的展开动画、延迟图片、代码渲染和视口高度变化。内容更新与尺寸变化共用一个合并到下一帧的滚动入口。跟随开启时，Feed 关闭浏览器滚动锚定；用户浏览历史时，Feed 恢复浏览器锚定，并停止自动到底。向上滚轮、触摸、键盘和滚动条操作可以中断跟随。用户手动回到底部或点击“滚动到最新内容”后恢复跟随。折叠引起的滚动范围收缩不改变用户暂停跟随的选择。“滚动到最新内容”使用同一滚动入口，不再启动独立的平滑滚动。空列表首次出现内容时会挂载观察器，卸载时会断开观察器并取消待执行帧。该状态只用于 Renderer 交互，不增加协议或持久化字段。
 
+长会话导航通过 `ExecutionFeed → ConversationRunRail` 在 Renderer 内部实现。会话有效用户 Run 达到 4 条且侧边空间充足时在左侧展示垂直导航轨道。每个非队列、未废弃的 Run 映射为一条静止宽度 6px 的短横线，悬浮激活时应用透镜动画（中心 26px，前后 3 条按比例放大到 20/14/10px）并弹出 320px 宽的浮动预览卡（展示主提问与最终回答摘要）；支持点击平滑滚动、连续拖拽 scrub 即时定位与 roving tabIndex 键盘导航。轨道通过 CSS 容器查询 `@container feed-shell (max-width: 53.99rem)` 与 ResizeObserver 判定可用侧边留白并在过窄时自动隐藏，避免遮挡正文与代码。未挂载的历史分页在用户点击或拖拽落点时按需拉取补齐，不修改 Agent Loop、RPC 协议与持久化结构。
+
 远端模型只提供不可信的文本和 ToolCall 提案。Runtime 负责验证模型输出、构建 Context、执行 Tool、处理 Approval、应用 Sandbox Policy 和提交持久事实。
 
 ## Workspace model

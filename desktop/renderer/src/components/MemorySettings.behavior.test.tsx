@@ -207,7 +207,7 @@ it("allows a new note without a separate summary", async () => {
   const { memory } = mount();
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "新建笔记" }));
-  await user.type(screen.getByRole("textbox", { name: "笔记文件名" }), "preference.md");
+  await user.type(await screen.findByRole("textbox", { name: "笔记文件名" }), "preference.md");
   await user.type(screen.getByRole("textbox", { name: "笔记正文" }), "用户偏好简短回复。");
   await user.click(screen.getByRole("button", { name: "保存笔记" }));
   await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/edit", expect.objectContaining({ summary: "", content: "用户偏好简短回复。" })));
@@ -337,8 +337,13 @@ it("starts with projectless global memory and remembers an explicit project and 
   await user.tab();
   expect(screen.getByRole("combobox", { name: "位置" })).toHaveFocus();
   expect(screen.getByRole("combobox", { name: "位置" })).toHaveValue("");
+  const locationSelect = screen.getByRole("combobox", { name: "位置" });
+  const optionTexts = Array.from(locationSelect.querySelectorAll("option")).map((opt) => opt.textContent);
+  expect(optionTexts).toContain("Other");
+  expect(optionTexts.some((text) => text?.includes("/"))).toBe(false);
   expect(screen.queryByRole("combobox", { name: "范围" })).not.toBeInTheDocument();
-  expect(screen.getByText("无项目对话使用全局记忆。")).toBeInTheDocument();
+  expect(screen.queryByText("无项目对话使用全局记忆。")).not.toBeInTheDocument();
+  expect(document.querySelector(".memory-location-status")).not.toBeInTheDocument();
   expect(memory).toHaveBeenCalledWith("memory/list", expect.objectContaining({ projectId: null, scope: "global" }));
   await user.selectOptions(screen.getByRole("combobox", { name: "位置" }), "other");
   await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/read", expect.objectContaining({ projectId: "other", scope: "current", path: "MEMORY.md" })));

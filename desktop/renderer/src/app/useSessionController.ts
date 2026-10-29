@@ -67,6 +67,7 @@ export interface SessionControllerActions {
   rollbackMaterializedSession: (session: Session, draft: SessionSnapshot) => Promise<boolean>;
   selectSession: (session: Session, focusItemId?: string) => Promise<SessionSnapshot | undefined>;
   loadOlderSession: () => Promise<void>;
+  ensureItemLoaded: (targetItemId: string) => Promise<boolean>;
   createSession: (
     workspaceRoot?: string | null,
     options?: {
@@ -392,6 +393,46 @@ export function useSessionController(): [SessionControllerState, SessionControll
         clearPending("loadingHistorySessionId");
       }
     }
+  }, [snapshot]);
+
+  const ensureItemLoaded = useCallback(async (targetItemId: string): Promise<boolean> => {
+    if (!snapshot) return false;
+    if (snapshot.items.some((item) => item.id === targetItemId)) return true;
+    if (!snapshot.previousItemId) return false;
+
+    const sessionId = snapshot.session.id;
+    const epoch = selectionEpochRef.current;
+    let cursor: string | undefined = snapshot.previousItemId;
+
+    while (cursor && selectedSessionIdRef.current === sessionId && selectionEpochRef.current === epoch) {
+      try {
+        const older = await window.eidosRuntime.readSession(sessionId, { itemLimit: 500, beforeItemId: cursor });
+        if (older.session.id !== sessionId || older.previousItemId === cursor) break;
+        if (selectedSessionIdRef.current !== sessionId || selectionEpochRef.current !== epoch) break;
+
+        let found = false;
+        setSnapshot((current) => {
+          if (current?.session.id !== sessionId) return current;
+          const merged = mergeOlderHistory(current, older);
+          if (merged.items.some((item) => item.id === targetItemId)) {
+            found = true;
+          }
+          return merged;
+        });
+
+        if (found || older.items.some((item) => item.id === targetItemId)) {
+          return true;
+        }
+        if (!older.previousItemId) break;
+        cursor = older.previousItemId;
+      } catch (cause) {
+        if (selectedSessionIdRef.current === sessionId && selectionEpochRef.current === epoch) {
+          setError(userFacingError(cause));
+        }
+        break;
+      }
+    }
+    return false;
   }, [snapshot]);
 
   const createSession = useCallback(async (
@@ -778,6 +819,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     rollbackMaterializedSession,
     selectSession,
     loadOlderSession,
+    ensureItemLoaded,
     createSession,
     forkSession,
     createSessionBranch,

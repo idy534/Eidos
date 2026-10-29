@@ -45,6 +45,7 @@ import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 import { useFeedScroll } from "./useFeedScroll.js";
 import { ContextCompactionRow } from "./ContextCompactionRow.js";
 import { HookActivityRows } from "./HookActivityRows.js";
+import { ConversationRunRail } from "./ConversationRunRail.js";
 import type { ContextCompactionActivity } from "../../../shared/context.generated.js";
 export { isFeedAtBottom } from "./useFeedScroll.js";
 
@@ -62,6 +63,8 @@ interface Props {
   items: Item[];
   resultItems?: Item[];
   runs: Run[];
+  allRuns?: Run[] | undefined;
+  onEnsureItemMounted?: ((itemId: string) => Promise<boolean>) | undefined;
   models?: ModelOption[];
   workspaceRoot?: string;
   responseActionState?: ResponseActionState;
@@ -119,6 +122,8 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   items,
   resultItems = items,
   runs,
+  allRuns,
+  onEnsureItemMounted,
   models = [],
   workspaceRoot = "",
   responseActionState = EMPTY_RESPONSE_ACTION_STATE,
@@ -182,6 +187,16 @@ export const ExecutionFeed = memo(function ExecutionFeed({
 
   return (
     <div className="feed-shell">
+      <ConversationRunRail
+        runs={allRuns ?? runs}
+        items={items}
+        resultItems={resultItems}
+        supersededRunIds={supersededRunIds}
+        contextCompactions={contextCompactions}
+        feedRef={feedRef}
+        pauseFollowing={pauseFollowing}
+        onEnsureItemMounted={onEnsureItemMounted}
+      />
       {approvalLoadError && onRetryLoadPending && (
         <ApprovalRecoveryBanner
           error={approvalLoadError}

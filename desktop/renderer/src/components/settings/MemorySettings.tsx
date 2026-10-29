@@ -101,6 +101,36 @@ function MemorySettingsContent({
 
   const currentMode = selected?.mode ?? "auto";
 
+  const activeProject = location.projects.find((project) => project.id === projectId);
+  const activeProjectName = activeProject ? (activeProject.name ?? activeProject.workspaceRoot.split("/").filter(Boolean).at(-1)) : undefined;
+
+  const statusMessages: React.ReactNode[] = [];
+  if (dirty) {
+    statusMessages.push(<p key="dirty" role="status">请先保存或取消编辑，再切换位置或范围。</p>);
+  } else if (projectId && scope === "global") {
+    statusMessages.push(<p key="global">所有项目和无项目对话共用这份全局记忆。</p>);
+  }
+  if (location.error) {
+    statusMessages.push(
+      <p key="loc-err" role="alert">
+        {location.error} <Button size="small" variant="ghost" onClick={location.refresh}>重试项目列表</Button>
+      </p>
+    );
+  } else if (projectId && !valid) {
+    statusMessages.push(
+      <p key="invalid-proj" role="status">
+        {location.loaded ? "所选项目已不存在，请重新选择位置。" : "正在读取项目列表…"}
+      </p>
+    );
+  }
+  if (library.error) {
+    statusMessages.push(
+      <p key="lib-err" role="alert">
+        {library.error} <Button size="small" variant="ghost" onClick={library.refresh}>重新读取</Button>
+      </p>
+    );
+  }
+
   return (
     <div className="settings-panel memory-settings">
       {/* 独立/测试环境下的顶部悬浮条兜底 */}
@@ -121,16 +151,19 @@ function MemorySettingsContent({
             <span className="memory-control-label">位置</span>
             <div className="memory-select-wrapper memory-location-select">
               <select aria-label="位置" value={projectId ?? ""}
-                title={location.projects.find((project) => project.id === projectId)?.workspaceRoot}
+                title={activeProjectName}
                 disabled={dirty || busy}
                 onChange={(event) => location.selectProject(event.target.value || null)}>
                 <option value="">无项目</option>
                 {projectId && !valid && <option value={projectId}>{location.loaded ? "项目已不存在" : "正在读取项目…"}</option>}
-                {location.projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name ?? project.workspaceRoot.split("/").filter(Boolean).at(-1)} · {project.workspaceRoot}
-                  </option>
-                ))}
+                {location.projects.map((project) => {
+                  const projectName = project.name ?? project.workspaceRoot.split("/").filter(Boolean).at(-1);
+                  return (
+                    <option key={project.id} value={project.id}>
+                      {projectName}
+                    </option>
+                  );
+                })}
               </select>
             </div>
           </label>
@@ -179,14 +212,11 @@ function MemorySettingsContent({
         </div>
       </header>
 
-      <div className="memory-location-status">
-        {dirty ? <p role="status">请先保存或取消编辑，再切换位置或范围。</p>
-          : !projectId ? <p>无项目对话使用全局记忆。</p>
-          : scope === "global" ? <p>所有项目和无项目对话共用这份全局记忆。</p> : null}
-        {location.error ? <p role="alert">{location.error} <Button size="small" variant="ghost" onClick={location.refresh}>重试项目列表</Button></p>
-          : projectId && !valid && <p role="status">{location.loaded ? "所选项目已不存在，请重新选择位置。" : "正在读取项目列表…"}</p>}
-        {library.error && <p role="alert">{library.error} <Button size="small" variant="ghost" onClick={library.refresh}>重新读取</Button></p>}
-      </div>
+      {statusMessages.length > 0 && (
+        <div className="memory-location-status">
+          {statusMessages}
+        </div>
+      )}
 
       {/* 现代双栏知识工作台 */}
       <div className={`memory-workspace${sidebarCollapsed ? " memory-workspace--sidebar-collapsed" : ""}`}>
