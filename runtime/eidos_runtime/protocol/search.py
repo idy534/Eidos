@@ -68,6 +68,7 @@ class ReadAroundRequest(MethodRequestDto):
 
 
 class FileFindRequest(MethodRequestDto):
+    workspace_root: str | None = Field(default=None, max_length=4096)
     model_config = {"alias_generator": to_camel}
     session_id: str = Field(min_length=1, max_length=256)
     path: str = Field(min_length=1, max_length=4096)

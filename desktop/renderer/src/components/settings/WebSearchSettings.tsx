@@ -288,7 +288,7 @@ export function WebSearchSettings({
         <div className="web-search-header-info">
           <h1>网页搜索</h1>
           <p className="web-search-subtitle">
-            配置联网检索提供商。开启默认服务后，智能体可在任务中获取最新网络信息。
+            配置联网检索提供商。勾选默认服务后，智能体可在任务中获取最新网络信息。
           </p>
         </div>
         {!loading && (
@@ -359,14 +359,9 @@ export function WebSearchSettings({
                           {provider === "deepseek"
                             ? "DeepSeek 官方搜索 API"
                             : provider === "doubao"
-                            ? "火山引擎豆包搜索 Custom 版 · 查询最多 100 字符"
+                            ? "火山引擎豆包搜索"
                             : "LangSearch 官方网页搜索 API"}
                         </p>
-                        {provider === "doubao" && (
-                          <p className="web-search-provider-desc">
-                            用户可填写搜索专用 Key，或已开启豆包搜索抵扣的 Agent Plan 专属 Key。计费方式由 Key 决定。
-                          </p>
-                        )}
                       </div>
                     </div>
 

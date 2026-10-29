@@ -30,7 +30,7 @@ describe("Runtime sandbox environment settings", () => {
   it("renders inside Runtime with only inheritance and reread controls", async () => {
     const user = userEvent.setup();
     render(<RuntimeSettings runtime={runtime} />);
-    expect(screen.getByRole("heading", { name: "Runtime 引擎环境" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "运行环境" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "沙盒环境设置" })).toBeInTheDocument();
     expect(await screen.findByLabelText("环境继承方式")).toHaveValue("all");
     expect(screen.queryByRole("button", { name: "保存设置" })).not.toBeInTheDocument();

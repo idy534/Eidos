@@ -121,6 +121,27 @@ def capture_workspace_identity(path: Path | str) -> WorkspaceIdentity:
     )
 
 
+def capture_directory_identity(path: Path | str) -> WorkspaceIdentity:
+    """Capture a saved absolute directory path without following any symlink."""
+
+    path = Path(path)
+    if not path.is_absolute() or ".." in path.parts:
+        raise WorkspacePathError("workspace_unavailable")
+    descriptor = WorkspaceReader._open_absolute_directory(path)
+    try:
+        metadata = os.fstat(descriptor)
+    except OSError:
+        raise WorkspacePathError("workspace_unavailable") from None
+    finally:
+        os.close(descriptor)
+    return WorkspaceIdentity(
+        path=path,
+        device=metadata.st_dev,
+        inode=metadata.st_ino,
+        owner=metadata.st_uid,
+    )
+
+
 class WorkspaceReader:
     """One fd-relative, fail-closed Workspace read boundary."""
 
@@ -129,12 +150,9 @@ class WorkspaceReader:
             workspace if isinstance(workspace, WorkspaceIdentity)
             else capture_workspace_identity(workspace)
         )
-        flags = os.O_RDONLY | os.O_DIRECTORY
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
         try:
-            root_fd = os.open(identity.path, flags)
-        except OSError:
+            root_fd = self._open_absolute_directory(identity.path)
+        except WorkspacePathError:
             raise WorkspacePathError("workspace_unavailable") from None
         metadata = os.fstat(root_fd)
         if (metadata.st_dev, metadata.st_ino, metadata.st_uid) != (
@@ -144,6 +162,30 @@ class WorkspaceReader:
             raise WorkspacePathError("workspace_identity_changed")
         self.workspace = identity
         self.root_fd = root_fd
+
+    def capture_directory_identity(self, relative_path: str) -> WorkspaceIdentity:
+        """Capture a directory below this root without following path symlinks."""
+
+        self._verify_root()
+        descriptor, normalized = self._open_directory_path(relative_path)
+        try:
+            metadata = os.fstat(descriptor)
+            self._verify_root()
+            path = (
+                self.workspace.path
+                if normalized == "."
+                else self.workspace.path.joinpath(*normalized.split("/"))
+            )
+            return WorkspaceIdentity(
+                path=path,
+                device=metadata.st_dev,
+                inode=metadata.st_ino,
+                owner=metadata.st_uid,
+            )
+        except OSError:
+            raise WorkspacePathError("workspace_unavailable") from None
+        finally:
+            os.close(descriptor)
 
     def __enter__(self) -> WorkspaceReader:
         return self
@@ -451,6 +493,27 @@ class WorkspaceReader:
         return descriptor
 
     @staticmethod
+    def _open_absolute_directory(path: Path) -> int:
+        if not path.is_absolute():
+            raise WorkspacePathError("workspace_unavailable")
+        flags = os.O_RDONLY | os.O_DIRECTORY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            descriptor = os.open(path.anchor, flags)
+        except OSError:
+            raise WorkspacePathError("workspace_unavailable") from None
+        try:
+            for part in path.parts[1:]:
+                child = os.open(part, flags, dir_fd=descriptor)
+                os.close(descriptor)
+                descriptor = child
+            return descriptor
+        except OSError:
+            os.close(descriptor)
+            raise WorkspacePathError("workspace_unavailable") from None
+
+    @staticmethod
     def _open_directory(
         parent_fd: int,
         name: str,
@@ -508,5 +571,6 @@ __all__ = [
     "DEFAULT_DIRECTORY_LIMIT", "MAX_DIRECTORY_LIMIT", "WorkspaceDirectoryEntry",
     "WorkspaceDirectoryListing", "WorkspaceFilePreview", "WorkspacePathError",
     "WorkspaceReader", "capture_workspace_identity", "validate_workspace_relative_path",
+    "capture_directory_identity",
     "is_workspace_discoverable_path",
 ]

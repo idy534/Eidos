@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from eidos_runtime.protocol.project_workspaces import ProjectRootDto
 from eidos_runtime.domain.channels import ChannelOrigin
 from eidos_runtime.models.mcp_connections import RemoteMcpInfo
 from eidos_runtime.domain.automation import AutomationOrigin
@@ -79,6 +81,8 @@ class SessionWorktreeDto(ClosedModel):
     state: Literal["active", "missing", "invalid", "deleted"]
 
 
+
+
 class SessionProjectDto(ClosedModel):
     id: StrictStr
     workspace_root: StrictStr = Field(alias="workspaceRoot")
@@ -86,6 +90,14 @@ class SessionProjectDto(ClosedModel):
 
 
 class ProjectDto(ClosedModel):
+    def to_json_value(self) -> dict[str, JsonValue]:
+        value = super().to_json_value()
+        value["revision"] = self.revision
+        return value
+
+    revision: StrictInt = 1
+    primary_root_id: StrictStr | None = Field(default=None, alias="primaryRootId")
+    roots: list[ProjectRootDto] = Field(default_factory=list)
     id: StrictStr
     name: StrictStr
     workspace_root: StrictStr = Field(alias="workspaceRoot")
@@ -95,6 +107,7 @@ class ProjectDto(ClosedModel):
 
 
 class SessionDto(ClosedModel):
+    roots: list[ProjectRootDto] = Field(default_factory=list)
     forked_from: SessionForkSource | None = Field(default=None, alias="forkedFrom")
     automation_origin: AutomationOrigin | None = Field(default=None, alias="automationOrigin")
     id: StrictStr

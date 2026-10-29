@@ -56,26 +56,29 @@ Renderer 是展示边界。Renderer 不能直接访问 Node 系统能力，也�
 
 `ExecutionFeed → useFeedScroll` 分开保存底部跟随意图和实际底部位置。原生 `ResizeObserver` 同时观察 `.feed-content` 和 Feed 视口，覆盖处理过程与工具的展开动画、延迟图片、代码渲染和视口高度变化。内容更新与尺寸变化共用一个合并到下一帧的滚动入口。跟随开启时，Feed 关闭浏览器滚动锚定；用户浏览历史时，Feed 恢复浏览器锚定，并停止自动到底。向上滚轮、触摸、键盘和滚动条操作可以中断跟随。用户手动回到底部或点击“滚动到最新内容”后恢复跟随。折叠引起的滚动范围收缩不改变用户暂停跟随的选择。“滚动到最新内容”使用同一滚动入口，不再启动独立的平滑滚动。空列表首次出现内容时会挂载观察器，卸载时会断开观察器并取消待执行帧。该状态只用于 Renderer 交互，不增加协议或持久化字段。
 
+长会话导航通过 `ExecutionFeed → ConversationRunRail` 在 Renderer 内部实现。会话有效用户 Run 达到 4 条且侧边空间充足时在左侧展示垂直导航轨道。每个非队列、未废弃的 Run 映射为一条静止宽度 6px 的短横线，悬浮激活时应用透镜动画（中心 26px，前后 3 条按比例放大到 20/14/10px）并弹出 320px 宽的浮动预览卡（展示主提问与最终回答摘要）；支持点击平滑滚动、连续拖拽 scrub 即时定位与 roving tabIndex 键盘导航。轨道通过 CSS 容器查询 `@container feed-shell (max-width: 53.99rem)` 与 ResizeObserver 判定可用侧边留白并在过窄时自动隐藏，避免遮挡正文与代码。未挂载的历史分页在用户点击或拖拽落点时按需拉取补齐，不修改 Agent Loop、RPC 协议与持久化结构。
+
 远端模型只提供不可信的文本和 ToolCall 提案。Runtime 负责验证模型输出、构建 Context、执行 Tool、处理 Approval、应用 Sandbox Policy 和提交持久事实。
 
 ## Workspace model
 
-Eidos 把用户选择的目录建模为 Project。Project 的基础事实是 `name` 和 `workspace_root`。Project 可以有 Git capability，但 Git 不是 Project 存在的前提。Project 由 `project/create` 显式写入 SQLite，不依赖 Session 创建。`name` 可以省略，Runtime 会使用 canonical Workspace 的文件夹名。
+Eidos 把项目建模为稳定的 Project ID、名称、多个文件夹和一个主要文件夹。`workspace_root` 保留主要目录兼容投影。每个根保存独立 ID、路径和可选 Git checkout 信息。SQLite v45-v47 保存 `project_roots`、Session 的 `project_id` 与根快照、Worktree 私有 gitdir 身份和保留快照的固定 Git 来源。项目配置通过版本号控制并发保存。
 
 ```text
-Project
- ├── workspace_root
- └── optional Git capability
-          └── Thread / Session
-                    ├── Local Execution → Project.workspace_root
-                    └── Worktree Execution → Managed Worktree → Run
+Project → ordered roots + primary root
+             └── Session → frozen roots and project_id
+                           ├── Local → source paths
+                           └── Worktree → remap primary checkout; share other paths
+                                      └── Run → frozen identities and base permissions
 ```
 
-Non-Git Project 只能创建 Local Execution Session。Git Project 可以创建 Local 或 Worktree Execution Session。Desktop 的新建会话入口先保留本地草稿，首次提交时才物化 Session。Workspace Dock 的 Review 只对 Git Project 展示，Terminal 和 Files 只对有 Project 的会话展示，Browser 对所有会话展示。Local Session 的 `execution_mode` 是 `local`，`worktree_id` 是 NULL，Run 直接使用 `Project.workspace_root`。Worktree Session 的 `execution_mode` 是 `worktree`，它绑定 Managed Worktree，Run 使用该 Worktree root。Git Project 的 Session Git status 和 diff API 会读取当前 execution root。
+新会话使用当前项目配置。已有会话保留原目录。主要目录提供默认 cwd 和 Worktree 目标。主目录无 Git 时，会话使用 Local，但 Review 仍可选择次目录中的仓库。Git 控件操作整个已核验 checkout；文件和 Shell 的权限只包含挂载目录。项目改名不改变身份或记忆作用域。Worktree 的运行、Fork、Handoff 和恢复使用固定来源，不跟随项目主目录变化。
 
-文件读写、Shell、Skill、MCP、Context、Long Task、Sandbox 和 Checkpoint 属于 Workspace 或 Runtime 能力。它们不因为 Project 没有 Git 而失效。Git status 和 Git diff 在 Git Project 的当前 execution root 上提供。Managed Worktree 和 Git-based Fork 仍然只在 Git Project 中提供。
+文件、Shell、workspace_read MCP、图片和 Context 环境可以使用固定的多个根。相对路径仍以主要目录为起点；次根使用绝对路径。权限快照保留全部根及原 Skill/Runtime 授权字段。Shell 的 manifest 合并各根观察。目录身份和文件版本仍由 Reader 与执行层核验。Repo Intelligence 自动索引仍以主要目录为范围。
 
-Desktop Workspace Explorer 也只读取当前 Session execution root。`WorkspaceExplorerApplication` 先解析 Local root 或验证 Managed Worktree identity，再调用共享 `WorkspaceReader`。Draft 在 Session 尚未物化时使用请求中的 Project binding；Runtime 从持久化 Project 解析 root，并在请求同时提供 root 时核对 workspace identity。Workspace Dock 不对 Projectless 会话展示 Files。`WorkspaceReader` 与 Agent 文件工具共用 fd-relative、`O_NOFOLLOW`、hard discovery directory 和 root ignore 规则。普通敏感文件名和内容可以读取；`.git`、`.agents`、`.eidos` 只在写入侧保护，显式路径可以列举、搜索和读取，默认发现仍隐藏这些元数据目录。`workspace/listDirectory` 只返回一层子项。`workspace/readFilePreview` 返回有界 UTF-8 预览或图片/PDF/HTML 元数据。`workspace/readAsset` 按块读取受控资源。Projectless 的 Runtime 文件能力仍经过同一个 Reader。Renderer 对 Conversation 的文件打开请求检查工作区相对路径格式。Runtime 负责核验当前 execution root、文件身份和实际存在性；文件树缓存不替代这些核验。Renderer 不直接读取 filesystem。
+Desktop Workspace Explorer 提供根选择器。`WorkspaceExplorerApplication` 解析 Session 的固定根，或在草稿中解析持久 Project 配置。Runtime 核验请求的具体 root。目录通知携带 `workspaceRoot`，Renderer 只刷新对应根。预览、资源与文件内查找使用同一个根。`WorkspaceReader` 保留 fd-relative、`O_NOFOLLOW`、有界输出与发现规则。Renderer 继续只经过 typed IPC 访问文件。
+
+多目录项目的详细行为、Git 仓库范围和 Checkpoint 限制见 [项目说明](features/projects.md)。
 
 Conversation 文件引用沿用 `MarkdownContent → ArtifactLink → AppShell → WorkspaceExplorer → typed IPC → WorkspaceExplorerApplication → WorkspaceReader`。`workspaceFileLink` 从显式 Markdown 链接目标解析绝对路径和可选行列号，并把当前 execution root 内的目标转为工作区相对路径。显示标签不参与路径解析。行内代码不再自动变成文件链接。文档预览通过 `documentPath` 保留相对链接语义。`ArtifactActions.openFile` 和 Renderer 内部的 `WorkspaceFileOpenRequest` 携带可选 `line`、`column`；位置只控制预览滚动与选区，不改变 Runtime 文件读取请求、权限或文件身份。Shiki 的 line transformer 和普通文本行节点提供源行标记。Markdown 的 rehype 节点位置提供源文本块标记。代码高亮完成后，预览会再次应用当前定位请求；同文件的不同请求用 `requestId` 区分。
 
@@ -235,7 +238,7 @@ CLAUDE.md
 
 每层只选择一个候选。Resolver 使用共享的 32 KiB UTF-8 byte budget。Resolver 记录 shadowed candidate、读取或预算 warning、原始 content hash、实际包含字节数、directory level、Workspace root 和 effective cwd。Run 使用 immutable rule snapshot，Step Resolution 保存 resolved instruction hash 和 effective cwd。
 
-`InstructionResolver` 按 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 形成分层 instructions。Skill Catalog 属于 developer capability context。真正加载的第三方 `SKILL.md` 属于较低权限的 user context。Project Rules 和 Selected Skill 保留来源与 hash。 模型可见的 Skill 目录只保留唯一调用名称、说明和入口路径；完整身份、版本与 hash 留在 Runtime 的冻结快照中。skill_read 继续使用现有参数读取该名称对应的 Skill。它们不具备修改 Runtime Permission、Approval 或 Sandbox 的权限。 通用 Runtime 提示不包含具体审批模式的扩权流程。当前权限层按 manual、auto_review、full_access 分别生成；完全访问层不混入沙盒扩权、嵌套沙盒或自动审查指引。可用工具由当前 Tool Schema 暴露，权限文本不重复整份名称列表。
+`InstructionResolver` 按 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 形成分层 instructions。 个性化设置在 Run 创建时固定到 `RunResolutionSnapshot`，并以较低权限的 user context 参与每次上下文构建。用户背景和全局指令不会更改执行权限。详见[个性化说明](features/personalization.md)。Skill Catalog 属于 developer capability context。真正加载的第三方 `SKILL.md` 属于较低权限的 user context。Project Rules 和 Selected Skill 保留来源与 hash。 模型可见的 Skill 目录只保留唯一调用名称、说明和入口路径；完整身份、版本与 hash 留在 Runtime 的冻结快照中。skill_read 继续使用现有参数读取该名称对应的 Skill。它们不具备修改 Runtime Permission、Approval 或 Sandbox 的权限。 通用 Runtime 提示不包含具体审批模式的扩权流程。当前权限层按 manual、auto_review、full_access 分别生成；完全访问层不混入沙盒扩权、嵌套沙盒或自动审查指引。可用工具由当前 Tool Schema 暴露，权限文本不重复整份名称列表。
 
 Context Budget 使用 `projected_input_tokens` 判断下一次模型请求是否适合当前窗口。圆环、详情和兼容的 Context Usage RPC 使用同一份当前 ContextPlan 元数据。Runtime 只接受与这个 Plan 绑定的已完成 ModelAttempt 的 Provider `input_tokens`，否则系统显示当前投影估算。Provider 数值不是累计消费；分母来自 Run 的冻结 ModelProfile，用户调小窗口后，系统不使用 Catalog 上限替代它。系统保留超过 100% 的真实比例，只把圆环绘图限制在一圈内。
 
@@ -517,7 +520,7 @@ ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。
 
 本地 JSONL 日志保存脱敏后的异常消息和调用位置，包括显式 cause 与未抑制的 context。普通消息最多 16 KiB，异常消息最多 4 KiB，调用栈最多 16 KiB；每个异常最多记录 32 个调用位置，异常链最多记录 8 层。日志不保存局部变量和源码行。日志字段使用现有凭据扫描并补充私钥正文、Authorization 与密钥赋值脱敏；诊断生成失败时只保存固定占位信息。该信息不进入 Session 正文，也不参与业务状态和恢复判断。
 
-当前 `SCHEMA_VERSION` 是 43。v42→v43 保留已有笔记、历史版本、模式和撤销记录，新增归档状态并调整聊天来源触发器。v41→v42 删除会话级临时记忆字段和接口，保留笔记与原来源撤销状态，并让原临时会话按所属范围的模式工作。v40→v41 保留现有笔记，在事务中修复历史自动版本的来源撤销触发器，并补充撤销旧版遗漏的上下文。v39→v40 在事务中重置记忆表，撤销旧记忆上下文，并保留聊天、执行记录及其他配置；文件清理由可重试的启动标记完成。v25→v26 增加 `session_forks`、`session_history_entries`、`session_history_resources` 和 Worktree 生命周期请求校验值。迁移使用事务，旧 Session 没有继承历史。v16→v17 在事务内新增记忆作用域、版本、证据、任务、预算及隐私撤销表和索引。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
+当前 `SCHEMA_VERSION` 是 44。v43→v44 新增全局个性化设置表，并保留已有数据。v42→v43 保留已有笔记、历史版本、模式和撤销记录，新增归档状态并调整聊天来源触发器。v41→v42 删除会话级临时记忆字段和接口，保留笔记与原来源撤销状态，并让原临时会话按所属范围的模式工作。v40→v41 保留现有笔记，在事务中修复历史自动版本的来源撤销触发器，并补充撤销旧版遗漏的上下文。v39→v40 在事务中重置记忆表，撤销旧记忆上下文，并保留聊天、执行记录及其他配置；文件清理由可重试的启动标记完成。v25→v26 增加 `session_forks`、`session_history_entries`、`session_history_resources` 和 Worktree 生命周期请求校验值。迁移使用事务，旧 Session 没有继承历史。v16→v17 在事务内新增记忆作用域、版本、证据、任务、预算及隐私撤销表和索引。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
 
 Outbox 投递失败不会删除事实。Runtime 重启会从 `state.sqlite`、Outbox、Long Task 和 Resource 状态恢复或记录实际中断与未知结果。其他数据库和文件不参与跨库业务 transaction。
 

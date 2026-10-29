@@ -760,8 +760,8 @@ def test_validation_reports_repository_mismatch_and_persists_invalid_state(
     manager = WorktreeManager(database, managed_root=tmp_path / "managed")
     worktree = manager.create(repository)
     database.connection().execute(
-        "UPDATE projects SET git_common_dir = ? WHERE id = ?",
-        (str((tmp_path / "different-common").resolve()), worktree.project_id),
+        "UPDATE worktrees SET git_common_dir = ? WHERE id = ?",
+        (str((tmp_path / "different-common").resolve()), worktree.id),
     )
     database.connection().commit()
 

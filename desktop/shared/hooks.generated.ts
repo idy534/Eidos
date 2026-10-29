@@ -42,6 +42,7 @@ export type Systemmessage = string;
 export type Exitcode = number | null;
 export type Durationms = number;
 export type Workspacechanged = boolean;
+export type Workspaceobservationcomplete = boolean;
 export type Workspacechanges = string[];
 export type Outputcallid = string | null;
 export type Contexttruncated = boolean;
@@ -153,6 +154,7 @@ export interface HookResult {
   exitCode?: Exitcode;
   durationMs?: Durationms;
   workspaceChanged?: Workspacechanged;
+  workspaceObservationComplete?: Workspaceobservationcomplete;
   workspaceChanges?: Workspacechanges;
   outputCallId?: Outputcallid;
   contextTruncated?: Contexttruncated;

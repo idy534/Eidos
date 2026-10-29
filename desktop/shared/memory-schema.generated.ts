@@ -277,6 +277,20 @@ export const memorySchema = {
           "minLength": 1,
           "title": "Operationid",
           "type": "string"
+        },
+        "projectId": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Projectid"
         }
       },
       "required": [
@@ -403,6 +417,20 @@ export const memorySchema = {
           "default": null,
           "title": "Sessionid"
         },
+        "projectId": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Projectid"
+        },
         "scope": {
           "default": "current",
           "enum": [
@@ -436,6 +464,20 @@ export const memorySchema = {
           ],
           "default": null,
           "title": "Sessionid"
+        },
+        "projectId": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Projectid"
         },
         "scope": {
           "default": "allowed",
@@ -490,6 +532,20 @@ export const memorySchema = {
           "default": null,
           "title": "Sessionid"
         },
+        "projectId": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Projectid"
+        },
         "scope": {
           "default": "global",
           "enum": [
@@ -529,6 +585,20 @@ export const memorySchema = {
           ],
           "default": null,
           "title": "Sessionid"
+        },
+        "projectId": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Projectid"
         },
         "scope": {
           "default": "current",

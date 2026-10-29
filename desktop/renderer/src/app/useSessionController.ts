@@ -60,15 +60,18 @@ export interface SessionControllerActions {
   loadSessions: () => Promise<void>;
   createProject: (name: string | undefined, workspaceRoot: string) => Promise<Project | undefined>;
   startDraft: (project?: Project | null) => void;
+  updateDraftProject: (project: Project) => void;
   updateDraftExecutionMode: (mode: "local" | "worktree") => void;
   materializeDraft: (workspaceNameHint?: string) => Promise<SessionSnapshot | undefined>;
   discardDraft: () => void;
   rollbackMaterializedSession: (session: Session, draft: SessionSnapshot) => Promise<boolean>;
   selectSession: (session: Session, focusItemId?: string) => Promise<SessionSnapshot | undefined>;
   loadOlderSession: () => Promise<void>;
+  ensureItemLoaded: (targetItemId: string) => Promise<boolean>;
   createSession: (
     workspaceRoot?: string | null,
     options?: {
+      projectId?: string;
       workspaceNameHint?: string;
       executionMode?: "local" | "worktree";
       baseRef?: string;
@@ -235,6 +238,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     const session: Session = {
       id: `draft-${crypto.randomUUID()}`,
       workspaceRoot: project?.workspaceRoot ?? "",
+      ...(project?.roots ? { roots: project.roots } : {}),
       ...(project
         ? {
             project: {
@@ -262,6 +266,33 @@ export function useSessionController(): [SessionControllerState, SessionControll
     setDraft((prev) => prev
       ? { ...prev, session: { ...prev.session, executionMode: mode, updatedAt: Date.now() } }
       : prev);
+  }, []);
+
+  const updateDraftProject = useCallback((project: Project): void => {
+    setDraft((prev) => {
+      if (!prev || prev.session.project?.id !== project.id) return prev;
+      const session = { ...prev.session };
+      if (project.roots) session.roots = project.roots;
+      else delete session.roots;
+      return {
+        ...prev,
+        session: {
+          ...session,
+          workspaceRoot: project.workspaceRoot,
+          ...(project.roots ? { roots: project.roots } : {}),
+          project: {
+            id: project.id,
+            ...(project.name ? { name: project.name } : {}),
+            workspaceRoot: project.workspaceRoot,
+            gitAvailable: project.gitAvailable,
+          },
+          executionMode: project.gitAvailable
+            ? (prev.session.executionMode ?? "local")
+            : "local",
+          updatedAt: Date.now(),
+        },
+      };
+    });
   }, []);
 
   const selectSession = useCallback(async (session: Session, focusItemId?: string): Promise<SessionSnapshot | undefined> => {
@@ -364,9 +395,50 @@ export function useSessionController(): [SessionControllerState, SessionControll
     }
   }, [snapshot]);
 
+  const ensureItemLoaded = useCallback(async (targetItemId: string): Promise<boolean> => {
+    if (!snapshot) return false;
+    if (snapshot.items.some((item) => item.id === targetItemId)) return true;
+    if (!snapshot.previousItemId) return false;
+
+    const sessionId = snapshot.session.id;
+    const epoch = selectionEpochRef.current;
+    let cursor: string | undefined = snapshot.previousItemId;
+
+    while (cursor && selectedSessionIdRef.current === sessionId && selectionEpochRef.current === epoch) {
+      try {
+        const older = await window.eidosRuntime.readSession(sessionId, { itemLimit: 500, beforeItemId: cursor });
+        if (older.session.id !== sessionId || older.previousItemId === cursor) break;
+        if (selectedSessionIdRef.current !== sessionId || selectionEpochRef.current !== epoch) break;
+
+        let found = false;
+        setSnapshot((current) => {
+          if (current?.session.id !== sessionId) return current;
+          const merged = mergeOlderHistory(current, older);
+          if (merged.items.some((item) => item.id === targetItemId)) {
+            found = true;
+          }
+          return merged;
+        });
+
+        if (found || older.items.some((item) => item.id === targetItemId)) {
+          return true;
+        }
+        if (!older.previousItemId) break;
+        cursor = older.previousItemId;
+      } catch (cause) {
+        if (selectedSessionIdRef.current === sessionId && selectionEpochRef.current === epoch) {
+          setError(userFacingError(cause));
+        }
+        break;
+      }
+    }
+    return false;
+  }, [snapshot]);
+
   const createSession = useCallback(async (
     workspaceRoot?: string | null,
     options: {
+      projectId?: string;
       workspaceNameHint?: string;
       executionMode?: "local" | "worktree";
       baseRef?: string;
@@ -394,6 +466,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
           const existing = prev.find((item) => item.id === project.id);
           const next: Project = {
             ...project,
+            ...existing,
             ...(project.name
               ? { name: project.name }
               : existing?.name
@@ -430,6 +503,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     const projectRoot = currentDraft.session.project?.workspaceRoot ?? null;
     return createSession(projectRoot, {
       executionMode: currentDraft.session.executionMode ?? "local",
+      ...(currentDraft.session.project ? { projectId: currentDraft.session.project.id } : {}),
       ...(projectRoot === null ? { workspaceNameHint: workspaceNameHint ?? "新会话" } : {}),
     });
   }, [createSession, draft]);
@@ -738,12 +812,14 @@ export function useSessionController(): [SessionControllerState, SessionControll
     loadSessions,
     createProject,
     startDraft,
+    updateDraftProject,
     updateDraftExecutionMode,
     materializeDraft,
     discardDraft,
     rollbackMaterializedSession,
     selectSession,
     loadOlderSession,
+    ensureItemLoaded,
     createSession,
     forkSession,
     createSessionBranch,

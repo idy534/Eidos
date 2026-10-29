@@ -210,7 +210,7 @@ export class TerminalManager {
     ) {
       throw new Error("Worktree 当前不可用。");
     }
-    return worktree.worktreeRoot;
+    return session.roots?.[0]?.path ?? worktree.worktreeRoot;
   }
 
   private async draftExecutionRoot(

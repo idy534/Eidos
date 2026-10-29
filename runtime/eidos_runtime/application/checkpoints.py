@@ -67,7 +67,8 @@ class CheckpointWorktreePort(Protocol):
     ) -> Worktree: ...
 
     def prepare_create(
-        self, repository_root: Path | str, base_ref: str | None = None
+        self, repository_root: Path | str, base_ref: str | None = None,
+        *, project: Project | None = None,
     ) -> Worktree: ...
 
     def create_prepared(
@@ -198,7 +199,8 @@ class CheckpointApplication:
             elif projection.project.git_available:
                 try:
                     manager = self._manager_or_error()
-                    project = manager.project(projection.project.id)
+                    from eidos_runtime.persistence.project_workspaces import project_for_session
+                    project = project_for_session(manager.project(projection.project.id), projection.session)
                     identity = self._store.workspace_for_run(request.run_id)
                     snapshot_id = f"git-{checkpoint_id}"
                     snapshot = self.snapshot_service.snapshots.read(snapshot_id)
@@ -305,7 +307,8 @@ class CheckpointApplication:
         operation_request: dict[str, object],
     ) -> CheckpointRewindResponseDto:
         manager = self._manager_or_error()
-        project = manager.project(projection.project.id)
+        from eidos_runtime.persistence.project_workspaces import project_for_session
+        project = project_for_session(manager.project(projection.project.id), projection.session)
         if project.git_common_dir is None or project.git_repository_root is None:
             raise ApplicationError("CHECKPOINT_GIT_STATE_UNAVAILABLE")
         if self._sessions.has_active_run_for_workspace(project.workspace_root):
@@ -451,7 +454,7 @@ class CheckpointApplication:
                 operation_id=operation_id,
                 state=WorktreeLifecycleState.PREPARED,
                 project_id=current.project_id,
-                repository_root=manager.project(current.project_id).workspace_root,
+                repository_root=current.repository_root or manager.project(current.project_id).workspace_root,
                 worktree_id=current.id,
                 worktree_root=current.worktree_root,
                 base_ref=current.base_ref,
@@ -568,10 +571,12 @@ class CheckpointApplication:
         if parent_projection.worktree is None:
             # A direct fork creates a new runtime/conversation lineage while
             # both Sessions continue to use the same real filesystem root.
-            session = self._store.create_session(
-                parent_projection.project.workspace_root
-            )
-            session_id = str(session["id"])
+            session = self._sessions.create_session(
+                parent_projection.session.workspace_root,
+                project_id=parent_projection.project.id,
+                workspace_roots=parent_projection.session.roots or None,
+            ).value
+            session_id = session.id
         else:
             return self._fork_managed(
                 request,
@@ -669,7 +674,7 @@ class CheckpointApplication:
         snapshot = self._ready_checkpoint_snapshot(checkpoint)
         parent_worktree = parent_projection.worktree
         assert parent_worktree is not None
-        parent_project = manager.project(parent_worktree.project_id)
+        parent_project = manager.source_project(parent_worktree.worktree_id)
         lifecycle = manager.lifecycle
         lifecycle_operation_id = request.operation_id or (
             f"checkpoint-fork-{uuid.uuid4().hex}"
@@ -684,7 +689,7 @@ class CheckpointApplication:
             if lifecycle_operation is None:
                 plan = manager.prepare_create(
                     parent_project.workspace_root,
-                    base_ref=git_head,
+                    base_ref=git_head, project=parent_project,
                 )
                 token = uuid.uuid5(
                     uuid.NAMESPACE_URL,
@@ -700,6 +705,7 @@ class CheckpointApplication:
                         operation_id=lifecycle_operation_id,
                         state=WorktreeLifecycleState.PREPARED,
                         project_id=plan.project_id,
+                        workspace_roots=parent_projection.session.roots,
                         repository_root=parent_project.workspace_root,
                         worktree_id=plan.id,
                         worktree_root=plan.worktree_root,
@@ -779,10 +785,11 @@ class CheckpointApplication:
             session = self._sessions.read_session(session_id)
             if session is None:
                 session_mutation = self._sessions.create_session(
-                    parent_project.workspace_root,
+                    parent_projection.session.workspace_root,
                     worktree_id=worktree.id,
                     execution_mode=SessionExecutionMode.WORKTREE,
                     project_id=parent_project.id,
+                    workspace_roots=parent_projection.session.roots or None,
                     operation_id=None,
                     session_id=session_id,
                 )

@@ -207,6 +207,12 @@ export function parseMultiFileDiff(raw: string, defaultTitle = "代码差异"): 
   return files;
 }
 
+export function pathBasename(path: string): string {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  const idx = normalized.lastIndexOf("/");
+  return idx >= 0 ? normalized.slice(idx + 1) : normalized;
+}
+
 export const DiffViewer = memo(function DiffViewer({ diff = "", title = "代码差异", onOpenFile }: DiffViewerProps) {
   const [copiedFileIndex, setCopiedFileIndex] = useState<number | null>(null);
 
@@ -235,6 +241,7 @@ export const DiffViewer = memo(function DiffViewer({ diff = "", title = "代码�
     <div className="diff-viewer-group" role="region" aria-label="代码差异对比">
       {parsedFiles.map((file, fileIdx) => {
         const isCopied = copiedFileIndex === fileIdx;
+        const displayFileName = file.filename === title ? title : (pathBasename(file.filename) || file.filename);
         return (
           <div
             key={`${file.filename}-${fileIdx}`}
@@ -244,11 +251,11 @@ export const DiffViewer = memo(function DiffViewer({ diff = "", title = "代码�
             <div className="diff-file-header diff-viewer-header">
               <div className="diff-file-meta">
                 <span className="diff-file-name">{onOpenFile && file.filename !== title ? (
-                  <Tooltip content={`打开当前文件：${file.filename}`}>
+                  <Tooltip content={`打开当前文件：${file.filename}`} className="eidos-link-tooltip">
                     <button type="button" className="diff-file-name-link" title={`打开当前文件：${file.filename}`}
-                      onClick={() => onOpenFile(file.filename)}>{file.filename}</button>
+                      onClick={() => onOpenFile(file.filename)}>{displayFileName}</button>
                   </Tooltip>
-                ) : file.filename}</span>
+                ) : displayFileName}</span>
                 <span className="diff-stat-add">+{file.additions}</span>
                 <span className="diff-stat-del">-{file.deletions}</span>
               </div>

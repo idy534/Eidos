@@ -1,3 +1,6 @@
+import { ProjectMutationRetry } from "./project-mutation-retry.js";
+import type { ProjectRootInput } from "../../../shared/project-workspaces.generated.js";
+import { ProjectEditorDialog } from "../components/ProjectEditorDialog.js";
 import { AgentList, AgentWorkspacePanel, useAgentState } from "../components/AgentPanel.js";
 import type { AgentSummary } from "../../../shared/collaboration.generated.js";
 import { PlanPanel } from "../components/PlanPanel.js";
@@ -178,6 +181,10 @@ export function AppShell({ runtime }: AppShellProps) {
   const [sessionToDelete, setSessionToDelete] = useState<Session | undefined>(undefined);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | undefined>(undefined);
+  const [projectToEdit, setProjectToEdit] = useState<Project>();
+  const [projectEditBusy, setProjectEditBusy] = useState(false);
+  const [projectEditError, setProjectEditError] = useState<string>();
+  const projectEditorGeneration = useRef(0);
   const [projectToDelete, setProjectToDelete] = useState<Project | undefined>(undefined);
   const [projectDeleteBusy, setProjectDeleteBusy] = useState(false);
   const [projectDeleteError, setProjectDeleteError] = useState<string | undefined>(undefined);
@@ -466,7 +473,9 @@ export function AppShell({ runtime }: AppShellProps) {
     const unsubNotifications = window.eidosRuntime?.onNotification?.((notification) => {
       handleContextUsageNotification(notification);
       gitReviewActions.handleNotification(notification);
-      if (notification.method === "sidebar/pinsChanged") {
+      if (notification.method === "project/updated") {
+        void sessionActions.loadProjects();
+      } else if (notification.method === "sidebar/pinsChanged") {
         sidebarPins.handleChanged(notification.params.eventId);
       } else if (notification.method === "run/queueChanged") {
         void sessionActions.refreshCompletedSession(notification.params.change.sessionId);
@@ -509,6 +518,7 @@ export function AppShell({ runtime }: AppShellProps) {
   const hasBlockingModal =
     Boolean(sessionToDelete) ||
     deleteBusy ||
+    Boolean(projectToEdit) ||
     Boolean(projectToDelete) ||
     projectDeleteBusy ||
     Boolean(createBranchSessionId) ||
@@ -663,7 +673,11 @@ export function AppShell({ runtime }: AppShellProps) {
     handleCreateSession(project);
   }
 
+  const projectCreateRetry = useRef(new ProjectMutationRetry());
+  const projectEditRetry = useRef(new ProjectMutationRetry());
+
   function handleOpenCreateProject(): void {
+    projectCreateRetry.current.reset();
     setProjectPickerOpen(false);
     setCreateProjectError(undefined);
     setCreateProjectFolder(undefined);
@@ -693,6 +707,46 @@ export function AppShell({ runtime }: AppShellProps) {
     }
     setCreateProjectOpen(false);
     handleCreateSession(project);
+  }
+
+  async function handleCreateProjectFolders(name: string | undefined, roots: ProjectRootInput[], primaryRootId: string) {
+    const first = roots[0]; if (!first) return;
+    setCreateProjectBusy(true); setCreateProjectError(undefined);
+    try {
+      const project = await window.eidosRuntime.createProjectFolders(projectCreateRetry.current.prepare({
+        roots: [first, ...roots.slice(1)], primaryRootId, ...(name ? { name } : {}),
+      }));
+      await sessionActions.loadProjects();
+      setCreateProjectOpen(false); handleCreateSession(project);
+    } catch (cause) { setCreateProjectError(userFacingError(cause)); }
+    finally { setCreateProjectBusy(false); }
+  }
+
+  async function handleEditProject(project: Project) {
+    projectEditRetry.current.reset();
+    const generation = ++projectEditorGeneration.current;
+    setProjectToEdit(project); setProjectEditBusy(true); setProjectEditError(undefined);
+    try {
+      const latest = await window.eidosRuntime.readProject(project.id);
+      if (generation === projectEditorGeneration.current) setProjectToEdit(latest);
+    } catch (cause) {
+      if (generation === projectEditorGeneration.current) setProjectEditError(userFacingError(cause));
+    } finally { if (generation === projectEditorGeneration.current) setProjectEditBusy(false); }
+  }
+
+  async function handleSaveProject(name: string | undefined, roots: ProjectRootInput[], primaryRootId: string) {
+    if (!projectToEdit) return;
+    const first = roots[0]; if (!first) return;
+    setProjectEditBusy(true); setProjectEditError(undefined);
+    try {
+      const updatedProject = await window.eidosRuntime.updateProject(projectEditRetry.current.prepare({
+        projectId: projectToEdit.id, expectedRevision: projectToEdit.revision ?? 1,
+        roots: [first, ...roots.slice(1)], primaryRootId, ...(name ? { name } : {}),
+      }));
+      sessionActions.updateDraftProject(updatedProject);
+      setProjectToEdit(undefined); await sessionActions.loadProjects();
+    } catch (cause) { setProjectEditError(userFacingError(cause)); }
+    finally { setProjectEditBusy(false); }
   }
 
   function handleCreateInProject(workspaceRoot: string): void {
@@ -943,6 +997,7 @@ export function AppShell({ runtime }: AppShellProps) {
     currentSnapshot && !isDraft ? currentSnapshot.session.id : undefined,
     currentSnapshot?.items ?? [],
     currentSnapshot?.previousItemId,
+    currentSnapshot?.runs ?? [],
   );
   const outputArtifacts = collectOutputArtifacts(completeSessionItems.items);
   const { approvals, respondingApprovalIds, respondingKindByApprovalId, errorsByApprovalId } = approvalState;
@@ -981,7 +1036,10 @@ export function AppShell({ runtime }: AppShellProps) {
   const handleFeedFork = useCallback((item: Item) => {
     const source = sessionState.snapshot?.session;
     if (!source || sessionState.pending.creatingSession) return;
-    if (!source.project?.gitAvailable) {
+    const sourceHasGit = source.roots === undefined
+      ? source.project?.gitAvailable === true
+      : source.roots[0]?.repositoryRoot !== undefined;
+    if (!sourceHasGit) {
       void createConversationFork(source, item, "same_workspace");
       return;
     }
@@ -1004,11 +1062,17 @@ export function AppShell({ runtime }: AppShellProps) {
   const selectedProject = currentSnapshot?.session.project?.id
     ? sessionState.projects.find((project) => project.id === currentSnapshot.session.project?.id)
     : undefined;
-  const sessionProject = selectedProject ?? currentSnapshot?.session.project;
+  const sessionProject = isDraft ? selectedProject ?? currentSnapshot?.session.project
+    : currentSnapshot?.session.project ? { ...currentSnapshot.session.project, ...(selectedProject?.name ? { name: selectedProject.name } : {}) } : undefined;
   // Draft 状态下也允许根据关联项目类型计算 hasProject/hasGit，
   // 使环境信息在新会话有项目时也能显示。
   const sessionHasProject = Boolean(currentSnapshot && currentSnapshot.session.projectless !== true && sessionProject);
-  const sessionHasGit = sessionProject?.gitAvailable === true;
+  const sessionHasGit = isDraft
+    ? sessionProject?.gitAvailable === true
+    : currentSnapshot?.session.roots !== undefined
+      ? currentSnapshot.session.roots[0]?.repositoryRoot !== undefined
+      : sessionProject?.gitAvailable === true;
+  const sessionHasGitRepositories = sessionHasGit || Boolean(currentSnapshot?.session.roots?.some((root) => root.repositoryRoot));
   const sessionBranch = gitReviewState.status?.branch ?? sessionWorktree?.branch ?? null;
   const handoffBusy = Boolean(snapshot && sessionState.pending.handoffSessionId === snapshot.session.id);
   const restoreBusy = Boolean(snapshot && sessionState.pending.restoringWorktreeSessionId === snapshot.session.id);
@@ -1020,17 +1084,17 @@ export function AppShell({ runtime }: AppShellProps) {
         currentSnapshot.session.executionMode ?? "local",
         currentSnapshot.session.associatedWorktreeId ?? "workspace",
         currentSnapshot.session.worktree?.state ?? "available",
-        currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot,
+        currentSnapshot.session.roots?.[0]?.path ?? currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot,
       ].join(":")
     : "empty";
   const availableTools = useMemo<WorkspaceToolKind[]>(() => currentSnapshot
     ? [
         ...(agents.state?.agents?.length ? ["agent" as const] : []),
-        ...(sessionHasGit ? ["review" as const] : []),
+        ...(sessionHasGitRepositories ? ["review" as const] : []),
         ...(sessionHasProject ? ["terminal", "files"] as const : []),
         "browser",
       ]
-    : [], [currentSnapshot, agents.state?.agents?.length, sessionHasGit, sessionHasProject]);
+    : [], [currentSnapshot, agents.state?.agents?.length, sessionHasGitRepositories, sessionHasProject]);
 
   useEffect(() => {
     setEnvironmentPopoverOpen(false);
@@ -1221,15 +1285,17 @@ export function AppShell({ runtime }: AppShellProps) {
 
   async function handleOpenExternal(path: string): Promise<void> {
     if (!currentSnapshot) return;
-    const root = currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
+    const selected = currentSnapshot.session.roots?.find((root) => path.startsWith(root.path.replace(/\/$/, "") + "/"));
+    const root = selected?.path ?? currentSnapshot.session.roots?.[0]?.path ?? currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
     const resolved = artifactPath(path, root, undefined, true);
     if (!resolved) throw new Error("文件不在当前工作区内。");
-    await window.eidosRuntime.openWorkspacePathInEditor(currentSnapshot.session.id, resolved);
+    await window.eidosRuntime.openWorkspacePathInEditor(currentSnapshot.session.id, resolved, selected?.id);
   }
 
   async function handleShowInFinder(path: string): Promise<void> {
     if (!currentSnapshot) return;
-    const root = currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
+    const selected = currentSnapshot.session.roots?.find((root) => path.startsWith(root.path.replace(/\/$/, "") + "/"));
+    const root = selected?.path ?? currentSnapshot.session.roots?.[0]?.path ?? currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
     const resolved = artifactPath(path, root, undefined, true);
     if (!resolved) throw new Error("文件不在当前工作区内。");
     await window.eidosRuntime.showItemInFolder(`${root.replace(/\/$/, "")}/${resolved}`);
@@ -1237,12 +1303,15 @@ export function AppShell({ runtime }: AppShellProps) {
 
   const handleOpenFileInDock = useCallback((path: string, position?: WorkspaceFilePosition): void => {
     if (!currentSnapshot) return;
-    const root = currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
+    const selected = currentSnapshot.session.roots?.find((root) => root.id === position?.rootId)
+      ?? currentSnapshot.session.roots?.find((root) => path.startsWith(root.path.replace(/\/$/, "") + "/"));
+    const root = selected?.path ?? currentSnapshot.session.roots?.[0]?.path ?? currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
     const resolved = artifactPath(path, root, undefined, true);
     if (!resolved) return;
     openTool("files");
     setExplorerOpenRequest({
       path: resolved,
+      ...(selected ? { rootId: selected.id } : {}),
       requestId: ++fileOpenSequenceRef.current,
       ...(position?.line === undefined ? {} : { line: position.line }),
       ...(position?.column === undefined ? {} : { column: position.column }),
@@ -1397,7 +1466,8 @@ export function AppShell({ runtime }: AppShellProps) {
   return (
     <ArtifactProvider value={currentSnapshot ? {
       sessionId: currentSnapshot.session.id,
-      executionRoot: currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot,
+      roots: currentSnapshot.session.roots,
+      executionRoot: currentSnapshot.session.roots?.[0]?.path ?? currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot,
       ...(currentSnapshot.session.project?.id
         ? { projectId: currentSnapshot.session.project.id }
         : {}),
@@ -1408,7 +1478,9 @@ export function AppShell({ runtime }: AppShellProps) {
       showInFinder: handleShowInFinder,
       showToast,
     } : undefined}>
-    <InputContextProvider ready={runState.draftReady && isStorageReady} sessionId={currentSnapshot?.session.id} workspaceRoot={currentSnapshot?.session.worktree?.worktreeRoot ?? currentSnapshot?.session.workspaceRoot}
+    <InputContextProvider ready={runState.draftReady && isStorageReady} sessionId={currentSnapshot?.session.id} workspaceRoot={currentSnapshot?.session.roots?.[0]?.path ?? currentSnapshot?.session.worktree?.worktreeRoot ?? currentSnapshot?.session.workspaceRoot}
+      workspaceRoots={currentSnapshot?.session.roots?.map(root => root.path)}
+      projectId={sessionProject?.id}
       onAdd={runActions.addReference} onInsert={runActions.insertReference} onSettings={(section) => { setSettingsCategory(section === "agents" ? "agents" : section === "mcp" ? "mcp" : section === "skills" ? "skills" : "plugins"); setSettingsOpen(true); setDockOpen(false); }}
       onNavigateToSession={(target) => {
         if (settingsOpen) setSettingsOpen(false);
@@ -1434,6 +1506,8 @@ export function AppShell({ runtime }: AppShellProps) {
         gitStatusBySessionId={gitReviewState.statusBySessionId}
         onCreate={() => { setAutomationsOpen(false); handleCreateSession(); }}
         onCreateInProject={handleCreateInProject}
+        onCreateInProjectById={(id) => handleCreateSession(sessionState.projects.find((project) => project.id === id))}
+        onEditProject={(project) => void handleEditProject(project)}
         onSelect={(session) => { setAutomationsOpen(false); void handleSelectSession(session); }}
         onRename={(session) => void beginRename(session)}
         onDelete={(session) => requestDeleteSession(session)}
@@ -1615,6 +1689,8 @@ export function AppShell({ runtime }: AppShellProps) {
                   searchTarget={searchTarget}
                   items={currentSnapshot.items.filter((item) => !currentSnapshot.runs.some((run) => run.id === item.runId && isQueuedMessage(run)))}
                   resultItems={completeSessionItems.items}
+                  allRuns={completeSessionItems.runs}
+                  onEnsureItemMounted={sessionActions.ensureItemLoaded}
                   contextCompactions={currentSnapshot.contextCompactions}
                   runs={currentSnapshot.runs.filter((run) => !isQueuedMessage(run))}
                   models={feedModels}
@@ -1715,7 +1791,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   branchChanging={sessionState.pending.branchSessionId === currentSnapshot.session.id}
                   onSelectProject={() => void handleSelectProject()}
                   onLeaveProject={() => handleCreateSession()}
-                  onExecutionModeChange={sessionProject?.gitAvailable === true ? requestExecutionModeChange : undefined}
+                  onExecutionModeChange={sessionHasGit ? requestExecutionModeChange : undefined}
                 />
                 </ComposerSlot>
                 </SessionCanvas>
@@ -1803,10 +1879,12 @@ export function AppShell({ runtime }: AppShellProps) {
                     );
                   }
                   if (tab.kind === "review") {
-                    return sessionHasGit ? (
+                    return sessionHasGitRepositories ? (
                       <GitChangesPanel
+                        projectId={currentSnapshot.session.project?.id}
+                        roots={currentSnapshot.session.roots}
                         sessionId={currentSnapshot.session.id}
-                        workspaceRoot={currentSnapshot.session.project?.workspaceRoot ?? currentSnapshot.session.workspaceRoot}
+                        workspaceRoot={currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.roots?.[0]?.repositoryRoot ?? currentSnapshot.session.workspaceRoot}
                         items={completeSessionItems.items}
                         latestRunId={currentSnapshot.runs.filter((run) => !run.inherited).at(-1)?.id}
                         previousItemId={currentSnapshot.previousItemId}
@@ -1843,7 +1921,7 @@ export function AppShell({ runtime }: AppShellProps) {
                         <TerminalPanel
                           key={tab.id}
                           sessionId={currentSnapshot.session.id}
-                          workspaceRoot={currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot}
+                          workspaceRoot={currentSnapshot.session.roots?.[0]?.path ?? currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot}
                           {...(currentSnapshot.session.project?.id
                             ? { projectId: currentSnapshot.session.project.id }
                             : {})}
@@ -1854,7 +1932,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   }
                   if (tab.kind === "browser") return <BrowserPanel
                     key={executionKey} browserId={tab.id} sessionId={currentSnapshot.session.id} executionKey={executionKey}
-                    workspaceRoot={currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot}
+                    workspaceRoot={currentSnapshot.session.roots?.[0]?.path ?? currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot}
                     active={dockOpen && activeTabId === tab.id}
                     request={browserRequest?.browserId === tab.id ? { url: browserRequest.url, id: browserRequest.id } : undefined}
                     onPageStateChange={(pageState) => {
@@ -1872,24 +1950,25 @@ export function AppShell({ runtime }: AppShellProps) {
                   />;
                   return (
                   <WorkspaceExplorer
+                      roots={currentSnapshot.session.roots}
                       sessionId={currentSnapshot.session.id}
                       executionKey={executionKey}
                       layout={dockExpanded ? "expanded" : "side"}
                       openRequest={explorerOpenRequest}
                       {...(isDraft && currentSnapshot.session.workspaceRoot ? {
-                        listDirectory: (sid: string, path: string) =>
+                        listDirectory: (sid: string, path: string, selectedRoot?: string) =>
                           window.eidosRuntime.listWorkspaceDirectory(
                             sid,
                             path,
                             undefined,
-                            currentSnapshot.session.workspaceRoot,
+                            selectedRoot ?? currentSnapshot.session.workspaceRoot,
                             currentSnapshot.session.project?.id,
                           ),
-                        readPreview: (sid: string, path: string) =>
+                        readPreview: (sid: string, path: string, selectedRoot?: string) =>
                           window.eidosRuntime.readWorkspaceFilePreview(
                             sid,
                             path,
-                            currentSnapshot.session.workspaceRoot,
+                            selectedRoot ?? currentSnapshot.session.workspaceRoot,
                             currentSnapshot.session.project?.id,
                           ),
                       } : {})}
@@ -1956,6 +2035,14 @@ export function AppShell({ runtime }: AppShellProps) {
           }
         />
       )}
+      <ProjectEditorDialog
+        open={Boolean(projectToEdit)} project={projectToEdit} busy={projectEditBusy} error={projectEditError}
+        getFallbackFocus={getDialogFallbackFocus}
+        onSave={(name, roots, primary) => void handleSaveProject(name, roots, primary)}
+        onCancel={() => { if (projectEditBusy) return; projectEditorGeneration.current++; setProjectToEdit(undefined); }}
+        canRemove={!sessionState.sessions.some((session) => session.project?.id === projectToEdit?.id)}
+        onRemove={() => { if (projectToEdit) { setProjectToEdit(undefined); requestDeleteProject(projectToEdit); } }}
+      />
       <CreateProjectDialog
         open={createProjectOpen}
         sourceFolder={createProjectFolder}
@@ -1963,6 +2050,7 @@ export function AppShell({ runtime }: AppShellProps) {
         error={createProjectError}
         getFallbackFocus={getDialogFallbackFocus}
         onCreate={(name, folder) => void handleCreateProject(name, folder)}
+        onCreateFolders={(name, roots, primary) => void handleCreateProjectFolders(name, roots, primary)}
         onSelectFolder={() => void handleSelectProjectFolder()}
         onCancel={() => {
           if (createProjectBusy) return;

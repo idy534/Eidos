@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 
 from eidos_runtime.db.storage import WorkspaceIdentity
+from eidos_runtime.domain.project_workspace import DirectoryIdentity
 from eidos_runtime.git.backend import DulwichGitBackend
 from eidos_runtime.git.errors import GitError
 from eidos_runtime.runtime.tool_orchestrator import (
@@ -22,6 +23,7 @@ from eidos_runtime.sandbox.permissions import (
     merge_permissions,
 )
 from eidos_runtime.tools.contracts import RunShellInput
+from eidos_runtime.workspace.reader import WorkspacePathError, capture_directory_identity
 
 
 @dataclass(frozen=True)
@@ -43,19 +45,54 @@ def resolve_git_write_roots(workspace: WorkspaceIdentity) -> tuple[str, ...]:
         git_common_dir = Path(discovery.git_common_dir).resolve(strict=True)
         if (
             workspace.git_dir is not None
-            and git_dir != workspace.git_dir.resolve(strict=True)
+            and git_dir != workspace.git_dir
         ):
             raise GitWriteAccessError("git_repository_identity_changed")
         if (
             workspace.git_common_dir is not None
-            and git_common_dir != workspace.git_common_dir.resolve(strict=True)
+            and git_common_dir != workspace.git_common_dir
         ):
             raise GitWriteAccessError("git_repository_identity_changed")
+        verify_git_metadata_identities(replace(workspace, additional_roots=()))
         return tuple(dict.fromkeys((str(git_dir), str(git_common_dir))))
     except GitWriteAccessError:
         raise
     except (GitError, OSError, ValueError) as error:
         raise GitWriteAccessError("git_repository_unavailable") from error
+
+
+def verify_git_metadata_identities(workspace: WorkspaceIdentity) -> None:
+    """Verify frozen directories without loading repository configuration."""
+    checked: set[tuple[Path | None, DirectoryIdentity | None]] = set()
+    for root in (workspace, *workspace.additional_roots):
+        for binding in (
+            (root.git_dir, root.git_dir_identity),
+            (root.git_common_dir, root.git_common_identity),
+        ):
+            if binding not in checked:
+                _verify_git_directory_identity(*binding)
+                checked.add(binding)
+
+
+def _verify_git_directory_identity(
+    path: Path | None, expected: DirectoryIdentity | None
+) -> None:
+    if path is None:
+        if expected is not None:
+            raise GitWriteAccessError("git_repository_identity_changed")
+        return
+    if expected is None:
+        raise GitWriteAccessError("git_repository_identity_changed")
+    try:
+        actual = capture_directory_identity(path)
+    except WorkspacePathError as error:
+        raise GitWriteAccessError("git_repository_identity_changed") from error
+    if actual.path != path or (
+        actual.device,
+        actual.inode,
+        actual.owner,
+    ) != (expected.device, expected.inode, expected.owner):
+        raise GitWriteAccessError("git_repository_identity_changed")
 
 
 def effective_shell_permissions(
@@ -96,7 +133,10 @@ class ShellOrchestrationRuntime:
         request: ShellOrchestrationRequest,
         _context: OrchestratorContext,
     ) -> tuple[str, ...]:
-        return (str(request.workspace.path),)
+        return tuple(
+            str(root.path)
+            for root in (request.workspace, *request.workspace.additional_roots)
+        )
 
     def sandbox_permissions(
         self, request: ShellOrchestrationRequest

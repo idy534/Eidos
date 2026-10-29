@@ -103,6 +103,8 @@ class McpConnection:
         *,
         plugin_root: Path,
         workspace_root: Path,
+        additional_workspace_roots: tuple[Path, ...] = (),
+        workspace_check: Callable[[], None] | None = None,
         config: McpServerConfigV1,
         env_values: dict[str, str] | None = None,
         on_list_changed: Callable[[], None],
@@ -114,6 +116,8 @@ class McpConnection:
     ) -> None:
         self.plugin_root = plugin_root
         self.workspace_root = workspace_root
+        self.additional_workspace_roots = additional_workspace_roots
+        self.workspace_check = workspace_check
         self.config = config
         self.remote_client = remote_client
         self.remote_check = remote_check
@@ -146,6 +150,7 @@ class McpConnection:
 
     def start(self) -> tuple[mcp_types.Tool, ...]:
         try:
+            self._check_workspace()
             if self.resources is not None:
                 self.resource = self.resources.register(
                     RuntimeResourceKind.MCP_CONNECTION,
@@ -172,12 +177,23 @@ class McpConnection:
             self.close()
             raise McpUnavailable(self.error_code) from None
 
+    def _check_workspace(self) -> None:
+        if self.workspace_check is not None:
+            try:
+                self.workspace_check()
+            except (OSError, ValueError):
+                raise McpUnavailable("workspace_identity_changed") from None
+
     def call(
         self,
         name: str,
         arguments: dict[str, object],
         cancel: threading.Event,
     ) -> dict[str, object]:
+        try:
+            self._check_workspace()
+        except McpUnavailable:
+            return _unavailable()
         if self.remote_check is not None:
             try:
                 self.remote_check()
@@ -467,6 +483,7 @@ class McpConnection:
             if self.error_code is not None:
                 return _unavailable()
             try:
+                self._check_workspace()
                 return await _call_tool(session, command)
             except TimeoutError:
                 return _call_failure(command, "mcp_tool_timeout")
@@ -543,6 +560,16 @@ class McpConnection:
                 if self.config.permission_profile == "connector"
                 else "mcp_workspace_read.sbpl"
             )
+            if self.config.permission_profile != "connector" and self.additional_workspace_roots:
+                import json
+                extra = "\n".join(
+                    '(allow file-read* file-test-existence (subpath ' + json.dumps(str(root), ensure_ascii=False) + '))\n'
+                    '(allow file-read-metadata file-test-existence (path-ancestors ' + json.dumps(str(root), ensure_ascii=False) + '))'
+                    for root in self.additional_workspace_roots
+                )
+                compiled = self.runtime_root / "workspace.sbpl"
+                compiled.write_text(profile.read_text() + "\n" + extra)
+                profile = compiled
             arguments = [
                 "-f", str(profile),
                 f"-DPLUGIN_ROOT={self.plugin_root}",
@@ -633,6 +660,8 @@ class McpManager:
         snapshot: dict[str, object],
         workspace_root: Path,
         *,
+        additional_workspace_roots: tuple[Path, ...] = (),
+        workspace_check: Callable[[], None] | None = None,
         async_kernel: RuntimeAsyncKernel | None = None,
         sandbox: bool = True,
         resource_registry: ResourceRegistry | None = None,
@@ -640,6 +669,8 @@ class McpManager:
         self.plugins = plugins
         self.snapshot = snapshot
         self.workspace_root = workspace_root
+        self.additional_workspace_roots = additional_workspace_roots
+        self.workspace_check = workspace_check
         self.async_kernel = async_kernel
         self.sandbox = sandbox
         self.resources = resource_registry
@@ -694,6 +725,8 @@ class McpManager:
                 connection = McpConnection(
                     plugin_root=plugin_root,
                     workspace_root=self.workspace_root,
+                    additional_workspace_roots=self.additional_workspace_roots,
+                    workspace_check=self.workspace_check,
                     config=config,
                     env_values=env_values,
                     async_kernel=self.async_kernel,

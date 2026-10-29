@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.project_workspace import SessionRoot
+
 import hashlib
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -135,7 +137,6 @@ from eidos_runtime.domain.session import (
 )
 from eidos_runtime.persistence.mappers.session import (
     deleted_session_to_legacy_dict,
-    session_from_legacy_dict,
     session_to_legacy_dict,
 )
 from eidos_runtime.persistence.worktree_lifecycle import WorktreeLifecycleRepository
@@ -175,7 +176,9 @@ class TypedSessionRepositoryPort(Protocol):
         worktree_id: str | None = None,
         execution_mode: SessionExecutionMode = SessionExecutionMode.LOCAL,
         project_id: str | None = None,
+        workspace_roots: tuple[SessionRoot, ...] | None = None,
         operation_id: str | None = None,
+        operation_request: dict[str, object] | None = None,
         session_id: str | None = None,
         projectless: bool = False,
         projectless_creation_id: str | None = None,
@@ -192,6 +195,12 @@ class TypedSessionRepositoryPort(Protocol):
     ) -> SessionProjectionPage: ...
 
     def read_session(self, session_id: str) -> Session | None: ...
+
+    def legacy_project_local_session_create_result(
+        self,
+        operation_id: str,
+        project_id: str,
+    ) -> dict[str, object] | None: ...
 
     def read_session_projection(self, session_id: str) -> SessionProjection | None: ...
 
@@ -538,6 +547,17 @@ def clean_session_title(value: str) -> str:
     ).strip()
 
 
+def _project_session_create_operation_request(
+    request: SessionCreateRequestDto,
+) -> dict[str, object]:
+    """Keep Local Session idempotency tied to the selected Project identity."""
+    return {
+        "projectId": request.project_id,
+        "projectless": False,
+        "executionMode": SessionExecutionMode.LOCAL.value,
+    }
+
+
 class SessionApplication:
     """Owns top-level Session and Session-event use cases.
 
@@ -576,7 +596,69 @@ class SessionApplication:
         self._logger = logging.getLogger(__name__)
 
     def create(self, request: SessionCreateRequestDto) -> SessionCreateResponseDto:
+        guard = self._lifecycle.hold_operation("session/create", request.operation_id) if request.operation_id and request.execution_mode == "worktree" else nullcontext()
+        with guard:
+            return self._create_with_binding(request)
+
+    def _create_with_binding(self, request: SessionCreateRequestDto) -> SessionCreateResponseDto:
+        selected_project: Project | None = None
+        if request.workspace_name_hint is not None and (request.workspace_root is not None or request.project_id is not None):
+            raise ApplicationInvalidParamsError("INVALID_PARAMS", "workspaceNameHint only applies to projectless Sessions")
         execution_mode = SessionExecutionMode(request.execution_mode)
+        operation_request = (
+            _project_session_create_operation_request(request)
+            if request.project_id is not None
+            and execution_mode is SessionExecutionMode.LOCAL
+            else None
+        )
+        if request.operation_id is not None and operation_request is not None:
+            try:
+                replay = self._store.operation_result(
+                    request.operation_id, "session/create", operation_request
+                )
+            except OperationConflictError as error:
+                try:
+                    replay = self._repository.legacy_project_local_session_create_result(
+                        request.operation_id,
+                        request.project_id,
+                    )
+                except OperationInProgressError as pending_error:
+                    raise ApplicationError(
+                        "OPERATION_IN_PROGRESS", str(pending_error)
+                    ) from pending_error
+                if replay is None:
+                    raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+            except OperationInProgressError as error:
+                raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
+            if replay is not None:
+                return self._activate_created_session(
+                    self._project_session_create_replay(request, replay)
+                )
+        if request.operation_id and request.execution_mode == "worktree" and self._worktree_manager is not None:
+            pending = self._worktree_manager.lifecycle.read(WorktreeLifecycleScope.SESSION_CREATE, request.operation_id)
+            if pending is not None and pending.workspace_roots:
+                if request.project_id is not None and request.project_id != pending.project_id:
+                    raise ApplicationError("OPERATION_ID_REUSED")
+                primary = pending.workspace_roots[0]
+                if request.workspace_root is not None and str(
+                    Path(request.workspace_root).expanduser().resolve(strict=False)
+                ) != primary.path:
+                    raise ApplicationError("OPERATION_ID_REUSED")
+                if request.workspace_root is not None and self._worktree_manager.discover(request.workspace_root).repository_root != pending.repository_root:
+                    raise ApplicationError("OPERATION_ID_REUSED")
+                project = self._worktree_manager.project(pending.project_id).model_copy(update={
+                    "workspace_root": primary.path, "git_repository_root": primary.repository_root,
+                    "git_common_dir": primary.git_common_dir,
+                })
+                pinned = request.model_copy(update={"workspace_root": primary.path})
+                resolution = ProjectResolution(project=project, git=self._worktree_manager.discover(pending.repository_root))
+                return self._activate_created_session(self._create_managed(pinned, resolution, captured_roots=pending.workspace_roots))
+        if request.project_id is not None:
+            project = self._require_manager().project(request.project_id)
+            selected_project = project
+            if request.workspace_root is not None and request.workspace_root != project.workspace_root:
+                raise ApplicationError("PROJECT_CONFIGURATION_CONFLICT", "project folder changed")
+            request = request.model_copy(update={"workspace_root": project.workspace_root})
         if request.workspace_root is None:
             if execution_mode is not SessionExecutionMode.LOCAL:
                 raise ApplicationError(
@@ -613,16 +695,36 @@ class SessionApplication:
                 raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
 
         resolution: ProjectResolution | None = None
+        captured_roots: tuple[SessionRoot, ...] | None = None
         if self._worktree_manager is not None:
             operation_guard = (
                 self._lifecycle.hold_operation(
                     "session/create", request.operation_id
                 )
-                if request.operation_id is not None
+                if request.operation_id is not None and execution_mode is not SessionExecutionMode.WORKTREE
                 else nullcontext()
             )
             with operation_guard:
-                resolution = self._resolve_project(request.workspace_root)
+                if request.project_id is not None:
+                    assert selected_project is not None
+                    project = selected_project
+                    from eidos_runtime.persistence.project_workspaces import capture_session_roots
+                    try:
+                        roots = capture_session_roots(project.roots)
+                    except WorkspacePathError as error:
+                        raise ApplicationError(
+                            "WORKSPACE_IDENTITY_CHANGED",
+                            "a project folder changed after it was configured",
+                        ) from error
+                    captured_roots = tuple(sorted(roots, key=lambda root: root.id != project.primary_root_id))
+                    primary = next(root for root in roots if root.id == project.primary_root_id)
+                    discovery = self._require_manager().discover(project.workspace_root) if primary.repository_root else None
+                    project = project.model_copy(update={
+                        "git_repository_root": primary.repository_root, "git_common_dir": primary.git_common_dir,
+                    })
+                    resolution = ProjectResolution(project=project, git=discovery)
+                else:
+                    resolution = self._resolve_project(request.workspace_root)
                 if execution_mode is SessionExecutionMode.WORKTREE:
                     if resolution.git is None:
                         raise ApplicationError(
@@ -630,14 +732,16 @@ class SessionApplication:
                             "worktree execution requires a Git repository",
                         )
                     return self._activate_created_session(
-                        self._create_managed(request, resolution)
+                        self._create_managed(request, resolution, captured_roots=captured_roots)
                     )
         try:
             mutation = self._repository.create_session(
                 request.workspace_root,
                 execution_mode=execution_mode,
                 project_id=resolution.project.id if resolution is not None else None,
+                workspace_roots=captured_roots,
                 operation_id=request.operation_id,
+                operation_request=operation_request,
             )
         except WorkspaceBoundaryError as error:
             raise ApplicationError(
@@ -712,6 +816,21 @@ class SessionApplication:
         )
         runtime.activate_workspace(root)
         return result
+
+    def _resolve_session_project(self, session: Session) -> ProjectResolution:
+        manager = self._require_manager()
+        if session.project_id is None:
+            return manager.resolve_project(session.workspace_root)
+        project = manager.project(session.project_id)
+        root = session.roots[0] if session.roots else None
+        git = manager.discover(session.workspace_root) if (root.repository_root if root else project.has_git) else None
+        if root and git and (git.repository_root != root.repository_root or git.git_common_dir != root.git_common_dir):
+            raise WorktreeError("workspace_identity_changed")
+        return ProjectResolution(project=project.model_copy(update={
+            "workspace_root": session.workspace_root,
+            "git_repository_root": git.repository_root if git else None,
+            "git_common_dir": git.git_common_dir if git else None,
+        }), git=git)
 
     def _resolve_project(self, workspace_root: str) -> ProjectResolution:
         manager = self._worktree_manager
@@ -923,6 +1042,7 @@ class SessionApplication:
         self,
         request: SessionCreateRequestDto,
         resolution: ProjectResolution | None = None,
+        *, captured_roots: tuple[SessionRoot, ...] | None = None,
     ) -> SessionCreateResponseDto:
         manager = self._worktree_manager
         assert manager is not None
@@ -944,6 +1064,8 @@ class SessionApplication:
             "executionMode": SessionExecutionMode.WORKTREE.value,
             "includeLocalChanges": request.include_local_changes,
         }
+        if request.project_id is not None:
+            operation_request["projectId"] = request.project_id
         if request.base_ref is not None:
             operation_request["baseRef"] = request.base_ref
         if request.operation_id is not None:
@@ -952,17 +1074,66 @@ class SessionApplication:
                     request.operation_id, "session/create", operation_request
                 )
             except OperationConflictError as error:
-                raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+                legacy_request: dict[str, object] = {
+                    "workspaceRoot": discovery.repository_root,
+                    "executionMode": SessionExecutionMode.WORKTREE.value,
+                    "includeLocalChanges": request.include_local_changes,
+                }
+                if request.base_ref is not None:
+                    legacy_request["baseRef"] = request.base_ref
+                try:
+                    replay = self._store.operation_result(
+                        request.operation_id, "session/create", legacy_request
+                    )
+                except OperationConflictError:
+                    raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+                except OperationInProgressError as pending_error:
+                    raise ApplicationError(
+                        "OPERATION_IN_PROGRESS", str(pending_error)
+                    ) from pending_error
+                except OperationFailedError as failed_error:
+                    raise ApplicationError(
+                        failed_error.code, str(failed_error)
+                    ) from failed_error
+                if replay is None or request.project_id is None:
+                    raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+                if not isinstance(replay, dict) or not isinstance(
+                    replay.get("id"), str
+                ):
+                    raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+                replayed_session_id = str(replay["id"])
+                lifecycle_operation = manager.lifecycle.read(
+                    WorktreeLifecycleScope.SESSION_CREATE, request.operation_id
+                )
+                persisted_session = self._repository.read_session(
+                    replayed_session_id
+                )
+                if (
+                    lifecycle_operation is None
+                    or lifecycle_operation.state is not WorktreeLifecycleState.COMPLETED
+                    or lifecycle_operation.project_id != request.project_id
+                    or lifecycle_operation.repository_root != discovery.repository_root
+                    or lifecycle_operation.include_local_changes
+                    != request.include_local_changes
+                    or (
+                        request.base_ref is not None
+                        and lifecycle_operation.base_ref != request.base_ref
+                    )
+                    or lifecycle_operation.session_id != replayed_session_id
+                    or persisted_session is None
+                    or persisted_session.project_id != request.project_id
+                    or persisted_session.worktree_id != lifecycle_operation.worktree_id
+                    or persisted_session.execution_mode
+                    is not SessionExecutionMode.WORKTREE
+                ):
+                    raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+                return self._project_session_create_replay(
+                    request, replay
+                )
             except OperationInProgressError as error:
                 raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
             if replay is not None:
-                replayed_session = session_from_legacy_dict(replay)
-                return _result(
-                    SessionCreateResponseDto,
-                    self._project_session(
-                        self._projection_for_session(replayed_session.id)
-                    ),
-                )
+                return self._project_session_create_replay(request, replay)
 
         lifecycle = manager.lifecycle
         lifecycle_operation_id = request.operation_id or (
@@ -975,10 +1146,21 @@ class SessionApplication:
         worktree: Worktree | None = None
         try:
             if lifecycle_operation is None:
-                plan = manager.prepare_create(
-                    discovery.repository_root,
-                    base_ref=request.base_ref,
-                )
+                if request.project_id is not None:
+                    plan = manager.prepare_create(
+                        discovery.repository_root, base_ref=request.base_ref,
+                        project=resolution.project,
+                    )
+                else:
+                    plan = manager.prepare_create(
+                        discovery.repository_root,
+                        base_ref=request.base_ref,
+                    )
+                from eidos_runtime.persistence.project_workspaces import capture_session_roots
+                binding_project = resolution.project if request.project_id is not None and resolution is not None else manager.project(plan.project_id)
+                binding_roots = captured_roots or tuple(sorted(
+                    capture_session_roots(binding_project.roots), key=lambda root: root.id != binding_project.primary_root_id,
+                ))
                 source_snapshot = manager.source_snapshot(
                     Path(discovery.repository_root),
                     include_local_changes=request.include_local_changes,
@@ -996,6 +1178,7 @@ class SessionApplication:
                         operation_id=lifecycle_operation_id,
                         state=WorktreeLifecycleState.PREPARED,
                         project_id=plan.project_id,
+                        workspace_roots=binding_roots, project_revision=binding_project.revision,
                         repository_root=discovery.repository_root,
                         worktree_id=plan.id,
                         worktree_root=plan.worktree_root,
@@ -1058,7 +1241,11 @@ class SessionApplication:
                     lifecycle_operation_id,
                     WorktreeLifecycleState.WORKTREE_CREATED,
                 )
-            project = manager.project(worktree.project_id)
+            project = manager.source_project(worktree.id)
+            frozen_roots = lifecycle_operation.workspace_roots or captured_roots
+            if not frozen_roots and (len(project.roots) != 1 or project.workspace_root != project.roots[0].path):
+                raise ApplicationError("PROJECT_CONFIGURATION_CONFLICT", "saved session folder binding is unavailable")
+            source_workspace = frozen_roots[0].path if frozen_roots else project.workspace_root
             session_id = lifecycle_operation.session_id
             if session_id is None:
                 raise ApplicationError(
@@ -1069,7 +1256,8 @@ class SessionApplication:
             if existing_session is None:
                 try:
                     mutation = self._repository.create_session(
-                        project.workspace_root,
+                        source_workspace,
+                        workspace_roots=frozen_roots,
                         worktree_id=worktree.id,
                         execution_mode=SessionExecutionMode.WORKTREE,
                         project_id=project.id,
@@ -1079,13 +1267,13 @@ class SessionApplication:
                 except TypeError as error:
                     if not any(
                         field in str(error)
-                        for field in ("execution_mode", "project_id", "session_id")
+                        for field in ("execution_mode", "project_id", "session_id", "workspace_roots")
                     ):
                         raise
                     # Keep narrow compatibility with older injected repository
                     # seams used by failure tests.
                     mutation = self._repository.create_session(
-                        project.workspace_root,
+                        source_workspace,
                         worktree_id=worktree.id,
                         operation_id=None,
                     )
@@ -1171,6 +1359,8 @@ class SessionApplication:
                 "SESSION_PERSISTENCE_FAILED", str(error)
             ) from error
         except Exception as error:
+            if isinstance(error, WorkspacePathError):
+                raise ApplicationError("WORKSPACE_IDENTITY_CHANGED", str(error)) from error
             if isinstance(error, WorkspaceBoundaryError):
                 raise ApplicationError(
                     "WORKSPACE_BOUNDARY_VIOLATION", str(error)
@@ -1264,6 +1454,10 @@ class SessionApplication:
         projected_snapshot["session"] = self._project_session(projection)
         return _result(SessionReadResponseDto, projected_snapshot)
 
+    def for_git_request(self, request):
+        from eidos_runtime.application.git_workspace import scoped_git_application
+        return scoped_git_application(self, request)
+
     def git_status(
         self, request: SessionGitStatusRequestDto
     ) -> SessionGitStatusResponseDto:
@@ -1283,7 +1477,7 @@ class SessionApplication:
             if session.worktree_id is not None:
                 status = manager.status(session.worktree_id)
             else:
-                resolution = manager.resolve_project(session.workspace_root)
+                resolution = self._resolve_session_project(session)
                 if resolution.git is None:
                     raise WorktreeError("not_a_git_repository")
                 status = manager.local_status(Path(resolution.git.repository_root))
@@ -1335,7 +1529,7 @@ class SessionApplication:
                     path=request.path,
                 )
             else:
-                resolution = manager.resolve_project(session.workspace_root)
+                resolution = self._resolve_session_project(session)
                 if resolution.git is None:
                     raise WorktreeError("not_a_git_repository")
                 diff = manager.local_diff(
@@ -2093,7 +2287,7 @@ class SessionApplication:
         operation_id: str,
     ) -> HandoffPlan:
         manager = self._require_manager()
-        resolution = manager.resolve_project(session.workspace_root)
+        resolution = self._resolve_session_project(session)
         if resolution.git is None:
             raise WorktreeError("handoff_not_supported")
         project = resolution.project
@@ -2101,7 +2295,7 @@ class SessionApplication:
         if session.execution_mode is SessionExecutionMode.LOCAL:
             source = manager.source_snapshot(local_root, include_local_changes=True)
             if session.associated_worktree_id is None:
-                prepared = manager.prepare_create(source.discovery.repository_root)
+                prepared = manager.prepare_create(source.discovery.repository_root, project=project)
                 target_root = Path(prepared.worktree_root)
                 target_head = prepared.base_commit
                 target_branch = prepared.checkout_branch
@@ -2376,6 +2570,8 @@ class SessionApplication:
                     Worktree(
                         id=operation.associated_worktree_id,
                         project_id=operation.project_id,
+                        repository_root=operation.source_root,
+                        git_common_dir=operation.source_common_dir,
                         worktree_root=operation.target_root,
                         git_dir=str(Path(operation.target_root) / ".git"),
                         base_ref=operation.target_base_ref or "HEAD",
@@ -2550,20 +2746,18 @@ class SessionApplication:
                     changed_file_count=0,
                 ).model_dump(mode="json"),
             )
-        resolution = self._resolve_project(request.workspace_root)
-        if resolution.git is None:
-            return _result(
-                GitContextResponseDto,
-                {
-                    "gitAvailable": False,
-                    "currentBranch": None,
-                    "head": None,
-                    "branches": [],
-                    "dirty": False,
-                    "changedFileCount": 0,
-                },
-            )
-        repository_root = Path(resolution.git.repository_root)
+        try:
+            discovery = manager.discover(Path(request.workspace_root))
+        except WorktreeError as error:
+            if error.code not in {"not_a_git_repository", "repository_not_found"}:
+                raise ApplicationError(_workspace_resolution_error_code(error), str(error)) from error
+            discovery = None
+        if discovery is None:
+            return _result(GitContextResponseDto, {
+                "gitAvailable": False, "currentBranch": None, "head": None,
+                "branches": [], "dirty": False, "changedFileCount": 0,
+            })
+        repository_root = Path(discovery.repository_root)
         try:
             source_status = manager.source_snapshot(
                 repository_root,
@@ -2773,7 +2967,7 @@ class SessionApplication:
                                     "WORKTREE_RESTORE_REQUIRED",
                                     "deleted Worktree snapshot is no longer ready",
                                 )
-                            project = manager.project(worktree_projection.project_id)
+                            project = manager.source_project(worktree_projection.worktree_id)
                             lifecycle_operation_id = request.operation_id or (
                                 f"session-delete-{uuid.uuid4().hex}"
                             )
@@ -2840,7 +3034,7 @@ class SessionApplication:
                                     "WORKTREE_RECOVERY_REQUIRED",
                                     "deleted Worktree has no durable Session delete intent",
                                 )
-                            project = manager.project(worktree_projection.project_id)
+                            project = manager.source_project(worktree_projection.worktree_id)
                             now = datetime.now(UTC).replace(microsecond=0)
                             lifecycle_operation_id = request.operation_id or (
                                 f"session-delete-{uuid.uuid4().hex}"
@@ -3009,6 +3203,18 @@ class SessionApplication:
                 branch=worktree.branch,
                 state=worktree.state.value,
             )
+        if session.roots:
+            value["roots"] = []
+            for root in session.roots:
+                path = root.path
+                shared = False
+                if projection.worktree is not None:
+                    if root.repository_root == projection.worktree.repository_root:
+                        path = str(Path(projection.worktree.worktree_root) / Path(root.path).relative_to(root.repository_root))
+                    else:
+                        shared = True
+                value["roots"].append({"id": root.id, "path": path, "repositoryRoot": root.repository_root,
+                                       "shared": shared})
         projected = SessionDto.model_validate(value).to_json_value()
         if projection.worktree is not None and projection.worktree.branch is None:
             worktree_value = projected.setdefault("worktree", {})
@@ -3016,6 +3222,98 @@ class SessionApplication:
                 worktree_value["branch"] = None
         projected["executionMode"] = session.execution_mode.value
         return projected
+
+    def _project_session_create_replay(
+        self,
+        request: SessionCreateRequestDto,
+        replay: object,
+    ) -> SessionCreateResponseDto:
+        if not isinstance(replay, dict):
+            raise ApplicationError("OPERATION_ID_REUSED")
+        session_id = replay.get("id")
+        if not isinstance(session_id, str):
+            raise ApplicationError("OPERATION_ID_REUSED")
+        session = self._repository.read_session(session_id)
+        if session is None:
+            raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
+        if session.execution_mode is not SessionExecutionMode(request.execution_mode):
+            raise ApplicationError("OPERATION_ID_REUSED")
+        if request.project_id is not None and session.project_id != request.project_id:
+            raise ApplicationError("OPERATION_ID_REUSED")
+        if request.project_id is None:
+            manager = self._worktree_manager
+            lifecycle_operation = (
+                manager.lifecycle.read(
+                    WorktreeLifecycleScope.SESSION_CREATE,
+                    request.operation_id,
+                )
+                if manager is not None and request.operation_id is not None
+                else None
+            )
+            if (
+                manager is None
+                or request.workspace_root is None
+                or session.execution_mode is not SessionExecutionMode.WORKTREE
+                or session.project_id is None
+                or session.worktree_id is None
+                or lifecycle_operation is None
+                or lifecycle_operation.state is not WorktreeLifecycleState.COMPLETED
+                or lifecycle_operation.project_id != session.project_id
+                or lifecycle_operation.session_id != session.id
+                or lifecycle_operation.worktree_id != session.worktree_id
+            ):
+                raise ApplicationError("OPERATION_ID_REUSED")
+            try:
+                worktree = manager.read_worktree(session.worktree_id)
+            except WorktreeError as error:
+                raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
+            if (
+                worktree.project_id != session.project_id
+                or worktree.repository_root != lifecycle_operation.repository_root
+            ):
+                raise ApplicationError("OPERATION_ID_REUSED")
+        result_workspace_root = replay.get("workspaceRoot")
+        if (
+            isinstance(result_workspace_root, str)
+            and result_workspace_root != session.workspace_root
+        ):
+            raise ApplicationError("OPERATION_ID_REUSED")
+        if request.workspace_root is not None:
+            requested_root = str(Path(request.workspace_root).expanduser().resolve(strict=False))
+            frozen_root = session.roots[0].path if session.roots else session.workspace_root
+            if requested_root != frozen_root:
+                manager = self._worktree_manager
+                if (
+                    request.project_id is None
+                    or session.execution_mode is not SessionExecutionMode.LOCAL
+                    or manager is None
+                ):
+                    raise ApplicationError("OPERATION_ID_REUSED")
+                try:
+                    current_project_root = str(
+                        Path(manager.project(request.project_id).workspace_root)
+                        .expanduser()
+                        .resolve(strict=False)
+                    )
+                except WorktreeError as error:
+                    raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
+                if requested_root != current_project_root:
+                    raise ApplicationError("OPERATION_ID_REUSED")
+            if session.worktree_id is not None:
+                manager = self._worktree_manager
+                if manager is None:
+                    raise ApplicationError("OPERATION_ID_REUSED")
+                try:
+                    worktree = manager.read_worktree(session.worktree_id)
+                    requested_repository = manager.discover(requested_root).repository_root
+                except WorktreeError as error:
+                    raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
+                if requested_repository != worktree.repository_root:
+                    raise ApplicationError("OPERATION_ID_REUSED")
+        return _result(
+            SessionCreateResponseDto,
+            self._project_session(self._projection_for_session(session.id)),
+        )
 
     def _projection_for_session(self, session_id: str) -> SessionProjection:
         projection = self._repository.read_session_projection(session_id)
@@ -3065,6 +3363,7 @@ def _worktree_error_code(error: WorktreeError) -> str:
         "worktree_persistence_failed": "WORKTREE_PERSISTENCE_FAILED",
         "local_changes_base_mismatch": "LOCAL_CHANGES_BASE_MISMATCH",
         "worktree_source_changed": "WORKTREE_SOURCE_CHANGED",
+        "workspace_identity_changed": "WORKSPACE_IDENTITY_CHANGED",
         "worktree_local_changes_conflict": "WORKTREE_LOCAL_CHANGES_CONFLICT",
         "worktree_include_invalid": "WORKTREE_INCLUDE_INVALID",
         "worktree_include_symlink_escape": "WORKTREE_INCLUDE_INVALID",

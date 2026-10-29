@@ -137,6 +137,7 @@ class BasePermissionProfile(ClosedModel):
         cls,
         *,
         workspace_root: Path,
+        additional_roots: tuple[Path, ...] = (),
         protected_paths: tuple[Path, ...] = (),
         protected_write_paths: tuple[Path, ...] = (),
         hard_confidentiality_paths: tuple[Path, ...] = (),
@@ -153,13 +154,8 @@ class BasePermissionProfile(ClosedModel):
             path.resolve(strict=False) for path in hard_confidentiality_paths
         )
         return cls(
-            workspaceRoots=(str(workspace),),
-            entries=(
-                FileSystemPermissionEntry(
-                    path=str(workspace),
-                    access=FileSystemAccessMode.WRITE,
-                ),
-            ),
+            workspaceRoots=tuple(str(path) for path in (workspace, *additional_roots)),
+            entries=tuple(FileSystemPermissionEntry(path=str(path), access=FileSystemAccessMode.WRITE) for path in (workspace, *additional_roots)),
             permanentDenies=tuple(
                 FileSystemPermissionEntry(
                     path=str(path),

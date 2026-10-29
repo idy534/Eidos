@@ -80,3 +80,38 @@ for (const mode of ["read", "off"] as const) {
     }
   });
 }
+
+test("Desktop manages project memory without a Session through real stdio and restart", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "eidos-memory-project-"));
+  const workspace = path.join(temp, "workspace");
+  await mkdir(workspace);
+  const options = {
+    pythonExecutable: path.resolve(".venv/bin/python"),
+    runtimeRoot: path.resolve("runtime"),
+    dataDirectory: path.join(temp, "data"),
+    environment: { EIDOS_FAKE_MODEL: "1", EIDOS_PROJECTLESS_ROOT: path.join(temp, "workspaces") },
+  };
+  let client = new RuntimeClient(options);
+  try {
+    await client.initialize();
+    const project = await client.createProject("Memory project", workspace);
+    const target = { projectId: project.id, scope: "current" as const };
+    await client.memory("memory/edit", { ...target, operationId: randomUUID(), path: "preferences.md", content: "用户使用中文。" });
+    assert.equal((await client.memory("memory/list", target)).documents.length, 1);
+    await client.memory("memory/policy", { ...target, mode: "read" });
+    const exported = await client.memory("memory/export", target);
+    assert.equal(exported.files.at(-1)?.content, "用户使用中文。");
+    await client.shutdown();
+    assert.equal(await client.waitForExit(), 0);
+    client = new RuntimeClient(options);
+    await client.initialize();
+    assert.equal((await client.memory("memory/read", { ...target, path: "preferences.md" })).content, "用户使用中文。");
+    assert.equal((await client.memory("memory/list", target)).scopes.at(-1)?.mode, "read");
+    assert.equal((await client.listSessions()).items.length, 0);
+  } finally {
+    await client.shutdown();
+    await client.waitForExit();
+    client.terminate();
+    await rm(temp, { recursive: true, force: true });
+  }
+});

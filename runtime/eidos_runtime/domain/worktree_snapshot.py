@@ -23,6 +23,8 @@ class WorktreeSnapshot(EidosFrozenStrictModel):
     workspace_root: str = Field(min_length=1, max_length=4096)
     session_id: str | None = Field(default=None, min_length=1)
     project_id: str = Field(min_length=1)
+    repository_root: str | None = None
+    git_common_dir: str | None = None
     base_ref: str = Field(min_length=1, max_length=4096)
     base_commit: str = Field(min_length=40, max_length=64, pattern=r"^[0-9a-fA-F]+$")
     head: str = Field(min_length=40, max_length=64, pattern=r"^[0-9a-fA-F]+$")

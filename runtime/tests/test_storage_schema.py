@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sqlite3
 import sys
+import subprocess
 import tempfile
 import unittest
 import threading
@@ -15,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from eidos_runtime.db.schema import (  # noqa: E402
     LEGACY_SCHEMA_VERSION,
     PREVIOUS_SCHEMA_VERSION,
+    V46_SCHEMA_VERSION,
     SCHEMA_SQL,
     SCHEMA_VERSION,
     V9_SCHEMA_SQL,
@@ -43,6 +45,13 @@ from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
 from eidos_runtime.runtime.resolution import RuleResolutionSnapshot  # noqa: E402
 from eidos_runtime.db.storage import DATABASE_NAME, SessionStore  # noqa: E402
 from eidos_runtime.db.database import Database  # noqa: E402
+from eidos_runtime.domain.project_workspace import SessionRoot  # noqa: E402
+from eidos_runtime.git.backend import DulwichGitBackend  # noqa: E402
+from eidos_runtime.persistence.project_workspaces import verify_session_roots  # noqa: E402
+from eidos_runtime.workspace.reader import (  # noqa: E402
+    WorkspacePathError,
+    capture_workspace_identity,
+)
 from eidos_runtime.runtime.state_machine import (  # noqa: E402
     RunStatus,
     RuntimeState,
@@ -51,6 +60,7 @@ from eidos_runtime.runtime.state_machine import (  # noqa: E402
 
 
 EXPECTED_TABLES = {
+    "personalization_settings",
     "hook_sources",
     "mcp_connections",
     "plugin_versions",
@@ -97,6 +107,7 @@ EXPECTED_TABLES = {
     "run_revisions",
     "review_comments",
     "projects",
+    "project_roots",
     "sidebar_pins",
     "worktrees",
     "worktree_lifecycle_operations",
@@ -128,7 +139,10 @@ EXPECTED_COLUMNS = {
         "workspace_dev", "workspace_inode", "workspace_uid", "worktree_id",
         "associated_worktree_id",
     },
-    "worktrees": {"checkout_branch", "last_used_at"},
+    "worktrees": {
+        "checkout_branch", "last_used_at", "git_dir_dev", "git_dir_inode",
+        "git_dir_uid",
+    },
     "session_handoff_operations": {
         "scope", "operation_id", "state", "session_id", "project_id",
         "source_mode", "target_mode", "source_root", "target_root",
@@ -495,6 +509,9 @@ class StorageSchemaTests(unittest.TestCase):
                 "sidebar_pins_event_revision",
                 "run_revisions_source",
                 "review_comments_session_path",
+                "review_comments_workspace",
+                "projects_workspace",
+                "sessions_project",
                 "worktrees_project_state",
                 "worktrees_project_ownership",
                 "sessions_worktree_id",
@@ -561,12 +578,244 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 43)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 42)
+        self.assertEqual(SCHEMA_VERSION, 47)
+        self.assertEqual(V46_SCHEMA_VERSION, 46)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 46)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
         store.close()
+
+    def test_v45_worktree_bindings_backfill_session_and_fork_snapshots(self) -> None:
+        workspace = self.data.parent / "workspace"
+        workspace.mkdir()
+        subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+        store = SessionStore(self.data)
+        store.initialize()
+        session = store.create_session(str(workspace))
+        connection = store.connection
+        assert connection is not None
+        project_id = "project-fork-source"
+        connection.execute(
+            "INSERT INTO projects (id, name, workspace_root, git_repository_root, "
+            "git_common_dir, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, 1)",
+            (
+                project_id,
+                "Fork source",
+                str(workspace),
+                str(workspace),
+                str(workspace / ".git"),
+            ),
+        )
+        workspace_identity = capture_workspace_identity(workspace)
+        git = DulwichGitBackend().discover(workspace)
+        source_roots = (
+            SessionRoot(
+                id="root-primary",
+                path=str(workspace_identity.path),
+                repository_root=git.repository_root,
+                git_dir=git.git_dir,
+                git_common_dir=git.git_common_dir,
+                device=workspace_identity.device,
+                inode=workspace_identity.inode,
+                owner=workspace_identity.owner,
+            ),
+        )
+        source_roots_json = json.dumps(
+            [root.model_dump(mode="json") for root in source_roots],
+            separators=(",", ":"),
+        )
+        connection.execute(
+            "UPDATE sessions SET project_id = ?, workspace_roots_json = ? WHERE id = ?",
+            (project_id, source_roots_json, session["id"]),
+        )
+        connection.execute(
+            """
+            INSERT INTO worktree_snapshots (
+                id, worktree_id, workspace_root, session_id, project_id,
+                base_ref, base_commit, head, branch, checkout_branch,
+                branch_ownership, dirty, staged_paths_json, unstaged_paths_json,
+                untracked_paths_json, conflict_paths_json, source_fingerprint,
+                artifact_path, artifact_sha256, full_patch_sha256,
+                staged_patch_sha256, format_version, state, created_at,
+                restored_at, updated_at
+            ) VALUES (
+                'fork-snapshot-valid', NULL, ?, ?, ?, 'HEAD', ?, ?, NULL, NULL,
+                'none', 0, '[]', '[]', '[]', '[]', 'source-fingerprint',
+                '/snapshot', ?, ?, ?, 1, 'ready', 1, NULL, 1
+            )
+            """,
+            (
+                str(workspace),
+                session["id"],
+                project_id,
+                "0" * 40,
+                "0" * 40,
+                "a" * 64,
+                "b" * 64,
+                "c" * 64,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO worktree_lifecycle_operations (
+                scope, operation_id, state, session_id, created_at, updated_at
+            ) VALUES ('session/create', 'existing-session', 'session_created', ?, 1, 1)
+            """,
+            (session["id"],),
+        )
+        connection.execute(
+            """
+            INSERT INTO worktree_lifecycle_operations (
+                scope, operation_id, state, session_id, created_at, updated_at
+            ) VALUES ('session/create', 'pending-create', 'worktree_created', 'missing-session', 1, 1)
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO worktree_lifecycle_operations (
+                scope, operation_id, state, session_id, snapshot_id, created_at, updated_at
+            ) VALUES ('session/create', 'pending-fork', 'worktree_created', 'fork-session', 'fork-snapshot', 1, 1)
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO worktree_lifecycle_operations (
+                scope, operation_id, state, session_id, snapshot_id, created_at, updated_at
+            ) VALUES (
+                'session/create', 'pending-fork-valid', 'worktree_created',
+                'fork-target-session', 'fork-snapshot-valid', 1, 1
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO worktree_lifecycle_operations (
+                scope, operation_id, state, session_id, snapshot_id, created_at, updated_at
+            ) VALUES (
+                'checkpoint/fork', 'pending-checkpoint-fork', 'prepared',
+                'checkpoint-target-session', 'fork-snapshot-valid', 1, 1
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO worktree_lifecycle_operations (
+                scope, operation_id, state, session_id, snapshot_id, created_at, updated_at
+            ) VALUES (
+                'checkpoint/fork', 'pending-checkpoint-fork-unknown', 'prepared',
+                'checkpoint-target-unknown', 'missing-checkpoint-snapshot', 1, 1
+            )
+            """
+        )
+        connection.commit()
+        store.close()
+
+        database = self.data / DATABASE_NAME
+        legacy = sqlite3.connect(database)
+        legacy.execute(
+            "ALTER TABLE worktree_lifecycle_operations DROP COLUMN project_revision"
+        )
+        legacy.execute(
+            "ALTER TABLE worktree_lifecycle_operations DROP COLUMN workspace_roots_json"
+        )
+        legacy.execute("ALTER TABLE worktrees DROP COLUMN git_dir_uid")
+        legacy.execute("ALTER TABLE worktrees DROP COLUMN git_dir_inode")
+        legacy.execute("ALTER TABLE worktrees DROP COLUMN git_dir_dev")
+        legacy.execute("PRAGMA user_version = 45")
+        legacy.commit()
+        legacy.close()
+
+        migrated = SessionStore(self.data)
+        migrated.initialize()
+        connection = migrated.connection
+        assert connection is not None, (migrated.health_state, migrated.health_code)
+        existing = connection.execute(
+            """
+            SELECT state, workspace_roots_json, error_code
+            FROM worktree_lifecycle_operations WHERE operation_id = 'existing-session'
+            """
+        ).fetchone()
+        pending = connection.execute(
+            """
+            SELECT state, workspace_roots_json, error_code
+            FROM worktree_lifecycle_operations WHERE operation_id = 'pending-create'
+            """
+        ).fetchone()
+        pending_fork = connection.execute(
+            """
+            SELECT state, workspace_roots_json, error_code
+            FROM worktree_lifecycle_operations WHERE operation_id = 'pending-fork'
+            """
+        ).fetchone()
+        pending_fork_valid = connection.execute(
+            """
+            SELECT state, workspace_roots_json, error_code
+            FROM worktree_lifecycle_operations WHERE operation_id = 'pending-fork-valid'
+            """
+        ).fetchone()
+        pending_checkpoint_fork = connection.execute(
+            """
+            SELECT state, workspace_roots_json, error_code
+            FROM worktree_lifecycle_operations
+            WHERE operation_id = 'pending-checkpoint-fork'
+            """
+        ).fetchone()
+        pending_checkpoint_fork_unknown = connection.execute(
+            """
+            SELECT state, workspace_roots_json, error_code
+            FROM worktree_lifecycle_operations
+            WHERE operation_id = 'pending-checkpoint-fork-unknown'
+            """
+        ).fetchone()
+        source_roots_after_migration = connection.execute(
+            "SELECT workspace_roots_json FROM sessions WHERE id = ?",
+            (session["id"],),
+        ).fetchone()[0]
+        self.assertEqual(existing["state"], "session_created")
+        self.assertEqual(
+            existing["workspace_roots_json"], source_roots_after_migration
+        )
+        self.assertEqual(pending["state"], "cleanup_required")
+        self.assertEqual(pending["workspace_roots_json"], "[]")
+        self.assertEqual(
+            pending["error_code"], "workspace_binding_snapshot_unavailable"
+        )
+        self.assertEqual(pending_fork["state"], "cleanup_required")
+        self.assertEqual(
+            pending_fork["error_code"], "workspace_binding_snapshot_unavailable"
+        )
+        self.assertEqual(pending_fork_valid["state"], "worktree_created")
+        self.assertEqual(pending_checkpoint_fork["state"], "prepared")
+        self.assertEqual(
+            pending_checkpoint_fork["workspace_roots_json"],
+            pending_fork_valid["workspace_roots_json"],
+        )
+        self.assertEqual(
+            pending_checkpoint_fork_unknown["state"], "cleanup_required"
+        )
+        self.assertEqual(
+            pending_checkpoint_fork_unknown["error_code"],
+            "workspace_binding_snapshot_unavailable",
+        )
+        self.assertEqual(
+            pending_fork_valid["workspace_roots_json"], source_roots_after_migration
+        )
+        migrated_roots = tuple(
+            SessionRoot.model_validate(value)
+            for value in json.loads(pending_fork_valid["workspace_roots_json"])
+        )
+        self.assertIsNotNone(migrated_roots[0].git_dir_identity)
+        self.assertIsNotNone(migrated_roots[0].git_common_identity)
+        verify_session_roots(migrated_roots)
+        (workspace / ".git").rename(workspace / ".git-old")
+        subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+        with self.assertRaises(WorkspacePathError):
+            verify_session_roots(migrated_roots)
+        self.assertEqual(
+            connection.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION
+        )
+        migrated.close()
 
     def test_v9_run_index_migrates_with_overlapping_waiting_runs(self) -> None:
         database = self.data / DATABASE_NAME

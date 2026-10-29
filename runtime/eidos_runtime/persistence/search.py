@@ -179,7 +179,7 @@ class SearchRepository(Repository):
         if request.projectless:
             conditions.append("p.id IS NULL")
         scope = " AND ".join(conditions)
-        join = "FROM sessions s LEFT JOIN worktrees w ON w.id=s.worktree_id LEFT JOIN projects p ON p.workspace_root=s.workspace_root"
+        join = "FROM sessions s LEFT JOIN worktrees w ON w.id=s.worktree_id LEFT JOIN projects p ON p.id=s.project_id OR (s.project_id IS NULL AND p.workspace_root=s.workspace_root)"
         # Trigram narrows the normal path. Short terms deliberately search the
         # full projection rather than silently limiting the visible history.
         candidate = (

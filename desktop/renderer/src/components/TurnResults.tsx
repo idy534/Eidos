@@ -298,14 +298,17 @@ export function useCompleteSessionItems(
   sessionId: string | undefined,
   currentItems: Item[],
   previousItemId: string | undefined,
-): { items: Item[]; loading: boolean; error?: string } {
+  currentRuns?: Run[],
+): { items: Item[]; runs: Run[]; loading: boolean; error?: string } {
   const [olderItems, setOlderItems] = useState<Item[]>([]);
+  const [olderRuns, setOlderRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState(Boolean(previousItemId));
   const [error, setError] = useState<string>();
 
   useEffect(() => {
     let active = true;
     setOlderItems([]);
+    setOlderRuns([]);
     setError(undefined);
     if (!sessionId || !previousItemId) {
       setLoading(false);
@@ -315,16 +318,20 @@ export function useCompleteSessionItems(
     void (async () => {
       let cursor: string | undefined = previousItemId;
       const pages: Item[] = [];
+      const runPages: Run[] = [];
       try {
         while (active && cursor) {
           const page = await window.eidosRuntime.readSession(sessionId, { itemLimit: 200, beforeItemId: cursor });
           pages.unshift(...page.items);
+          if (page.runs) runPages.unshift(...page.runs);
           if (!page.previousItemId || page.previousItemId === cursor) break;
           cursor = page.previousItemId;
         }
         if (active) {
-          const unique = new Map(pages.map((item) => [item.id, item]));
-          setOlderItems([...unique.values()]);
+          const uniqueItems = new Map(pages.map((item) => [item.id, item]));
+          const uniqueRuns = new Map(runPages.map((run) => [run.id, run]));
+          setOlderItems([...uniqueItems.values()]);
+          setOlderRuns([...uniqueRuns.values()]);
         }
       } catch (cause) {
         if (active) setError(cause instanceof Error ? cause.message : "更早的结果暂时无法读取。");
@@ -339,7 +346,13 @@ export function useCompleteSessionItems(
     const merged = new Map([...olderItems, ...currentItems].map((item) => [item.id, item]));
     return [...merged.values()];
   }, [currentItems, olderItems]);
-  return { items, loading, ...(error ? { error } : {}) };
+
+  const runs = useMemo(() => {
+    const merged = new Map([...olderRuns, ...(currentRuns ?? [])].map((run) => [run.id, run]));
+    return [...merged.values()];
+  }, [currentRuns, olderRuns]);
+
+  return { items, runs, loading, ...(error ? { error } : {}) };
 }
 
 function artifactSubtitle(artifact: TurnArtifact): string {

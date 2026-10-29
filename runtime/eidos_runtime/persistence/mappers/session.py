@@ -5,6 +5,8 @@ import json
 
 from pydantic import ValidationError
 
+from eidos_runtime.domain.project_workspace import SessionRoot
+
 from eidos_runtime.domain.session import (
     DeletedSession,
     Session,
@@ -91,6 +93,8 @@ def session_from_row(row: RowValues | Mapping[str, object]) -> Session:
                 title = task.session_title()
         return Session(
             id=session_id,
+            project_id=values.optional_text("project_id") if "project_id" in row.keys() else None,
+            roots=tuple(SessionRoot.model_validate(root) for root in json.loads(row["workspace_roots_json"])) if "workspace_roots_json" in row.keys() else (),
             automation_origin=automation_origin,
             forked_from=(SessionForkSource.model_validate_json(values.text("fork_source_json"))
                          if "fork_source_json" in row.keys() and row["fork_source_json"] is not None else None),
@@ -126,8 +130,17 @@ def session_from_legacy_dict(value: object) -> Session:
         if isinstance(worktree_value, Mapping)
         else None
     )
+    roots_value = value.get("roots", ())
+    if not isinstance(roots_value, (list, tuple)):
+        raise PersistenceCorruptionError(
+            "persistence_record_invalid",
+            record="session_operation_result",
+            field="roots",
+        )
     return session_from_row({
         "id": reader.text("id"),
+        "project_id": reader.optional_text("projectId") if "projectId" in value else None,
+        "workspace_roots_json": json.dumps(roots_value),
         "workspace_root": reader.text("workspaceRoot"),
         "worktree_id": (
             reader.optional_text("worktreeId")
@@ -238,6 +251,10 @@ def session_to_operation_dict(session: Session) -> dict[str, object]:
     """Keep the managed binding in internal operation replay state only."""
 
     value = session_to_legacy_dict(session)
+    if session.project_id is not None:
+        value["projectId"] = session.project_id
+    if session.roots:
+        value["roots"] = [root.model_dump(mode="json") for root in session.roots]
     if session.worktree_id is not None:
         value["worktreeId"] = session.worktree_id
     if session.associated_worktree_id is not None:

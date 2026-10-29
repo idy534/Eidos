@@ -1,0 +1,86 @@
+.personalization-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.personalization-settings .setting-section {
+  margin-bottom: 1.5rem;
+}
+
+.personalization-settings .setting-row {
+  padding: 0.55rem 1.25rem;
+}
+
+.personalization-settings .setting-row-body {
+  margin-top: 0.35rem;
+}
+
+.personalization-settings input,
+.personalization-settings textarea,
+.personalization-settings select {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  padding: 0.42rem 0.75rem;
+}
+
+.personalization-settings select {
+  min-width: 9rem;
+  padding-right: 2rem;
+}
+
+.personalization-settings textarea {
+  padding: 0.5rem 0.75rem;
+  resize: vertical;
+}
+
+.personalization-settings .setting-row-body input,
+.personalization-settings .setting-row-body textarea {
+  width: 100%;
+}
+
+.personalization-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+  color: var(--danger);
+}
+
+.personalization-settings .markdown-editor {
+  min-width: 0;
+  padding: 0.75rem 1.25rem 1.25rem;
+  gap: 0.45rem;
+}
+
+.personalization-settings .markdown-editor__textarea {
+  min-height: 160px;
+  border-radius: var(--radius-md, 8px);
+  padding: 0.75rem 0.95rem;
+  font-family: inherit;
+  font-size: var(--font-size-sm, 13px);
+  line-height: 1.6;
+}
+
+.personalization-settings .markdown-editor__preview-wrapper {
+  border-radius: var(--radius-md, 8px);
+  padding: 0.75rem 0.95rem;
+}
+
+@media (max-width: 480px) {
+  .personalization-settings .setting-row-main {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+
+  .personalization-settings .setting-row-action,
+  .personalization-settings select {
+    width: 100%;
+  }
+}

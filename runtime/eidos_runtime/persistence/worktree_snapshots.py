@@ -39,6 +39,7 @@ class WorktreeSnapshotRepository(Repository):
                     """,
                     _values(snapshot),
                 )
+                connection.execute("UPDATE worktree_snapshots SET repository_root=?,git_common_dir=? WHERE id=?", (snapshot.repository_root, snapshot.git_common_dir, snapshot.id))
             except sqlite3.IntegrityError as error:
                 raise StorageError("snapshot_persistence_conflict") from error
         return snapshot
@@ -202,6 +203,8 @@ def _map(row: sqlite3.Row | None) -> WorktreeSnapshot | None:
             "workspace_root": row["workspace_root"],
             "session_id": row["session_id"],
             "project_id": row["project_id"],
+            "repository_root": row["repository_root"] if "repository_root" in row.keys() else None,
+            "git_common_dir": row["git_common_dir"] if "git_common_dir" in row.keys() else None,
             "base_ref": row["base_ref"],
             "base_commit": row["base_commit"],
             "head": row["head"],

@@ -149,15 +149,21 @@ class RunFinalizer:
             None,
             check_cancel=lambda: _raise_finalization_cancel(request_cancel),
         )
-        resolved = InstructionResolver().for_finalization(
-            instructions or InstructionResolver().resolve(
-                has_project=not self.store.run_is_projectless(run_id),
-            )
-        )
-
         try:
+            if instructions is None:
+                personalization = self.store.read_run_resolution_snapshot(run_id).personalization
+                instructions = InstructionResolver().resolve(
+                    has_project=not self.store.run_is_projectless(run_id),
+                    personalization=personalization.preferences if personalization is not None else None,
+                )
+            resolved = InstructionResolver().for_finalization(instructions)
             hit_fault("finalization_model_failure")
-            base_context = (*context, {
+            section_ids = {item.get("sectionId") for item in context}
+            missing_user_layers: tuple[ModelContextItem, ...] = tuple(
+                {"type": "user", "sectionId": layer.id, "content": layer.content}
+                for layer in resolved.user_context_layers if layer.id not in section_ids
+            )
+            base_context = (*missing_user_layers, *context, {
                 "type": "finalization",
                 "toolsAllowed": False,
                 "stopReason": stop_reason,
@@ -166,7 +172,7 @@ class RunFinalizer:
             with self.store.database.memory.admit(context_epochs(base_context), request_cancel) as memory_cancel:
                 result = runner.run(
                     base_context, memory_cancel, writer.stream,
-                    instructions=resolved.text, allow_tools=False,
+                    instructions=resolved.system_text, allow_tools=False,
                 )
             if cancel.is_set():
                 raise RuntimeCancelled

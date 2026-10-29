@@ -567,6 +567,7 @@ class SessionHistoryRepository(Repository):
                 if worktree_id
                 else SessionExecutionMode.LOCAL,
                 project_id=projection.project.id if projection.project else None,
+                workspace_roots=projection.session.roots or None,
                 projectless=projection.project is None,
                 title=projection.session.title or "新会话",
                 transaction_connection=connection,

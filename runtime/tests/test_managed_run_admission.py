@@ -242,7 +242,7 @@ def test_run_admission_rejects_repository_and_branch_mismatch(
         project_id = str(repository_mismatch["worktree"]["projectId"])
         with store.connection:
             store.connection.execute(
-                "UPDATE projects SET git_common_dir = ? WHERE id = ?",
+                "UPDATE worktrees SET git_common_dir = ? WHERE project_id = ?",
                 (str(tmp_path / "foreign-git-common-dir"), project_id),
             )
         with pytest.raises(ApplicationError) as repository_error:
@@ -255,7 +255,7 @@ def test_run_admission_rejects_repository_and_branch_mismatch(
         discovery = manager.discover(repository)
         with store.connection:
             store.connection.execute(
-                "UPDATE projects SET git_common_dir = ? WHERE id = ?",
+                "UPDATE worktrees SET git_common_dir = ? WHERE project_id = ?",
                 (discovery.git_common_dir, project_id),
             )
         branch_mismatch = _managed_session(sessions, repository)

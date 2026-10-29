@@ -7,7 +7,9 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from eidos_runtime.domain.project_workspace import DirectoryIdentity
 from eidos_runtime.domain.approval_policy import ApprovalMode, FULL_ACCESS_WARNING_VERSION
+from eidos_runtime.domain.personalization import PersonalizationSettings
 from eidos_runtime.model.client import (
     ModelContextItem,
     ModelProfileSnapshot,
@@ -46,12 +48,16 @@ class _FrozenModel(BaseModel):
 
 
 class WorkspaceIdentitySnapshot(_FrozenModel):
+    root_id: str | None = None
+    additional_roots: tuple[WorkspaceIdentitySnapshot, ...] | None = None
     path: str
     device: int
     inode: int
     owner: int
     git_dir: str | None = None
     git_common_dir: str | None = None
+    git_dir_identity: DirectoryIdentity | None = None
+    git_common_identity: DirectoryIdentity | None = None
 
 
 class RuleSourceSnapshot(_FrozenModel):
@@ -161,6 +167,7 @@ class RunResolutionSnapshot(_FrozenModel):
     permission_profile_json: str
     sandbox_policy_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     sandbox_policy_json: str
+    personalization: PersonalizationSettings | None = None
     created_at: int = Field(ge=0)
 
     @classmethod
@@ -307,6 +314,7 @@ def create_run_resolution_snapshot(
     created_at: int,
     projectless: bool = False,
     approval_mode: ApprovalMode = "manual",
+    personalization: PersonalizationSettings | None = None,
 ) -> RunResolutionSnapshot:
     model_value = model_profile.model_dump(mode="json")
     model_hash = canonical_sha256(model_value)
@@ -315,6 +323,20 @@ def create_run_resolution_snapshot(
         Path(workspace_identity.path),
         data_directory,
     )
+    from eidos_runtime.sandbox.permissions import FileSystemPermissionEntry, FileSystemAccessMode
+    attached = workspace_identity.additional_roots or ()
+    extra_paths = tuple(root.path for root in attached)
+    metadata = tuple(dict.fromkeys(
+        path for root in (workspace_identity, *attached)
+        for path in (root.git_dir, root.git_common_dir,
+                     *((str(Path(root.path) / name) for name in (".git", ".agents", ".eidos")) if root in attached else ()))
+        if path is not None
+    ))
+    base_permissions = base_permissions.model_copy(update={
+        "workspace_roots": (*base_permissions.workspace_roots, *extra_paths),
+        "entries": (*base_permissions.entries, *(FileSystemPermissionEntry(path=path, access=FileSystemAccessMode.WRITE) for path in extra_paths)),
+        "protected_write_paths": tuple(dict.fromkeys((*base_permissions.protected_write_paths, *metadata))),
+    })
     if approval_mode == "full_access":
         base_permissions = base_permissions.with_full_access()
     permission_json = canonical_json(
@@ -343,6 +365,7 @@ def create_run_resolution_snapshot(
         permission_profile_json=permission_json,
         sandbox_policy_hash=canonical_sha256(sandbox_policy),
         sandbox_policy_json=sandbox_json,
+        **({"personalization": personalization} if personalization is not None else {}),
         created_at=created_at,
     )
 

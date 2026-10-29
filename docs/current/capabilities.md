@@ -1,5 +1,7 @@
 # Eidos 当前能力
 
+Eidos 支持多目录项目、一个主要文件夹和侧栏项目编辑。会话固定创建时的目录绑定。Files 和 Review 分别选择文件夹与 Git checkout。主仓库 Worktree 映射其源 checkout 内的目录，其他目录继续共享。系统的 Checkpoint 仍只覆盖主仓库的现有范围。具体行为和限制见 [多目录项目](features/projects.md)。
+
 用户可以在“设置 → 网页搜索”配置 DeepSeek Search、LangSearch 和豆包搜索 Custom 版，并手动勾选默认服务。三家可以同时保存，用户也可以全部取消。没有默认服务或可用本地 Key 时，新 Run 不发布 `web_search`。系统不会自动切换服务。Run 固定创建时的配置。用户选择默认服务后，搜索不再逐次审批，仍保留 Durable Intent、取消和有界结果投影；请求可能计费。实现已接入，真实账户 Key 验证仍未进行。配置、持久化和验证边界见[当前网页搜索](features/web-search.md)。
 
 Eidos 支持钉钉、飞书和企业微信文字消息。用户可以在“设置 → 助理”为各平台配置凭证、模型、项目和审批模式。各渠道按平台的群机器人提及规则接收消息，不设置额外用户和群白名单。渠道支持经 Desktop 确认并保存的完全访问模式。Runtime 使用普通 Session / Run 执行，并向原会话回复。现有记录包含钉钉真实收发验证；飞书、企业微信与长期重连仍需真实平台验收。配置和验证边界见 [当前渠道接入](features/channels.md)。
@@ -159,6 +161,8 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - 默认在线 Run 会在每个 ModelAttempt Sampling 前持久化并绑定精确 ContextSnapshot。该 Snapshot 原样保存结构化消息、resolved instructions 和 tools。协议修复使用新 Snapshot，Provider transport retry 复用原 Snapshot。可重试的 transport failure 即使已显示文字，也会先结束当前 Attempt 与失败草稿，再创建独立 Attempt、新草稿并复用同一 Snapshot。首次请求加最多 5 次重试共用持久预算，首次临时失败后默认最多恢复 180 秒。系统不拼接旧草稿，不执行残缺工具调用，也不重新执行已有工具操作。明确余额、配额、认证与参数错误不重试。预算耗尽后记录失败，不重新进入容量恢复。
 
 ## Project Rules
+
+- 设置页提供“个性化”，包含语言与表达、关于你和自定义指令。Runtime 把全局偏好保存在 SQLite，并在创建 Run 时固定到指令来源快照。后续修改不会改变已创建的任务，子 Agent 继承父任务配置。具体范围见[个性化说明](features/personalization.md)。
 
 - ProjectRuleResolver 支持 `EIDOS.override.md`、`EIDOS.md`、`AGENTS.override.md`、`AGENTS.md` 和 `CLAUDE.md`。
 - Resolver 从 Workspace root 到 effective cwd 逐目录解析。

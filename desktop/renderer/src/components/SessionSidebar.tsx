@@ -10,7 +10,12 @@ import { SearchIcon } from "./FindBar.js";
 import { EidosMark } from "./EidosMark.js";
 import { ForkIcon } from "./ForkIcon.js";
 import { PrimaryActionButton } from "./PrimaryActionButton.js";
-import { SidebarTooltip, type SidebarTooltipState, type SidebarTooltipTarget } from "./SidebarTooltip.js";
+import {
+  SidebarTooltip,
+  buildProjectTooltipRoots,
+  type SidebarTooltipState,
+  type SidebarTooltipTarget,
+} from "./SidebarTooltip.js";
 import { Tooltip } from "./Tooltip.js";
 import settingsIcon from "./settings.svg";
 
@@ -64,6 +69,8 @@ interface Props {
   onRename: (session: Session) => void;
   onDelete: (session: Session) => void;
   onDeleteProject: (project: Project) => void;
+  onEditProject?: ((project: Project) => void) | undefined;
+  onCreateInProjectById?: ((projectId: string) => void) | undefined;
   onShowInFinder?: (project: Project) => void;
   onOpenSettings: () => void;
   onOpenAutomations?: () => void;
@@ -93,7 +100,7 @@ export function SessionSidebar({
   sessions, projects: catalogProjects, selectedId, disabled, readCompletedSessions,
   pins = [], pinningDisabled = false, pendingPinTargets, onSetPinned,
   runtimePresentation, isSelectingSessionId, gitStatusBySessionId = new Map(),
-  onCreate, onCreateInProject, onSelect, onRename, onDelete, onDeleteProject, onShowInFinder, onOpenSettings,
+  onCreate, onCreateInProject, onSelect, onRename, onDelete, onDeleteProject, onEditProject, onCreateInProjectById, onShowInFinder, onOpenSettings,
   navigationSlot, onOpenAutomations, onOpenAutomation, onSearch,
 }: Props) {
   const visibleSessions = sessions.filter(
@@ -407,6 +414,11 @@ export function SessionSidebar({
 
   const renderProject = (project: ProjectSessionGroup) => {
     const isExpanded = !collapsedProjects.has(project.key);
+    const tooltipRoots = buildProjectTooltipRoots(project);
+    const isPinned = Boolean(
+      project.projectId && pins.some((pin) => pin.kind === "project" && pin.id === project.projectId)
+    );
+    const sessionCount = project.sessions.length;
     return (
       <li key={project.key}>
         <section className={`workspace-group${project.projectless ? " workspace-group--recent" : ""}`} aria-label={project.displayName} data-project-id={project.projectId}>
@@ -425,6 +437,9 @@ export function SessionSidebar({
                       kind: "project",
                       projectName: project.displayName,
                       workspaceRoot: project.workspaceRoot,
+                      roots: tooltipRoots,
+                      sessionCount,
+                      isPinned,
                       projectless: true,
                     },
                     e.currentTarget,
@@ -437,6 +452,9 @@ export function SessionSidebar({
                       kind: "project",
                       projectName: project.displayName,
                       workspaceRoot: project.workspaceRoot,
+                      roots: tooltipRoots,
+                      sessionCount,
+                      isPinned,
                       projectless: true,
                     },
                     e.currentTarget,
@@ -463,6 +481,9 @@ export function SessionSidebar({
                       kind: "project",
                       projectName: project.displayName,
                       workspaceRoot: project.workspaceRoot,
+                      roots: tooltipRoots,
+                      sessionCount,
+                      isPinned,
                       projectless: false,
                     },
                     rowElement,
@@ -476,6 +497,9 @@ export function SessionSidebar({
                       kind: "project",
                       projectName: project.displayName,
                       workspaceRoot: project.workspaceRoot,
+                      roots: tooltipRoots,
+                      sessionCount,
+                      isPinned,
                       projectless: false,
                     },
                     rowElement,
@@ -533,7 +557,7 @@ export function SessionSidebar({
                     saveCollapsedProjects(next);
                     return next;
                   });
-                  onCreateInProject(project.workspaceRoot);
+                  (onCreateInProjectById && project.projectId ? onCreateInProjectById(project.projectId) : onCreateInProject(project.workspaceRoot));
                 }}
                 onMouseEnter={(e) => {
                   const rowElement = (e.currentTarget.closest(".workspace-title-row") as HTMLElement) ?? e.currentTarget;
@@ -542,6 +566,9 @@ export function SessionSidebar({
                       kind: "project",
                       projectName: project.displayName,
                       workspaceRoot: project.workspaceRoot,
+                      roots: tooltipRoots,
+                      sessionCount,
+                      isPinned,
                       projectless: false,
                     },
                     rowElement,
@@ -735,6 +762,10 @@ export function SessionSidebar({
                 const target: SidebarTarget = { kind: "project", id: contextMenu.project.id };
                 requestPin(target, contextMenu.element);
               },
+            },
+            {
+              key: "edit-project", label: "编辑项目", icon: <EditIcon />, disabled: !onEditProject,
+              onClick: () => { setContextMenu(undefined); onEditProject?.(contextMenu.project); },
             },
             {
               key: "show-in-finder",

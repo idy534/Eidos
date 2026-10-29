@@ -7,6 +7,7 @@ from pydantic import Field, JsonValue, StrictInt, StrictStr, field_validator, mo
 from eidos_runtime.protocol.methods import (
     MethodResultDto,
     _CanonicalIdRequest,
+    _GitRootRequest,
     _OperationRequest,
     _git_relative_path,
 )
@@ -28,7 +29,7 @@ class ReviewCommentDto(ClosedModel):
     updated_at: StrictInt = Field(alias="updatedAt", ge=0)
 
 
-class ReviewCommentListRequestDto(_CanonicalIdRequest):
+class ReviewCommentListRequestDto(_GitRootRequest, _CanonicalIdRequest):
     session_id: StrictStr = Field(alias="sessionId")
     path: StrictStr | None = Field(default=None, min_length=1, max_length=4096)
     scope: Literal["head", "baseline"] | None = None
@@ -50,7 +51,7 @@ class ReviewCommentListResponseDto(MethodResultDto):
     comments: list[ReviewCommentDto]
 
 
-class ReviewCommentCreateRequestDto(_OperationRequest):
+class ReviewCommentCreateRequestDto(_GitRootRequest, _OperationRequest):
     operation_id: StrictStr = Field(alias="operationId")
     comment_id: StrictStr = Field(alias="commentId")
     session_id: StrictStr = Field(alias="sessionId")
@@ -89,7 +90,7 @@ class ReviewCommentCreateResponseDto(MethodResultDto):
     comment: ReviewCommentDto
 
 
-class ReviewCommentDeleteRequestDto(_OperationRequest):
+class ReviewCommentDeleteRequestDto(_GitRootRequest, _OperationRequest):
     operation_id: StrictStr = Field(alias="operationId")
     session_id: StrictStr = Field(alias="sessionId")
     comment_id: StrictStr = Field(alias="commentId")

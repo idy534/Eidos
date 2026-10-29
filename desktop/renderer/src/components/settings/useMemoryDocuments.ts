@@ -3,7 +3,7 @@ import type { MemoryState } from "../../../../shared/memory.generated.js";
 
 export type MemoryScopeChoice = "current" | "global";
 
-export function useMemoryDocuments(sessionId: string | undefined, scope: MemoryScopeChoice) {
+export function useMemoryDocuments(projectId: string | undefined, scope: MemoryScopeChoice, enabled = true) {
   const [state, setState] = useState<MemoryState>();
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
@@ -16,21 +16,22 @@ export function useMemoryDocuments(sessionId: string | undefined, scope: MemoryS
 
   useEffect(() => {
     setCursor(0); setQuery(""); setState(undefined);
-  }, [sessionId, scope]);
+  }, [projectId, scope]);
 
   useEffect(() => {
+    if (!enabled) return;
     let active = true;
     const timer = window.setTimeout(() => {
       if (document.visibilityState === "hidden") return;
       setLoading(true); setError("");
       void window.eidosRuntime.memory("memory/list", {
-        sessionId: sessionId ?? null, scope, query, cursor, includeArchived: true,
+        projectId: projectId ?? null, scope, query, cursor, includeArchived: true,
       }).then((value) => { if (active) setState(value); })
         .catch(() => { if (active) setError("记忆无法读取，请重试。"); })
         .finally(() => { if (active) setLoading(false); });
     }, query ? 250 : 0);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [sessionId, scope, query, cursor, version]);
+  }, [projectId, scope, query, cursor, version, enabled]);
 
   useEffect(() => {
     const unsubscribe = window.eidosRuntime.onNotification?.((notice) => {

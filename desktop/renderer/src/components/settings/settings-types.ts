@@ -1,6 +1,6 @@
 import type { ToastItem } from "../ToastContainer.js";
 
-export type SettingsCategory = "web_search" | "channels" | "memory" | "model" | "plugins" | "skills" | "agents" | "mcp" | "worktrees" | "runtime";
+export type SettingsCategory = "personalization" | "web_search" | "channels" | "memory" | "model" | "plugins" | "skills" | "agents" | "mcp" | "worktrees" | "runtime";
 
 export type SettingsPendingAction =
   | { type: "configure_model" }

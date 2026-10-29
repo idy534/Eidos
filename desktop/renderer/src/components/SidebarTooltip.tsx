@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 
-import type { Session } from "../contracts.js";
+import type { Project, Session } from "../contracts.js";
 
 export interface SessionTooltipData {
   kind: "session";
@@ -13,10 +13,21 @@ export interface SessionTooltipData {
   rect: DOMRect;
 }
 
+export interface ProjectTooltipRoot {
+  id?: string | undefined;
+  path: string;
+  name?: string | undefined;
+  isPrimary?: boolean | undefined;
+  shared?: boolean | undefined;
+}
+
 export interface ProjectTooltipData {
   kind: "project";
   projectName: string;
   workspaceRoot: string;
+  roots?: ProjectTooltipRoot[] | undefined;
+  sessionCount?: number | undefined;
+  isPinned?: boolean | undefined;
   projectless?: boolean | undefined;
   rect: DOMRect;
 }
@@ -26,6 +37,52 @@ export type SidebarTooltipState = SessionTooltipData | ProjectTooltipData;
 export type SidebarTooltipTarget =
   | Omit<SessionTooltipData, "rect">
   | Omit<ProjectTooltipData, "rect">;
+
+/**
+ * Format an absolute path for compact display, contracting user home directory to '~'.
+ */
+export function formatDisplayPath(path: string): string {
+  if (!path) return "";
+  return path.replace(/^(\/Users\/[^\/]+|\/home\/[^\/]+)/, "~");
+}
+
+export function buildProjectTooltipRoots(project: {
+  projectless?: boolean | undefined;
+  workspaceRoot: string;
+  project?: Partial<Project> | undefined;
+}): ProjectTooltipRoot[] | undefined {
+  if (project.projectless) return undefined;
+  const rawRoots = project.project?.roots;
+  if (rawRoots && rawRoots.length > 0) {
+    const primaryId = project.project?.primaryRootId;
+    const items: ProjectTooltipRoot[] = rawRoots.map((root, index) => {
+      const isPrimary = primaryId
+        ? root.id === primaryId
+        : root.path === project.workspaceRoot || index === 0;
+      const name = root.path.split("/").filter(Boolean).at(-1) || root.path;
+      return {
+        id: root.id,
+        path: root.path,
+        name,
+        isPrimary,
+        shared: Boolean(root.shared),
+      };
+    });
+    return items.sort((a, b) => (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0));
+  }
+  if (project.workspaceRoot) {
+    const name = project.workspaceRoot.split("/").filter(Boolean).at(-1) || project.workspaceRoot;
+    return [
+      {
+        id: project.project?.primaryRootId ?? "primary",
+        path: project.workspaceRoot,
+        name,
+        isPrimary: true,
+      },
+    ];
+  }
+  return undefined;
+}
 
 /**
  * Format a timestamp into an intuitive relative string and a precise exact date-time string.
@@ -97,9 +154,17 @@ function FolderIconSvg() {
   );
 }
 
-function SessionIconSvg() {
+function PinIconSvg() {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m6 2 5 0-1 4 2 3H4l2-3V2ZM8 9v5" />
+    </svg>
+  );
+}
+
+function SessionIconSvg({ width = 14, height = 14 }: { width?: number; height?: number }) {
+  return (
+    <svg viewBox="0 0 16 16" width={width} height={height} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M2.5 3.5h11a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-6.5l-3 2.5v-2.5h-1.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z" />
     </svg>
   );
@@ -206,30 +271,67 @@ export function SidebarTooltip({ state, sourceSession, onOpenSourceSession, onOp
 
       {state.kind === "project" ? (
         <>
-          <div className="sidebar-hover-card__header">
-            <span className="sidebar-hover-card__icon sidebar-hover-card__icon--project" aria-hidden="true">
-              <FolderIconSvg />
-            </span>
+          <div className="sidebar-hover-card__header sidebar-hover-card__header--project">
             <span className="sidebar-hover-card__title" title={state.projectName}>
               {state.projectName}
             </span>
-            {state.projectless && (
+            {state.projectless ? (
               <span className="sidebar-hover-card__badge">最近会话</span>
-            )}
-          </div>
-          <div className="sidebar-hover-card__body">
-            <div className="sidebar-hover-card__section">
-              <span className="sidebar-hover-card__label">
-                {state.projectless ? "工作区说明" : "文件夹路径"}
-              </span>
-              <div className="sidebar-hover-card__path-box" title={state.workspaceRoot}>
-                {state.projectless && !state.workspaceRoot ? (
-                  <span className="sidebar-hover-card__path-empty">未关联独立项目目录（临时工作区）</span>
-                ) : (
-                  <span className="sidebar-hover-card__path-text">{state.workspaceRoot}</span>
+            ) : (
+              <div className="sidebar-hover-card__meta-group">
+                {typeof state.sessionCount === "number" && (
+                  <span className="sidebar-hover-card__session-count" title={`${state.sessionCount} 次对话`}>
+                    <SessionIconSvg width={11} height={11} />
+                    <span>{`${state.sessionCount} 次对话`}</span>
+                  </span>
+                )}
+                {state.isPinned && (
+                  <span className="sidebar-hover-card__pin-badge" title="已置顶" aria-label="已置顶">
+                    <PinIconSvg />
+                  </span>
                 )}
               </div>
-            </div>
+            )}
+          </div>
+          <div className="sidebar-hover-card__body sidebar-hover-card__body--project">
+            {state.projectless && !state.workspaceRoot ? (
+              <div className="sidebar-hover-card__section">
+                <span className="sidebar-hover-card__label">工作区说明</span>
+                <div className="sidebar-hover-card__path-box">
+                  <span className="sidebar-hover-card__path-empty">未关联独立项目目录（临时工作区）</span>
+                </div>
+              </div>
+            ) : (
+              <div className="sidebar-hover-card__roots-list" role="list" aria-label="项目目录列表">
+                {(() => {
+                  const roots = state.roots && state.roots.length > 0
+                    ? state.roots
+                    : [{ id: "primary", path: state.workspaceRoot, isPrimary: true }];
+                  return roots.map((root) => {
+                    const isPrimary = Boolean(root.isPrimary && !root.shared);
+                    const displayPath = formatDisplayPath(root.path);
+                    return (
+                      <div
+                        key={root.id || root.path}
+                        className="sidebar-hover-card__root-row"
+                        role="listitem"
+                        title={root.path}
+                      >
+                        <span
+                          className={`sidebar-hover-card__root-icon ${isPrimary ? "sidebar-hover-card__root-icon--primary" : "sidebar-hover-card__root-icon--muted"}`}
+                          aria-hidden="true"
+                        >
+                          <FolderIconSvg />
+                        </span>
+                        <span className="sidebar-hover-card__root-path" title={root.path}>
+                          {displayPath}
+                        </span>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            )}
           </div>
         </>
       ) : (

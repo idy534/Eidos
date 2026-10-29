@@ -73,7 +73,7 @@ class WorktreeRestoreService:
                     operation_id=operation_id,
                     state=WorktreeLifecycleState.PREPARED,
                     project_id=snapshot.project_id,
-                    repository_root=self.manager.project(snapshot.project_id).workspace_root,
+                    repository_root=snapshot.repository_root or self.manager.project(snapshot.project_id).workspace_root,
                     worktree_id=worktree_id,
                     worktree_root=current_worktree.worktree_root,
                     base_ref=snapshot.base_ref,

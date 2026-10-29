@@ -44,9 +44,13 @@ vi.mock("../components/SessionSidebar.js", () => ({
 }));
 vi.mock("../components/Composer.js", async () => {
   const { ApprovalModeSelector } = await import("../components/ApprovalModeSelector.js");
-  return { Composer: ({ approvalMode, onApprovalModeChange }: {
+  return { Composer: ({ approvalMode, onApprovalModeChange, onExecutionModeChange }: {
     approvalMode: ApprovalMode; onApprovalModeChange: (mode: ApprovalMode) => void;
-  }) => <ApprovalModeSelector mode={approvalMode} onChange={onApprovalModeChange} /> };
+    onExecutionModeChange?: (mode: "local" | "worktree") => void;
+  }) => <>
+    <ApprovalModeSelector mode={approvalMode} onChange={onApprovalModeChange} />
+    {onExecutionModeChange && <button onClick={() => onExecutionModeChange("worktree")}>切换到工作树</button>}
+  </> };
 });
 vi.mock("../components/ComposerSlot.js", () => ({
   ComposerSlot: ({ children }: { children: React.ReactNode }) => children,
@@ -179,7 +183,7 @@ function renderShell() { return render(shell()); }
 
 describe("AppShell memory settings Session identity", () => {
   it.each(["empty", "projectless draft", "project draft", "persisted"] as const)(
-    "opens memory with a persisted Session or global scope for %s",
+    "opens memory independently of Session identity for %s",
     async (kind) => {
       const persisted = fixture.snapshot!;
       if (kind !== "persisted") {
@@ -192,10 +196,11 @@ describe("AppShell memory settings Session identity", () => {
           }
         }
       }
-      const sessionId = kind === "persisted" ? persisted.session.id : null;
-      const scope = kind === "persisted" ? "current" : "global";
+      localStorage.removeItem("eidos.memory.location.v1");
+      const projectId = null;
+      const scope = "global";
       const memory = vi.fn(async (method: string, request: Record<string, unknown>) => {
-        if (request.sessionId !== null && request.sessionId !== persisted.session.id) {
+        if (request.sessionId != null) {
           throw new Error("EIDOS_RUNTIME_ERROR:MEMORY_SESSION_NOT_FOUND");
         }
         if (method === "memory/read") return {
@@ -209,19 +214,20 @@ describe("AppShell memory settings Session identity", () => {
       });
       window.eidosRuntime.memory = memory as typeof window.eidosRuntime.memory;
       window.eidosRuntime.exportMemoryNotes = vi.fn(async () => {});
+      window.eidosRuntime.listProjects = vi.fn(async () => ({ items: [] }));
       window.eidosRuntime.listModelPresets = vi.fn(async () => ({ providers: [] }));
       renderShell();
       fireEvent.click(screen.getByRole("button", { name: "打开设置" }));
       fireEvent.click(screen.getByRole("tab", { name: "记忆" }));
       await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/read", expect.objectContaining({
-        sessionId, scope, path: "MEMORY.md",
+        projectId, scope, path: "MEMORY.md",
       })));
       expect(screen.queryByText("记忆无法读取，请重试。")).not.toBeInTheDocument();
       fireEvent.change(screen.getByRole("combobox", { name: "模式" }), { target: { value: "read" } });
-      await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/policy", { sessionId, scope, mode: "read" }));
+      await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/policy", { projectId, scope, mode: "read" }));
       await waitFor(() => expect(screen.getByRole("button", { name: "导出" })).toBeEnabled());
       fireEvent.click(screen.getByRole("button", { name: "导出" }));
-      expect(window.eidosRuntime.exportMemoryNotes).toHaveBeenCalledWith(scope, sessionId ?? undefined);
+      expect(window.eidosRuntime.exportMemoryNotes).toHaveBeenCalledWith({ scope, projectId });
     },
   );
 });
@@ -340,7 +346,8 @@ describe("AppShell conversation fork targets", () => {
 
   it("lets a Git conversation choose an independent Worktree", async () => {
     const snapshot = selectedAnswer();
-    snapshot.session.project!.gitAvailable = true;
+    snapshot.session.project!.gitAvailable = false;
+    snapshot.session.roots = [{ id: "root", path: "/workspace", repositoryRoot: "/workspace" }];
     renderShell();
     fireEvent.click(screen.getByRole("button", { name: "从这里分叉" }));
     const dialog = await screen.findByRole("alertdialog", { name: "从这里分叉" });
@@ -349,6 +356,26 @@ describe("AppShell conversation fork targets", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "创建分叉" }));
     await waitFor(() => expect(fixture.forkSession).toHaveBeenCalledWith(snapshot.session.id, "selected", { kind: "new_worktree", state: "current_workspace" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog", { name: "从这里分叉" })).not.toBeInTheDocument());
+  });
+
+  it("uses the Session's frozen Git root after the Project changes", () => {
+    const snapshot = fixture.snapshot!;
+    snapshot.session.project!.gitAvailable = false;
+    snapshot.session.roots = [{
+      id: "root",
+      path: "/workspace",
+      repositoryRoot: "/workspace",
+    }];
+    renderShell();
+    expect(screen.getByRole("button", { name: "切换到工作树" })).toBeInTheDocument();
+  });
+
+  it("does not offer Worktree mode when only the current Project has Git", () => {
+    const snapshot = fixture.snapshot!;
+    snapshot.session.project!.gitAvailable = true;
+    snapshot.session.roots = [{ id: "root", path: "/workspace" }];
+    renderShell();
+    expect(screen.queryByRole("button", { name: "切换到工作树" })).not.toBeInTheDocument();
   });
 
   it("requires an independent Worktree for managed conversations", async () => {

@@ -4,7 +4,6 @@ from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.runtime.contracts import (
     RunContext,
     StepContext,
-    WorkspaceIdentitySnapshot,
 )
 from eidos_runtime.runtime.run_resources import RunResources
 from eidos_runtime.context.budget import ContextBudget
@@ -69,7 +68,6 @@ class StepContextFactory:
             resolution_snapshot=resolution,
         )
         fact = self.store.read_current_step_fact(run.run_id)
-        workspace = self.store.workspace_for_run(run.run_id)
         return StepContext(
             run_id=run.run_id,
             session_id=run.session_id,
@@ -82,22 +80,7 @@ class StepContextFactory:
             instructions=instructions,
             tool_snapshot=snapshot,
             tool_definitions=tool_definitions,
-            workspace_identity=WorkspaceIdentitySnapshot(
-                path=str(workspace.path),
-                device=workspace.device,
-                inode=workspace.inode,
-                owner=workspace.owner,
-                git_dir=(
-                    str(workspace.git_dir)
-                    if workspace.git_dir is not None
-                    else None
-                ),
-                git_common_dir=(
-                    str(workspace.git_common_dir)
-                    if workspace.git_common_dir is not None
-                    else None
-                ),
-            ),
+            workspace_identity=resolution.workspace_identity,
             reconciliation_epoch=int(fact["reconciliationEpoch"]),
             workspace_version=workspace_version,
             context_budget=context_budget,

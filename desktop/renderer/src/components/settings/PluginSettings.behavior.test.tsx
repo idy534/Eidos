@@ -273,7 +273,7 @@ describe("Plugin resources", () => {
     const props = { plugins: [], pendingAction: undefined, onImportPlugin: vi.fn(), onTogglePlugin: vi.fn(), onRemovePlugin: vi.fn(), onShowToast: vi.fn() };
     render(<PluginSettings {...props} />);
     const user = userEvent.setup();
-    expect(screen.getByText("尚未导入任何 Plugin")).toBeInTheDocument();
+    expect(screen.getByText("尚未导入任何插件")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "浏览插件市场" }));
     expect(await screen.findByRole("dialog", { name: "插件市场" })).toBeInTheDocument();
   });

@@ -1,9 +1,11 @@
+import type { ProjectRootDto } from "../../../shared/project-workspaces.js";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { getOfficialFileIcon } from "./FileIcons.js";
 import type { ToastType } from "./ToastContainer.js";
 import { Tooltip } from "./Tooltip.js";
 
 export interface WorkspaceFilePosition {
+  rootId?: string;
   line?: number;
   column?: number;
 }
@@ -13,8 +15,10 @@ export interface WorkspaceFileLink extends WorkspaceFilePosition {
 }
 
 export interface ArtifactActions {
+  rootId?: string;
   sessionId: string;
   executionRoot: string;
+  roots?: ProjectRootDto[] | undefined;
   projectId?: string;
   openFile(path: string, position?: WorkspaceFilePosition): void;
   openBrowser(url: string): void;
@@ -178,7 +182,14 @@ export function ArtifactLink({ href, documentPath, children }: { href?: string; 
       </Tooltip>
     );
   }
-  const target = workspaceFileLink(href, actions.executionRoot, documentPath);
+  let target = workspaceFileLink(href, actions.executionRoot, documentPath);
+  let targetRoot = actions.executionRoot;
+  if (!target && !documentPath) {
+    for (const root of actions.roots ?? []) {
+      const candidate = workspaceFileLink(href, root.path);
+      if (candidate) { target = { ...candidate, rootId: root.id }; targetRoot = root.path; break; }
+    }
+  }
   if (!target) {
     let fallbackPath = href;
     if (fallbackPath.startsWith("file://")) {
@@ -193,7 +204,7 @@ export function ArtifactLink({ href, documentPath, children }: { href?: string; 
       </Tooltip>
     );
   }
-  const filePath = displayFilePath(target.path, actions.executionRoot, target);
+  const filePath = displayFilePath(target.path, targetRoot, target);
   return (
     <Tooltip content={filePath} className="eidos-link-tooltip">
       <a
@@ -203,7 +214,7 @@ export function ArtifactLink({ href, documentPath, children }: { href?: string; 
         onClick={(event) => {
           event.preventDefault();
           const { path, ...position } = target;
-          if (position.line === undefined && position.column === undefined) actions.openFile(path);
+          if (position.line === undefined && position.column === undefined && position.rootId === undefined) actions.openFile(path);
           else actions.openFile(path, position);
         }}
       >

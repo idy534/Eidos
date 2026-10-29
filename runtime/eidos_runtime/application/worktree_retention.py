@@ -227,7 +227,7 @@ class WorktreeRetentionService:
                 operation_id=f"retention-{worktree.id}-{snapshot_id}",
                 state=WorktreeLifecycleState.PREPARED,
                 project_id=worktree.project_id,
-                repository_root=self.manager.project(worktree.project_id).workspace_root,
+                repository_root=self.manager.source_project(worktree.id).workspace_root,
                 worktree_id=worktree.id,
                 worktree_root=worktree.worktree_root,
                 base_ref=worktree.base_ref,
@@ -362,7 +362,7 @@ class WorktreeRetentionService:
         root = Path(worktree.worktree_root)
         if root.exists() or root.is_symlink():
             return False
-        project = self.manager.project(worktree.project_id)
+        project = self.manager.source_project(worktree.id)
         try:
             return not any(
                 entry.worktree_root == str(root.resolve(strict=False))

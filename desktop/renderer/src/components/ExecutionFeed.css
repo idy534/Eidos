@@ -1,5 +1,5 @@
 /* RIGHT-SIDE SESSION AREA - REMAIN MINIMALIST */
-.feed-shell { position: relative; flex: 1 1 auto; min-height: 0; }
+.feed-shell { position: relative; flex: 1 1 auto; min-height: 0; container: feed-shell / inline-size; }
 .feed {
   flex: 1 1 auto;
   height: 100%;

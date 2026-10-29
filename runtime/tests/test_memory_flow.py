@@ -8,7 +8,7 @@ import threading
 
 import pytest
 
-from eidos_runtime.db.schema import SCHEMA_VERSION, V42_SCHEMA_SQL
+from eidos_runtime.db.schema import V43_SCHEMA_VERSION, V42_SCHEMA_SQL
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.collaboration import SpawnAgent
 from eidos_runtime.memory import flow_migration
@@ -355,7 +355,7 @@ def test_v42_upgrade_preserves_notes_and_does_not_resurrect_forgotten_entries(tm
             )
         connection.commit()
         flow_migration.migrate_memory_flow(connection)
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == V43_SCHEMA_VERSION
         assert connection.execute(
             "SELECT id,status,archived FROM memory_documents ORDER BY id"
         ).fetchall() == [

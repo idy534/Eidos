@@ -13,7 +13,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def v40_memory(tmp_path):
+def v40_memory(tmp_path, downgrade_project_workspaces_schema):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     store = SessionStore(tmp_path / "data")
@@ -60,6 +60,7 @@ def v40_memory(tmp_path):
             "AND name IN ('memory_source_change','memory_source_delete')"
         ).fetchall()
     with store.database.transaction() as connection:
+        downgrade_project_workspaces_schema(connection)
         connection.execute(
             "ALTER TABLE memory_sources ADD COLUMN temporary INTEGER NOT NULL DEFAULT 0"
         )
@@ -67,6 +68,7 @@ def v40_memory(tmp_path):
             connection.execute(f"DROP TRIGGER {name}")
             connection.execute(sql)
         connection.execute("ALTER TABLE memory_documents DROP COLUMN archived")
+        connection.execute("DROP TABLE personalization_settings")
         connection.execute("PRAGMA user_version=40")
         connection.execute(
             "UPDATE items SET content='来源已更正' WHERE id=?", (source,)

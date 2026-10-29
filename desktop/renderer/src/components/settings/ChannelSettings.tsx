@@ -172,14 +172,14 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
         </div>
       )}
 
-      {/* 视图 1：接入助理列表页（对应草图图 2） */}
+      {/* 视图 1：消息渠道列表页 */}
       {currentView === "list" && (
         <div className="channel-list-view">
           <div className="channel-list-header">
             <div className="channel-header-title-group">
-              <h1 className="channel-main-title">接入助理</h1>
+              <h1 className="channel-main-title">消息渠道</h1>
               <p className="channel-main-desc">
-                连接外部协作工具，让 Eidos 在不同平台中作为助理接收群聊指令并协同回复
+                连接外部协作工具，让 Eidos 在不同平台中接收群聊指令并协同回复
               </p>
             </div>
             <div className="channel-header-actions">
@@ -228,7 +228,7 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
         </div>
       )}
 
-      {/* 视图 2：钉钉助理配置详情页（单行顶栏重构） */}
+      {/* 视图 2：渠道配置详情页 */}
       {currentView !== "list" && (
         <div className="channel-detail-view">
           {!response && !error ? (
@@ -239,16 +239,16 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
                     type="button"
                     className="channel-back-link-btn"
                     onClick={() => setCurrentView("list")}
-                    aria-label="接入助理"
+                    aria-label="消息渠道"
                   >
                     <BackArrowIcon />
-                    <span>接入助理</span>
+                    <span>消息渠道</span>
                   </button>
                 </div>
               </div>
               <div className="channel-loading-card" role="status">
                 <RefreshIcon spinning className="channel-spinner-large" />
-                <span>正在读取助理配置…</span>
+                <span>正在读取渠道配置…</span>
               </div>
             </>
           ) : (

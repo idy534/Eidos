@@ -63,7 +63,7 @@ export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
       <div inert={Boolean(selected)}>
         <div className="settings-panel-header">
           <h1>技能</h1>
-          <p className="settings-panel-subtitle">管理个人和系统技能。插件自带的技能请在插件详情中管理。</p>
+          <p className="settings-panel-subtitle">管理个人和系统技能。</p>
         </div>
         <SearchInput
           className="skill-search"

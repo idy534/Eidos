@@ -34,7 +34,7 @@ from eidos_runtime.sandbox.permissions import (
 )
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
 from eidos_runtime.sandbox.shell import prepare_shell_launch_for_execution, run_shell_process
-from eidos_runtime.sandbox.workspace_manifest import capture_workspace_manifest, diff_workspace_manifests
+from eidos_runtime.sandbox.workspace_manifest import capture_workspace_roots_manifest, diff_workspace_manifests
 from eidos_runtime.model.client import CustomToolPayload, ModelToolCall
 from eidos_runtime.tools.contracts import RunShellInput
 from eidos_runtime.runtime.hook_transcript import write_transcript
@@ -230,8 +230,12 @@ class HookService:
             workspace = self.store.workspace_for_run(self.run_id)
             attempt = SandboxAttempt(ordinal=0, sandbox=SandboxType.NONE if base.full_access else SandboxType.MACOS_SEATBELT,
                 sandboxRequested=not base.full_access, permissions=permissions,
-                sandboxCwd=str(workspace.path), workspaceRoots=(str(workspace.path),))
-            before = capture_workspace_manifest(workspace.path)
+                sandboxCwd=str(workspace.path), workspaceRoots=tuple(str(root.path) for root in (workspace, *workspace.additional_roots)))
+            from eidos_runtime.workspace.reader import WorkspaceReader
+            for identity in (workspace, *workspace.additional_roots):
+                with WorkspaceReader(identity):
+                    pass
+            before = capture_workspace_roots_manifest((workspace, *workspace.additional_roots))
 
             def mark_started() -> None:
                 nonlocal launched
@@ -295,9 +299,10 @@ class HookService:
             launch_scope.close()
             self._executing.active = False
         if before is not None and launched:
-            after = capture_workspace_manifest(self.store.workspace_for_run(self.run_id).path)
+            workspace = self.store.workspace_for_run(self.run_id)
+            after = capture_workspace_roots_manifest((workspace, *workspace.additional_roots))
             diff = diff_workspace_manifests(before, after)
-            result = result.model_copy(update={"workspace_changed": diff.changed,
+            result = result.model_copy(update={"workspace_changed": diff.changed, "workspace_observation_complete": diff.complete,
                 "workspace_changes": tuple((*diff.created, *diff.modified, *diff.deleted)[:256]) if diff.complete else ()})
         self.repository.complete(invocation_id, result, output)
         return result

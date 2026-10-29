@@ -65,8 +65,12 @@ class MemoryDocument(EidosFrozenStrictModel):
     evidence: list[MemoryEvidence] = Field(default_factory=list)
 
 
-class MemoryListRequest(EidosFrozenStrictModel):
+class MemoryTarget(EidosFrozenStrictModel):
     session_id: str | None = None
+    project_id: str | None = Field(default=None, min_length=1, max_length=256)
+
+
+class MemoryListRequest(MemoryTarget):
     scope: ScopeSelection = "allowed"
     query: str = Field(default="", max_length=512)
     limit: int = Field(default=50, ge=1, le=100)
@@ -81,8 +85,7 @@ class MemoryState(EidosFrozenStrictModel):
     search_limited: bool = False
 
 
-class MemoryReadRequest(EidosFrozenStrictModel):
-    session_id: str | None = None
+class MemoryReadRequest(MemoryTarget):
     scope: Literal["current", "global"] = "current"
     path: str = Field(default="MEMORY.md", max_length=200)
     revision: NonnegativeInt | None = None
@@ -138,6 +141,7 @@ class MemoryEdit(EidosFrozenStrictModel):
 class MemoryEditRequest(MemoryEdit):
     session_id: str | None = None
     operation_id: str = Field(min_length=1, max_length=256)
+    project_id: str | None = Field(default=None, min_length=1, max_length=256)
 
 
 class MemoryActionResult(EidosFrozenStrictModel):
@@ -148,14 +152,12 @@ class MemoryActionResult(EidosFrozenStrictModel):
     code: Literal["memory_saved", "memory_unchanged", "memory_deleted", "memory_archived"]
 
 
-class MemoryPolicyRequest(EidosFrozenStrictModel):
-    session_id: str | None = None
+class MemoryPolicyRequest(MemoryTarget):
     scope: Literal["current", "global"] = "global"
     mode: MemoryMode
 
 
-class MemoryExportRequest(EidosFrozenStrictModel):
-    session_id: str | None = None
+class MemoryExportRequest(MemoryTarget):
     scope: Literal["current", "global"] = "current"
     cursor: int = Field(default=0, ge=0)
 

@@ -1,4 +1,6 @@
+import { isProjectRoot, isProjectWorkspace, type ProjectUpdateRequest, type ProjectCreateFoldersRequest, type GitWorkspaceRequest, type GitWorkspaceContract } from "../shared/project-workspaces.js";
 import { isShellEnvironmentResponse, type ShellEnvironmentReadRequest, type ShellEnvironmentRefreshRequest, type ShellEnvironmentSaveRequest, type ShellEnvironmentResponse } from "../shared/shell-environment.js";
+import { isPersonalizationResponse, type PersonalizationReadRequest, type PersonalizationSaveRequest, type PersonalizationResponse } from "../shared/personalization.js";
 import { isHookActivity, isHookActivityPage, isHookSourceList, isPluginHookReview, isPluginCompatibility } from "../shared/hooks.js";
 import type { HookActivityPage, HookConfigurationRequest, HookHistoryRequest, HookSourceList } from "../shared/hooks.js";
 import { isPluginPresentation } from "../shared/plugins.js";
@@ -69,7 +71,9 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "STORAGE_HEALTH_ONLY",
   "OPERATION_ID_REUSED",
   "OPERATION_IN_PROGRESS",
+  "PROJECT_CONFIGURATION_CONFLICT",
   "SHELL_ENVIRONMENT_CONFIG_CONFLICT",
+  "PERSONALIZATION_CONFLICT",
   "WEB_SEARCH_CONFIG_CONFLICT",
   "WEB_SEARCH_CREDENTIALS_UNAVAILABLE",
   "INTERNAL_ERROR",
@@ -442,6 +446,7 @@ export class RuntimeClient {
   async createSession(
     workspaceRoot: string | null,
     options: {
+      projectId?: string;
       workspaceNameHint?: string;
       executionMode?: "local" | "worktree";
       baseRef?: string;
@@ -515,6 +520,14 @@ export class RuntimeClient {
     return this.validatedRequest("shellEnvironment/read", { ...request }, isShellEnvironmentResponse);
   }
 
+  readPersonalization(request: PersonalizationReadRequest = {}): Promise<PersonalizationResponse> {
+    return this.validatedRequest("personalization/read", { ...request }, isPersonalizationResponse);
+  }
+
+  savePersonalization(request: PersonalizationSaveRequest): Promise<PersonalizationResponse> {
+    return this.validatedRequest("personalization/save", { ...request }, isPersonalizationResponse);
+  }
+
   saveShellEnvironment(request: ShellEnvironmentSaveRequest): Promise<ShellEnvironmentResponse> {
     return this.validatedRequest("shellEnvironment/save", { ...request }, isShellEnvironmentResponse);
   }
@@ -573,6 +586,36 @@ export class RuntimeClient {
       { name, workspaceRoot, operationId },
       isProject,
     );
+  }
+
+  createProjectFolders(request: ProjectCreateFoldersRequest): Promise<Project> {
+    return this.validatedRequest("project/createFolders", { ...request }, isProjectWorkspace);
+  }
+
+  repositoryGit(request: GitWorkspaceRequest): Promise<GitWorkspaceContract["response"]> {
+    const validators = {
+      "review/listComments": (value: unknown) => isRecord(value) && hasOnlyKeys(value, ["comments"]) && Array.isArray(value.comments) && value.comments.every(isReviewComment),
+      "review/createComment": (value: unknown) => isRecord(value) && hasOnlyKeys(value, ["comment"]) && isReviewComment(value.comment),
+      "review/deleteComment": (value: unknown) => isRecord(value) && hasOnlyKeys(value, ["commentId"]) && typeof value.commentId === "string",
+      "session/gitStatus": isSessionGitStatus, "session/gitDiff": isSessionGitDiff,
+      "session/gitStage": isSessionGitMutationResult, "session/gitCommit": isSessionGitCommitResult,
+      "session/gitSwitchBranch": isSessionGitMutationResult, "session/gitCreateBranch": isSessionGitMutationResult,
+      "session/gitRemoteStatus": isGitRemoteStatus, "session/gitFetch": isGitFetchResult,
+      "session/gitPull": isGitPullResult, "session/gitPush": isGitPullResult,
+      "session/gitMerge": isGitMergeResult, "session/gitMergeAbort": isGitMergeResult,
+      "session/gitRebase": isGitMergeResult, "session/gitRebaseContinue": isGitMergeResult,
+      "session/gitRebaseAbort": isGitMergeResult,
+    };
+    return this.validatedRequest(request.method, { ...request.parameters, rootId: request.rootId },
+      (value): value is GitWorkspaceContract["response"] => validators[request.method](value));
+  }
+
+  readProject(projectId: string): Promise<Project> {
+    return this.validatedRequest("project/read", { projectId }, isProjectWorkspace);
+  }
+
+  updateProject(request: ProjectUpdateRequest): Promise<Project> {
+    return this.validatedRequest("project/update", { ...request }, isProjectWorkspace);
   }
 
   deleteProject(
@@ -1478,10 +1521,14 @@ function isNotification(value: unknown): value is RuntimeNotification {
   }
   if (value.method === "workspace/changed") {
     return (
-      hasOnlyKeys(params, ["sessionId", "paths"])
+      hasOnlyKeys(params, ["sessionId", "paths", "workspaceRoot"])
       && typeof params.sessionId === "string"
+      && (params.workspaceRoot === undefined || typeof params.workspaceRoot === "string")
       && isStringArray(params.paths)
     );
+  }
+  if (value.method === "project/updated") {
+    return isRecord(value.params) && hasOnlyKeys(value.params, ["id"]) && typeof value.params.id === "string";
   }
   if (value.method === "session/titleUpdated") {
     return (
@@ -1698,10 +1745,11 @@ function isSession(value: unknown): value is Session {
     && hasOnlyKeys(value, [
       "id", "workspaceRoot", "executionMode", "associatedWorktreeId",
       "worktreeRestoreAvailable", "forkedFrom", "automationOrigin", "projectless", "project", "worktree", "title", "taskStatus", "activeRunStatus",
-      "createdAt", "updatedAt",
+      "createdAt", "updatedAt", "roots",
     ])
     && typeof value.id === "string"
     && typeof value.workspaceRoot === "string"
+    && (value.roots === undefined || (Array.isArray(value.roots) && value.roots.length <= 64 && value.roots.every(isProjectRoot)))
     && (value.forkedFrom === undefined || isSessionForkSource(value.forkedFrom))
     && (value.automationOrigin === undefined || isAutomationOrigin(value.automationOrigin))
     && (value.projectless === undefined || typeof value.projectless === "boolean")
@@ -1776,6 +1824,7 @@ function isSessionProject(value: unknown): boolean {
 }
 
 function isProject(value: unknown): value is ProjectListResult["items"][number] {
+  if (isProjectWorkspace(value)) return true;
   return (
     isRecord(value)
     && hasOnlyKeys(value, ["id", "name", "workspaceRoot", "gitAvailable", "createdAt", "updatedAt"])

@@ -89,4 +89,27 @@ describe("CreateProjectDialog", () => {
     expect(requestFrame).not.toHaveBeenCalled();
     requestFrame.mockRestore();
   });
+  it("can add the same folder again immediately after removing it", async () => {
+    const user = userEvent.setup();
+    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    const onCreateFolders = vi.fn();
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, value: {
+      selectWorkspace: vi.fn().mockResolvedValueOnce("/work/other").mockResolvedValueOnce("/work/other"),
+    } });
+    try {
+      render(<CreateProjectDialog open sourceFolder="/work/main" onCreate={vi.fn()}
+        onCreateFolders={onCreateFolders} onSelectFolder={vi.fn()} onCancel={vi.fn()} />);
+      await user.click(screen.getByRole("button", { name: "添加文件夹" }));
+      expect(await screen.findByText("other")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "移除文件夹 other" }));
+      await user.click(screen.getByRole("button", { name: "添加文件夹" }));
+      expect(await screen.findByText("other")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "创建项目" }));
+      expect(onCreateFolders.mock.calls[0]?.[1].map((root: { path: string }) => root.path)).toEqual(["/work/main", "/work/other"]);
+    } finally {
+      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
+      else Reflect.deleteProperty(window, "eidosRuntime");
+    }
+  });
+
 });

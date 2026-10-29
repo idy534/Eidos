@@ -18,9 +18,9 @@ class AutomationRepository(Repository):
     @staticmethod
     def session_project_in(connection: sqlite3.Connection, session_id: str) -> sqlite3.Row | None:
         return connection.execute(
-            "SELECT COALESCE(w.project_id,p.id) AS project_id FROM sessions s "
+            "SELECT COALESCE(s.project_id,w.project_id,p.id) AS project_id FROM sessions s "
             "LEFT JOIN worktrees w ON w.id=COALESCE(s.worktree_id,s.associated_worktree_id) "
-            "LEFT JOIN projects p ON p.workspace_root=s.workspace_root WHERE s.id=?", (session_id,),
+            "LEFT JOIN projects p ON p.id=s.project_id OR (s.project_id IS NULL AND p.workspace_root=s.workspace_root) WHERE s.id=?", (session_id,),
         ).fetchone()
     @staticmethod
     def read_in(connection: sqlite3.Connection, task_id: str) -> Automation:

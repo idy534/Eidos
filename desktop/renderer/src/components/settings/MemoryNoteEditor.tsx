@@ -8,7 +8,7 @@ import { StatusBadge } from "../StatusBadge.js";
 import type { MemoryScopeChoice } from "./useMemoryDocuments.js";
 
 export function MemoryNoteEditor({
-  sessionId,
+  projectId,
   scope,
   path,
   generation,
@@ -18,7 +18,7 @@ export function MemoryNoteEditor({
   onOpenSource,
   onShowToast,
 }: {
-  sessionId: string | undefined;
+  projectId: string | undefined;
   scope: MemoryScopeChoice;
   path: string | null;
   generation: number;
@@ -95,7 +95,7 @@ export function MemoryNoteEditor({
       let offset = 0;
       for (let page = 0; page < 10; page++) {
         const value = await window.eidosRuntime.memory("memory/read", {
-          sessionId: sessionId ?? null,
+          projectId: projectId ?? null,
           scope,
           path: path!,
           offset,
@@ -133,14 +133,14 @@ export function MemoryNoteEditor({
     return () => {
       active = false;
     };
-  }, [sessionId, scope, path, generation, revision, reload, onShowToast]);
+  }, [projectId, scope, path, generation, revision, reload, onShowToast]);
 
   async function save(action: "write" | "delete") {
     if (busy) return;
     setBusy(true);
     try {
       await window.eidosRuntime.memory("memory/edit", {
-        sessionId: sessionId ?? null,
+        projectId: projectId ?? null,
         scope,
         operationId: crypto.randomUUID(),
         action,

@@ -349,9 +349,9 @@ export function McpSettings({
       <div className="settings-panel-header">
         <div className="header-title-with-stats">
           <div>
-            <h1>MCP Servers 扩展</h1>
+            <h1>MCP 服务</h1>
             <p className="settings-panel-subtitle">
-              MCP (Model Context Protocol) 允许 Agent 访问外部工具或数据源。启用敏感 Server 前需进行安全审阅与授权。
+              MCP (Model Context Protocol) 允许 Agent 访问外部工具或数据源。
             </p>
           </div>
           <Button
@@ -375,7 +375,7 @@ export function McpSettings({
           <div className="mcp-empty-icon-wrap">
             <TerminalIcon />
           </div>
-          <h2 className="mcp-empty-title">没有 MCP Server 声明</h2>
+          <h2 className="mcp-empty-title">没有 MCP 服务声明</h2>
           <p className="mcp-empty-desc">
             你可以添加本地 STDIO MCP。插件自带的服务请在插件详情中管理。
           </p>

@@ -13,6 +13,7 @@ from eidos_runtime.db.database import (
     managed_worktree_root_for,
 )
 from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
+from eidos_runtime.domain.project_workspace import DirectoryIdentity, SessionRoot
 from eidos_runtime.domain.project import Project
 from eidos_runtime.domain.worktree import (
     BranchOwnership,
@@ -236,6 +237,7 @@ class WorktreeManager:
             return self.repository.rebind_restored(
                 worktree_id,
                 git_dir=discovery.git_dir,
+                git_dir_identity=_capture_git_dir_identity(discovery.git_dir),
                 checkout_branch=None,
             )
         except ResourceNotFoundError:
@@ -410,7 +412,7 @@ class WorktreeManager:
             )
             return ProjectResolution(project=project, git=None)
         project = self.repository.get_or_create_project(
-            discovery.repository_root, discovery, name=project_name
+            workspace, discovery, name=project_name
         )
         return ProjectResolution(project=project, git=discovery)
 
@@ -431,11 +433,12 @@ class WorktreeManager:
         self,
         repository_root: Path | str,
         base_ref: str | None = None,
+        *, project: Project | None = None,
     ) -> Worktree:
         """Resolve all managed Worktree identity before Git changes state."""
 
         discovery = self.discovery.discover(repository_root)
-        project = self.repository.get_or_create_project(
+        project = project or self.repository.get_or_create_project(
             discovery.repository_root, discovery
         )
         if base_ref is not None:
@@ -464,6 +467,8 @@ class WorktreeManager:
         return Worktree(
             id=worktree_id,
             project_id=project.id,
+            repository_root=discovery.repository_root,
+            git_common_dir=discovery.git_common_dir,
             worktree_root=str(worktree_root),
             git_dir=str(worktree_root / ".git"),
             base_ref=resolved_base_ref,
@@ -492,11 +497,13 @@ class WorktreeManager:
         """
 
         started = time.monotonic()
-        project = self.repository.read_project(plan.project_id)
-        if project is None:
-            raise WorktreeError("worktree_repository_mismatch")
+        self._verify_creation_roots(plan.source_roots)
+        project = self._project_for(plan)
         self._ensure_managed_root()
-        candidate = plan
+        candidate = plan.model_copy(update={
+            "repository_root": plan.repository_root or project.git_repository_root or project.workspace_root,
+            "git_common_dir": plan.git_common_dir or project.git_common_dir,
+        })
         existing = self.repository.read_worktree(plan.id)
         if existing is not None:
             if not _same_prepared_worktree(existing, plan):
@@ -563,7 +570,12 @@ class WorktreeManager:
                 creation_attempted = True
                 created_discovery = self.discovery.discover(root)
                 candidate = candidate.model_copy(
-                    update={"git_dir": created_discovery.git_dir}
+                    update={
+                        "git_dir": created_discovery.git_dir,
+                        "git_dir_identity": _capture_git_dir_identity(
+                            created_discovery.git_dir
+                        ),
+                    }
                 )
             else:
                 if root.exists() or root.is_symlink() or branch_present:
@@ -577,7 +589,12 @@ class WorktreeManager:
                 )
                 created_discovery = self.discovery.discover(root)
                 candidate = candidate.model_copy(
-                    update={"git_dir": created_discovery.git_dir}
+                    update={
+                        "git_dir": created_discovery.git_dir,
+                        "git_dir_identity": _capture_git_dir_identity(
+                            created_discovery.git_dir
+                        ),
+                    }
                 )
             if source_before is not None:
                 source_after = self.source_snapshot(
@@ -619,6 +636,7 @@ class WorktreeManager:
             )
             if not final_validation.valid:
                 raise WorktreeError(final_validation.code or "worktree_invalid")
+            self._verify_creation_roots(plan.source_roots)
             persisted = self.repository.insert_worktree(candidate)
         except GitCommandTimeoutError:
             if creation_attempted and compensate_on_failure:
@@ -634,7 +652,11 @@ class WorktreeManager:
                 if error.operation in {"worktree-apply", "worktree-apply-staged"}
                 else "worktree_create_failed"
             ) from error
-        except WorktreeError:
+        except WorktreeError as error:
+            if creation_attempted and error.code == "workspace_identity_changed":
+                # The source namespace changed. Keep the durable intent and avoid
+                # issuing cleanup Git commands against a different repository.
+                raise WorktreeError("worktree_cleanup_required") from error
             if creation_attempted and compensate_on_failure:
                 if not self._compensate_create(project, candidate):
                     raise WorktreeError("worktree_cleanup_required") from None
@@ -683,9 +705,13 @@ class WorktreeManager:
             and operation.base_ref is not None
             and operation.base_commit is not None
         )
+        self._verify_creation_roots(operation.workspace_roots)
         return Worktree(
+            source_roots=operation.workspace_roots,
             id=operation.worktree_id,
             project_id=operation.project_id,
+            repository_root=operation.repository_root,
+            git_common_dir=(self.discovery.discover(operation.repository_root).git_common_dir if operation.repository_root else None),
             worktree_root=operation.worktree_root,
             git_dir=str(Path(operation.worktree_root) / ".git"),
             base_ref=operation.base_ref,
@@ -1228,8 +1254,9 @@ class WorktreeManager:
         worktree = self._read_worktree(worktree_id)
         if worktree.state is WorktreeState.DELETED:
             return self._deleted_validation(worktree)
-        project = self.repository.read_project(worktree.project_id)
-        if project is None:
+        try:
+            project = self._project_for(worktree)
+        except WorktreeError:
             return self._record_validation(
                 worktree,
                 valid=False,
@@ -1260,36 +1287,27 @@ class WorktreeManager:
         if not validation.valid or validation.head is None:
             raise WorktreeError(validation.code or "worktree_invalid")
         try:
-            if root.is_symlink() or not root.is_dir():
+            if not root.exists() or root.is_symlink():
                 raise WorktreeError("worktree_not_found")
-            before = root.stat()
-            resolved = root.resolve(strict=True)
+            before = _capture_directory_identity(str(root))
         except OSError:
             raise WorktreeError("worktree_not_found") from None
         validation = self.validate(worktree_id)
         if not validation.valid or validation.head is None:
             raise WorktreeError(validation.code or "worktree_invalid")
         try:
-            if root.is_symlink() or root.resolve(strict=True) != resolved:
+            if root.is_symlink():
                 raise WorktreeError("workspace_identity_changed")
-            after = root.stat()
+            after = _capture_directory_identity(str(root))
         except OSError:
             raise WorktreeError("workspace_identity_changed") from None
-        if (
-            before.st_dev,
-            before.st_ino,
-            before.st_uid,
-        ) != (
-            after.st_dev,
-            after.st_ino,
-            after.st_uid,
-        ):
+        if before != after:
             raise WorktreeError("workspace_identity_changed")
         return WorkspaceIdentity(
-            path=resolved,
-            device=after.st_dev,
-            inode=after.st_ino,
-            owner=after.st_uid,
+            path=root,
+            device=after.device,
+            inode=after.inode,
+            owner=after.owner,
             git_dir=(
                 Path(validation.observed_git_dir)
                 if validation.observed_git_dir is not None
@@ -1300,21 +1318,18 @@ class WorktreeManager:
                 if validation.observed_git_common_dir is not None
                 else None
             ),
+            git_dir_identity=worktree.git_dir_identity,
         )
 
     def list(self, project_id: str | None = None) -> tuple[WorktreeView, ...]:
-        projects = (
-            (self.project(project_id),)
-            if project_id is not None
-            else self.repository.list_projects()
-        )
+        projects = self._repository_sources(project_id)
         views: list[WorktreeView] = []
         for project in projects:
             if not project.has_git:
                 continue
             entries = self._entries_for_observation(project)
             by_root = {entry.worktree_root: entry for entry in entries}
-            for worktree in self.repository.list_worktrees(project.id):
+            for worktree in self._worktrees_for_source(project):
                 validation = self._validate_record(
                     worktree,
                     project,
@@ -1340,12 +1355,10 @@ class WorktreeManager:
         started = time.monotonic()
         updated: list[Worktree] = []
         orphan_candidates: list[OrphanWorktreeCandidate] = []
-        for project in self.repository.list_projects():
-            if not project.has_git:
-                continue
+        for project in self._repository_sources():
             try:
                 entries = self._entries_for_observation(project)
-                known = self.repository.list_worktrees(project.id)
+                known = self._worktrees_for_source(project)
             except WorktreeError as error:
                 self.logger.warning(
                     "worktree project recovery observation unavailable",
@@ -1358,7 +1371,7 @@ class WorktreeManager:
                     },
                 )
                 continue
-            known_roots = {worktree.worktree_root for worktree in known}
+            known_roots = {worktree.worktree_root for worktree in self.repository.list_worktrees()}
             try:
                 for worktree in known:
                     if worktree.state is WorktreeState.DELETED:
@@ -1405,11 +1418,7 @@ class WorktreeManager:
 
     def cleanup(self) -> WorktreeCleanupReport:
         started = time.monotonic()
-        projects = tuple(
-            project
-            for project in self.repository.list_projects()
-            if project.has_git
-        )
+        projects = self._repository_sources()
         for project in projects:
             try:
                 self.git.worktree_prune(Path(project.workspace_root))
@@ -1422,7 +1431,7 @@ class WorktreeManager:
         for project in projects:
             entries = self._worktree_entries(project)
             entry_roots = {entry.worktree_root for entry in entries}
-            for worktree in self.repository.list_worktrees(project.id):
+            for worktree in self._worktrees_for_source(project):
                 if (
                     worktree.ownership is WorktreeOwnership.MANAGED
                     and worktree.state is WorktreeState.MISSING
@@ -1442,7 +1451,7 @@ class WorktreeManager:
             result="success",
         )
         return WorktreeCleanupReport(
-            pruned_project_ids=tuple(project.id for project in projects),
+            pruned_project_ids=tuple(dict.fromkeys(project.id for project in projects)),
             marked_deleted=tuple(marked_deleted),
         )
 
@@ -1453,9 +1462,7 @@ class WorktreeManager:
             raise WorktreeError("worktree_not_owned")
         if worktree.state is WorktreeState.DELETED:
             return worktree
-        project = self.repository.read_project(worktree.project_id)
-        if project is None:
-            raise WorktreeError("worktree_repository_mismatch")
+        project = self._project_for(worktree)
         entries = self._entries_for_observation(project)
         root = Path(worktree.worktree_root)
         entry_present = any(
@@ -1870,6 +1877,16 @@ class WorktreeManager:
                 state=WorktreeState.MISSING,
                 persist_state=persist_state and worktree.state is not WorktreeState.DELETED,
             )
+        try:
+            _capture_directory_identity(str(root))
+        except WorktreeError:
+            return self._record_validation(
+                worktree,
+                valid=False,
+                code="workspace_identity_changed",
+                state=WorktreeState.INVALID,
+                persist_state=persist_state,
+            )
         git_marker = root / ".git"
         if not git_marker.exists() and not git_marker.is_symlink():
             return self._record_validation(
@@ -1911,7 +1928,7 @@ class WorktreeManager:
                 state=state,
                 persist_state=persist_state and worktree.state is not WorktreeState.DELETED,
             )
-        actual_root = Path(discovered.repository_root).resolve()
+        actual_root = Path(discovered.repository_root)
         actual_git_dir = Path(discovered.git_dir).resolve()
         actual_common_dir = Path(discovered.git_common_dir).resolve()
         if entry is None:
@@ -1930,7 +1947,7 @@ class WorktreeManager:
                 observed_git_common_dir=str(actual_common_dir),
                 persist_state=persist_state,
             )
-        if actual_root != root.resolve():
+        if actual_root != root:
             return self._record_validation(
                 worktree,
                 valid=False,
@@ -1946,6 +1963,34 @@ class WorktreeManager:
                 worktree,
                 valid=False,
                 code="worktree_invalid",
+                state=WorktreeState.INVALID,
+                observed_worktree_root=str(actual_root),
+                observed_git_dir=str(actual_git_dir),
+                observed_git_common_dir=str(actual_common_dir),
+                persist_state=persist_state,
+            )
+        if worktree.git_dir_identity is None:
+            return self._record_validation(
+                worktree,
+                valid=False,
+                code="git_metadata_identity_unavailable",
+                state=WorktreeState.INVALID,
+                observed_worktree_root=str(actual_root),
+                observed_git_dir=str(actual_git_dir),
+                observed_git_common_dir=str(actual_common_dir),
+                persist_state=persist_state,
+            )
+        try:
+            actual_git_dir_identity = _capture_git_dir_identity(
+                str(actual_git_dir)
+            )
+        except WorktreeError:
+            actual_git_dir_identity = None
+        if actual_git_dir_identity != worktree.git_dir_identity:
+            return self._record_validation(
+                worktree,
+                valid=False,
+                code="workspace_identity_changed",
                 state=WorktreeState.INVALID,
                 observed_worktree_root=str(actual_root),
                 observed_git_dir=str(actual_git_dir),
@@ -2059,10 +2104,46 @@ class WorktreeManager:
     ) -> tuple[GitWorktreeEntry, ...]:
         return self._worktree_entries(project)
 
+    def _repository_sources(self, project_id: str | None = None) -> tuple[Project, ...]:
+        projects = (self.project(project_id),) if project_id else self.repository.list_projects()
+        sources = {(project.id, project.git_common_dir): project.model_copy(update={"workspace_root": project.git_repository_root})
+                   for project in projects if project.has_git}
+        for worktree in self.repository.list_worktrees(project_id):
+            source = self._project_for(worktree)
+            if source.has_git:
+                sources[(source.id, source.git_common_dir)] = source
+        return tuple(sources.values())
+
+    def _worktrees_for_source(self, source: Project) -> tuple[Worktree, ...]:
+        return tuple(worktree for worktree in self.repository.list_worktrees(source.id)
+                     if self._project_for(worktree).git_common_dir == source.git_common_dir)
+
+    def _verify_creation_roots(self, roots: tuple[SessionRoot, ...]) -> None:
+        from eidos_runtime.persistence.project_workspaces import verify_session_roots
+        from eidos_runtime.workspace.reader import WorkspacePathError
+        try:
+            verify_session_roots(roots)
+            for root in roots:
+                if root.repository_root is not None:
+                    actual = self.discovery.discover(root.path)
+                    if (actual.repository_root, actual.git_dir, actual.git_common_dir) != (root.repository_root, root.git_dir, root.git_common_dir):
+                        raise WorkspacePathError("workspace_identity_changed")
+        except (OSError, WorkspacePathError, WorktreeError):
+            raise WorktreeError("workspace_identity_changed") from None
+
+    def source_project(self, worktree_id: str) -> Project:
+        return self._project_for(self._read_worktree(worktree_id))
+
     def _project_for(self, worktree: Worktree) -> Project:
         project = self.repository.read_project(worktree.project_id)
         if project is None:
             raise WorktreeError("worktree_repository_mismatch")
+        if worktree.repository_root is not None:
+            project = project.model_copy(update={
+                "workspace_root": worktree.repository_root,
+                "git_repository_root": worktree.repository_root,
+                "git_common_dir": worktree.git_common_dir,
+            })
         return project
 
     def _read_worktree(self, worktree_id: str) -> Worktree:
@@ -2380,6 +2461,29 @@ def _paths_overlap(left: Path, right: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _capture_git_dir_identity(path: str) -> DirectoryIdentity:
+    return _capture_directory_identity(path)
+
+
+def _capture_directory_identity(path: str) -> DirectoryIdentity:
+    from eidos_runtime.workspace.reader import (
+        WorkspacePathError,
+        capture_directory_identity,
+    )
+
+    try:
+        captured = capture_directory_identity(path)
+    except WorkspacePathError as error:
+        raise WorktreeError("workspace_identity_changed") from error
+    if captured.path != Path(path):
+        raise WorktreeError("workspace_identity_changed")
+    return DirectoryIdentity(
+        device=captured.device,
+        inode=captured.inode,
+        owner=captured.owner,
+    )
 
 
 def _require_user_branch(branch: str) -> None:

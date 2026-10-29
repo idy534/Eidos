@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.persistence.project_workspaces import project_for_session
+
 import uuid
 import sqlite3
 import threading
@@ -201,14 +203,15 @@ class SessionForkApplication:
                     )
                 else:
                     snapshot = snapshots.save_local(
-                        manager.project(source.project.id),
+                        project_for_session(manager.project(source.project.id), source.session),
                         workspace_root=Path(source.session.workspace_root),
                         session_id=source.session.id,
                         snapshot_id=snapshot_id,
                     )
             snapshots.verify(snapshot)
             plan = manager.prepare_create(
-                source.project.workspace_root, base_ref=snapshot.head
+                source.session.workspace_root, base_ref=snapshot.head,
+                project=project_for_session(manager.project(source.project.id), source.session),
             )
             now = datetime.now(UTC).replace(microsecond=0)
             operation = lifecycle.prepare(
@@ -220,7 +223,8 @@ class SessionForkApplication:
                     ),
                     state=WorktreeLifecycleState.PREPARED,
                     project_id=plan.project_id,
-                    repository_root=source.project.workspace_root,
+                    workspace_roots=source.session.roots,
+                    repository_root=plan.repository_root,
                     worktree_id=plan.id,
                     worktree_root=plan.worktree_root,
                     base_ref=plan.base_ref,

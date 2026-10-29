@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import threading
 import base64
@@ -26,6 +26,7 @@ from eidos_runtime.workspace.discovery_scope import DiscoveryScopeError
 from eidos_runtime.workspace.reader import (
     WorkspacePathError,
     WorkspaceReader,
+    capture_directory_identity,
     capture_workspace_identity,
     file_version,
     preview_mime,
@@ -59,7 +60,7 @@ class WorkspaceExplorerApplication:
         *,
         worktree_manager: WorkspaceWorktreePort,
         scan_text,
-        on_changes: Callable[[str, tuple[RepositoryChange, ...]], None] | None = None,
+        on_changes: Callable[[str, tuple[RepositoryChange, ...], Path], None] | None = None,
         watch_factory: Callable[[Path], RepositoryWatchController] = RepositoryWatchController,
     ) -> None:
         self._sessions = sessions
@@ -101,7 +102,7 @@ class WorkspaceExplorerApplication:
 
     def read_file_for_find(self, request: FileFindRequest) -> FileFindResponse:
         try:
-            identity = self._execution_identity(request.session_id)
+            identity = self._execution_identity(request.session_id, request.workspace_root)
             with WorkspaceReader(identity) as reader:
                 preview = reader.read_preview(request.path, limit=64 * 1024)
                 data, metadata, _, _ = reader.read_file_bytes(
@@ -197,13 +198,13 @@ class WorkspaceExplorerApplication:
             # A draft request is bound to the saved Project selected by the user.
             if project_id:
                 try:
-                    identity = capture_workspace_identity(
-                        self._worktree_manager.project(project_id).workspace_root
-                    )
+                    project = self._worktree_manager.project(project_id)
+                    selected = next((root for root in project.roots if root.path == workspace_root), None)
+                    identity = capture_directory_identity(selected.path if selected else project.workspace_root)
                 except WorktreeError as error:
                     raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
                 if workspace_root:
-                    supplied = capture_workspace_identity(workspace_root)
+                    supplied = capture_directory_identity(workspace_root)
                     if (
                         supplied.path,
                         supplied.device,
@@ -221,6 +222,51 @@ class WorkspaceExplorerApplication:
             if workspace_root and not session_id.startswith("draft-"):
                 return capture_workspace_identity(workspace_root)
             raise ApplicationError("RESOURCE_NOT_FOUND")
+        if projection.session.roots:
+            roots = projection.session.roots
+            selected = None
+            for root in roots:
+                path = Path(root.path)
+                managed = projection.session.execution_mode is SessionExecutionMode.WORKTREE and projection.worktree is not None and root.repository_root == projection.worktree.repository_root
+                if managed:
+                    worktree_identity = self._worktree_manager.execution_identity(
+                        projection.worktree.worktree_id
+                    )
+                    relative = path.relative_to(root.repository_root)
+                    try:
+                        with WorkspaceReader(worktree_identity) as reader:
+                            identity = reader.capture_directory_identity(
+                                relative.as_posix()
+                            )
+                    except WorkspacePathError as error:
+                        raise ApplicationError("WORKSPACE_IDENTITY_CHANGED") from error
+                    identity = replace(
+                        identity,
+                        git_dir=worktree_identity.git_dir,
+                        git_common_dir=worktree_identity.git_common_dir,
+                        git_dir_identity=worktree_identity.git_dir_identity,
+                        git_common_identity=root.git_common_identity,
+                    )
+                    path = identity.path
+                else:
+                    identity = WorkspaceIdentity(
+                        path=path,
+                        device=root.device,
+                        inode=root.inode,
+                        owner=root.owner,
+                        git_dir=Path(root.git_dir) if root.git_dir else None,
+                        git_common_dir=Path(root.git_common_dir) if root.git_common_dir else None,
+                        git_dir_identity=root.git_dir_identity,
+                        git_common_identity=root.git_common_identity,
+                    )
+                if workspace_root == str(path) or (selected is None and root == roots[0]):
+                    if workspace_root == str(path):
+                        return replace(identity, root_id=root.id)
+                    selected = replace(identity, root_id=root.id)
+            if workspace_root and workspace_root != projection.session.workspace_root:
+                raise ApplicationError("WORKSPACE_BOUNDARY_VIOLATION")
+            if selected is not None:
+                return selected
         if projection.session.execution_mode is SessionExecutionMode.WORKTREE:
             if projection.worktree is None:
                 raise ApplicationError("WORKTREE_INVALID")
@@ -247,7 +293,8 @@ class WorkspaceExplorerApplication:
         if self._on_changes is None:
             return
         with self._watch_lock:
-            current = self._watches.get(session_id)
+            watch_key = session_id + "\0" + str(root)
+            current = self._watches.get(watch_key)
             if current is not None and current.root == root:
                 return
             if current is not None:
@@ -262,14 +309,14 @@ class WorkspaceExplorerApplication:
                 target=controller.run,
                 args=(
                     stop,
-                    lambda changes: self._on_changes_for_session(session_id, changes),
+                    lambda changes: self._on_changes_for_session(session_id, changes, root),
                 ),
             )
-            self._watches[session_id] = _WorkspaceWatch(root, stop, thread)
+            self._watches[watch_key] = _WorkspaceWatch(root, stop, thread)
             thread.start()
 
     def _on_changes_for_session(
-        self, session_id: str, changes: tuple[RepositoryChange, ...]
+        self, session_id: str, changes: tuple[RepositoryChange, ...], root: Path
     ) -> None:
         callback = self._on_changes
         if callback is not None:
@@ -278,7 +325,7 @@ class WorkspaceExplorerApplication:
                 if is_workspace_discoverable_path(change.path)
             )
             if visible:
-                callback(session_id, visible)
+                callback(session_id, visible, root)
 
 
 def _workspace_error_code(error: Exception) -> str:

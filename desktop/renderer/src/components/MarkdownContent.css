@@ -26,7 +26,7 @@
 .markdown-body blockquote { border-left: 3px solid var(--line); padding-left: 0.75rem; color: var(--muted); }
 .markdown-body hr { margin: 1rem 0; border: 0; border-top: 1px solid var(--line); }
 .markdown-body pre { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); padding: 0.75rem; background: var(--surface-muted); font: var(--font-size-code)/1.55 var(--font-code); }
-.markdown-body code { border-radius: 0.25rem; padding: 0.15em 0.38em; background: var(--code-inline-bg, #eef0f2); border: 1px solid var(--code-inline-border, rgba(0, 0, 0, 0.04)); font: var(--font-size-code)/var(--line-height-code) var(--font-code); font-size: 0.88em; letter-spacing: -0.01em; }
+.markdown-body code { border-radius: 0.25rem; padding: 0.15em 0.38em; background: var(--code-inline-bg, #eef0f2); font: var(--font-size-code)/var(--line-height-code) var(--font-code); font-size: 0.88em; letter-spacing: -0.01em; }
 .markdown-body pre code { padding: 0; border: 0; background: transparent; white-space: pre; font: inherit; letter-spacing: normal; }
 .markdown-body table { width: 100%; margin: 0 0 0.75rem; border-collapse: collapse; }
 .markdown-body th,

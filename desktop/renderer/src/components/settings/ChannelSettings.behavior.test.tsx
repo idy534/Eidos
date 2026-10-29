@@ -66,9 +66,9 @@ it("loads connection state with saved credentials displayed as masked password a
   expect(screen.getByText("网络中断，结果未知。")).toBeInTheDocument();
   expect(screen.getByRole("option", { name: "完全访问" })).toBeInTheDocument();
 
-  // 点击返回按钮回到接入助理列表页
-  await user.click(screen.getByRole("button", { name: "接入助理" }));
-  expect(screen.getByRole("heading", { name: "接入助理" })).toBeInTheDocument();
+  // 点击返回按钮回到消息渠道列表页
+  await user.click(screen.getByRole("button", { name: "消息渠道" }));
+  expect(screen.getByRole("heading", { name: "消息渠道" })).toBeInTheDocument();
 });
 
 it("renders three available channels with DingTalk at the top", async () => {
@@ -79,7 +79,7 @@ it("renders three available channels with DingTalk at the top", async () => {
   } as unknown as EidosRuntimeAPI;
 
   render(<ChannelSettings modelList={{ models: [model] }} />);
-  expect(await screen.findByRole("heading", { name: "接入助理" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "消息渠道" })).toBeInTheDocument();
   expect(screen.getByText("钉钉")).toBeInTheDocument();
   expect(screen.getByText("飞书")).toBeInTheDocument();
   expect(screen.getByText("企业微信")).toBeInTheDocument();
@@ -109,7 +109,7 @@ it("shows floating toast on refresh and supports manual close", async () => {
   } as unknown as EidosRuntimeAPI;
 
   render(<ChannelSettings modelList={{ models: [model] }} />);
-  expect(await screen.findByRole("heading", { name: "接入助理" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "消息渠道" })).toBeInTheDocument();
 
   // 点击刷新状态
   await user.click(screen.getByRole("button", { name: "刷新助理状态" }));
@@ -277,7 +277,7 @@ it("renders unified single topbar in detail view with back button, identity, tog
   // 顶栏元素验证
   expect(await screen.findByRole("heading", { name: "钉钉" })).toBeInTheDocument();
   expect(screen.getByText("已连接")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "接入助理" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "消息渠道" })).toBeInTheDocument();
   expect(screen.getByLabelText("启用钉钉助理")).toBeChecked();
 
   // 顶栏小方块刷新按钮

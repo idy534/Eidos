@@ -1,11 +1,19 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ArtifactProvider } from "./ArtifactContext.js";
 import { WorkspaceExplorer } from "./WorkspaceExplorer.js";
 
 const shikiMock = vi.hoisted(() => ({ codeToHtml: vi.fn() }));
 vi.mock("shiki", () => shikiMock);
 vi.mock("shiki/bundle/web", () => shikiMock);
+vi.mock("./PdfViewer.js", () => ({
+  PdfViewer: ({ onOpenExternal }: { onOpenExternal?: () => void }) => (
+    <div data-testid="pdf-viewer">
+      {onOpenExternal && <button onClick={onOpenExternal}>Open externally</button>}
+    </div>
+  ),
+}));
 
 function highlightedCode(code: string): string {
   const lines = code.split("\n");
@@ -20,8 +28,59 @@ beforeEach(() => {
   shikiMock.codeToHtml.mockImplementation(async (code: string) => highlightedCode(code));
 });
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 
 describe("WorkspaceExplorer", () => {
+  it("keeps draft PDF previews inside Eidos until a Session exists", async () => {
+    vi.stubGlobal("eidosRuntime", {
+      prepareWorkspacePreview: vi.fn().mockResolvedValue("eidos-preview://draft/report.pdf"),
+      releaseWorkspacePreview: vi.fn().mockResolvedValue(undefined),
+      onNotification: vi.fn(() => () => undefined),
+    });
+    const listDirectory = vi.fn(async () => ({
+      path: ".",
+      entries: [{
+        name: "report.pdf",
+        relativePath: "report.pdf",
+        kind: "file" as const,
+        sizeBytes: 8,
+      }],
+      truncated: false,
+    }));
+    const readPreview = vi.fn(async () => ({
+      path: "report.pdf",
+      kind: "pdf" as const,
+      sizeBytes: 8,
+      truncated: false,
+    }));
+    const actions = {
+      sessionId: "draft-session-a",
+      projectId: "project-a",
+      executionRoot: "/workspace",
+      openFile: vi.fn(),
+      openBrowser: vi.fn(),
+    };
+
+    render(
+      <ArtifactProvider value={actions}>
+        <WorkspaceExplorer
+          sessionId="draft-session-a"
+          listDirectory={listDirectory}
+          readPreview={readPreview}
+        />
+      </ArtifactProvider>,
+    );
+
+    fireEvent.click(await screen.findByText("report.pdf"));
+    expect(await screen.findByTestId("pdf-viewer")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Open externally" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("loads folders lazily and previews a file with one click", async () => {
     const listDirectory = vi.fn(async (_sessionId: string, path: string) => (
       path === "."
@@ -766,5 +825,56 @@ describe("WorkspaceExplorer", () => {
     fireEvent.click(await screen.findByText("gone.ts"));
     expect(await screen.findByText("文件不存在或已被移除。请从当前文件树重新选择。"))
       .toBeInTheDocument();
+  });
+
+  it("renders folder dropdown inside the tree pane when multiple roots exist and hides it for a single root", async () => {
+    const listDirectory = vi.fn(async (_sessionId: string, _path: string, workspaceRoot?: string) => ({
+      path: ".",
+      entries: [{
+        name: workspaceRoot === "/second" ? "second-file.txt" : "first-file.txt",
+        relativePath: workspaceRoot === "/second" ? "second-file.txt" : "first-file.txt",
+        kind: "file" as const,
+        sizeBytes: 10,
+      }],
+      truncated: false,
+    }));
+
+    const single = render(
+      <WorkspaceExplorer
+        sessionId="session-a"
+        roots={[{ id: "first", path: "/first", repositoryRoot: "/first" }]}
+        listDirectory={listDirectory}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "选择项目文件夹" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/^文件夹$/)).not.toBeInTheDocument();
+    expect(await screen.findByText("first-file.txt")).toBeInTheDocument();
+    single.unmount();
+
+    const multi = render(
+      <WorkspaceExplorer
+        sessionId="session-a"
+        roots={[
+          { id: "root-1", path: "/projects/agentic-kit", repositoryRoot: "/projects/agentic-kit" },
+          { id: "root-2", path: "/second", repositoryRoot: "/second", shared: true },
+        ]}
+        listDirectory={listDirectory}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "选择项目文件夹" });
+    expect(trigger).toBeInTheDocument();
+    expect(trigger).toHaveTextContent("agentic-kit");
+    expect(screen.queryByText(/^文件夹$/)).not.toBeInTheDocument();
+    expect(document.querySelector(".workspace-tree-root-label")).toHaveTextContent("agentic-kit");
+    expect(await screen.findByText("first-file.txt")).toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    expect(await screen.findByRole("menuitem", { name: "agentic-kit · 主要" })).toBeInTheDocument();
+    const secondOption = screen.getByRole("menuitem", { name: "second · 共享" });
+    expect(secondOption).toBeInTheDocument();
+    fireEvent.click(secondOption);
+
+    expect(await screen.findByText("second-file.txt")).toBeInTheDocument();
+    multi.unmount();
   });
 });

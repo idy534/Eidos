@@ -12,6 +12,7 @@ class ReviewCommentRepository:
 
     def __init__(self, database: Database) -> None:
         self._database = database
+        self.root_id = ""
 
     def create(
         self,
@@ -42,12 +43,12 @@ class ReviewCommentRepository:
                 """
                 INSERT INTO review_comments (
                     id, session_id, path, scope, side, line, body,
-                    base_head, diff_hash, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                    base_head, diff_hash, status, created_at, updated_at, root_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
                 """,
                 (
                     comment_id, session_id, path, scope, side, line, body,
-                    base_head, diff_hash, now, now,
+                    base_head, diff_hash, now, now, self.root_id,
                 ),
             )
             row = connection.execute(
@@ -84,10 +85,10 @@ class ReviewCommentRepository:
             rows = connection.execute(
                 """
                 SELECT * FROM review_comments
-                WHERE session_id = ?
+                WHERE session_id = ? AND root_id = ?
                 ORDER BY created_at ASC, id ASC
                 """,
-                (session_id,),
+                (session_id, self.root_id),
             ).fetchall()
         return tuple(_comment_from_row(row) for row in rows)
 
@@ -116,11 +117,11 @@ class ReviewCommentRepository:
                         END THEN ?
                         ELSE updated_at
                     END
-                WHERE session_id = ? AND path = ? AND scope = ?
+                WHERE session_id = ? AND path = ? AND scope = ? AND root_id = ?
                 """,
                 (
                     base_head, diff_hash, base_head, diff_hash, now,
-                    session_id, path, scope,
+                    session_id, path, scope, self.root_id,
                 ),
             )
 
@@ -134,7 +135,7 @@ class ReviewCommentRepository:
     ) -> str:
         def action(connection: sqlite3.Connection) -> dict[str, object]:
             row = connection.execute(
-                "SELECT session_id FROM review_comments WHERE id = ?", (comment_id,)
+                "SELECT session_id FROM review_comments WHERE id = ? AND root_id = ?", (comment_id, self.root_id)
             ).fetchone()
             if row is None or str(row["session_id"]) != session_id:
                 raise ResourceNotFoundError("review comment not found")

@@ -349,7 +349,11 @@ class RunShellInput(StrictToolModel):
     )
     gitWriteAccess: GitWriteAccess = Field(
         default=GitWriteAccess.DEFAULT,
-        description='Set to "request" when the current Run needs Git metadata write permission. In full_access use "default".',
+        description=(
+            'Set to "request" for Git metadata write permission in the repository containing cwd. '
+            'Set cwd to the target repository or its subdirectory and include justification. '
+            'In full_access use "default".'
+        ),
     )
     sandboxPermissions: SandboxPermissions = SandboxPermissions.USE_DEFAULT
     additionalPermissions: AdditionalPermissionProfile | None = None

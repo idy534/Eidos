@@ -1,3 +1,5 @@
+import type { ProjectRootDto } from "../../../shared/project-workspaces.js";
+import { ArtifactProvider } from "./ArtifactContext.js";
 import { FileFind } from "./FileFind.js";
 import { useInputContext } from "./InputContext.js";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -11,10 +13,10 @@ import type {
 } from "../contracts.js";
 import { runtimeBusinessCode, userFacingError } from "../session-state.js";
 import { useArtifacts, usePreviewUrl, type WorkspaceFilePosition } from "./ArtifactContext.js";
-import { ContextMenu } from "./DropdownMenu.js";
+import { ContextMenu, DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
 import { ToastContainer } from "./ToastContainer.js";
 import { FinderIcon, CopyIcon, ExternalLinkIcon, CloseIcon, CloseOthersIcon } from "./MenuIcons.js";
-import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
+import { WorkspaceFileIcon, WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { PdfViewer } from "./PdfViewer.js";
 import { Tooltip } from "./Tooltip.js";
@@ -32,6 +34,7 @@ export interface WorkspaceFileOpenRequest extends WorkspaceFilePosition {
 }
 
 interface WorkspaceExplorerProps {
+  roots?: ProjectRootDto[] | undefined;
   sessionId: string;
   executionKey?: string;
   layout?: "side" | "expanded";
@@ -40,15 +43,20 @@ interface WorkspaceExplorerProps {
   listDirectory?: (
     sessionId: string,
     path: string,
+    workspaceRoot?: string,
   ) => Promise<WorkspaceDirectoryListing>;
   readPreview?: (
     sessionId: string,
     path: string,
+    workspaceRoot?: string,
   ) => Promise<WorkspaceFilePreview>;
   subscribeChanges?: (
     sessionId: string,
     callback: (paths: string[]) => void,
+    workspaceRoot?: string,
   ) => () => void;
+  selectedRootId?: string | undefined;
+  onSelectRoot?: ((rootId: string) => void) | undefined;
 }
 
 type ExplorerLayout = "side" | "expanded";
@@ -58,17 +66,19 @@ const EXPANDED_SPLIT_MIN = 13 * 16;
 const EXPANDED_SPLIT_DEFAULT = 18 * 16;
 const INVALID_FILE_PATH_ERROR = "文件路径无效。请从当前文件树重新选择。";
 
-const defaultListDirectory = (sessionId: string, path: string) =>
-  window.eidosRuntime.listWorkspaceDirectory(sessionId, path);
-const defaultReadPreview = (sessionId: string, path: string) =>
-  window.eidosRuntime.readWorkspaceFilePreview(sessionId, path);
+const defaultListDirectory = (sessionId: string, path: string, workspaceRoot?: string) =>
+  window.eidosRuntime.listWorkspaceDirectory(sessionId, path, undefined, workspaceRoot);
+const defaultReadPreview = (sessionId: string, path: string, workspaceRoot?: string) =>
+  window.eidosRuntime.readWorkspaceFilePreview(sessionId, path, workspaceRoot);
 const defaultSubscribeChanges = (
   sessionId: string,
   callback: (paths: string[]) => void,
+  workspaceRoot?: string,
 ) => window.eidosRuntime?.onNotification((notification) => {
   if (
     notification.method === "workspace/changed"
     && notification.params.sessionId === sessionId
+    && (!notification.params.workspaceRoot || !workspaceRoot || notification.params.workspaceRoot === workspaceRoot)
   ) {
     callback(notification.params.paths);
   }
@@ -138,7 +148,33 @@ function previewReadError(cause: unknown): string {
     : "文件预览读取失败";
 }
 
-export function WorkspaceExplorer({
+export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
+  const roots = props.roots ?? [];
+  const [selected, setSelected] = useState(roots[0]?.id ?? "");
+  const [localRequest, setLocalRequest] = useState<WorkspaceFileOpenRequest>();
+  const sequence = useRef(0);
+  const actions = useArtifacts();
+  useEffect(() => {
+    setSelected((current) => roots.some((root) => root.id === current) ? current : roots[0]?.id ?? "");
+  }, [props.roots]);
+  useEffect(() => { if (props.openRequest?.rootId) setSelected(props.openRequest.rootId); }, [props.openRequest?.requestId]);
+  const root = roots.find((entry) => entry.id === selected) ?? roots[0];
+  const list = useCallback((id: string, path: string) => (props.listDirectory ?? defaultListDirectory)(id, path, root?.path), [props.listDirectory, root?.path]);
+  const read = useCallback((id: string, path: string) => (props.readPreview ?? defaultReadPreview)(id, path, root?.path), [props.readPreview, root?.path]);
+  if (roots.length < 2 || !root) return <WorkspaceExplorerContent {...props} />;
+  const requested = localRequest?.rootId === selected ? localRequest : props.openRequest?.rootId === selected
+    || (!props.openRequest?.rootId && root.id === roots[0]?.id) ? props.openRequest : undefined;
+  const content = <WorkspaceExplorerContent {...props} key={`${props.sessionId}:${root.id}`} executionKey={`${props.executionKey}:${root.id}:${root.path}`}
+    openRequest={requested} listDirectory={list} readPreview={read}
+    roots={roots} selectedRootId={root.id} onSelectRoot={(id) => { setSelected(id); setLocalRequest(undefined); }} />;
+  return <ArtifactProvider value={actions ? { ...actions, executionRoot: root.path, rootId: root.id,
+    openFile: (path, position) => setLocalRequest({ path, ...position, rootId: root.id, requestId: ++sequence.current }),
+    openExternal: actions.openExternal ? (path) => actions.openExternal?.(`${root.path}/${path}`) : undefined,
+    showInFinder: actions.showInFinder ? (path) => actions.showInFinder?.(`${root.path}/${path}`) : undefined,
+  } : undefined}>{content}</ArtifactProvider>;
+}
+
+function WorkspaceExplorerContent({
   sessionId,
   executionKey = sessionId,
   layout = "expanded",
@@ -147,8 +183,12 @@ export function WorkspaceExplorer({
   listDirectory = defaultListDirectory,
   readPreview = defaultReadPreview,
   subscribeChanges = defaultSubscribeChanges,
+  roots,
+  selectedRootId,
+  onSelectRoot,
 }: WorkspaceExplorerProps) {
   const actions = useArtifacts();
+  const workspaceRoot = actions?.executionRoot;
   const [treeContextMenu, setTreeContextMenu] = useState<{
     path: string;
     name: string;
@@ -450,7 +490,7 @@ export function WorkspaceExplorer({
     for (const path of openPreviewPathsRef.current) {
       if (paths.some((changed) => changed === path || path.startsWith(changed + "/"))) openFileRef.current(path, true);
     }
-  }), [executionKey, sessionId, subscribeChanges]);
+  }, workspaceRoot), [executionKey, sessionId, subscribeChanges, workspaceRoot]);
 
   const handleTreeContextMenu = useCallback((
     entry: WorkspaceDirectoryEntry,
@@ -485,6 +525,23 @@ export function WorkspaceExplorer({
   } as CSSProperties;
   const activePreview = activePreviewPath ? previews[activePreviewPath] : undefined;
 
+  const currentRoot = roots?.find((entry) => entry.id === selectedRootId) ?? roots?.[0];
+  const currentRootName = currentRoot?.path.split("/").filter(Boolean).at(-1) ?? currentRoot?.id ?? "";
+
+  const rootMenuItems: DropdownMenuItem[] = useMemo(() => (
+    (roots ?? []).map((entry, index) => {
+      const name = entry.path.split("/").filter(Boolean).at(-1) ?? entry.id;
+      const label = `${name}${index === 0 ? " · 主要" : entry.shared ? " · 共享" : ""}`;
+      return {
+        key: entry.id,
+        label,
+        checked: entry.id === selectedRootId,
+        disabled: entry.id === selectedRootId,
+        onClick: () => onSelectRoot?.(entry.id),
+      };
+    })
+  ), [roots, selectedRootId, onSelectRoot]);
+
   return (
     <section
       ref={explorerRef}
@@ -493,6 +550,24 @@ export function WorkspaceExplorer({
       aria-label="Workspace 文件浏览器"
     >
       <aside className="workspace-tree-pane" aria-label="文件树">
+        {roots && roots.length > 1 && (
+          <div className="workspace-tree-root-header">
+            <DropdownMenu
+              className="workspace-tree-root-dropdown"
+              menuClassName="workspace-tree-root-menu"
+              label="项目文件夹"
+              triggerAriaLabel="选择项目文件夹"
+              trigger={(
+                <span className="workspace-tree-root-trigger" title={`当前文件夹：${currentRoot?.path ?? ""}`}>
+                  <span className="workspace-tree-root-icon" aria-hidden="true"><WorkspaceFolderIcon /></span>
+                  <span className="workspace-tree-root-label">{currentRootName}</span>
+                  <span className="dropdown-caret" aria-hidden="true">▾</span>
+                </span>
+              )}
+              items={rootMenuItems}
+            />
+          </div>
+        )}
         {error && (
           <ToastContainer
             toasts={[{ id: "workspace-explorer-error", message: error, type: "error", duration: 3500 }]}
@@ -886,7 +961,7 @@ function WorkspacePreview({ preview, navigation }: { preview: WorkspaceFilePrevi
     setFindPreview(undefined); setFindNotice("");
     if (findRequested && preview.truncated && preview.version && actions?.sessionId) {
       setFindNotice("正在读取文件正文…");
-      void window.eidosRuntime.readWorkspaceFileForFind({ sessionId: actions.sessionId, path: preview.path, version: preview.version }).then((result) => {
+      void window.eidosRuntime.readWorkspaceFileForFind({ sessionId: actions.sessionId, path: preview.path, version: preview.version, workspaceRoot: actions.executionRoot }).then((result) => {
         if (current) { setFindPreview(result); setFindNotice(result.truncated ? "文件超过 2 MiB，仅查找已读取部分" : ""); }
       }).catch((cause) => { if (current) setFindNotice(userFacingError(cause)); });
     }
@@ -925,8 +1000,10 @@ function WorkspacePreview({ preview, navigation }: { preview: WorkspaceFilePrevi
           <PdfViewer
             url={url}
             title={preview.path}
-            onOpenExternal={actions?.sessionId ? () => {
-              void window.eidosRuntime?.openWorkspacePathInEditor?.(actions.sessionId, preview.path);
+            onOpenExternal={actions?.sessionId && !actions.sessionId.startsWith("draft-") ? () => {
+              void (actions.rootId
+                ? window.eidosRuntime?.openWorkspacePathInEditor?.(actions.sessionId, preview.path, actions.rootId)
+                : window.eidosRuntime?.openWorkspacePathInEditor?.(actions.sessionId, preview.path));
             } : undefined}
             onError={(msg) => setLoadError(msg)}
           />

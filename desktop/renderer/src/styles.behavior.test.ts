@@ -205,19 +205,27 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.diff-file-card\s*\{[^}]*overflow:\s*hidden;[^}]*flex-shrink:\s*0;[^}]*max-height:\s*var\(--diff-single-max-height,\s*16rem\);/s);
     expect(styles).toMatch(/\.diff-file-body\s*\{[^}]*max-height:\s*calc\(var\(--diff-single-max-height,\s*16rem\)\s*-\s*2\.1rem\);[^}]*overflow:\s*auto;/s);
     expect(styles).toMatch(/\.diff-file-card\.diff-view\s*\{[^}]*max-height:\s*var\(--diff-single-max-height,\s*16rem\);[^}]*overflow:\s*hidden;/s);
+    expect(styles).toMatch(/\.diff-file-header\s*\{[^}]*border-bottom:\s*1px solid var\(--line\);/s);
+    expect(styles).toMatch(/\.diff-file-card pre\.diff-file-body,\s*\.diff-file-body\s*\{[^}]*padding:\s*0 0 0\.35rem 0;/s);
+    expect(styles).toMatch(/\.diff-file-card pre\.diff-file-body code,\s*\.diff-file-body code\s*\{[^}]*display:\s*block;[^}]*width:\s*max-content;[^}]*min-width:\s*100%;/s);
+    expect(styles).toMatch(/\.diff-row\s*\{[^}]*width:\s*100%;[^}]*min-width:\s*100%;/s);
   });
 
   it("applies low-saturation links and distinct inline code pill background in markdown", () => {
     expect(styles).toMatch(/--link-color:\s*#2b5da7;/);
     expect(styles).toMatch(/--code-inline-bg:\s*#eef0f2;/);
+    expect(styles).not.toMatch(/--code-inline-border/);
     expect(styles).toMatch(/\.markdown-body code\s*\{[^}]*background:\s*var\(--code-inline-bg/s);
-    expect(styles).toMatch(/\.markdown-body code\s*\{[^}]*border:\s*1px solid var\(--code-inline-border/s);
+    expect(styles).not.toMatch(/\.markdown-body code\s*\{[^}]*border:/s);
     expect(styles).toMatch(/\.markdown-file-link\s*\{[^}]*color:\s*var\(--link-color/s);
     expect(styles).not.toMatch(/\.markdown-file-link\s*\{[^}]*color:\s*#1d4ed8;/s);
     expect(styles).toMatch(/\.markdown-file-link\s*\{[^}]*vertical-align:\s*-0\.15em;/s);
     expect(styles).toMatch(/\.markdown-body a\s*\{[^}]*text-decoration:\s*none;/s);
     expect(styles).toMatch(/\.markdown-body a:hover[^{]*\{[^}]*text-decoration:\s*underline;/s);
     expect(styles).toMatch(/\.markdown-body a\.markdown-file-link[^{]*\{[^}]*text-decoration:\s*none !important;/s);
+    expect(styles).not.toMatch(/\.input-reference--kind-history\s*\{[^}]*--inline-ref-color:\s*#1d4ed8;/s);
+    expect(styles).toMatch(/\.input-reference--kind-history\s*\{[^}]*--inline-ref-color:\s*var\(--link-color/s);
+    expect(styles).toMatch(/\.input-reference__icon--history\s*\{[^}]*color:\s*var\(--link-color/s);
   });
 
   it("scales code block fonts appropriately to match body text proportions", () => {

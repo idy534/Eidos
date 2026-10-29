@@ -1,4 +1,7 @@
+import { validateSessionCreateOptions } from "./session-create-options.js";
+import { isGitWorkspaceRequest, isProjectCreateFoldersRequest, isProjectReadRequest, isProjectUpdateRequest } from "../shared/project-workspaces.js";
 import { isShellEnvironmentReadRequest, isShellEnvironmentRefreshRequest, isShellEnvironmentSaveRequest } from "../shared/shell-environment.js";
+import { isPersonalizationReadRequest, isPersonalizationSaveRequest } from "../shared/personalization.js";
 import { isHookConfigurationRequest, isHookHistoryRequest } from "../shared/hooks.js";
 import { webSearchOfficialUrl } from "./web-search-links.js";
 import { isWebSearchReadRequest, isWebSearchSaveRequest } from "../shared/web-search.js";
@@ -258,50 +261,6 @@ function isReviewCommentCreateInput(value: unknown): value is ReviewCommentCreat
     && typeof record.baseHead === "string"
     && typeof record.diffHash === "string"
   );
-}
-
-function validateSessionCreateOptions(value: unknown): {
-  workspaceNameHint?: string;
-  executionMode?: "local" | "worktree";
-  baseRef?: string;
-  includeLocalChanges?: boolean;
-} {
-  if (value === undefined) return {};
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Session 创建参数无效。");
-  }
-  const record = value as Record<string, unknown>;
-  if (Object.keys(record).some((key) => !["workspaceNameHint", "executionMode", "baseRef", "includeLocalChanges"].includes(key))) {
-    throw new Error("Session 创建参数无效。");
-  }
-  if (
-    record.executionMode !== undefined
-    && record.executionMode !== "local"
-    && record.executionMode !== "worktree"
-  ) {
-    throw new Error("Session 创建模式无效。");
-  }
-  if (record.baseRef !== undefined && typeof record.baseRef !== "string") {
-    throw new Error("Session 起始 Ref 无效。");
-  }
-  if (record.includeLocalChanges !== undefined && typeof record.includeLocalChanges !== "boolean") {
-    throw new Error("Session 本地修改参数无效。");
-  }
-  if (record.workspaceNameHint !== undefined && (
-    typeof record.workspaceNameHint !== "string" || [...record.workspaceNameHint].length > 512
-  )) {
-    throw new Error("Session 工作目录名称无效。");
-  }
-  return {
-    ...(record.workspaceNameHint !== undefined ? { workspaceNameHint: record.workspaceNameHint } : {}),
-    ...(record.executionMode !== undefined
-      ? { executionMode: record.executionMode }
-      : {}),
-    ...(record.baseRef !== undefined ? { baseRef: record.baseRef } : {}),
-    ...(record.includeLocalChanges !== undefined
-      ? { includeLocalChanges: record.includeLocalChanges }
-      : {}),
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -609,6 +568,31 @@ ipcMain.handle(IPC.WORKSPACE_SELECT, async () => {
 });
 
 ipcMain.handle(IPC.PROJECT_LIST, () => clientOrThrow().listProjects());
+ipcMain.handle(IPC.PROJECT_CREATE_FOLDERS, (_event, request: unknown) => {
+  if (!isProjectCreateFoldersRequest(request)) throw new Error("项目配置无效。");
+  return clientOrThrow().createProjectFolders(request);
+});
+ipcMain.handle(IPC.GIT_REPOSITORY_REQUEST, (_event, request: unknown) => {
+  if (!isGitWorkspaceRequest(request)) throw new Error("Git 目标参数无效。");
+  return clientOrThrow().repositoryGit(request);
+});
+ipcMain.handle(IPC.PROJECT_READ, (_event, request: unknown) => {
+  if (!isProjectReadRequest(request)) throw new Error("项目参数无效。");
+  return clientOrThrow().readProject(request.projectId);
+});
+ipcMain.handle(IPC.PROJECT_UPDATE, (_event, request: unknown) => {
+  if (!isProjectUpdateRequest(request)) throw new Error("项目配置无效。");
+  return clientOrThrow().updateProject(request);
+});
+ipcMain.handle(IPC.PERSONALIZATION_READ, (_event, request: unknown) => {
+  const value = request ?? {};
+  if (!isPersonalizationReadRequest(value)) throw new Error("个性化读取参数无效。");
+  return clientOrThrow().readPersonalization(value);
+});
+ipcMain.handle(IPC.PERSONALIZATION_SAVE, (_event, request: unknown) => {
+  if (!isPersonalizationSaveRequest(request)) throw new Error("个性化设置无效，请检查填写内容。");
+  return clientOrThrow().savePersonalization(request);
+});
 ipcMain.handle(IPC.SHELL_ENVIRONMENT_READ, (_event, request: unknown) => {
   const value = request ?? {};
   if (!isShellEnvironmentReadRequest(value)) throw new Error("沙盒环境读取参数无效。");
@@ -930,15 +914,18 @@ ipcMain.handle(IPC.WORKSPACE_OPEN_IN_EDITOR, async (
   _event,
   sessionId: unknown,
   relativePath: unknown,
+  rootId: unknown,
 ) => {
-  if (typeof sessionId !== "string" || typeof relativePath !== "string") {
+  if (typeof sessionId !== "string" || typeof relativePath !== "string" || (rootId !== undefined && typeof rootId !== "string")) {
     throw new Error("Workspace 文件参数无效。");
   }
   const snapshot = await clientOrThrow().readSession(sessionId);
-  const root = snapshot.session.executionMode === "worktree"
-    ? snapshot.session.worktree?.worktreeRoot
-    : snapshot.session.workspaceRoot;
+  const selected = snapshot.session.roots?.find((root) => root.id === rootId);
+  if (rootId !== undefined && !selected) throw new Error("文件夹不属于当前聊天。");
+  const root = selected?.path ?? snapshot.session.roots?.[0]?.path ?? (snapshot.session.executionMode === "worktree"
+    ? snapshot.session.worktree?.worktreeRoot : snapshot.session.workspaceRoot);
   if (!root) throw new Error("Workspace 当前不可用。");
+  await clientOrThrow().readWorkspaceFilePreview(sessionId, relativePath, root);
   const canonicalTarget = await resolveWorkspaceFileForOpen(root, relativePath);
   const failure = await electronShell.openPath(canonicalTarget);
   if (failure) throw new Error("无法在编辑器中打开文件。");
@@ -1350,14 +1337,13 @@ ipcMain.handle(IPC.MEMORY_REQUEST, (event, method: unknown, request: unknown) =>
   if (!isMemoryMethod(method) || method === "data/backup" || !isMemoryRequest(method, request)) throw new Error("记忆请求无效。");
   return clientOrThrow().memory(method, request);
 });
-ipcMain.handle(IPC.MEMORY_EXPORT, async (event, scope: unknown, sessionId: unknown) => {
+ipcMain.handle(IPC.MEMORY_EXPORT, async (event, request: unknown) => {
   inputOwner(event);
-  if (scope !== "current" && scope !== "global") throw new Error("记忆范围无效。");
-  const selectedSession = sessionId == null ? null : inputKey(sessionId);
+  if (!isMemoryRequest("memory/export", request)) throw new Error("记忆请求无效。");
   const owner = BrowserWindow.fromWebContents(event.sender);
   if (!owner) throw new Error("无法打开保存窗口。");
   const saved = await dialog.showSaveDialog(owner, { title: "导出记忆", defaultPath: "eidos-memories.md", filters: [{ name: "Markdown", extensions: ["md"] }] });
-  if (!saved.canceled && saved.filePath) await exportMemoryNotes(saved.filePath, { scope, sessionId: selectedSession }, (request) => clientOrThrow().memory("memory/export", request));
+  if (!saved.canceled && saved.filePath) await exportMemoryNotes(saved.filePath, { ...request, cursor: 0 }, (page) => clientOrThrow().memory("memory/export", page));
 });
 ipcMain.handle(IPC.PLANNING_READ, (event, sessionId: unknown) => {
   inputOwner(event);

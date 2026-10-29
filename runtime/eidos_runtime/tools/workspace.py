@@ -166,7 +166,7 @@ class PreparedPatch:
 class ResolvedAuthorizedPath:
     root: Path
     relative_path: str
-    authority: Literal["workspace", "active_skill", "full_access"]
+    authority: Literal["workspace", "project_root", "active_skill", "full_access"]
     writable: bool
 
 
@@ -451,6 +451,7 @@ class ToolExecutor:
         self.root_fd = root_fd
         self.reader = WorkspaceReader(identity)
         self.workspace_index = WorkspaceIndex(identity)
+        self._additional_indexes = {root.path: WorkspaceIndex(root) for root in identity.additional_roots}
         self.search_driver = search_driver or RipgrepSearchDriver()
         self._search_lock = threading.Lock()
         self._search_sessions: dict[str, _SearchSession] = {}
@@ -464,6 +465,23 @@ class ToolExecutor:
             supports_tool_grammar=supports_tool_grammar,
         )
 
+    def _project_writer(self, value: str | Path) -> WorkspaceIdentity | None:
+        path = Path(value)
+        if not path.is_absolute():
+            return None
+        for identity in sorted(
+            (self.workspace, *self.workspace.additional_roots),
+            key=lambda item: len(item.path.parts),
+            reverse=True,
+        ):
+            if path == identity.path or identity.path in path.parents:
+                if identity is self.workspace:
+                    return None
+                if path != identity.path:
+                    resolve_workspace_write_path(str(path), identity.path)
+                return identity
+        return None
+
     def external_patch_paths(
         self, arguments: object, *, approval_roots: tuple[str, ...] = (),
     ) -> tuple[Path, ...]:
@@ -476,9 +494,11 @@ class ToolExecutor:
                 path = self.workspace.path / value
                 if ".." in path.parts or path.resolve(strict=False) != path:
                     raise WorkspacePathError("workspace_boundary_violation")
-                if not path.is_relative_to(self.workspace.path) or any(
+                root = self._project_writer(path)
+                authorized_root = root.path if root else self.workspace.path
+                if not path.is_relative_to(authorized_root) or any(
                     part in _PROTECTED_WORKSPACE_METADATA_NAMES
-                    for part in path.relative_to(self.workspace.path).parts
+                    for part in path.relative_to(authorized_root).parts
                 ) or any(
                     path.is_relative_to(root) for root in approval_roots
                 ):
@@ -515,6 +535,15 @@ class ToolExecutor:
 
     def _resolve_write_path(self, value: str) -> str:
         absolute = str(self.workspace.path / value)
+        project = self._project_writer(absolute)
+        if project is not None:
+            with WorkspaceReader(project):
+                pass
+            if not self._protected_write_allowed(Path(absolute)) and _is_protected_workspace_metadata_path(Path(absolute), project.path):
+                raise WorkspacePathError("permission_not_requestable")
+            if self.write_permissions is not None and not self.write_permissions.allows_file_write(Path(absolute)):
+                raise WorkspacePathError("permission_not_requestable")
+            return absolute
         resolved = absolute if absolute in self._external_writers else resolve_workspace_write_path(value, self.workspace.path)
         target = self.workspace.path / resolved
         if not self._protected_write_allowed(target) and _is_protected_workspace_metadata_path(target, self.workspace.path):
@@ -640,13 +669,18 @@ class ToolExecutor:
 
     def shell_cwd(self, value: str) -> WorkspaceIdentity:
         self._verify_root()
+        absolute_cwd = self.workspace.path / value
+        project = self._project_writer(absolute_cwd)
+        if project is not None:
+            with ToolExecutor(project) as selected:
+                return selected.shell_cwd(str(absolute_cwd))
         if self.full_access and Path(value).is_absolute():
             resolve_read_path(value, self.workspace.path, (Path("/"),))
             with ToolExecutor(Path(value)) as external:
                 return external.workspace
         relative = (
             "."
-            if value == "."
+            if value == "." or Path(value) == self.workspace.path
             else resolve_workspace_write_path(value, self.workspace.path)
         )
         if relative == ".":
@@ -669,6 +703,8 @@ class ToolExecutor:
                 owner=metadata.st_uid,
                 git_dir=self.workspace.git_dir,
                 git_common_dir=self.workspace.git_common_dir,
+                git_dir_identity=self.workspace.git_dir_identity,
+                git_common_identity=self.workspace.git_common_identity,
             )
         finally:
             os.close(descriptor)
@@ -684,6 +720,9 @@ class ToolExecutor:
         kept for post-execution mutation and safety reconciliation.
         """
         self._verify_root()
+        for root in self.workspace.additional_roots:
+            with WorkspaceReader(root):
+                pass
         cwd = self.shell_cwd(value)
         self._verify_root()
         return cwd
@@ -692,8 +731,40 @@ class ToolExecutor:
         self, cancel: threading.Event
     ):
         self._verify_root()
-        self._verify_shell_workspace(cancel)
-        return self.workspace_index.manifest()
+        deadline = time.monotonic() + SHELL_PREFLIGHT_DEADLINE_SECONDS
+        self._verify_shell_workspace(cancel, deadline=deadline)
+        for root in self.workspace.additional_roots:
+            with ToolExecutor(root, self.search_driver) as executor:
+                executor.workspace_index = self._additional_indexes[root.path]
+                executor._verify_shell_workspace(cancel, deadline=deadline)
+        return self.workspace_manifest()
+
+    def workspace_manifest(self):
+        from dataclasses import replace
+        from eidos_runtime.sandbox.workspace_manifest import WorkspaceManifest
+        manifests = [(None, self.workspace_index.manifest()), *(
+            (root, index.manifest()) for root, index in self._additional_indexes.items()
+        )]
+        entries = []
+        seen_paths: set[str] = set()
+        for root, manifest in manifests:
+            for entry in manifest.entries:
+                absolute_path = str(
+                    (self.workspace.path if root is None else root) / entry.path
+                )
+                if absolute_path in seen_paths:
+                    continue
+                seen_paths.add(absolute_path)
+                entries.append(
+                    entry
+                    if root is None
+                    else replace(entry, path=absolute_path)
+                )
+        return WorkspaceManifest(
+            tuple(entries),
+            all(manifest.complete for _, manifest in manifests),
+            any(manifest.truncated for _, manifest in manifests),
+        )
 
     def execute_read(
         self,
@@ -998,9 +1069,10 @@ class ToolExecutor:
         change: FileChange,
         cancel: threading.Event,
     ) -> dict[str, object]:
-        external = self._external_writers.get(change.path)
+        project = self._project_writer(change.path)
+        external = self._external_writers.get(change.path) or project
         if external is not None:
-            if not self.external_write_approved:
+            if project is None and not self.external_write_approved:
                 return _error(tool_name, "approval_required", "External file write requires approval")
             try:
                 self.verify_write_scope()
@@ -1637,6 +1709,9 @@ class ToolExecutor:
         )
 
     def _resolve_read_path(self, value: str) -> ResolvedAuthorizedPath:
+        project = self._project_writer(value)
+        if project is not None:
+            return ResolvedAuthorizedPath(project.path, Path(value).relative_to(project.path).as_posix(), "project_root", True)
         if self.full_access:
             # Validate using the same canonical syntax, then scope the reader to the selected target.
             resolved = resolve_read_path(value, self.workspace.path, (Path("/"),))
@@ -1658,7 +1733,8 @@ class ToolExecutor:
         if resolved.authority == "workspace":
             yield self.reader
             return
-        reader = WorkspaceReader(resolved.root)
+        project = next((root for root in self.workspace.additional_roots if root.path == resolved.root), None)
+        reader = WorkspaceReader(project or resolved.root)
         try:
             yield reader
         finally:
@@ -1677,7 +1753,7 @@ class ToolExecutor:
         if Path(_fd_path(self.root_fd)) != self.workspace.path:
             raise WorkspacePathError("workspace_identity_changed")
 
-    def _verify_shell_workspace(self, cancel: threading.Event) -> None:
+    def _verify_shell_workspace(self, cancel: threading.Event, *, deadline: float | None = None) -> None:
         try:
             self.workspace_index.refresh(
                 self.root_fd,
@@ -1685,7 +1761,7 @@ class ToolExecutor:
                 validate=self._validate_workspace_index_entry,
                 open_directory=self._open_directory,
                 deadline=(
-                    time.monotonic()
+                    deadline if deadline is not None else time.monotonic()
                     + SHELL_PREFLIGHT_DEADLINE_SECONDS
                 ),
             )
@@ -1731,7 +1807,7 @@ class ToolExecutor:
         *,
         allow_missing_parents: bool = False,
     ) -> tuple[bytes, int] | None:
-        external = self._external_writers.get(path)
+        external = self._external_writers.get(path) or self._project_writer(path)
         if external is not None:
             with ToolExecutor(external) as reader:
                 return reader._read_existing_for_change(

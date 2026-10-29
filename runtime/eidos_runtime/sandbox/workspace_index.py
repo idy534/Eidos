@@ -93,6 +93,8 @@ class WorkspaceIndex:
         validate: EntryValidator,
         open_directory: DirectoryOpener,
         deadline: float,
+        hash_all: bool = False,
+        max_entries: int | None = None,
     ) -> WorkspaceIndexSnapshot:
         hit_fault("workspace_manifest_timeout")
         entries: list[WorkspaceManifestEntry] = []
@@ -170,6 +172,8 @@ class WorkspaceIndex:
                     continue
                 if ignored:
                     continue
+                if max_entries is not None and len(entries) >= max_entries:
+                    raise WorkspaceIndexIncomplete
                 fingerprint = (
                     metadata.st_dev,
                     metadata.st_ino,
@@ -185,6 +189,7 @@ class WorkspaceIndex:
                     metadata,
                     fingerprint,
                     deadline,
+                    force_hash=hash_all,
                 )
                 fingerprints[relative] = fingerprint
                 digests[relative] = digest
@@ -240,6 +245,7 @@ class WorkspaceIndex:
         metadata: os.stat_result,
         fingerprint: tuple[int, int, int, int, int, int],
         deadline: float,
+        *, force_hash: bool = False,
     ) -> str | None:
         if (
             not stat.S_ISREG(metadata.st_mode)
@@ -248,11 +254,11 @@ class WorkspaceIndex:
             return None
         with self._lock:
             previous = self._fingerprints.get(relative)
-            if previous is None:
+            if previous is None and not force_hash:
                 # The first manifest pass is a structural baseline. Avoid hashing
                 # every source file before a trivial shell command can start.
                 return None
-            if previous == fingerprint:
+            if previous == fingerprint and not force_hash:
                 return self._digests.get(relative)
         flags = os.O_RDONLY | os.O_NONBLOCK
         if hasattr(os, "O_NOFOLLOW"):

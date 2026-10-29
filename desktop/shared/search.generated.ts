@@ -28,6 +28,7 @@ export type Cursor = string | null;
 export type Limit = number;
 export type Sessionid2 = string;
 export type Itemid1 = string;
+export type Workspaceroot = string | null;
 export type Sessionid3 = string;
 export type Path = string;
 export type Version = string;
@@ -81,6 +82,7 @@ export interface ReadAroundRequest {
   itemId: Itemid1;
 }
 export interface FileFindRequest {
+  workspaceRoot?: Workspaceroot;
   sessionId: Sessionid3;
   path: Path;
   version: Version;

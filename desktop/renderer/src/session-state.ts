@@ -349,6 +349,7 @@ export function applyQueuedRunChange(
 export type RunStatusTone = "success" | "error" | "neutral" | "warning";
 
 const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
+  PROJECT_CONFIGURATION_CONFLICT: "项目配置已经变化，请关闭并重新打开编辑窗口。",
   AGENT_DEFINITION_INVALID: "智能体配置无效，请检查名称、用途说明、指令和 TOML 格式。",
   AGENT_DEFINITION_EXISTS: "智能体名称或配置文件已经存在，请使用其他名称。",
   AGENT_DEFINITION_CONFLICT: "智能体配置已经变化，请刷新并重新打开后再修改。",

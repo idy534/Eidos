@@ -823,7 +823,7 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     const tooltip = screen.getByRole("tooltip");
     expect(tooltip).toBeInTheDocument();
     expect(within(tooltip).getByText("repository")).toBeInTheDocument();
-    expect(within(tooltip).getByText("文件夹路径")).toBeInTheDocument();
+    expect(within(tooltip).getByText("1 次对话")).toBeInTheDocument();
     expect(within(tooltip).getByText("/repository")).toBeInTheDocument();
 
     act(() => {
@@ -833,6 +833,61 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
       await vi.advanceTimersByTimeAsync(400);
     });
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
+  it("shows project hover tooltip with multi-root folders, badge, and primary indicator on hover", async () => {
+    vi.useFakeTimers();
+    const multiRootProject = {
+      id: "multi-root-proj",
+      name: "Office-Test",
+      workspaceRoot: "/work/office-main",
+      primaryRootId: "root-main",
+      roots: [
+        { id: "root-sub", path: "/work/office-sub", shared: true },
+        { id: "root-main", path: "/work/office-main" },
+      ],
+      gitAvailable: true,
+      createdAt: 100,
+      updatedAt: 100,
+    };
+    render(
+      <SessionSidebar
+        sessions={[]}
+        projects={[multiRootProject]}
+        selectedId={undefined}
+        disabled={false}
+        readCompletedSessions={new Set()}
+        runtimePresentation={{ tone: "success", label: "Ready" }}
+        onCreate={vi.fn()}
+        onCreateInProject={vi.fn()}
+        onSelect={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+
+    const projectToggle = screen.getByRole("button", { name: "Office-Test" });
+    fireEvent.mouseEnter(projectToggle);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toBeInTheDocument();
+    expect(within(tooltip).getByText("Office-Test")).toBeInTheDocument();
+    expect(within(tooltip).getByText("0 次对话")).toBeInTheDocument();
+    expect(within(tooltip).getByText("/work/office-main")).toBeInTheDocument();
+    expect(within(tooltip).getByText("/work/office-sub")).toBeInTheDocument();
+
+    const rootRows = within(tooltip).getAllByRole("listitem");
+    expect(rootRows).toHaveLength(2);
+    expect(rootRows[0]?.querySelector(".sidebar-hover-card__root-icon--primary")).toBeTruthy();
+    expect(rootRows[1]?.querySelector(".sidebar-hover-card__root-icon--muted")).toBeTruthy();
 
     vi.useRealTimers();
   });

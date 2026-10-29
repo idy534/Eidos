@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.project_workspace import DirectoryIdentity, SessionRoot
+
 from datetime import UTC, datetime
 from enum import StrEnum
 
@@ -54,10 +56,15 @@ class WorktreeLifecycleState(StrEnum):
 class Worktree(EidosFrozenStrictModel):
     """Durable Worktree facts. HEAD and dirty state are deliberately absent."""
 
+    source_roots: tuple[SessionRoot, ...] = ()
+
     id: str = Field(min_length=1)
     project_id: str = Field(min_length=1)
+    repository_root: str | None = None
+    git_common_dir: str | None = None
     worktree_root: str = Field(min_length=1, max_length=4096)
     git_dir: str = Field(min_length=1, max_length=4096)
+    git_dir_identity: DirectoryIdentity | None = None
     base_ref: str = Field(min_length=1, max_length=4096)
     base_commit: str = Field(
         min_length=40,
@@ -170,6 +177,8 @@ class WorktreeRecoveryReport(EidosFrozenStrictModel):
 
 class WorktreeLifecycleOperation(EidosFrozenStrictModel):
     request_hash: str | None = None
+    workspace_roots: tuple[SessionRoot, ...] = ()
+    project_revision: int | None = Field(default=None, ge=1)
     scope: WorktreeLifecycleScope
     operation_id: str = Field(min_length=1)
     state: WorktreeLifecycleState
