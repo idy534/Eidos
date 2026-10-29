@@ -262,4 +262,22 @@ describe("InputPicker behavior", () => {
     expect(onChoose).not.toHaveBeenCalled();
   });
 
+  it("lists each project folder for a draft and keeps equal filenames distinct", async () => {
+    const list = vi.fn(async (_session: string, _path: string, _limit: number, root: string) => ({
+      path: ".", truncated: false, entries: [{ name: "README.md", relativePath: "README.md", kind: "file" }],
+    }));
+    setupRuntime({ listWorkspaceDirectory: list });
+    const onChoose = vi.fn();
+    render(<InputContextProvider sessionId="draft-multi" workspaceRoot="/work/main" projectId="project-multi"
+      workspaceRoots={["/work/main", "/work/second"]} ready onAdd={vi.fn()} onSettings={vi.fn()}>
+      <InputPicker {...pickerProps} mode="all" onChoose={onChoose} />
+    </InputContextProvider>);
+    const files = await screen.findAllByRole("option", { name: /README.md/ });
+    expect(files).toHaveLength(2);
+    expect(list).toHaveBeenCalledWith("draft-multi", ".", 100, "/work/main", "project-multi");
+    expect(list).toHaveBeenCalledWith("draft-multi", ".", 100, "/work/second", "project-multi");
+    fireEvent.click(files[1]!);
+    expect(onChoose).toHaveBeenCalledWith({ kind: "file", source: "/work/second/README.md" });
+  });
+
 });

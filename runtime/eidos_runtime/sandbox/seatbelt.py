@@ -13,6 +13,8 @@ import subprocess
 import sys
 import tempfile
 import time
+from eidos_runtime.git.backend import DulwichGitBackend
+from eidos_runtime.git.errors import GitError
 from eidos_runtime.sandbox.host_shell import (
     HOST_SHELL_RESOLVER,
     SHELL_ENVIRONMENT_PROVIDER,
@@ -155,7 +157,26 @@ class SeatbeltProfile:
             )
         if git_worktree_dir is not None and git_common_dir is not None:
             if not git_marker.exists():
-                raise ValueError("Git workspace metadata marker is unavailable")
+                # An attached root may be a repository subdirectory. Keep its
+                # write scope, and locate only the verified checkout's marker.
+                try:
+                    discovery = DulwichGitBackend().discover(workspace)
+                    discovered_metadata = (
+                        Path(discovery.git_dir).resolve(strict=True),
+                        Path(discovery.git_common_dir).resolve(strict=True),
+                    )
+                    if discovered_metadata != (
+                        git_worktree_dir.resolve(strict=True),
+                        git_common_dir.resolve(strict=True),
+                    ):
+                        raise ValueError("Git workspace metadata identity changed")
+                    git_marker = Path(discovery.repository_root) / ".git"
+                except (GitError, OSError) as error:
+                    raise ValueError("Git workspace metadata marker is unavailable") from error
+                if git_marker.is_symlink() or not (
+                    git_marker.is_dir() or git_marker.is_file()
+                ):
+                    raise ValueError("Git workspace metadata marker is unavailable")
             git_directory = git_marker.resolve(strict=False)
             verified_worktree_dir = _verified_git_directory(
                 git_worktree_dir,
@@ -202,7 +223,18 @@ class SeatbeltProfile:
                 compiled = SeatbeltPolicyCompiler(
                     base_policy_path=profile_path
                 ).compile(
-                    self.effective_permissions
+                    self.effective_permissions,
+                    verified_git_metadata=tuple(dict.fromkeys(
+                        path for path in (
+                            self.git_directory,
+                            self.git_worktree_dir,
+                            self.git_common_dir,
+                        ) if path is not None
+                    )),
+                    verified_git_checkout=(
+                        self.git_directory.parent
+                        if self.git_directory is not None else None
+                    ),
                 )
             except ValueError as error:
                 raise SeatbeltUnavailableError(

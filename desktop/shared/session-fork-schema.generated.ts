@@ -469,6 +469,11 @@ export const sessionForkSchema = {
           "title": "Workspacechanged",
           "type": "boolean"
         },
+        "workspaceObservationComplete": {
+          "default": true,
+          "title": "Workspaceobservationcomplete",
+          "type": "boolean"
+        },
         "workspaceChanges": {
           "default": [],
           "items": {
@@ -766,6 +771,46 @@ export const sessionForkSchema = {
         "kind"
       ],
       "title": "NewWorktreeForkTarget",
+      "type": "object"
+    },
+    "ProjectRootDto": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "repositoryRoot": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repositoryroot"
+        },
+        "shared": {
+          "default": false,
+          "title": "Shared",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "path"
+      ],
+      "title": "ProjectRootDto",
       "type": "object"
     },
     "RunDto": {
@@ -1292,6 +1337,13 @@ export const sessionForkSchema = {
     "SessionDto": {
       "additionalProperties": false,
       "properties": {
+        "roots": {
+          "items": {
+            "$ref": "#/$defs/ProjectRootDto"
+          },
+          "title": "Roots",
+          "type": "array"
+        },
         "forkedFrom": {
           "anyOf": [
             {

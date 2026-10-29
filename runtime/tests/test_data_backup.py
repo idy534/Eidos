@@ -5,15 +5,22 @@ from contextlib import nullcontext
 from pathlib import Path
 import sqlite3
 import stat
+import subprocess
 import zipfile
+from uuid import uuid4
 
 import pytest
 
 from eidos_runtime.db.backup import FORMAT, backup, restore
 from eidos_runtime.db.schema import SCHEMA_VERSION
 from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.application.projects import ProjectApplication
+from eidos_runtime.application.sessions import SessionApplication
+from eidos_runtime.git import WorktreeManager
 from eidos_runtime.memory.contracts import MemoryEditRequest, MemoryReadRequest
 from eidos_runtime.memory.repository import MemoryRejected
+from eidos_runtime.protocol.methods import SessionCreateRequestDto
+from eidos_runtime.protocol.project_workspaces import ProjectCreateFoldersRequest, ProjectRootInput
 
 pytestmark = pytest.mark.integration
 
@@ -54,9 +61,72 @@ def test_backup_preserves_archived_notes_and_shared_body_versions(tmp_path):
         reopened.close()
 
 
-@pytest.mark.parametrize("schema_version", [40, 41, 42, 43, SCHEMA_VERSION])
+def test_v46_backup_restore_pins_existing_worktree_gitdir_identity(tmp_path):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repository)], check=True)
+    subprocess.run(["git", "config", "user.name", "Eidos Tests"], cwd=repository, check=True)
+    subprocess.run(["git", "config", "user.email", "eidos-tests@example.com"], cwd=repository, check=True)
+    (repository / "tracked.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repository, check=True)
+    subprocess.run(["git", "commit", "-qm", "initial"], cwd=repository, check=True)
+
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    manager = WorktreeManager(store.database, managed_root=tmp_path / "managed-worktrees")
+    projects = ProjectApplication(manager.repository, create_project=manager.create_project)
+    sessions = SessionApplication(
+        store, scan_text=lambda value: value, worktree_manager=manager,
+    )
+    project = projects.create_folders(ProjectCreateFoldersRequest(
+        operationId=str(uuid4()),
+        roots=[ProjectRootInput(id="root-primary", path=str(repository))],
+        primaryRootId="root-primary",
+    ))
+    session = sessions.create(SessionCreateRequestDto(
+        projectId=project.id, executionMode="worktree",
+    )).root
+    worktree_id = session["worktree"]["worktreeId"]
+    archive = tmp_path / "backup.zip"
+    backup(store.database.memory, archive)
+    store.close()
+
+    with zipfile.ZipFile(archive) as source:
+        entries = [(name, source.read(name)) for name in source.namelist()]
+    state_path = tmp_path / "legacy.sqlite"
+    state_path.write_bytes(dict(entries)["state.sqlite"])
+    with sqlite3.connect(state_path) as connection:
+        connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_uid")
+        connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_inode")
+        connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_dev")
+        connection.execute("PRAGMA user_version=46")
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    legacy_state = state_path.read_bytes()
+    manifest = json.loads(dict(entries)["manifest.json"])
+    manifest["schemaVersion"] = 46
+    entries = [
+        (name, legacy_state if name == "state.sqlite" else json.dumps(manifest).encode() if name == "manifest.json" else value)
+        for name, value in entries
+    ]
+    write_archive(archive, entries)
+
+    destination = tmp_path / "restored"
+    restore(archive, destination)
+    restored = SessionStore(destination)
+    restored.initialize()
+    try:
+        restored_manager = WorktreeManager(
+            restored.database, managed_root=tmp_path / "managed-worktrees",
+        )
+        worktree = restored_manager.read_worktree(worktree_id)
+        assert worktree.git_dir_identity is not None
+    finally:
+        restored.close()
+
+
+@pytest.mark.parametrize("schema_version", [40, 41, 42, 43, 44, 45, 46, SCHEMA_VERSION])
 def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(
-    tmp_path, schema_version
+    tmp_path, schema_version, downgrade_project_workspaces_schema
 ):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -83,7 +153,17 @@ def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(
         state = tmp_path / "legacy.sqlite"
         state.write_bytes(entries["state.sqlite"])
         with sqlite3.connect(state) as connection:
-            connection.execute("DROP TABLE personalization_settings")
+            if schema_version < 45:
+                downgrade_project_workspaces_schema(connection)
+            elif schema_version == 45:
+                connection.execute("ALTER TABLE worktree_lifecycle_operations DROP COLUMN workspace_roots_json")
+                connection.execute("ALTER TABLE worktree_lifecycle_operations DROP COLUMN project_revision")
+            else:
+                connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_uid")
+                connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_inode")
+                connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_dev")
+            if schema_version < 44:
+                connection.execute("DROP TABLE personalization_settings")
             if schema_version < 43:
                 connection.execute("ALTER TABLE memory_documents DROP COLUMN archived")
             if schema_version < 42:

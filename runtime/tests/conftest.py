@@ -13,9 +13,32 @@ def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.fixture
-def downgrade_document_memory_schema():
+def downgrade_project_workspaces_schema():
+    """Remove v45 additions before fixtures rebuild a legacy database."""
+    def downgrade(connection: sqlite3.Connection) -> None:
+        connection.execute("DROP TABLE IF EXISTS project_roots")
+        for index in ("sessions_project", "review_comments_workspace"):
+            connection.execute(f"DROP INDEX IF EXISTS {index}")
+        for table, names in {
+            "projects": ("revision", "primary_root_id"),
+            "sessions": ("project_id", "workspace_roots_json"),
+            "review_comments": ("root_id",),
+            "worktrees": ("repository_root", "git_common_dir"),
+            "worktree_snapshots": ("repository_root", "git_common_dir"),
+            "worktree_lifecycle_operations": ("workspace_roots_json", "project_revision"),
+        }.items():
+            columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+            for name in names:
+                if name in columns:
+                    connection.execute(f"ALTER TABLE {table} DROP COLUMN {name}")
+    return downgrade
+
+
+@pytest.fixture
+def downgrade_document_memory_schema(downgrade_project_workspaces_schema):
     """Restore the v39 memory shape expected by the v40 migration."""
     def downgrade(connection: sqlite3.Connection) -> None:
+        downgrade_project_workspaces_schema(connection)
         connection.execute("DROP TABLE IF EXISTS personalization_settings")
         for trigger in (
             "memory_source_insert",
@@ -170,9 +193,12 @@ def downgrade_automation_schema(downgrade_custom_agents_schema):
 
 
 @pytest.fixture
-def downgrade_session_fork_schema(downgrade_automation_schema):
+def downgrade_session_fork_schema(
+    downgrade_automation_schema, downgrade_project_workspaces_schema
+):
     """Remove v26 and newer additions when rebuilding a legacy fixture."""
     def downgrade(connection: sqlite3.Connection) -> None:
+        downgrade_project_workspaces_schema(connection)
         # Remove the latest feature objects first. Their triggers refer to
         # memory tables that older-schema fixtures remove below.
         downgrade_automation_schema(connection)

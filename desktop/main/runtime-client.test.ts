@@ -15,6 +15,7 @@ import {
 } from "./runtime-client.js";
 import type { RuntimeNotification } from "./runtime-client.js";
 import type { Session } from "../shared/domain-contracts.js";
+import { isGitWorkspaceRequest } from "../shared/project-workspaces.js";
 
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -488,6 +489,55 @@ test("creates first-class Direct Workspace sessions without Git review state", a
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("shares draft Git review request fixtures with the Runtime", async () => {
+  const fixture = JSON.parse(await readFile(protocolV1Fixture, "utf8")) as {
+    draftGitReview: Record<string, { method: string; params: { rootId: string } }>;
+  };
+  for (const { method, params } of Object.values(fixture.draftGitReview)) {
+    const { rootId, ...parameters } = params;
+    assert.equal(isGitWorkspaceRequest({ rootId, method, parameters }), true);
+  }
+});
+
+test("previews draft Git repositories through the typed Runtime without creating a session", async () => {
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-draft-review-data-"));
+  const firstRoot = await createGitRepository("eidos-draft-review-first-");
+  const secondRoot = await createGitRepository("eidos-draft-review-second-");
+  let client: RuntimeClient | undefined;
+  try {
+    client = new RuntimeClient({ pythonExecutable, runtimeRoot: path.join(projectRoot, "runtime"), dataDirectory });
+    await client.initialize();
+    const project = await client.createProjectFolders({
+      operationId: randomUUID(), name: "Draft review", primaryRootId: "first",
+      roots: [{ id: "first", path: firstRoot }, { id: "second", path: secondRoot }],
+    });
+    const sessionId = `draft-${randomUUID()}`;
+    await writeFile(path.join(firstRoot, "README.md"), "# First draft change\n");
+    await writeFile(path.join(secondRoot, "README.md"), "# Second draft change\n");
+    for (const [rootId, marker] of [["first", "First draft change"], ["second", "Second draft change"]] as const) {
+      const parameters = { sessionId, projectId: project.id };
+      const status = await client.repositoryGit({ rootId, method: "session/gitStatus", parameters });
+      assert.ok("unstagedFiles" in status);
+      assert.deepEqual(status.unstagedFiles, ["README.md"]);
+      const diff = await client.repositoryGit({ rootId, method: "session/gitDiff", parameters: { ...parameters, scope: "head", path: "README.md" } });
+      assert.ok("unifiedDiff" in diff);
+      assert.ok(diff.unifiedDiff.includes(marker));
+    }
+    assert.deepEqual((await client.listSessions()).items, []);
+    assert.deepEqual((await client.listProjects()).items.map((entry) => entry.id), [project.id]);
+    await assert.rejects(client.repositoryGit({
+      rootId: "first", method: "session/gitStatus", parameters: { sessionId },
+    }), (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "INVALID_PARAMS");
+  } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
+    await rm(dataDirectory, { recursive: true, force: true });
+    await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
+    await rm(firstRoot, { recursive: true, force: true });
+    await rm(secondRoot, { recursive: true, force: true });
   }
 });
 

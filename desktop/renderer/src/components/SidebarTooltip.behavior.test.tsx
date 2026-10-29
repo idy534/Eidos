@@ -5,6 +5,8 @@ import type { Session } from "../contracts.js";
 import {
   SidebarTooltip,
   formatSessionTime,
+  formatDisplayPath,
+  buildProjectTooltipRoots,
   type ProjectTooltipData,
   type SessionTooltipData,
 } from "./SidebarTooltip.js";
@@ -52,11 +54,20 @@ describe("SidebarTooltip rendering", () => {
     toJSON: () => {},
   } as DOMRect;
 
-  it("renders Project hover tooltip with name and folder path", () => {
+  it("formats home paths with tilde abbreviation", () => {
+    expect(formatDisplayPath("/Users/xielei/Documents/test1/Office-Test")).toBe("~/Documents/test1/Office-Test");
+    expect(formatDisplayPath("/home/ubuntu/repo")).toBe("~/repo");
+    expect(formatDisplayPath("/var/log/app")).toBe("/var/log/app");
+    expect(formatDisplayPath("")).toBe("");
+  });
+
+  it("renders Project hover tooltip with name and single unified path row", () => {
     const projectState: ProjectTooltipData = {
       kind: "project",
       projectName: "Eidos Runtime",
       workspaceRoot: "/Users/developer/Projects/Eidos",
+      sessionCount: 3,
+      isPinned: true,
       projectless: false,
       rect: dummyRect,
     };
@@ -66,8 +77,98 @@ describe("SidebarTooltip rendering", () => {
     const tooltip = screen.getByRole("tooltip");
     expect(tooltip).toBeInTheDocument();
     expect(screen.getByText("Eidos Runtime")).toBeInTheDocument();
-    expect(screen.getByText("文件夹路径")).toBeInTheDocument();
-    expect(screen.getByText("/Users/developer/Projects/Eidos")).toBeInTheDocument();
+    expect(screen.getByText("3 次对话")).toBeInTheDocument();
+    expect(screen.getByLabelText("已置顶")).toBeInTheDocument();
+    expect(screen.getByText("~/Projects/Eidos")).toBeInTheDocument();
+  });
+
+  it("renders Project hover tooltip with multiple roots, session count and pin", () => {
+    const projectState: ProjectTooltipData = {
+      kind: "project",
+      projectName: "Office-Test",
+      workspaceRoot: "/Users/xielei/Documents/test1/Office-Test",
+      sessionCount: 10,
+      isPinned: true,
+      roots: [
+        {
+          id: "r1",
+          path: "/Users/xielei/Documents/test1/Office-Test",
+          name: "Office-Test",
+          isPrimary: true,
+        },
+        {
+          id: "r2",
+          path: "/Users/xielei/Documents/test1/office-backend",
+          name: "office-backend",
+          isPrimary: false,
+        },
+        {
+          id: "r3",
+          path: "/Users/xielei/Documents/common/shared-contracts",
+          name: "shared-contracts",
+          isPrimary: false,
+          shared: true,
+        },
+      ],
+      projectless: false,
+      rect: dummyRect,
+    };
+
+    render(<SidebarTooltip state={projectState} />);
+
+    expect(screen.getByText("Office-Test")).toBeInTheDocument();
+    expect(screen.getByText("10 次对话")).toBeInTheDocument();
+    expect(screen.getByLabelText("已置顶")).toBeInTheDocument();
+
+    expect(screen.getByText("~/Documents/test1/Office-Test")).toBeInTheDocument();
+    expect(screen.getByText("~/Documents/test1/office-backend")).toBeInTheDocument();
+    expect(screen.getByText("~/Documents/common/shared-contracts")).toBeInTheDocument();
+
+    const rootRows = screen.getAllByRole("listitem");
+    expect(rootRows).toHaveLength(3);
+    // First root is primary: has primary icon modifier
+    expect(rootRows[0]?.querySelector(".sidebar-hover-card__root-icon--primary")).toBeTruthy();
+    // Second and third are non-primary / shared: have muted icon modifier
+    expect(rootRows[1]?.querySelector(".sidebar-hover-card__root-icon--muted")).toBeTruthy();
+    expect(rootRows[2]?.querySelector(".sidebar-hover-card__root-icon--muted")).toBeTruthy();
+  });
+
+  it("buildProjectTooltipRoots sorts primary root to the first position", () => {
+    const result = buildProjectTooltipRoots({
+      workspaceRoot: "/work/fallback",
+      project: {
+        primaryRootId: "secondary-id",
+        roots: [
+          { id: "first-id", path: "/work/first" },
+          { id: "secondary-id", path: "/work/second", shared: true },
+        ],
+      },
+    });
+
+    expect(result).toHaveLength(2);
+    expect(result?.[0]?.id).toBe("secondary-id");
+    expect(result?.[0]?.isPrimary).toBe(true);
+    expect(result?.[0]?.shared).toBe(true);
+    expect(result?.[1]?.id).toBe("first-id");
+    expect(result?.[1]?.isPrimary).toBe(false);
+  });
+
+  it("buildProjectTooltipRoots falls back to single root when roots array is missing", () => {
+    const result = buildProjectTooltipRoots({
+      workspaceRoot: "/work/main-project",
+      project: {
+        roots: [],
+      },
+    });
+
+    expect(result).toEqual([
+      {
+        id: "primary",
+        path: "/work/main-project",
+        name: "main-project",
+        isPrimary: true,
+      },
+    ]);
   });
 
   it("renders Project hover tooltip for projectless recent group", () => {

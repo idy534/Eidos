@@ -15,6 +15,7 @@ export interface WorkspaceFileLink extends WorkspaceFilePosition {
 }
 
 export interface ArtifactActions {
+  rootId?: string;
   sessionId: string;
   executionRoot: string;
   roots?: ProjectRootDto[] | undefined;

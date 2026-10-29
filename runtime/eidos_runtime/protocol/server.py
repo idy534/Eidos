@@ -1835,7 +1835,9 @@ class RuntimeServer:
                     root = application.repository.project_root(task.target.project_id) if task.target.project_id else None
                     session = applications.sessions.create(method_dtos.SessionCreateRequestDto(
                         operationId=str(uuid5(NAMESPACE_URL, "automation/session/" + occurrence.id)),
-                        workspaceRoot=root, executionMode=task.target.execution.execution_mode,
+                        workspaceRoot=root if task.target.project_id is None else None,
+                        projectId=task.target.project_id,
+                        executionMode=task.target.execution.execution_mode,
                         baseRef=task.target.execution.base_ref,
                         workspaceNameHint=task.name if root is None else None,
                     ))
@@ -1964,12 +1966,13 @@ class RuntimeServer:
                 self.store.typed_runtime_repository(),
                 worktree_manager=self.worktree_manager,
                 scan_text=self._scan_text,
-                on_changes=lambda session_id, changes: self.send({
+                on_changes=lambda session_id, changes, root: self.send({
                     "jsonrpc": "2.0",
                     "method": "workspace/changed",
                     "params": {
                         "sessionId": session_id,
                         "paths": [change.path for change in changes],
+                        "workspaceRoot": str(root),
                     },
                 }),
             ),

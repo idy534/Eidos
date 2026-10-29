@@ -203,6 +203,14 @@ class RunRepository(Repository):
                 and execution_workspace != expected_workspace_identity
             ):
                 raise WorkspaceIdentityChangedError("workspace_identity_changed")
+            if expected_workspace_identity is not None:
+                from eidos_runtime.workspace.reader import WorkspaceReader, WorkspacePathError
+                try:
+                    for root in (execution_workspace, *execution_workspace.additional_roots):
+                        with WorkspaceReader(root):
+                            pass
+                except WorkspacePathError as error:
+                    raise WorkspaceIdentityChangedError(error.code) from error
             if session["title"] is None and session_title is not None:
                 connection.execute(
                     "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
@@ -284,6 +292,8 @@ class RunRepository(Repository):
                         root_id=root.root_id or None, path=str(root.path), device=root.device,
                         inode=root.inode, owner=root.owner, git_dir=str(root.git_dir) if root.git_dir else None,
                         git_common_dir=str(root.git_common_dir) if root.git_common_dir else None,
+                        git_dir_identity=root.git_dir_identity,
+                        git_common_identity=root.git_common_identity,
                     ) for root in execution_workspace.additional_roots) or None,
                     path=str(execution_workspace.path),
                     device=execution_workspace.device,
@@ -299,6 +309,8 @@ class RunRepository(Repository):
                         if execution_workspace.git_common_dir is not None
                         else None
                     ),
+                    git_dir_identity=execution_workspace.git_dir_identity,
+                    git_common_identity=execution_workspace.git_common_identity,
                 ),
                 data_directory=self.database.data_directory,
                 projectless=bool(session["projectless"]),

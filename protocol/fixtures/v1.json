@@ -145,7 +145,32 @@
       "method": "workspace/changed",
       "params": {
         "sessionId": "11111111-1111-4111-8111-111111111111",
-        "paths": ["src/main.ts"]
+        "paths": ["src/main.ts"],
+        "workspaceRoot": "/tmp/eidos-fixture"
+      }
+    }
+  },
+  "draftGitReview": {
+    "statusRequest": {
+      "jsonrpc": "2.0",
+      "id": "client-draft-git-status",
+      "method": "session/gitStatus",
+      "params": {
+        "sessionId": "draft-11111111-1111-4111-8111-111111111111",
+        "projectId": "project-multi-root",
+        "rootId": "root-secondary"
+      }
+    },
+    "diffRequest": {
+      "jsonrpc": "2.0",
+      "id": "client-draft-git-diff",
+      "method": "session/gitDiff",
+      "params": {
+        "sessionId": "draft-11111111-1111-4111-8111-111111111111",
+        "projectId": "project-multi-root",
+        "rootId": "root-secondary",
+        "scope": "head",
+        "path": "README.md"
       }
     }
   },

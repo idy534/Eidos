@@ -1521,8 +1521,9 @@ function isNotification(value: unknown): value is RuntimeNotification {
   }
   if (value.method === "workspace/changed") {
     return (
-      hasOnlyKeys(params, ["sessionId", "paths"])
+      hasOnlyKeys(params, ["sessionId", "paths", "workspaceRoot"])
       && typeof params.sessionId === "string"
+      && (params.workspaceRoot === undefined || typeof params.workspaceRoot === "string")
       && isStringArray(params.paths)
     );
   }

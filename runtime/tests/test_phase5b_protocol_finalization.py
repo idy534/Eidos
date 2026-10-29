@@ -448,13 +448,21 @@ class FinalizationPersistenceTests(unittest.TestCase):
         final_instructions = model.instructions_history[0]
         self.assertIn("system-safety", final_instructions)
         self.assertIn("runtime-policy", final_instructions)
-        self.assertIn("project-rule:EIDOS.md", final_instructions)
-        self.assertIn("Preserve this project rule", final_instructions)
         self.assertIn("finalization-policy", final_instructions)
         self.assertIn("Do not call tools", final_instructions)
+        user_layers = {
+            item["sectionId"]: item["content"]
+            for item in model.contexts[0]
+            if item.get("type") == "user"
+        }
+        self.assertIn("project-rule:EIDOS.md", user_layers)
+        self.assertIn("Preserve this project rule", user_layers["project-rule:EIDOS.md"])
         for layer in base.layers:
-            self.assertIn(layer.id, final_instructions)
-            self.assertIn(layer.content, final_instructions)
+            if layer.role in {"system", "developer"}:
+                self.assertIn(layer.id, final_instructions)
+                self.assertIn(layer.content, final_instructions)
+            else:
+                self.assertEqual(user_layers.get(layer.id), layer.content)
 
         self.assertEqual(
             model.contexts[0][-1],

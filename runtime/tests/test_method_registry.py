@@ -30,6 +30,8 @@ from eidos_runtime.protocol.collaboration import AgentDefinitionDocument
 from eidos_runtime.protocol.channels import ChannelResponse
 from eidos_runtime.protocol.shell_environment import ShellEnvironmentResponse
 from eidos_runtime.protocol.web_search import WebSearchResponse
+from eidos_runtime.protocol.personalization import PersonalizationResponse
+from eidos_runtime.protocol.schemas import ProjectDto
 
 
 class Params(RootModel[dict[str, object]]):
@@ -225,6 +227,8 @@ def test_production_method_registrations_do_not_use_generic_object_models(
         ChannelResponse,
         ShellEnvironmentResponse,
         WebSearchResponse,
+        PersonalizationResponse,
+        ProjectDto,
         method_dtos.SessionReadResponseDto,
     }
     assert all(

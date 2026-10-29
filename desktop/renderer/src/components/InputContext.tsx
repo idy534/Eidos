@@ -26,6 +26,8 @@ export interface InputEditorSelectionBridge {
 interface InputContextValue {
   sessionId: string;
   workspaceRoot: string;
+  workspaceRoots: readonly string[];
+  projectId: string | undefined;
   busy: boolean;
   error: string | undefined;
   add(request: InputPrepareRequest, range?: { start: number; end: number }): Promise<void>;
@@ -42,6 +44,8 @@ export const useInputContext = () => useContext(Context);
 export function InputContextProvider({
   sessionId,
   workspaceRoot,
+  workspaceRoots,
+  projectId,
   ready,
   onAdd,
   onInsert,
@@ -51,6 +55,8 @@ export function InputContextProvider({
 }: {
   sessionId: string | undefined;
   workspaceRoot: string | undefined;
+  workspaceRoots?: readonly string[] | undefined;
+  projectId?: string | undefined;
   ready: boolean;
   onAdd(id: string, reference: InputReference): void;
   onInsert?: ((id: string, reference: InputReference, range?: { start: number; end: number }) => number | undefined) | undefined;
@@ -136,7 +142,7 @@ export function InputContextProvider({
   }), [sessionId, add]);
 
   return <Context.Provider value={sessionId ? {
-    sessionId, workspaceRoot: workspaceRoot ?? "", busy: Boolean(counts[sessionId]), error: errors[sessionId], add, paths,
+    sessionId, workspaceRoot: workspaceRoot ?? "", workspaceRoots: workspaceRoots ?? (workspaceRoot ? [workspaceRoot] : []), projectId, busy: Boolean(counts[sessionId]), error: errors[sessionId], add, paths,
     paste: () => work(() => window.eidosRuntime.pasteInputImage()), settings: onSettings,
     reuse: (reference) => { if (ready) commitReference(sessionId, reference); },
     navigateToSession: onNavigateToSession,

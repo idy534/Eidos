@@ -60,22 +60,23 @@ Renderer 是展示边界。Renderer 不能直接访问 Node 系统能力，也�
 
 ## Workspace model
 
-Eidos 把用户选择的目录建模为 Project。Project 的基础事实是 `name` 和 `workspace_root`。Project 可以有 Git capability，但 Git 不是 Project 存在的前提。Project 由 `project/create` 显式写入 SQLite，不依赖 Session 创建。`name` 可以省略，Runtime 会使用 canonical Workspace 的文件夹名。
+Eidos 把项目建模为稳定的 Project ID、名称、多个文件夹和一个主要文件夹。`workspace_root` 保留主要目录兼容投影。每个根保存独立 ID、路径和可选 Git checkout 信息。SQLite v45-v47 保存 `project_roots`、Session 的 `project_id` 与根快照、Worktree 私有 gitdir 身份和保留快照的固定 Git 来源。项目配置通过版本号控制并发保存。
 
 ```text
-Project
- ├── workspace_root
- └── optional Git capability
-          └── Thread / Session
-                    ├── Local Execution → Project.workspace_root
-                    └── Worktree Execution → Managed Worktree → Run
+Project → ordered roots + primary root
+             └── Session → frozen roots and project_id
+                           ├── Local → source paths
+                           └── Worktree → remap primary checkout; share other paths
+                                      └── Run → frozen identities and base permissions
 ```
 
-Non-Git Project 只能创建 Local Execution Session。Git Project 可以创建 Local 或 Worktree Execution Session。Desktop 的新建会话入口先保留本地草稿，首次提交时才物化 Session。Workspace Dock 的 Review 只对 Git Project 展示，Terminal 和 Files 只对有 Project 的会话展示，Browser 对所有会话展示。Local Session 的 `execution_mode` 是 `local`，`worktree_id` 是 NULL，Run 直接使用 `Project.workspace_root`。Worktree Session 的 `execution_mode` 是 `worktree`，它绑定 Managed Worktree，Run 使用该 Worktree root。Git Project 的 Session Git status 和 diff API 会读取当前 execution root。
+新会话使用当前项目配置。已有会话保留原目录。主要目录提供默认 cwd 和 Worktree 目标。主目录无 Git 时，会话使用 Local，但 Review 仍可选择次目录中的仓库。Git 控件操作整个已核验 checkout；文件和 Shell 的权限只包含挂载目录。项目改名不改变身份或记忆作用域。Worktree 的运行、Fork、Handoff 和恢复使用固定来源，不跟随项目主目录变化。
 
-文件读写、Shell、Skill、MCP、Context、Long Task、Sandbox 和 Checkpoint 属于 Workspace 或 Runtime 能力。它们不因为 Project 没有 Git 而失效。Git status 和 Git diff 在 Git Project 的当前 execution root 上提供。Managed Worktree 和 Git-based Fork 仍然只在 Git Project 中提供。
+文件、Shell、workspace_read MCP、图片和 Context 环境可以使用固定的多个根。相对路径仍以主要目录为起点；次根使用绝对路径。权限快照保留全部根及原 Skill/Runtime 授权字段。Shell 的 manifest 合并各根观察。目录身份和文件版本仍由 Reader 与执行层核验。Repo Intelligence 自动索引仍以主要目录为范围。
 
-Desktop Workspace Explorer 也只读取当前 Session execution root。`WorkspaceExplorerApplication` 先解析 Local root 或验证 Managed Worktree identity，再调用共享 `WorkspaceReader`。Draft 在 Session 尚未物化时使用请求中的 Project binding；Runtime 从持久化 Project 解析 root，并在请求同时提供 root 时核对 workspace identity。Workspace Dock 不对 Projectless 会话展示 Files。`WorkspaceReader` 与 Agent 文件工具共用 fd-relative、`O_NOFOLLOW`、hard discovery directory 和 root ignore 规则。普通敏感文件名和内容可以读取；`.git`、`.agents`、`.eidos` 只在写入侧保护，显式路径可以列举、搜索和读取，默认发现仍隐藏这些元数据目录。`workspace/listDirectory` 只返回一层子项。`workspace/readFilePreview` 返回有界 UTF-8 预览或图片/PDF/HTML 元数据。`workspace/readAsset` 按块读取受控资源。Projectless 的 Runtime 文件能力仍经过同一个 Reader。Renderer 对 Conversation 的文件打开请求检查工作区相对路径格式。Runtime 负责核验当前 execution root、文件身份和实际存在性；文件树缓存不替代这些核验。Renderer 不直接读取 filesystem。
+Desktop Workspace Explorer 提供根选择器。`WorkspaceExplorerApplication` 解析 Session 的固定根，或在草稿中解析持久 Project 配置。Runtime 核验请求的具体 root。目录通知携带 `workspaceRoot`，Renderer 只刷新对应根。预览、资源与文件内查找使用同一个根。`WorkspaceReader` 保留 fd-relative、`O_NOFOLLOW`、有界输出与发现规则。Renderer 继续只经过 typed IPC 访问文件。
+
+多目录项目的详细行为、Git 仓库范围和 Checkpoint 限制见 [项目说明](features/projects.md)。
 
 Conversation 文件引用沿用 `MarkdownContent → ArtifactLink → AppShell → WorkspaceExplorer → typed IPC → WorkspaceExplorerApplication → WorkspaceReader`。`workspaceFileLink` 从显式 Markdown 链接目标解析绝对路径和可选行列号，并把当前 execution root 内的目标转为工作区相对路径。显示标签不参与路径解析。行内代码不再自动变成文件链接。文档预览通过 `documentPath` 保留相对链接语义。`ArtifactActions.openFile` 和 Renderer 内部的 `WorkspaceFileOpenRequest` 携带可选 `line`、`column`；位置只控制预览滚动与选区，不改变 Runtime 文件读取请求、权限或文件身份。Shiki 的 line transformer 和普通文本行节点提供源行标记。Markdown 的 rehype 节点位置提供源文本块标记。代码高亮完成后，预览会再次应用当前定位请求；同文件的不同请求用 `requestId` 区分。
 

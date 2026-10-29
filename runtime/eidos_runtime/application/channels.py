@@ -105,7 +105,9 @@ class ChannelApplication:
         if session_id is None:
             root = self.repository.project_root(config.project_id) if config.project_id else None
             session = self.sessions.create(SessionCreateRequestDto(operationId=stable_id("session/" + route + "/" + identifier),
-                workspaceRoot=root, workspaceNameHint=CHANNEL_NAMES[incoming.connection.channel] + "对话" if root is None else None))
+                workspaceRoot=root if config.project_id is None else None,
+                projectId=config.project_id,
+                workspaceNameHint=CHANNEL_NAMES[incoming.connection.channel] + "对话" if config.project_id is None else None))
             session_id = session.id
             self.repository.bind(route, session_id)
         if canceled():

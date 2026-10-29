@@ -19,6 +19,7 @@ from eidos_runtime.domain.project import (
     default_project_name,
     direct_project_id,
 )
+from eidos_runtime.domain.project_workspace import DirectoryIdentity
 from eidos_runtime.domain.worktree import (
     BranchOwnership,
     Worktree,
@@ -173,7 +174,8 @@ class ProjectWorktreeRepository(Repository):
                 """
                 SELECT 1
                 FROM sessions s
-                WHERE s.workspace_root = ?
+                WHERE s.project_id = ?
+                   OR (s.project_id IS NULL AND s.workspace_root = ?)
                    OR EXISTS (
                        SELECT 1
                        FROM worktrees w
@@ -182,7 +184,7 @@ class ProjectWorktreeRepository(Repository):
                    )
                 LIMIT 1
                 """,
-                (project["workspace_root"], project_id),
+                (project_id, project["workspace_root"], project_id),
             ).fetchone()
             if session is not None:
                 raise ProjectHasSessionsError("project has sessions")
@@ -263,8 +265,9 @@ class ProjectWorktreeRepository(Repository):
                         id, project_id, worktree_root, git_dir, base_ref,
                         base_commit, branch, checkout_branch, branch_ownership,
                         ownership, state, created_at, updated_at
-                        , last_used_at, repository_root, git_common_dir
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        , last_used_at, repository_root, git_common_dir,
+                        git_dir_dev, git_dir_inode, git_dir_uid
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         worktree.id,
@@ -281,7 +284,23 @@ class ProjectWorktreeRepository(Repository):
                         utc_datetime_to_millis(worktree.created_at),
                         utc_datetime_to_millis(worktree.updated_at),
                         utc_datetime_to_millis(worktree.last_used_at),
-                        worktree.repository_root, worktree.git_common_dir,
+                        worktree.repository_root,
+                        worktree.git_common_dir,
+                        (
+                            worktree.git_dir_identity.device
+                            if worktree.git_dir_identity is not None
+                            else None
+                        ),
+                        (
+                            worktree.git_dir_identity.inode
+                            if worktree.git_dir_identity is not None
+                            else None
+                        ),
+                        (
+                            worktree.git_dir_identity.owner
+                            if worktree.git_dir_identity is not None
+                            else None
+                        ),
                     ),
                 )
             except sqlite3.IntegrityError as error:
@@ -350,6 +369,7 @@ class ProjectWorktreeRepository(Repository):
         worktree_id: str,
         *,
         git_dir: str,
+        git_dir_identity: DirectoryIdentity,
         checkout_branch: str | None = None,
     ) -> Worktree:
         now = now_utc_millis()
@@ -357,12 +377,16 @@ class ProjectWorktreeRepository(Repository):
             updated = connection.execute(
                 """
                 UPDATE worktrees
-                SET git_dir = ?, checkout_branch = ?, branch = NULL,
+                SET git_dir = ?, git_dir_dev = ?, git_dir_inode = ?, git_dir_uid = ?,
+                    checkout_branch = ?, branch = NULL,
                     branch_ownership = ?, state = ?, last_used_at = ?, updated_at = ?
                 WHERE id = ? AND ownership = 'managed'
                 """,
                 (
                     git_dir,
+                    git_dir_identity.device,
+                    git_dir_identity.inode,
+                    git_dir_identity.owner,
                     checkout_branch,
                     BranchOwnership.NONE.value,
                     WorktreeState.ACTIVE.value,

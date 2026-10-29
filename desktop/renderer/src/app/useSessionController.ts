@@ -397,6 +397,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
           const existing = prev.find((item) => item.id === project.id);
           const next: Project = {
             ...project,
+            ...existing,
             ...(project.name
               ? { name: project.name }
               : existing?.name

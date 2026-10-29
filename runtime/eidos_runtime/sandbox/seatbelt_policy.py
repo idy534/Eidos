@@ -26,7 +26,11 @@ class SeatbeltPolicyCompiler:
         self.base_policy_path = base_policy_path
 
     def compile(
-        self, profile: EffectivePermissionProfile
+        self,
+        profile: EffectivePermissionProfile,
+        *,
+        verified_git_metadata: tuple[Path, ...] = (),
+        verified_git_checkout: Path | None = None,
     ) -> CompiledSeatbeltPolicy:
         try:
             base = self.base_policy_path.read_text(encoding="utf-8")
@@ -47,6 +51,15 @@ class SeatbeltPolicyCompiler:
                 overrides.append((entry, key))
             if entry.access is FileSystemAccessMode.WRITE:
                 approved_writes.append((entry, key))
+        for index, entry in enumerate(item for item in profile.entries if item.source == "base"):
+            if entry.access is FileSystemAccessMode.WRITE and profile.workspace_roots and entry.resolved_path == profile.workspace_roots[0]:
+                # The base policy already grants the primary root while excluding
+                # its verified Git metadata. A broad allow would undo that scope.
+                continue
+            key = f"BASE_{entry.access.value.upper()}_{index}"
+            parameters[key] = entry.resolved_path
+            sections.append(_metadata_rule(key))
+            sections.append(_allow_rule(entry, key))
         skill_root_keys: tuple[str, ...] = ()
         for index, root in enumerate(profile.active_skill_roots):
             key = f"SKILL_ROOT_{index}"
@@ -68,7 +81,31 @@ class SeatbeltPolicyCompiler:
                 tuple(_filter(entry, entry_key) for entry, entry_key in approved_writes),
             )
             sections.append(f'(deny file-write* {write_filter})')
-        workspace_exceptions: dict[str, str] = {}
+        metadata_reads: list[tuple[MaterializedFileSystemPermissionEntry, str]] = []
+        git_read_targets = tuple((path, path.is_dir()) for path in verified_git_metadata)
+        if verified_git_checkout is not None:
+            # Git needs the checkout directory itself to resolve getcwd from
+            # a mounted subdirectory. Its unmounted children stay protected.
+            git_read_targets += ((verified_git_checkout, False),)
+        for index, (path, recursive) in enumerate(git_read_targets):
+            if not any(
+                path != Path(entry.resolved_path)
+                and path.is_relative_to(entry.resolved_path)
+                for entry in profile.permanent_denies
+            ):
+                continue
+            key = f"VERIFIED_GIT_READ_{index}"
+            parameters[key] = str(path)
+            metadata = MaterializedFileSystemPermissionEntry(
+                requestedPath=str(path),
+                resolvedPath=str(path),
+                access=FileSystemAccessMode.READ,
+                recursive=recursive,
+                source="base",
+            )
+            metadata_reads.append((metadata, key))
+            sections.extend((_metadata_rule(key), _allow_rule(metadata, key)))
+        workspace_exceptions: dict[str, tuple[str, ...]] = {}
         for index, workspace_root in enumerate(profile.workspace_roots):
             workspace = Path(workspace_root).resolve(strict=False)
             for entry in profile.permanent_denies:
@@ -76,7 +113,7 @@ class SeatbeltPolicyCompiler:
                 if protected != workspace and protected in workspace.parents:
                     key = f"WORKSPACE_ROOT_{index}"
                     parameters[key] = str(workspace)
-                    workspace_exceptions[entry.resolved_path] = key
+                    workspace_exceptions[entry.resolved_path] = (*workspace_exceptions.get(entry.resolved_path, ()), key)
         for index, entry in enumerate(
             (*profile.permanent_denies, *profile.hard_confidentiality_denies)
         ):
@@ -86,10 +123,8 @@ class SeatbeltPolicyCompiler:
                 _deny_rule(
                     entry,
                     key,
-                    exception_key=(workspace_exceptions.get(entry.resolved_path)
-                                   if entry.source == "permanent_deny" else None),
                     exception_keys=(
-                        tuple(
+                        (workspace_exceptions.get(entry.resolved_path, ()) if entry.source == "permanent_deny" else ()) + tuple(
                             key
                             for key, root in zip(
                                 skill_root_keys, profile.active_skill_roots
@@ -108,7 +143,7 @@ class SeatbeltPolicyCompiler:
                         )
                     ),
                     metadata_exceptions=(
-                        (f'(path-ancestors (param "{workspace_exceptions[entry.resolved_path]}"))',)
+                        tuple(f'(path-ancestors (param "{value}"))' for value in workspace_exceptions[entry.resolved_path])
                         if entry.source == "permanent_deny" and entry.resolved_path in workspace_exceptions
                         else ()
                     ) + tuple(
@@ -122,7 +157,10 @@ class SeatbeltPolicyCompiler:
                         item.source == "additional" and item.access is FileSystemAccessMode.DENY
                         and item.resolved_path == entry.resolved_path
                         for item in profile.entries
-                    ) else tuple(overrides),
+                    ) else (
+                        *overrides,
+                        *(metadata_reads if entry.source == "permanent_deny" else ()),
+                    ),
                 )
             )
         for index, path in enumerate(profile.protected_write_paths):

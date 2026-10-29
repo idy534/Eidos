@@ -505,6 +505,53 @@ describe("App & Runtime Lifecycle behavior", () => {
     expect(within(environment).queryByRole("button", { name: "更改工作环境" })).not.toBeInTheDocument();
   });
 
+  it("does not show project folders section in environment information even with multiple roots", async () => {
+    const multiRootProject: Project = {
+      id: "project-multi-root",
+      name: "multi-root-test",
+      workspaceRoot: "/workspace/root1",
+      gitAvailable: true,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const session: Session = {
+      ...startupSession,
+      id: "multi-root-session",
+      title: "Multi root session",
+      taskStatus: "in_progress",
+      workspaceRoot: "/workspace/root1",
+      roots: [
+        { id: "root-1", path: "/workspace/root1", shared: false, primary: true },
+        { id: "root-2", path: "/workspace/root2", shared: false, primary: false },
+      ],
+      executionMode: "local",
+      project: multiRootProject,
+    };
+    const snapshot: SessionSnapshot = {
+      session,
+      runs: [],
+      items: [],
+      stepResolutions: [],
+      throughEventId: 0,
+    };
+    setupMockRuntime({
+      listProjects: vi.fn().mockResolvedValue({ items: [multiRootProject] }),
+      listSessions: vi.fn().mockResolvedValue({ items: [session] }),
+      readSession: vi.fn().mockResolvedValue(snapshot),
+      listEvents: vi.fn().mockResolvedValue({ items: [], throughEventId: 0, hasMore: false }),
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(session.title!) }));
+
+    expect(await screen.findByRole("button", { name: "环境信息" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "环境信息" }));
+    const environment = await screen.findByRole("region", { name: "环境信息预览" });
+    expect(within(environment).queryByText("项目文件夹")).not.toBeInTheDocument();
+    expect(within(environment).queryByText("/workspace/root1")).not.toBeInTheDocument();
+    expect(within(environment).queryByText(/Checkpoint 只保存主仓库/)).not.toBeInTheDocument();
+  });
+
   it("health-only state remains in ready application and presents read-only warning", async () => {
     setupMockRuntime({
       getStatus: vi.fn().mockResolvedValue(mockHealthOnlyStatus),

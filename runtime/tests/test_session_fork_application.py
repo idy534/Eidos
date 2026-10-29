@@ -310,12 +310,12 @@ def test_v26_fork_titles_are_backfilled_on_restart_without_renaming_existing_tit
             connection.execute(
                 "UPDATE sessions SET title='用户改名' WHERE id=?", (renamed.id,)
             )
+            assert parent.id not in SessionRepository(
+                store.database
+            ).list_empty_session_ids_for_project(parent.project.id)
             downgrade_document_memory_schema(connection)
             downgrade_automation_schema(connection)
             connection.execute("PRAGMA user_version=26")
-        assert parent.id not in SessionRepository(
-            store.database
-        ).list_empty_session_ids_for_project(parent.project.id)
         data = store.database.data_directory
         store.close()
         store = SessionStore(data)

@@ -447,6 +447,8 @@ class ExecutionRepository(Repository):
                 root_id=root.root_id or "", path=Path(root.path), device=root.device,
                 inode=root.inode, owner=root.owner, git_dir=Path(root.git_dir) if root.git_dir else None,
                 git_common_dir=Path(root.git_common_dir) if root.git_common_dir else None,
+                git_dir_identity=root.git_dir_identity,
+                git_common_identity=root.git_common_identity,
             ) for root in (identity.additional_roots or ())),
             path=Path(identity.path),
             device=identity.device,
@@ -458,6 +460,8 @@ class ExecutionRepository(Repository):
                 if identity.git_common_dir is not None
                 else None
             ),
+            git_dir_identity=identity.git_dir_identity,
+            git_common_identity=identity.git_common_identity,
         )
 
     def workspace_for_session(self, session_id: str) -> WorkspaceIdentity:

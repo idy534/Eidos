@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { ReviewComment, SessionGitDiff, SessionGitStatus } from "../contracts.js";
+import type { EidosRuntimeAPI, ReviewComment, SessionGitDiff, SessionGitStatus } from "../contracts.js";
 import { GitChangesPanel } from "./GitChangesPanel.js";
 
 
@@ -114,7 +114,67 @@ function renderPanel(
 }
 
 describe("GitChangesPanel", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it("previews a draft across project repositories without session-only requests", async () => {
+    const draftId = "draft-11111111-1111-4111-8111-111111111111";
+    const repositoryGit = vi.fn<EidosRuntimeAPI["repositoryGit"]>(async (request) => {
+      expect(request.parameters).toMatchObject({ sessionId: draftId, projectId: "project-a" });
+      if (request.method === "session/gitStatus") return status;
+      if (request.method === "session/gitDiff") return summaryDiff();
+      throw new Error(`Unexpected draft request: ${request.method}`);
+    });
+    const createSession = vi.fn();
+    const readSessionGitRemoteStatus = vi.fn();
+    vi.stubGlobal("eidosRuntime", { repositoryGit, createSession, readSessionGitRemoteStatus });
+    renderPanel({
+      sessionId: draftId, projectId: "project-a", workflowDisabled: true,
+      roots: [
+        { id: "first", path: "/first", repositoryRoot: "/first" },
+        { id: "second", path: "/second", repositoryRoot: "/second" },
+      ],
+    });
+    expect(await screen.findByRole("button", { name: "README.md" })).toBeInTheDocument();
+    expect(screen.queryByText("草稿仅预览变更。创建聊天后可添加评论和执行 Git 操作。")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Git 操作覆盖整个仓库/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "README.md" }));
+    expect(await screen.findAllByText("new")).not.toHaveLength(0);
+    const gutter = document.querySelector(".diff-gutter");
+    expect(gutter).not.toBeNull();
+    fireEvent.click(gutter!);
+    expect(screen.queryByRole("textbox", { name: "审阅评论" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "在编辑器中打开 README.md" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "选择 Git 仓库" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "second" }));
+    await waitFor(() => expect(repositoryGit).toHaveBeenCalledWith(expect.objectContaining({
+      rootId: "second", method: "session/gitStatus",
+    })));
+    expect(await screen.findByRole("button", { name: "README.md" })).toBeInTheDocument();
+    expect(repositoryGit.mock.calls.every(([request]) => ["session/gitStatus", "session/gitDiff"].includes(request.method))).toBe(true);
+    expect(createSession).not.toHaveBeenCalled();
+    expect(readSessionGitRemoteStatus).not.toHaveBeenCalled();
+  });
+
+  it("keeps draft loading and error states recoverable with refresh", async () => {
+    const pending = Promise.withResolvers<SessionGitStatus>();
+    const readStatus = vi.fn().mockImplementation(() => pending.promise);
+    const repositoryGit = vi.fn<EidosRuntimeAPI["repositoryGit"]>((request) => (
+      request.method === "session/gitStatus" ? readStatus() : Promise.resolve(summaryDiff())
+    ));
+    vi.stubGlobal("eidosRuntime", { repositoryGit });
+    renderPanel({
+      sessionId: "draft-11111111-1111-4111-8111-111111111111", projectId: "project-a",
+      roots: [{ id: "first", path: "/first", repositoryRoot: "/first" }],
+      workflowDisabled: true,
+    });
+    expect(await screen.findByText("正在读取…")).toBeInTheDocument();
+    pending.reject(new Error("Draft preview unavailable"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("操作失败，请查看 Runtime 日志。");
+    readStatus.mockResolvedValue(status);
+    fireEvent.click(screen.getByRole("button", { name: "刷新 Git 变更" }));
+    expect(await screen.findByRole("button", { name: "README.md" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 
   it("renders all changed files as collapsed accordions and requests only expanded file Diffs", async () => {
     const { readDiff } = renderPanel();
@@ -358,6 +418,49 @@ describe("GitChangesPanel", () => {
     expect(screen.getByRole("button", { name: "在工作区打开 README.md" })).toBeInTheDocument();
   });
 
+  it("disables editor opening for repository files outside the mounted project folder", async () => {
+    const repositoryStatus = {
+      ...status,
+      stagedFiles: ["README.md", "packages/app/src/index.ts"],
+      unstagedFiles: [],
+      untrackedFiles: [],
+      conflictFiles: [],
+    };
+    const repositoryGit = vi.fn<EidosRuntimeAPI["repositoryGit"]>(async (request) => {
+      if (request.method === "session/gitStatus") return repositoryStatus;
+      if (request.method === "session/gitDiff") {
+        const path = request.parameters.path;
+        return path ? fileDiff(path) : summaryDiff({
+          changedFiles: repositoryStatus.stagedFiles,
+          unifiedDiff: repositoryStatus.stagedFiles.map((entry) => fileDiff(entry).unifiedDiff).join("\n"),
+        });
+      }
+      if (request.method === "review/listComments") return { comments: [] };
+      throw new Error(`Unexpected repository request: ${request.method}`);
+    });
+    const openWorkspacePathInEditor = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("eidosRuntime", { repositoryGit, openWorkspacePathInEditor });
+    renderPanel({
+      workspaceRoot: "/repo",
+      roots: [{ id: "repo", path: "/repo/packages/app", repositoryRoot: "/repo" }],
+    });
+
+    const outsideButton = await screen.findByRole("button", { name: "在编辑器中打开 README.md" });
+    const insideButton = screen.getByRole("button", {
+      name: "在编辑器中打开 packages/app/src/index.ts",
+    });
+    expect(outsideButton).toBeDisabled();
+    expect(outsideButton).toHaveAttribute("title", "文件位于项目添加的文件夹之外");
+    expect(insideButton).toBeEnabled();
+
+    fireEvent.click(insideButton);
+    await waitFor(() => expect(openWorkspacePathInEditor).toHaveBeenCalledWith(
+      "session-a",
+      "src/index.ts",
+      "repo",
+    ));
+  });
+
   it("does not offer index or discard actions for a conflict", async () => {
     renderPanel();
     fireEvent.click(screen.getByRole("button", { name: "conflict.txt" }));
@@ -445,6 +548,7 @@ describe("GitChangesPanel", () => {
     const onScopeChange = vi.fn();
     const first = renderPanel({ onScopeChange, expanded: false });
 
+    expect(screen.queryByRole("button", { name: "选择 Git 仓库" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Diff 范围" })).toHaveTextContent("未提交");
     expect(document.querySelector(".git-scope-dropdown-label")).toHaveTextContent("未提交");
     expect(screen.queryByTitle(/eidos\/a →/)).not.toBeInTheDocument();
@@ -475,5 +579,36 @@ describe("GitChangesPanel", () => {
     expect(createBranchItem).toBeInTheDocument();
     fireEvent.click(createBranchItem);
     expect(onCreateBranch).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders repository dropdown in the single-row toolbar when multiple repositories exist and hides it for a single repository", async () => {
+    const repositoryGit = vi.fn().mockImplementation((request) => (
+      request.method === "session/gitStatus" ? Promise.resolve(status) : Promise.resolve(summaryDiff())
+    ));
+    vi.stubGlobal("eidosRuntime", { repositoryGit });
+
+    const single = renderPanel({
+      roots: [{ id: "single-repo", path: "/single-repo", repositoryRoot: "/single-repo" }],
+    });
+    expect(screen.queryByRole("button", { name: "选择 Git 仓库" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Diff 范围" })).toBeInTheDocument();
+    single.result.unmount();
+
+    const multi = renderPanel({
+      roots: [
+        { id: "repo-a", path: "/projects/agentic-kit", repositoryRoot: "/projects/agentic-kit" },
+        { id: "repo-b", path: "/projects/worktree-test", repositoryRoot: "/projects/worktree-test", shared: true },
+      ],
+    });
+    const repoTrigger = screen.getByRole("button", { name: "选择 Git 仓库" });
+    expect(repoTrigger).toBeInTheDocument();
+    expect(repoTrigger).toHaveTextContent("agentic-kit");
+    expect(screen.queryByText(/^仓库$/)).not.toBeInTheDocument();
+    expect(document.querySelector(".git-repo-dropdown-label")).toHaveTextContent("agentic-kit");
+
+    fireEvent.click(repoTrigger);
+    expect(await screen.findByRole("menuitem", { name: "agentic-kit" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "worktree-test · 共享" })).toBeInTheDocument();
+    multi.result.unmount();
   });
 });

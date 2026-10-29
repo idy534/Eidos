@@ -209,17 +209,23 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
 
   useEffect(() => {
     let active = true;
-    if (mode !== "all" || !context || context.sessionId.startsWith("draft-")) { setFiles([]); return; }
-    void window.eidosRuntime.listWorkspaceDirectory(context.sessionId, ".", 200).then((result) => {
+    if (mode !== "all" || !context || !context.workspaceRoots.length
+      || (context.sessionId.startsWith("draft-") && !context.projectId)) { setFiles([]); return; }
+    const roots = context.workspaceRoots;
+    const perRoot = Math.max(1, Math.floor(200 / roots.length));
+    void Promise.all(roots.map(async root => ({ root, result: await window.eidosRuntime.listWorkspaceDirectory(
+      context.sessionId, ".", perRoot, root, context.projectId,
+    ) }))).then((results) => {
       if (!active) return;
-      setFiles(result.entries.map((entry) => ({ id: `file:${entry.relativePath}`, label: entry.name,
-        detail: entry.kind === "directory" ? "文件夹" : "文件",
-        request: { kind: entry.kind === "directory" ? "directory" : "file", source: `${context.workspaceRoot}/${entry.relativePath}` },
-      })));
-      if (result.truncated) setError("当前目录结果较多。");
+      setFiles(results.flatMap(({ root, result }) => result.entries.map((entry) => ({
+        id: `file:${root}/${entry.relativePath}`, label: entry.name,
+        detail: roots.length > 1 ? `${root} · ${entry.kind === "directory" ? "文件夹" : "文件"}` : entry.kind === "directory" ? "文件夹" : "文件",
+        request: { kind: entry.kind === "directory" ? "directory" as const : "file" as const, source: `${root}/${entry.relativePath}` },
+      }))).slice(0, 200));
+      if (results.some(({ result }) => result.truncated)) setError("当前目录结果较多。");
     }, (cause) => { if (active) { setFiles([]); setError(userFacingError(cause)); } });
     return () => { active = false; };
-  }, [mode, context?.sessionId, context?.workspaceRoot]);
+  }, [mode, context?.sessionId, JSON.stringify(context?.workspaceRoots), context?.projectId]);
 
   const needle = query.toLocaleLowerCase();
   const cleanNeedle = (mode === "commands" && needle.startsWith("/")) ? needle.slice(1) : needle;

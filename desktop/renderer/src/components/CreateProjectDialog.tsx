@@ -13,8 +13,8 @@ interface CreateProjectDialogProps {
   getFallbackFocus?: (() => HTMLElement | null) | undefined;
 }
 
-export function CreateProjectDialog({ onCreate, onCreateFolders, ...props }: CreateProjectDialogProps) {
-  return <ProjectEditorDialog {...props} onSave={(name, roots, primary) => {
+export function CreateProjectDialog({ onCreate, onCreateFolders, onSelectFolder, ...props }: CreateProjectDialogProps) {
+  return <ProjectEditorDialog {...props} onSelectFolder={onCreateFolders ? undefined : onSelectFolder} onSave={(name, roots, primary) => {
     if (onCreateFolders) onCreateFolders(name, roots, primary);
     else onCreate(name, roots.find((root) => root.id === primary)!.path);
   }} />;

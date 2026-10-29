@@ -88,7 +88,10 @@ def run_shell(
         workspace_fd = _open_verified_directory(workspace)
         cwd_fd = _open_verified_directory(cwd)
         full_access = attempt is not None and attempt.permissions.full_access
-        if not full_access and cwd.path != workspace.path and workspace.path not in cwd.path.parents:
+        if not full_access and not any(
+            cwd.path == root.path or root.path in cwd.path.parents
+            for root in (workspace, *workspace.additional_roots)
+        ):
             raise ValueError("shell cwd is outside workspace")
         return _run_verified_shell(
             workspace,
@@ -110,28 +113,9 @@ def run_shell(
     except ShellProcessStartError:
         return process_start_failed_result(started, skill_invocation=skill_invocation)
     except ValueError:
-        result = {
-            "schemaVersion": 1,
-            "toolName": "run_shell",
-            "outcome": "error",
-            "code": "workspace_identity_changed",
-            "summary": "Command was not started because the workspace changed",
-            "data": {
-                "exitCode": None,
-                "stdout": "",
-                "stderr": "",
-                "truncated": False,
-                "termination": "not_started",
-                "durationMs": int((time.monotonic() - started) * 1000),
-                "originalBytes": 0,
-                "omittedBytes": 0,
-            },
-            "sideEffectsMayExist": False,
-        }
-        result["summary"] = _summary_with_termination(
-            str(result["summary"]), "not_started"
+        return workspace_changed_result(
+            started, skill_invocation=skill_invocation,
         )
-        return _attach_skill_invocation(result, skill_invocation)
     except SeatbeltUnavailableError:
         return sandbox_unavailable_result(started, skill_invocation=skill_invocation)
     finally:
@@ -139,6 +123,38 @@ def run_shell(
             os.close(cwd_fd)
         if workspace_fd >= 0:
             os.close(workspace_fd)
+
+
+def workspace_changed_result(
+    started: float | None = None,
+    *,
+    skill_invocation: SkillAccessRecord | None = None,
+) -> dict[str, object]:
+    result = {
+        "schemaVersion": 1,
+        "toolName": "run_shell",
+        "outcome": "error",
+        "code": "workspace_identity_changed",
+        "summary": (
+            "Command was not started because the workspace changed "
+            "(termination=not_started)"
+        ),
+        "data": {
+            "exitCode": None,
+            "stdout": "",
+            "stderr": "",
+            "truncated": False,
+            "termination": "not_started",
+            "durationMs": (
+                0 if started is None
+                else max(0, int((time.monotonic() - started) * 1000))
+            ),
+            "originalBytes": 0,
+            "omittedBytes": 0,
+        },
+        "sideEffectsMayExist": False,
+    }
+    return _attach_skill_invocation(result, skill_invocation)
 
 
 def sandbox_unavailable_result(
@@ -211,6 +227,10 @@ def process_start_failed_result(
 
 class ShellProcessStartError(RuntimeError):
     """Raised for a shell environment or process startup failure."""
+
+
+class ShellWorkspaceChangedError(ValueError):
+    """Raised when a frozen Shell directory identity no longer matches."""
 
 
 def _effective_shell_environment(
@@ -326,7 +346,10 @@ def prepare_shell_launch_for_execution(
         workspace_fd = _open_verified_directory(workspace)
         cwd_fd = _open_verified_directory(cwd)
         full_access = attempt is not None and attempt.permissions.full_access
-        if not full_access and cwd.path != workspace.path and workspace.path not in cwd.path.parents:
+        if not full_access and not any(
+            cwd.path == root.path or root.path in cwd.path.parents
+            for root in (workspace, *workspace.additional_roots)
+        ):
             raise ValueError("shell cwd is outside workspace")
         return _prepare_verified_shell_launch(
             workspace,
@@ -353,6 +376,8 @@ def _prepare_verified_shell_launch(
     dependency_environment: DependencyShellEnvironment | None,
     environment_policy: ShellEnvironmentPolicy | None = None,
 ) -> ShellLaunchSpec:
+    for root in (workspace, *workspace.additional_roots):
+        _verify_directory_path(root)
     host_shell = HOST_SHELL_RESOLVER.resolve()
     sandboxed = attempt is None or attempt.sandbox is SandboxType.MACOS_SEATBELT
     if sandboxed:
@@ -380,7 +405,8 @@ def _prepare_verified_shell_launch(
         attempt=attempt,
         active_skill_roots=active_skill_roots,
     )
-    _verify_directory_path(workspace)
+    for root in (workspace, *workspace.additional_roots):
+        _verify_directory_path(root)
     _verify_directory_path(cwd)
     launch = prepare_shell_launch(
         profile=profile,
@@ -707,7 +733,7 @@ def _open_verified_directory(identity: WorkspaceIdentity) -> int:
     try:
         descriptor = os.open(identity.path, flags)
     except OSError:
-        raise ValueError("workspace_identity_changed") from None
+        raise ShellWorkspaceChangedError("workspace_identity_changed") from None
     metadata = os.fstat(descriptor)
     if (
         not stat.S_ISDIR(metadata.st_mode)
@@ -715,7 +741,7 @@ def _open_verified_directory(identity: WorkspaceIdentity) -> int:
         != (identity.device, identity.inode, identity.owner)
     ):
         os.close(descriptor)
-        raise ValueError("workspace_identity_changed")
+        raise ShellWorkspaceChangedError("workspace_identity_changed")
     return descriptor
 
 
@@ -728,6 +754,6 @@ def _verify_directory_path(identity: WorkspaceIdentity) -> None:
             metadata.st_ino,
             metadata.st_uid,
         ) != (identity.device, identity.inode, identity.owner):
-            raise ValueError("workspace_identity_changed")
+            raise ShellWorkspaceChangedError("workspace_identity_changed")
     finally:
         os.close(descriptor)

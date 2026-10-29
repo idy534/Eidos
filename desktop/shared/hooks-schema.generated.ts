@@ -639,6 +639,11 @@ export const hookSchema = {
           "title": "Workspacechanged",
           "type": "boolean"
         },
+        "workspaceObservationComplete": {
+          "default": true,
+          "title": "Workspaceobservationcomplete",
+          "type": "boolean"
+        },
         "workspaceChanges": {
           "default": [],
           "items": {

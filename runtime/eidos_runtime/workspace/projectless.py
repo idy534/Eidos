@@ -11,7 +11,7 @@ import unicodedata
 from typing import Iterator
 
 from eidos_runtime.db.database import WorkspaceIdentity
-from eidos_runtime.workspace.reader import WorkspacePathError, capture_workspace_identity
+from eidos_runtime.workspace.reader import WorkspacePathError, capture_directory_identity
 
 MAX_NAME_BYTES = 96
 MAX_NAME_HINT_CHARACTERS = 512
@@ -90,7 +90,7 @@ class ProjectlessDirectoryAllocator:
                 metadata.st_dev, metadata.st_ino, metadata.st_uid
             ) != (identity.device, identity.inode, identity.owner):
                 raise WorkspacePathError("workspace_identity_changed")
-        if capture_workspace_identity(identity.path) != identity:
+        if capture_directory_identity(identity.path) != identity:
             raise WorkspacePathError("workspace_identity_changed")
 
     def remove_empty(self, identity: WorkspaceIdentity) -> None:

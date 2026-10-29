@@ -818,6 +818,122 @@
   font-style: italic;
 }
 
+.sidebar-hover-card--project {
+  min-width: 240px;
+  max-width: 380px;
+}
+
+.sidebar-hover-card__header--project {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.sidebar-hover-card__title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.sidebar-hover-card__meta-group {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: none;
+  margin-left: auto;
+}
+
+.sidebar-hover-card__session-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.sidebar-hover-card__pin-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  opacity: 0.85;
+  flex: none;
+}
+
+.sidebar-hover-card__body--project {
+  margin-top: 0.4rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  gap: 0.2rem;
+}
+
+.sidebar-hover-card__roots-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-height: 12.5rem;
+  overflow-y: auto;
+  padding-right: 0.1rem;
+}
+
+.sidebar-hover-card__root-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.2rem 0.35rem;
+  border-radius: var(--radius-sm);
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+  transition: background-color 100ms ease;
+}
+
+.sidebar-hover-card__root-row:hover {
+  background: rgba(0, 0, 0, 0.035);
+}
+
+.sidebar-hover-card__root-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.sidebar-hover-card__root-icon--primary {
+  color: var(--accent);
+  opacity: 0.95;
+}
+
+.sidebar-hover-card__root-icon--muted {
+  color: var(--muted);
+  opacity: 0.55;
+}
+
+.sidebar-hover-card__root-path {
+  font-family: var(--font-code);
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: break-all;
+  flex: 1;
+  min-width: 0;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 /* Sidebar Automation Entry (inside scrollable nav) */
 
 .sidebar .primary-action-btn--compact {

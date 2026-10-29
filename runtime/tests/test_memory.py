@@ -522,7 +522,9 @@ def test_restart_keeps_new_notes(store):
         reopened.close()
 
 
-def test_v39_upgrade_discards_legacy_memory_and_preserves_chat(tmp_path):
+def test_v39_upgrade_discards_legacy_memory_and_preserves_chat(
+    tmp_path, downgrade_project_workspaces_schema
+):
     from eidos_runtime.memory.schema import (
         MEMORY_SCHEMA_SQL,
         MEMORY_USE_SCHEMA_SQL,
@@ -538,6 +540,7 @@ def test_v39_upgrade_discards_legacy_memory_and_preserves_chat(tmp_path):
     run, _ = store.create_run(session["id"], "保留这段真实聊天")
     store.close()
     with sqlite3.connect(root / "state.sqlite") as connection:
+        downgrade_project_workspaces_schema(connection)
         for (name,) in connection.execute(
             "SELECT name FROM sqlite_master WHERE type='trigger' AND (name LIKE 'memory_%' OR name LIKE '%_memory%' OR name LIKE '%_origin_memory')"
         ).fetchall():

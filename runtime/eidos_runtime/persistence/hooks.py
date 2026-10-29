@@ -98,7 +98,7 @@ class HookRepository(Repository):
             updated = connection.execute("UPDATE hook_invocations SET status=?, result_json=?, output_json=?, completed_at=? WHERE id=? AND status IN ('intent','running')", ("unknown" if result.status == "unknown" else "completed", result.model_dump_json(by_alias=True), output.model_dump_json(by_alias=True) if output else None, now_ms(), invocation_id))
             if updated.rowcount != 1:
                 return
-            if result.workspace_changed:
+            if result.workspace_changed or not result.workspace_observation_complete:
                 connection.execute("UPDATE runs SET workspace_version=workspace_version+1,updated_at=? WHERE id=?", (now_ms(), row["run_id"]))
             run = connection.execute("SELECT session_id FROM runs WHERE id=?", (row["run_id"],)).fetchone()
             event = append_event(connection, EventType.RUN_UPDATED, now_ms(), {"reason": "hook_result"}, run_id=row["run_id"], session_id=run["session_id"])

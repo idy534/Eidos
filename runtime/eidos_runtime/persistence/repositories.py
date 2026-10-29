@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.project_workspace import SessionRoot
+
 from collections.abc import Mapping
 
 from eidos_runtime.db.database import CommittedMutation, Database, Repository
@@ -58,7 +60,9 @@ class TypedRuntimeRepository(Repository):
         worktree_id: str | None = None,
         execution_mode: SessionExecutionMode = SessionExecutionMode.LOCAL,
         project_id: str | None = None,
+        workspace_roots: tuple[SessionRoot, ...] | None = None,
         operation_id: str | None = None,
+        operation_request: dict[str, object] | None = None,
         session_id: str | None = None,
         projectless: bool = False,
         projectless_creation_id: str | None = None,
@@ -68,7 +72,9 @@ class TypedRuntimeRepository(Repository):
             worktree_id=worktree_id,
             execution_mode=execution_mode,
             project_id=project_id,
+            workspace_roots=workspace_roots,
             operation_id=operation_id,
+            operation_request=operation_request,
             session_id=session_id,
             projectless=projectless,
             projectless_creation_id=projectless_creation_id,
@@ -89,6 +95,15 @@ class TypedRuntimeRepository(Repository):
 
     def read_session(self, session_id: str) -> Session | None:
         return self._sessions.read_session(session_id)
+
+    def legacy_project_local_session_create_result(
+        self,
+        operation_id: str,
+        project_id: str,
+    ) -> dict[str, object] | None:
+        return self._sessions.legacy_project_local_session_create_result(
+            operation_id, project_id
+        )
 
     def session_is_projectless(self, session_id: str) -> bool:
         return self._sessions.session_is_projectless(session_id)

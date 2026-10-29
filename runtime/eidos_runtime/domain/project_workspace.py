@@ -25,7 +25,15 @@ class ProjectRoot(EidosFrozenStrictModel):
         return value
 
 
+class DirectoryIdentity(EidosFrozenStrictModel):
+    device: int = Field(ge=0)
+    inode: int = Field(ge=0)
+    owner: int = Field(ge=0)
+
+
 class SessionRoot(ProjectRoot):
+    git_dir_identity: DirectoryIdentity | None = None
+    git_common_identity: DirectoryIdentity | None = None
     device: int = Field(ge=0)
     inode: int = Field(ge=0)
     owner: int = Field(ge=0)

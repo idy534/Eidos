@@ -67,7 +67,8 @@ class CheckpointWorktreePort(Protocol):
     ) -> Worktree: ...
 
     def prepare_create(
-        self, repository_root: Path | str, base_ref: str | None = None
+        self, repository_root: Path | str, base_ref: str | None = None,
+        *, project: Project | None = None,
     ) -> Worktree: ...
 
     def create_prepared(
@@ -570,10 +571,12 @@ class CheckpointApplication:
         if parent_projection.worktree is None:
             # A direct fork creates a new runtime/conversation lineage while
             # both Sessions continue to use the same real filesystem root.
-            session = self._store.create_session(
-                parent_projection.project.workspace_root
-            )
-            session_id = str(session["id"])
+            session = self._sessions.create_session(
+                parent_projection.session.workspace_root,
+                project_id=parent_projection.project.id,
+                workspace_roots=parent_projection.session.roots or None,
+            ).value
+            session_id = session.id
         else:
             return self._fork_managed(
                 request,
@@ -686,7 +689,7 @@ class CheckpointApplication:
             if lifecycle_operation is None:
                 plan = manager.prepare_create(
                     parent_project.workspace_root,
-                    base_ref=git_head,
+                    base_ref=git_head, project=parent_project,
                 )
                 token = uuid.uuid5(
                     uuid.NAMESPACE_URL,
@@ -702,6 +705,7 @@ class CheckpointApplication:
                         operation_id=lifecycle_operation_id,
                         state=WorktreeLifecycleState.PREPARED,
                         project_id=plan.project_id,
+                        workspace_roots=parent_projection.session.roots,
                         repository_root=parent_project.workspace_root,
                         worktree_id=plan.id,
                         worktree_root=plan.worktree_root,
@@ -781,10 +785,11 @@ class CheckpointApplication:
             session = self._sessions.read_session(session_id)
             if session is None:
                 session_mutation = self._sessions.create_session(
-                    parent_project.workspace_root,
+                    parent_projection.session.workspace_root,
                     worktree_id=worktree.id,
                     execution_mode=SessionExecutionMode.WORKTREE,
                     project_id=parent_project.id,
+                    workspace_roots=parent_projection.session.roots or None,
                     operation_id=None,
                     session_id=session_id,
                 )

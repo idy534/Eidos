@@ -605,7 +605,7 @@ describe("useSessionController real Hook behavior", () => {
       await result.current[1].materializeDraft();
     });
 
-    expect(createSession).toHaveBeenCalledWith(project.workspaceRoot, { executionMode: "local" });
+    expect(createSession).toHaveBeenCalledWith(project.workspaceRoot, { executionMode: "local", projectId: project.id });
     expect(result.current[0].snapshot).toEqual(mockSnapshot1);
     expect(result.current[0].draft).toBeDefined();
   });

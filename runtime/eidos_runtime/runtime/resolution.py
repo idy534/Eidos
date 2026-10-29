@@ -7,6 +7,7 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from eidos_runtime.domain.project_workspace import DirectoryIdentity
 from eidos_runtime.domain.approval_policy import ApprovalMode, FULL_ACCESS_WARNING_VERSION
 from eidos_runtime.domain.personalization import PersonalizationSettings
 from eidos_runtime.model.client import (
@@ -55,6 +56,8 @@ class WorkspaceIdentitySnapshot(_FrozenModel):
     owner: int
     git_dir: str | None = None
     git_common_dir: str | None = None
+    git_dir_identity: DirectoryIdentity | None = None
+    git_common_identity: DirectoryIdentity | None = None
 
 
 class RuleSourceSnapshot(_FrozenModel):
@@ -320,20 +323,20 @@ def create_run_resolution_snapshot(
         Path(workspace_identity.path),
         data_directory,
     )
-    if workspace_identity.additional_roots:
-        from eidos_runtime.sandbox.permissions import BasePermissionProfile
-        extra = tuple(Path(root.path) for root in workspace_identity.additional_roots)
-        extra_protected = tuple(
-            str(path) for root in workspace_identity.additional_roots
-            for path in (Path(root.path) / ".git", Path(root.path) / ".agents", Path(root.path) / ".eidos",
-                         *((Path(root.git_dir),) if root.git_dir else ()),
-                         *((Path(root.git_common_dir),) if root.git_common_dir else ()))
-        )
-        base_permissions = BasePermissionProfile.for_workspace(
-            workspace_root=Path(workspace_identity.path), additional_roots=extra,
-            protected_paths=tuple(Path(entry.path) for entry in base_permissions.permanent_denies),
-            protected_write_paths=tuple(Path(value) for value in (*base_permissions.protected_write_paths, *extra_protected)),
-        )
+    from eidos_runtime.sandbox.permissions import FileSystemPermissionEntry, FileSystemAccessMode
+    attached = workspace_identity.additional_roots or ()
+    extra_paths = tuple(root.path for root in attached)
+    metadata = tuple(dict.fromkeys(
+        path for root in (workspace_identity, *attached)
+        for path in (root.git_dir, root.git_common_dir,
+                     *((str(Path(root.path) / name) for name in (".git", ".agents", ".eidos")) if root in attached else ()))
+        if path is not None
+    ))
+    base_permissions = base_permissions.model_copy(update={
+        "workspace_roots": (*base_permissions.workspace_roots, *extra_paths),
+        "entries": (*base_permissions.entries, *(FileSystemPermissionEntry(path=path, access=FileSystemAccessMode.WRITE) for path in extra_paths)),
+        "protected_write_paths": tuple(dict.fromkeys((*base_permissions.protected_write_paths, *metadata))),
+    })
     if approval_mode == "full_access":
         base_permissions = base_permissions.with_full_access()
     permission_json = canonical_json(

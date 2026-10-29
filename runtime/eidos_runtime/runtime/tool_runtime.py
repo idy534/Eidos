@@ -117,9 +117,11 @@ from eidos_runtime.sandbox.seatbelt import (
 from eidos_runtime.persistence.shell_environment import ShellEnvironmentRepository
 from eidos_runtime.sandbox.shell import (
     ShellProcessStartError,
+    ShellWorkspaceChangedError,
     prepare_shell_launch_for_execution,
     process_start_failed_result,
     sandbox_unavailable_result,
+    workspace_changed_result,
 )
 from eidos_runtime.sandbox.workspace_manifest import (
     WorkspaceDiff,
@@ -726,7 +728,7 @@ class ShellToolHandler:
         git_write_roots: tuple[str, ...] = ()
         if shell_input.gitWriteAccess is GitWriteAccess.REQUEST and not full_access:
             try:
-                git_write_roots = resolve_git_write_roots(workspace)
+                git_write_roots = resolve_git_write_roots(cwd)
             except GitWriteAccessError as error:
                 return HandlerOutcome(
                     tool_error(
@@ -885,7 +887,7 @@ class ShellToolHandler:
             self.dependencies.events.publish(mutation, item=mutation.value)
 
         manifest_before = (
-            runtime.implementation.executor.workspace_index.manifest()  # type: ignore[attr-defined]
+            runtime.implementation.executor.workspace_manifest()  # type: ignore[attr-defined]
         )
         manifest_after = manifest_before
 
@@ -899,7 +901,7 @@ class ShellToolHandler:
                 # A failed scan may leave a cached complete manifest. It is not
                 # evidence that the command left the workspace unchanged.
                 manifest_after = replace(
-                    runtime.implementation.executor.workspace_index.manifest(),  # type: ignore[attr-defined]
+                    runtime.implementation.executor.workspace_manifest(),  # type: ignore[attr-defined]
                     complete=False,
                 )
                 if error.code in {
@@ -911,6 +913,20 @@ class ShellToolHandler:
                     "run_id": run_id, "tool_call_id": item["toolCall"]["id"],
                     "reason_code": error.code,
                 })
+            if git_write_roots:
+                try:
+                    if resolve_git_write_roots(cwd) != git_write_roots:
+                        raise GitWriteAccessError(
+                            "git_repository_identity_changed"
+                        )
+                except GitWriteAccessError as error:
+                    manifest_after = replace(manifest_after, complete=False)
+                    result["reconciliationRequired"] = True
+                    logger.warning("shell_git_metadata_observation_incomplete", extra={
+                        "run_id": run_id,
+                        "tool_call_id": item["toolCall"]["id"],
+                        "reason_code": str(error),
+                    })
             return diff_workspace_manifests(manifest_before, manifest_after)
 
         def execute_shell_attempt(
@@ -925,7 +941,7 @@ class ShellToolHandler:
                 )
                 if approved_cwd != cwd:
                     raise WorkspacePathError("workspace_identity_changed")
-                if git_write_roots and resolve_git_write_roots(workspace) != git_write_roots:
+                if git_write_roots and resolve_git_write_roots(approved_cwd) != git_write_roots:
                     raise GitWriteAccessError("git_repository_identity_changed")
             except ToolCancelled:
                 raise RuntimeCancelled from None
@@ -1003,6 +1019,11 @@ class ShellToolHandler:
                         raw_result,
                         dependency_provenance,
                     )
+            except ShellWorkspaceChangedError:
+                result = workspace_changed_result(skill_invocation=skill_invocation)
+                if dependency_provenance is not None:
+                    result = _attach_dependency_provenance(result, dependency_provenance)
+                return result, None
             except (HostShellUnavailableError, ShellProcessStartError):
                 result = process_start_failed_result(
                     skill_invocation=skill_invocation,
@@ -1303,8 +1324,8 @@ class ShellToolHandler:
 
             def complete_command(terminal: dict[str, object]) -> dict[str, object]:
                 terminal = {**initial_result, **terminal, "data": {**initial_result["data"], **terminal["data"]}}
-                reconciliation_required = terminal.get("reconciliationRequired") is True
                 diff = observe_workspace(terminal, threading.Event())
+                reconciliation_required = terminal.get("reconciliationRequired") is True
                 terminal = attach_workspace_diff(terminal, diff)
                 changed, diff_hash = diff.changed, diff.diff_hash
                 exit_data = terminal["data"]

@@ -61,6 +61,7 @@ class HookResult(EidosFrozenModel):
     exit_code: StrictInt | None = None
     duration_ms: StrictInt = Field(default=0, ge=0)
     workspace_changed: StrictBool = False
+    workspace_observation_complete: StrictBool = True
     workspace_changes: tuple[str, ...] = ()
     output_call_id: str | None = None
     context_truncated: StrictBool = False

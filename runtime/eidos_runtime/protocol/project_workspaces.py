@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-from pydantic import ConfigDict, Field
-from pydantic.alias_generators import to_camel
+from pydantic import Field
 
-from pydantic import BaseModel
+from eidos_runtime.models import EidosStrictModel
 
 
-class WorkspaceDto(BaseModel):
-    model_config = ConfigDict(alias_generator=to_camel, extra="forbid", strict=True, populate_by_name=True)
-
-    def to_json_value(self):
-        return self.model_dump(mode="json", by_alias=True, exclude_none=True)
+class WorkspaceDto(EidosStrictModel):
+    def to_json_value(self) -> dict[str, object]:
+        return self.to_wire_dict(exclude_none=True)
 
 
 class ProjectRootDto(WorkspaceDto):

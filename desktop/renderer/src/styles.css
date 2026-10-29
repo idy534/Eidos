@@ -33,6 +33,7 @@
 @import "./components/PdfViewer.css";
 @import "./components/agents.css";
 @import "./components/settings/MemorySettings.css";
+@import "./components/settings/PersonalizationSettings.css";
 @import "./components/response-actions.css";
 @import "./components/TurnResults.css";
 @import "./components/TextReviewPanel.css";

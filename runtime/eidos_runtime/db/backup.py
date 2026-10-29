@@ -17,7 +17,16 @@ from pydantic import Field, ValidationError
 from eidos_runtime.application.agent_catalog import AgentCatalog
 from eidos_runtime.db.layout import collect_unreferenced_blobs, iter_blob_references
 from eidos_runtime.db.json_blobs import JsonBlobStore
-from eidos_runtime.db.schema import SCHEMA_VERSION, V40_SCHEMA_VERSION, V41_SCHEMA_VERSION, V42_SCHEMA_VERSION, V43_SCHEMA_VERSION
+from eidos_runtime.db.schema import (
+    SCHEMA_VERSION,
+    V40_SCHEMA_VERSION,
+    V41_SCHEMA_VERSION,
+    V42_SCHEMA_VERSION,
+    V43_SCHEMA_VERSION,
+    V44_SCHEMA_VERSION,
+    V45_SCHEMA_VERSION,
+    V46_SCHEMA_VERSION,
+)
 from eidos_runtime.memory.publication import MemoryFiles
 from eidos_runtime.memory.repository import MemoryRejected
 from eidos_runtime.memory.service import MemoryService
@@ -167,7 +176,16 @@ def restore(archive_path: Path, destination: Path) -> None:
                 manifest = _Manifest.model_validate_json(archive.read("manifest.json"))
             except ValidationError:
                 raise MemoryRejected("data_restore_format_unsupported") from None
-            if manifest.schema_version not in {V40_SCHEMA_VERSION, V41_SCHEMA_VERSION, V42_SCHEMA_VERSION, V43_SCHEMA_VERSION, SCHEMA_VERSION}:
+            if manifest.schema_version not in {
+                V40_SCHEMA_VERSION,
+                V41_SCHEMA_VERSION,
+                V42_SCHEMA_VERSION,
+                V43_SCHEMA_VERSION,
+                V44_SCHEMA_VERSION,
+                V45_SCHEMA_VERSION,
+                V46_SCHEMA_VERSION,
+                SCHEMA_VERSION,
+            }:
                 raise MemoryRejected("data_restore_format_unsupported")
             for item in entries:
                 relative = PurePosixPath(item.filename)
@@ -228,6 +246,18 @@ def restore(archive_path: Path, destination: Path) -> None:
                 from eidos_runtime.db.personalization_migration import migrate_personalization
                 connection.commit()
                 migrate_personalization(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V44_SCHEMA_VERSION:
+                from eidos_runtime.db.project_workspaces_migration import migrate_project_workspaces
+                connection.commit()
+                migrate_project_workspaces(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V45_SCHEMA_VERSION:
+                from eidos_runtime.db.project_binding_migration import migrate_project_bindings
+                connection.commit()
+                migrate_project_bindings(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V46_SCHEMA_VERSION:
+                from eidos_runtime.db.worktree_git_identity_migration import migrate_worktree_git_identity
+                connection.commit()
+                migrate_worktree_git_identity(connection)
             connection.execute("UPDATE memory_scopes SET mode='read',privacy_epoch=privacy_epoch+1")
             connection.execute(
                 "UPDATE memory_metadata SET value='0' WHERE key='legacy_cleanup_pending'"

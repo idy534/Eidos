@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from collections.abc import Callable
 from contextlib import nullcontext
 
@@ -25,7 +27,7 @@ from eidos_runtime.protocol.methods import (
     ProjectListResponseDto,
 )
 from eidos_runtime.protocol.schemas import ProjectDto
-from eidos_runtime.protocol.project_workspaces import ProjectReadRequest, ProjectUpdateRequest, ProjectRootDto, ProjectCreateFoldersRequest
+from eidos_runtime.protocol.project_workspaces import ProjectReadRequest, ProjectUpdateRequest, ProjectRootDto, ProjectCreateFoldersRequest, ProjectRootInput
 from eidos_runtime.persistence.project_workspaces import ProjectWorkspaceRepository, ProjectConfigurationConflict
 from eidos_runtime.domain.project_workspace import ProjectRoot
 
@@ -85,17 +87,23 @@ class ProjectApplication:
 
     def create_folders(self, request: ProjectCreateFoldersRequest) -> ProjectDto:
         try:
+            command = request.model_dump(mode="json", by_alias=True, exclude={"operation_id"})
+            replay = self._repository.database.operation_result(request.operation_id, "project/createFolders", command)
+            if replay is not None:
+                return self._dto(Project.model_validate_json(json.dumps(replay)))
             roots = self._validated_roots(request.roots)
             return self._dto(self._workspaces.create(
                 name=request.name.strip() if request.name else None, roots=roots,
-                primary_root_id=request.primary_root_id, operation_id=request.operation_id,
+                primary_root_id=request.primary_root_id, operation_id=request.operation_id, operation_request=command,
             ).value)
         except OperationConflictError as error:
             raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+        except OperationInProgressError as error:
+            raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
         except (OSError, ValueError, WorktreeError) as error:
             raise ApplicationError("PROJECT_WORKSPACE_INVALID", str(error)) from error
 
-    def _validated_roots(self, entries) -> tuple[ProjectRoot, ...]:
+    def _validated_roots(self, entries: list[ProjectRootInput]) -> tuple[ProjectRoot, ...]:
         from eidos_runtime.git.discovery import GitRepositoryDiscoveryService
         from eidos_runtime.git.backend import DulwichGitBackend
         from eidos_runtime.workspace.reader import capture_workspace_identity
@@ -114,11 +122,15 @@ class ProjectApplication:
 
     def update(self, request: ProjectUpdateRequest) -> ProjectDto:
         try:
+            command = request.model_dump(mode="json", by_alias=True, exclude={"operation_id"})
+            replay = self._repository.database.operation_result(request.operation_id, "project/update", command)
+            if replay is not None:
+                return self._dto(Project.model_validate_json(json.dumps(replay)))
             roots = self._validated_roots(request.roots)
             mutation = self._workspaces.update(
                 request.project_id, expected_revision=request.expected_revision,
                 name=request.name.strip() if request.name else None, roots=tuple(roots),
-                primary_root_id=request.primary_root_id, operation_id=request.operation_id,
+                primary_root_id=request.primary_root_id, operation_id=request.operation_id, operation_request=command,
             )
             return self._dto(mutation.value)
         except ProjectConfigurationConflict as error:
@@ -127,6 +139,8 @@ class ProjectApplication:
             raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
         except OperationConflictError as error:
             raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+        except OperationInProgressError as error:
+            raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
         except (OSError, ValueError, WorktreeError) as error:
             raise ApplicationError("PROJECT_WORKSPACE_INVALID", str(error)) from error
 

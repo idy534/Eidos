@@ -122,12 +122,21 @@ class RunResources:
                 supports_tool_grammar=self.supports_tool_grammar,
             )
             self.tool_executor.full_access = self.store.read_run(self.run_id).get("approvalMode") == "full_access"
+            from eidos_runtime.workspace.reader import WorkspaceReader
+
+            def check_workspace() -> None:
+                for root in (workspace, *workspace.additional_roots):
+                    with WorkspaceReader(root):
+                        pass
+
+            check_workspace()
             self.skills = SkillCatalog(PluginCatalog(self.store))
             self.mcp = McpManager(
                 self.skills.plugins,
                 self.extension_snapshot,
                 workspace.path,
                 additional_workspace_roots=tuple(root.path for root in workspace.additional_roots),
+                workspace_check=check_workspace,
                 async_kernel=self.async_kernel,
                 sandbox=self.mcp_sandbox and not self.tool_executor.full_access,
                 resource_registry=self.resources,
@@ -379,6 +388,7 @@ class RunResources:
         return ViewImageRootAuthority.from_skill_access(
             workspace.path,
             self.skill_access,
+            workspace_identities=(workspace, *workspace.additional_roots),
         )
 
     def _refresh_skill_dependency_diagnostics(self) -> None:

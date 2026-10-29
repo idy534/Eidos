@@ -76,17 +76,14 @@ class _CanonicalIdRequest(MethodRequestDto):
         return self
 
 
-class _WorkspaceSessionRequest(MethodRequestDto):
+class _ProjectBoundSessionRequest(MethodRequestDto):
     session_id: StrictStr = Field(alias="sessionId")
-    workspace_root: StrictStr | None = Field(
-        default=None, alias="workspaceRoot", min_length=1, max_length=4096
-    )
     project_id: StrictStr | None = Field(
         default=None, alias="projectId", min_length=1, max_length=256
     )
 
     @model_validator(mode="after")
-    def _validate_workspace_session_id(self) -> "_WorkspaceSessionRequest":
+    def _validate_workspace_session_id(self) -> "_ProjectBoundSessionRequest":
         value = self.session_id.removeprefix("draft-")
         try:
             if str(uuid.UUID(value)) != value:
@@ -98,6 +95,12 @@ class _WorkspaceSessionRequest(MethodRequestDto):
         if self.session_id.startswith("draft-") and not self.project_id:
             raise ValueError("draft workspace requires a project binding")
         return self
+
+
+class _WorkspaceSessionRequest(_ProjectBoundSessionRequest):
+    workspace_root: StrictStr | None = Field(
+        default=None, alias="workspaceRoot", min_length=1, max_length=4096
+    )
 
 
 class _OperationRequest(_CanonicalIdRequest):
@@ -214,19 +217,16 @@ class ToolTextReadRequestDto(_CanonicalIdRequest):
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id", "tool_call_id")
 
 
-class SessionGitStatusRequestDto(_GitRootRequest, _CanonicalIdRequest):
-    session_id: StrictStr = Field(alias="sessionId")
-    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
+class SessionGitStatusRequestDto(_GitRootRequest, _ProjectBoundSessionRequest):
+    pass
 
 
-class SessionGitDiffRequestDto(_GitRootRequest, _CanonicalIdRequest):
-    session_id: StrictStr = Field(alias="sessionId")
+class SessionGitDiffRequestDto(_GitRootRequest, _ProjectBoundSessionRequest):
     scope: Literal["head", "baseline"] = "head"
     compare_ref: StrictStr | None = Field(
         default=None, alias="compareRef", min_length=1, max_length=4096
     )
     path: StrictStr | None = Field(default=None, min_length=1, max_length=4096)
-    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
 
     @field_validator("path")
     @classmethod
@@ -712,6 +712,9 @@ class SessionListResponseDto(MethodResultDto):
 
 class ProjectListResponseDto(MethodResultDto):
     items: list[ProjectDto]
+
+    def to_json_value(self) -> dict[str, JsonValue]:
+        return {"items": [project.to_json_value() for project in self.items]}
 
 
 class ProjectCreateResponseDto(MethodResultDto, ProjectDto):

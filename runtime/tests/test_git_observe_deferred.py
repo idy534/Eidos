@@ -39,7 +39,9 @@ class _FakeServer:
         self._lock = threading.Lock()
         self.supervisor = _FakeSupervisor(schedulable=schedulable)
         self._applications_or_error = lambda: SimpleNamespace(
-            sessions=SimpleNamespace(git_diff=method)
+            sessions=SimpleNamespace(
+                for_git_request=lambda _request: SimpleNamespace(git_diff=method)
+            )
         )
 
     def send(self, message: dict[str, object]) -> None:

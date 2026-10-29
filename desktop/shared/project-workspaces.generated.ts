@@ -71,10 +71,12 @@ export type Operationid1 = string;
 export type Rootid3 = string | null;
 export type Sessionid2 = string;
 export type Commentid1 = string;
-export type Rootid4 = string | null;
 export type Sessionid3 = string;
-export type Rootid5 = string | null;
+export type Projectid = string | null;
+export type Rootid4 = string | null;
 export type Sessionid4 = string;
+export type Projectid1 = string | null;
+export type Rootid5 = string | null;
 export type Scope2 = "head" | "baseline";
 export type Compareref = string | null;
 export type Path3 = string | null;
@@ -248,8 +250,8 @@ export type Head13 = string;
 export type Branch16 = string | null;
 export type Operationstate4 = "none" | "merge" | "rebase";
 export type Conflictfiles5 = string[];
-export type Projectid = string;
-export type Projectid1 = string;
+export type Projectid2 = string;
+export type Projectid3 = string;
 export type Operationid14 = string;
 export type Expectedrevision = number;
 export type Name2 = string | null;
@@ -329,12 +331,14 @@ export interface ReviewCommentDeleteRequestDto {
   commentId: Commentid1;
 }
 export interface SessionGitStatusRequestDto {
-  rootId?: Rootid4;
   sessionId: Sessionid3;
+  projectId?: Projectid;
+  rootId?: Rootid4;
 }
 export interface SessionGitDiffRequestDto {
-  rootId?: Rootid5;
   sessionId: Sessionid4;
+  projectId?: Projectid1;
+  rootId?: Rootid5;
   scope?: Scope2;
   compareRef?: Compareref;
   path?: Path3;
@@ -573,10 +577,10 @@ export interface SessionGitRebaseAbortResponseDto {
   conflictFiles: Conflictfiles5;
 }
 export interface ProjectReadRequest {
-  projectId: Projectid;
+  projectId: Projectid2;
 }
 export interface ProjectUpdateRequest {
-  projectId: Projectid1;
+  projectId: Projectid3;
   operationId: Operationid14;
   expectedRevision: Expectedrevision;
   name?: Name2;

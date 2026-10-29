@@ -1,7 +1,7 @@
 import { CreateBranchDialog } from "./CreateBranchDialog.js";
 import type { EidosRuntimeAPI } from "../../../shared/ipc-api.js";
 import type { ProjectRootDto } from "../../../shared/project-workspaces.js";
-import { gitWorkspaceClient } from "../app/git-workspace-client.js";
+import { gitFilePath, gitWorkspaceClient } from "../app/git-workspace-client.js";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Diff,
@@ -54,6 +54,7 @@ interface ReviewFileState {
 }
 
 interface GitChangesPanelProps {
+  projectId?: string | undefined;
   roots?: ProjectRootDto[] | undefined;
   gitClient?: EidosRuntimeAPI | undefined;
   sessionId: string;
@@ -67,6 +68,7 @@ interface GitChangesPanelProps {
   } | undefined;
   items?: import("../contracts.js").Item[] | undefined;
   workspaceRoot: string;
+  editorMountedPath?: string | undefined;
   scope: GitDiffScope;
   status: SessionGitStatus | undefined;
   summary?: SessionGitDiff | undefined;
@@ -99,6 +101,9 @@ interface GitChangesPanelProps {
   workflowOpenRequest?: number | undefined;
   onWorkflowClose?: (() => void) | undefined;
   onCreateBranch?: (() => void) | undefined;
+  repositories?: ProjectRootDto[] | undefined;
+  selectedRepositoryId?: string | undefined;
+  onSelectRepository?: ((repositoryId: string) => void) | undefined;
 }
 
 const defaultReadDiff: NonNullable<GitChangesPanelProps["readDiff"]> = (id, scope, path) => (
@@ -202,8 +207,9 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
   const [loading, setLoading] = useState(false);
   useEffect(() => { setSelected((value) => repositories.some((root) => root.id === value) ? value : repositories[0]?.id ?? ""); }, [repositories]);
   const root = repositories.find((entry) => entry.id === selected);
-  const scoped = Boolean(root && (repositories.length > 1 || props.roots?.[0]?.id !== root.id));
-  const client = useMemo(() => selected ? gitWorkspaceClient(selected) : undefined, [selected]);
+  const scoped = Boolean(root);
+  const repositoryPath = root?.repositoryRoot === props.roots?.[0]?.repositoryRoot ? props.workspaceRoot : root?.repositoryRoot;
+  const client = useMemo(() => selected && root && repositoryPath ? gitWorkspaceClient(selected, { mountedPath: root.path, repositoryPath }, props.projectId) : undefined, [selected, root?.path, repositoryPath, props.projectId]);
   useEffect(() => {
     if (!scoped || !client) return;
     let current = true; setLoading(true); setError(undefined); setStatus(undefined);
@@ -212,17 +218,16 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
       .finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
   }, [client, scoped, props.sessionId, refresh, root?.path, props.status?.observedAt, props.latestRunId, props.items?.at(-1)?.id]);
-  if (!scoped || !client || !root) return <GitChangesContent {...props} />;
+  if (!scoped || !client || !root) return <GitChangesContent {...props} repositories={repositories} selectedRepositoryId={selected} onSelectRepository={setSelected} />;
   const { summary: _summary, ...scopedProps } = props;
   return <div className="git-repository-panel">
-    <label className="git-repository-picker">仓库<select aria-label="选择 Git 仓库" value={selected} onChange={(event) => setSelected(event.target.value)}>
-      {repositories.map((entry) => <option key={entry.id} value={entry.id}>{entry.path.split("/").filter(Boolean).at(-1)}{entry.shared ? " · 共享" : ""}</option>)}
-    </select></label>
     <GitChangesContent {...scopedProps} key={`${props.sessionId}:${selected}`} gitClient={client}
-      workspaceRoot={root.repositoryRoot ?? root.path} status={status} loading={loading} error={error}
+      repositories={repositories} selectedRepositoryId={selected} onSelectRepository={setSelected}
+      workspaceRoot={repositoryPath ?? root.path} editorMountedPath={root.path}
+      status={status} loading={loading} error={error}
       readDiff={client.readSessionGitDiff} openInEditor={client.openWorkspacePathInEditor} listComments={client.listReviewComments}
       createComment={client.createReviewComment} deleteComment={client.deleteReviewComment}
-      onCreateBranch={props.roots?.[0]?.id === selected ? props.onCreateBranch : () => { setBranchError(undefined); setBranchOpen(true); }}
+      onCreateBranch={props.sessionId.startsWith("draft-") ? undefined : props.roots?.[0]?.id === selected ? props.onCreateBranch : () => { setBranchError(undefined); setBranchOpen(true); }}
       onRefresh={() => { setRefresh((value) => value + 1); props.onRefresh(); }} />
     <CreateBranchDialog open={branchOpen} mode="local" busy={branchBusy} error={branchError}
       onCancel={() => { if (!branchBusy) setBranchOpen(false); }}
@@ -252,12 +257,16 @@ function GitChangesContent(props: GitChangesPanelProps) {
   const {
     sessionId,
     workspaceRoot,
+    editorMountedPath,
     scope,
     status,
     summary,
     loading,
     error,
     expanded = false,
+    repositories,
+    selectedRepositoryId,
+    onSelectRepository,
     onScopeChange,
     onRefresh,
     readDiff = defaultReadDiff,
@@ -273,6 +282,7 @@ function GitChangesContent(props: GitChangesPanelProps) {
     onWorkflowClose,
     onCreateBranch,
   } = props;
+  const isDraft = sessionId.startsWith("draft-");
   const [loadedSummary, setLoadedSummary] = useState<SessionGitDiff>();
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState<string>();
@@ -480,6 +490,25 @@ function GitChangesContent(props: GitChangesPanelProps) {
       : "未提交";
   const currentScopeLabel = fullScopeLabel;
 
+  const hasMultipleRepositories = Boolean(repositories && repositories.length > 1);
+  const currentRepo = repositories?.find((entry) => entry.id === selectedRepositoryId);
+  const currentRepoName = currentRepo
+    ? `${currentRepo.path.split("/").filter(Boolean).at(-1) ?? currentRepo.id}${currentRepo.shared ? " · 共享" : ""}`
+    : "";
+  const repoMenuItems: DropdownMenuItem[] = useMemo(() => (
+    (repositories ?? []).map((entry) => {
+      const name = entry.path.split("/").filter(Boolean).at(-1) ?? entry.id;
+      const label = `${name}${entry.shared ? " · 共享" : ""}`;
+      return {
+        key: entry.id,
+        label,
+        checked: entry.id === selectedRepositoryId,
+        disabled: entry.id === selectedRepositoryId,
+        onClick: () => onSelectRepository?.(entry.id),
+      };
+    })
+  ), [repositories, selectedRepositoryId, onSelectRepository]);
+
   const scopeMenuItems: DropdownMenuItem[] = [
     {
       key: "head",
@@ -528,7 +557,7 @@ function GitChangesContent(props: GitChangesPanelProps) {
             key: "send-review-feedback",
             label: "发送审阅意见",
             icon: <SendIcon />,
-            disabled: commentLoading || reviewFeedbackDisabled,
+            disabled: isDraft || commentLoading || reviewFeedbackDisabled,
             onClick: () => void sendReviewFeedback(),
           },
         ]
@@ -539,6 +568,21 @@ function GitChangesContent(props: GitChangesPanelProps) {
     <section className={`git-changes-panel${expanded ? " git-changes-panel--expanded" : ""}`} aria-label="Git Changes">
       <header className="git-changes-toolbar" aria-label="审查工具栏">
         <div className="git-changes-toolbar-left">
+          {hasMultipleRepositories && (
+            <DropdownMenu
+              className="git-repo-dropdown"
+              menuClassName="git-repo-dropdown-menu"
+              label="Git 仓库"
+              triggerAriaLabel="选择 Git 仓库"
+              trigger={(
+                <span className="git-repo-dropdown-trigger" title={`切换 Git 仓库: ${currentRepoName}`}>
+                  <span className="git-repo-dropdown-label">{currentRepoName}</span>
+                  <span className="dropdown-caret" aria-hidden="true">▾</span>
+                </span>
+              )}
+              items={repoMenuItems}
+            />
+          )}
           <DropdownMenu
             className="git-scope-dropdown"
             menuClassName="git-scope-dropdown-menu"
@@ -616,13 +660,13 @@ function GitChangesContent(props: GitChangesPanelProps) {
               variant="secondary"
               size="small"
               className="git-review-feedback"
-              disabled={commentLoading || reviewFeedbackDisabled}
+              disabled={isDraft || commentLoading || reviewFeedbackDisabled}
               onClick={() => void sendReviewFeedback()}
             >
               发送审阅意见
             </Button>
           )}
-          {status && (
+          {status && !isDraft && (
             <GitWorkflowControls
               {...(gitClient ? {
                 switchBranch: gitClient.switchSessionGitBranch, readRemoteStatus: gitClient.readSessionGitRemoteStatus,
@@ -692,6 +736,14 @@ function GitChangesContent(props: GitChangesPanelProps) {
                 comment.status === "stale"
               ));
               const draftAnchor = draft?.key === key ? draft.anchor : undefined;
+              let editorPathAllowed = true;
+              if (editorMountedPath) {
+                try {
+                  gitFilePath(path, workspaceRoot, editorMountedPath);
+                } catch {
+                  editorPathAllowed = false;
+                }
+              }
               return (
                 <article className="git-review-file" key={key}>
                   <header className="git-review-file-header">
@@ -712,14 +764,21 @@ function GitChangesContent(props: GitChangesPanelProps) {
                         </span>
                       )}
                     </button>
-                    <Tooltip content={`在编辑器中打开 ${path}`}>
+                    <Tooltip content={isDraft
+                      ? "创建聊天后可在编辑器中打开文件"
+                      : editorPathAllowed
+                        ? `在编辑器中打开 ${path}`
+                        : "文件位于项目添加的文件夹之外，无法从编辑器中打开"}>
                       <Button
                         size="small"
                         variant="ghost"
                         className="git-icon-button"
                         icon={<OpenInEditorIcon />}
                         aria-label={`在编辑器中打开 ${path}`}
-                        title={`在编辑器中打开 ${path}`}
+                        disabled={isDraft || !editorPathAllowed}
+                        title={editorPathAllowed
+                          ? `在编辑器中打开 ${path}`
+                          : "文件位于项目添加的文件夹之外"}
                         onClick={() => {
                           setLocalError(undefined);
                           void openInEditor(sessionId, path).catch((cause: unknown) => {
@@ -767,6 +826,7 @@ function GitChangesContent(props: GitChangesPanelProps) {
                           }}
                           gutterEvents={{
                             onClick: ({ change, side }) => {
+                              if (isDraft) return;
                               const anchor = change && commentAnchor(change, side);
                               if (anchor) {
                                 setDraft({ key, anchor });

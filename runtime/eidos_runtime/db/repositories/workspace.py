@@ -4,18 +4,26 @@ from pathlib import Path
 from dataclasses import replace
 import json
 
-from eidos_runtime.domain.project_workspace import SessionRoot
+from eidos_runtime.domain.project_workspace import DirectoryIdentity, SessionRoot
 import sqlite3
 import stat
 
 from eidos_runtime.db.database import WorkspaceIdentity
-from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
+from eidos_runtime.db.errors import (
+    ResourceNotFoundError,
+    StorageError,
+    WorkspaceIdentityChangedError,
+)
 
 
 _SESSION_WORKSPACE_SELECT = """
     SELECT s.id, s.workspace_root, s.workspace_dev, s.workspace_inode, s.workspace_roots_json,
            s.workspace_uid, s.worktree_id, s.execution_mode,
-           w.worktree_root, w.state, w.git_dir, w.repository_root, w.git_common_dir AS worktree_common_dir,
+           w.worktree_root, w.state, w.git_dir, w.repository_root,
+           w.git_common_dir AS worktree_common_dir,
+           w.git_dir_dev AS worktree_git_dir_dev,
+           w.git_dir_inode AS worktree_git_dir_inode,
+           w.git_dir_uid AS worktree_git_dir_uid,
            p.workspace_root AS project_workspace_root, p.git_common_dir
     FROM sessions s
     LEFT JOIN worktrees w ON w.id = s.worktree_id
@@ -103,26 +111,95 @@ def _identity_from_session_row(row: sqlite3.Row) -> WorkspaceIdentity:
             if (row["worktree_common_dir"] or row["git_common_dir"]) is not None
             else None
         ),
+        git_dir_identity=_worktree_git_dir_identity(row),
     )
 
 
+def _worktree_git_dir_identity(row: sqlite3.Row) -> DirectoryIdentity:
+    from eidos_runtime.workspace.reader import WorkspacePathError, capture_directory_identity
+
+    values = (
+        row["worktree_git_dir_dev"],
+        row["worktree_git_dir_inode"],
+        row["worktree_git_dir_uid"],
+    )
+    if row["git_dir"] is None or any(value is None for value in values):
+        raise WorkspaceIdentityChangedError("git_metadata_identity_unavailable")
+    expected = DirectoryIdentity(
+        device=values[0],
+        inode=values[1],
+        owner=values[2],
+    )
+    try:
+        captured = capture_directory_identity(row["git_dir"])
+    except WorkspacePathError as error:
+        raise WorkspaceIdentityChangedError(error.code) from error
+    if captured.path != Path(row["git_dir"]) or (
+        captured.device,
+        captured.inode,
+        captured.owner,
+    ) != (expected.device, expected.inode, expected.owner):
+        raise WorkspaceIdentityChangedError("workspace_identity_changed")
+    return expected
+
+
+def _verify_expected_git_common_identity(root: SessionRoot, actual: Path | None) -> None:
+    from eidos_runtime.workspace.reader import WorkspacePathError, capture_directory_identity
+
+    if (
+        root.git_common_dir is None
+        or root.git_common_identity is None
+        or actual is None
+        or actual != Path(root.git_common_dir).resolve(strict=False)
+    ):
+        raise WorkspaceIdentityChangedError("workspace_identity_changed")
+    try:
+        captured = capture_directory_identity(root.git_common_dir)
+    except WorkspacePathError as error:
+        raise WorkspaceIdentityChangedError(error.code) from error
+    if captured.path != Path(root.git_common_dir) or (
+        captured.device,
+        captured.inode,
+        captured.owner,
+    ) != (
+        root.git_common_identity.device,
+        root.git_common_identity.inode,
+        root.git_common_identity.owner,
+    ):
+        raise WorkspaceIdentityChangedError("workspace_identity_changed")
+
 
 def _with_roots(row: sqlite3.Row, primary: WorkspaceIdentity) -> WorkspaceIdentity:
-    from eidos_runtime.workspace.reader import capture_workspace_identity
+    from eidos_runtime.workspace.reader import WorkspacePathError, WorkspaceReader
     roots = tuple(SessionRoot.model_validate(value) for value in json.loads(row["workspace_roots_json"]))
     if not roots:
+        if row["worktree_root"] is not None:
+            raise WorkspaceIdentityChangedError("workspace_identity_changed")
         return primary
     identities = []
     for root in roots:
         if row["worktree_root"] is not None and row["execution_mode"] == "worktree" and root.repository_root == row["repository_root"]:
+            _verify_expected_git_common_identity(root, primary.git_common_dir)
             relative = Path(root.path).relative_to(root.repository_root)
-            identity = capture_workspace_identity(Path(row["worktree_root"]) / relative)
-            identity = replace(identity, git_dir=primary.git_dir, git_common_dir=primary.git_common_dir)
+            try:
+                with WorkspaceReader(primary) as reader:
+                    identity = reader.capture_directory_identity(relative.as_posix())
+            except WorkspacePathError as error:
+                raise WorkspaceIdentityChangedError(error.code) from error
+            identity = replace(
+                identity,
+                git_dir=primary.git_dir,
+                git_common_dir=primary.git_common_dir,
+                git_dir_identity=primary.git_dir_identity,
+                git_common_identity=root.git_common_identity,
+            )
         else:
             identity = WorkspaceIdentity(
                 path=Path(root.path), device=root.device, inode=root.inode, owner=root.owner,
                 git_dir=Path(root.git_dir) if root.git_dir else None,
                 git_common_dir=Path(root.git_common_dir) if root.git_common_dir else None,
+                git_dir_identity=root.git_dir_identity,
+                git_common_identity=root.git_common_identity,
             )
         identities.append(replace(identity, root_id=root.id))
     return replace(identities[0], additional_roots=tuple(identities[1:]))

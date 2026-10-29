@@ -480,8 +480,9 @@ class ToolContractTests(unittest.TestCase):
         self.assertEqual(model_shell["parameters"]["properties"]["cwd"], properties["cwd"])
         self.assertEqual(
             properties["gitWriteAccess"]["description"],
-            'Set to "request" when the current Run needs Git metadata write '
-            'permission. In full_access use "default".',
+            'Set to "request" for Git metadata write permission in the repository containing cwd. '
+            'Set cwd to the target repository or its subdirectory and include justification. '
+            'In full_access use "default".',
         )
         self.assertEqual(
             properties["networkAccess"]["description"],

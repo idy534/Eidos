@@ -926,6 +926,24 @@ export const projectWorkspacesSchema = {
     "SessionGitDiffRequestDto": {
       "additionalProperties": false,
       "properties": {
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "projectId": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Projectid"
+        },
         "rootId": {
           "anyOf": [
             {
@@ -939,10 +957,6 @@ export const projectWorkspacesSchema = {
           ],
           "default": null,
           "title": "Rootid"
-        },
-        "sessionId": {
-          "title": "Sessionid",
-          "type": "string"
         },
         "scope": {
           "default": "head",
@@ -2086,6 +2100,24 @@ export const projectWorkspacesSchema = {
     "SessionGitStatusRequestDto": {
       "additionalProperties": false,
       "properties": {
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "projectId": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Projectid"
+        },
         "rootId": {
           "anyOf": [
             {
@@ -2099,10 +2131,6 @@ export const projectWorkspacesSchema = {
           ],
           "default": null,
           "title": "Rootid"
-        },
-        "sessionId": {
-          "title": "Sessionid",
-          "type": "string"
         }
       },
       "required": [

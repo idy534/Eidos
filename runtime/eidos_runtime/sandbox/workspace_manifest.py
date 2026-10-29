@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import os
 from pathlib import Path
 import stat
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from eidos_runtime.db.database import WorkspaceIdentity
 
 
 DEFAULT_MAX_ENTRIES = 20_000
@@ -132,6 +136,44 @@ def capture_workspace_manifest(
         complete,
         truncated,
     )
+
+
+def capture_workspace_roots_manifest(roots: tuple[WorkspaceIdentity, ...]) -> WorkspaceManifest:
+    """Compose the existing bounded scanner across the frozen Run roots."""
+    from eidos_runtime.sandbox.workspace_index import WorkspaceIndexIncomplete
+    from eidos_runtime.tools.workspace import ToolExecutor
+    from eidos_runtime.workspace.reader import WorkspacePathError
+    import threading
+    entries: list[WorkspaceManifestEntry] = []
+    seen_paths: set[str] = set()
+    complete, truncated = True, False
+    deadline = time.monotonic() + DEFAULT_SCAN_SECONDS
+    for index, root in enumerate(roots):
+        try:
+            with ToolExecutor(replace(root, additional_roots=())) as executor:
+                executor._verify_root()
+                executor.workspace_index.refresh(
+                    executor.root_fd, threading.Event(),
+                    validate=executor._validate_workspace_index_entry,
+                    open_directory=executor._open_directory,
+                    deadline=deadline, hash_all=True,
+                    max_entries=max(0, DEFAULT_MAX_ENTRIES - len(entries)),
+                )
+                executor._verify_root()
+                manifest = executor.workspace_index.manifest()
+        except (OSError, WorkspacePathError, WorkspaceIndexIncomplete):
+            manifest = WorkspaceManifest((), False, True)
+        for entry in manifest.entries:
+            absolute_path = str(root.path / entry.path)
+            if absolute_path in seen_paths:
+                continue
+            seen_paths.add(absolute_path)
+            entries.append(
+                entry if index == 0 else replace(entry, path=absolute_path)
+            )
+        complete = complete and manifest.complete
+        truncated = truncated or manifest.truncated
+    return WorkspaceManifest(tuple(entries), complete, truncated)
 
 
 def diff_workspace_manifests(

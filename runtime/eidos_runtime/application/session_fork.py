@@ -210,9 +210,9 @@ class SessionForkApplication:
                     )
             snapshots.verify(snapshot)
             plan = manager.prepare_create(
-                source.project.workspace_root, base_ref=snapshot.head
+                source.session.workspace_root, base_ref=snapshot.head,
+                project=project_for_session(manager.project(source.project.id), source.session),
             )
-            plan = plan.model_copy(update={"project_id": source.project.id})
             now = datetime.now(UTC).replace(microsecond=0)
             operation = lifecycle.prepare(
                 WorktreeLifecycleOperation(
@@ -223,6 +223,7 @@ class SessionForkApplication:
                     ),
                     state=WorktreeLifecycleState.PREPARED,
                     project_id=plan.project_id,
+                    workspace_roots=source.session.roots,
                     repository_root=source.project.workspace_root,
                     worktree_id=plan.id,
                     worktree_root=plan.worktree_root,

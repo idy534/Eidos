@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Mapping
 
 from eidos_runtime.domain.project import Project, default_project_name
+from eidos_runtime.domain.project_workspace import DirectoryIdentity
 from eidos_runtime.domain.worktree import (
     BranchOwnership,
     Worktree,
@@ -44,6 +45,19 @@ def worktree_from_row(row: Mapping[str, object]) -> Worktree:
         git_common_dir=str(row["git_common_dir"]) if "git_common_dir" in row.keys() and row["git_common_dir"] else None,
         worktree_root=str(row["worktree_root"]),
         git_dir=str(row["git_dir"]),
+        git_dir_identity=(
+            DirectoryIdentity(
+                device=int(row["git_dir_dev"]),
+                inode=int(row["git_dir_inode"]),
+                owner=int(row["git_dir_uid"]),
+            )
+            if all(
+                "git_dir_" + suffix in row.keys()
+                and row["git_dir_" + suffix] is not None
+                for suffix in ("dev", "inode", "uid")
+            )
+            else None
+        ),
         base_ref=str(row["base_ref"]),
         base_commit=str(row["base_commit"]),
         branch=(str(row["branch"]) if row["branch"] is not None else None),

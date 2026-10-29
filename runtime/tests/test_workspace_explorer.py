@@ -368,7 +368,7 @@ def test_listing_starts_existing_watcher_and_emits_relative_invalidation(
         store.typed_runtime_repository(),
         worktree_manager=manager,
         scan_text=lambda value: value,
-        on_changes=lambda session_id, changes: notifications.append((session_id, changes)),
+        on_changes=lambda session_id, changes, _root: notifications.append((session_id, changes)),
         watch_factory=FakeWatchController,
     )
     try:

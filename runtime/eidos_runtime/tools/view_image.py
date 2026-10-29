@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from eidos_runtime.db.database import WorkspaceIdentity
+
 from dataclasses import dataclass
 import errno
 import hashlib
@@ -48,6 +53,7 @@ class ViewImageRootAuthority:
 
     workspace_root: Path
     active_skill_roots: tuple[Path, ...] = ()
+    workspace_identities: tuple[WorkspaceIdentity, ...] = ()
 
     def __post_init__(self) -> None:
         canonical_workspace = _canonical_root(self.workspace_root)
@@ -63,7 +69,8 @@ class ViewImageRootAuthority:
 
     @classmethod
     def from_skill_access(
-        cls, workspace_root: Path, skill_access: object
+        cls, workspace_root: Path, skill_access: object, *,
+        workspace_identities: tuple[WorkspaceIdentity, ...] = (),
     ) -> ViewImageRootAuthority:
         records = getattr(skill_access, "records", None)
         if not callable(records):
@@ -71,11 +78,11 @@ class ViewImageRootAuthority:
         roots = tuple(
             Path(getattr(record, "canonical_root")) for record in records()
         )
-        return cls(workspace_root, roots)
+        return cls(workspace_root, roots, workspace_identities)
 
     @property
     def roots(self) -> tuple[Path, ...]:
-        return (self.workspace_root, *self.active_skill_roots)
+        return tuple(dict.fromkeys((self.workspace_root, *(root.path for root in self.workspace_identities), *self.active_skill_roots)))
 
 # These aliases make the authority seam discoverable to callers that describe
 # the same object as image roots rather than a view-image authority.
@@ -210,7 +217,8 @@ def read_authorized_image(
 
     for root, relative_parts in candidates:
         try:
-            data, canonical_path = _read_regular_file(root, relative_parts)
+            identity = next((item for item in authority.workspace_identities if item.path == root), None)
+            data, canonical_path = _read_regular_file(root, relative_parts, identity=identity)
         except FileNotFoundError:
             continue
         image_mime = _detect_image_mime(data)
@@ -294,6 +302,7 @@ def _is_relative_to(path: Path, root: Path) -> bool:
 def _read_regular_file(
     root: Path,
     relative_parts: tuple[str, ...],
+    *, identity: WorkspaceIdentity | None = None,
 ) -> tuple[bytes, Path]:
     if not relative_parts:
         raise ViewImageError("unsafe_path")
@@ -304,6 +313,10 @@ def _read_regular_file(
     current_fd = root_fd
     try:
         _validate_directory_fd(current_fd)
+        if identity is not None:
+            metadata = os.fstat(current_fd)
+            if (metadata.st_dev, metadata.st_ino, metadata.st_uid) != (identity.device, identity.inode, identity.owner):
+                raise ViewImageError("unsafe_path")
         for component in relative_parts[:-1]:
             next_fd = os.open(
                 component,

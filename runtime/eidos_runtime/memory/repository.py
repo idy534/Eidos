@@ -69,7 +69,7 @@ class MemoryRepository:
         if session_id:
             root = self.root_session(connection, session_id)
             project = connection.execute(
-                "SELECT COALESCE(w.project_id,p.id) FROM sessions s LEFT JOIN worktrees w ON w.id=s.worktree_id LEFT JOIN projects p ON p.workspace_root=s.workspace_root WHERE s.id=?",
+                "SELECT COALESCE(s.project_id,w.project_id,p.id) FROM sessions s LEFT JOIN worktrees w ON w.id=s.worktree_id LEFT JOIN projects p ON p.id=s.project_id OR (s.project_id IS NULL AND p.workspace_root=s.workspace_root) WHERE s.id=?",
                 (root,),
             ).fetchone()
             project_id = project[0] if project else None

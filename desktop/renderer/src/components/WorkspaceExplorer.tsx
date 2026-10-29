@@ -13,10 +13,10 @@ import type {
 } from "../contracts.js";
 import { runtimeBusinessCode, userFacingError } from "../session-state.js";
 import { useArtifacts, usePreviewUrl, type WorkspaceFilePosition } from "./ArtifactContext.js";
-import { ContextMenu } from "./DropdownMenu.js";
+import { ContextMenu, DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
 import { ToastContainer } from "./ToastContainer.js";
 import { FinderIcon, CopyIcon, ExternalLinkIcon, CloseIcon, CloseOthersIcon } from "./MenuIcons.js";
-import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
+import { WorkspaceFileIcon, WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { PdfViewer } from "./PdfViewer.js";
 import { Tooltip } from "./Tooltip.js";
@@ -53,7 +53,10 @@ interface WorkspaceExplorerProps {
   subscribeChanges?: (
     sessionId: string,
     callback: (paths: string[]) => void,
+    workspaceRoot?: string,
   ) => () => void;
+  selectedRootId?: string | undefined;
+  onSelectRoot?: ((rootId: string) => void) | undefined;
 }
 
 type ExplorerLayout = "side" | "expanded";
@@ -70,10 +73,12 @@ const defaultReadPreview = (sessionId: string, path: string, workspaceRoot?: str
 const defaultSubscribeChanges = (
   sessionId: string,
   callback: (paths: string[]) => void,
+  workspaceRoot?: string,
 ) => window.eidosRuntime?.onNotification((notification) => {
   if (
     notification.method === "workspace/changed"
     && notification.params.sessionId === sessionId
+    && (!notification.params.workspaceRoot || !workspaceRoot || notification.params.workspaceRoot === workspaceRoot)
   ) {
     callback(notification.params.paths);
   }
@@ -160,17 +165,13 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
   const requested = localRequest?.rootId === selected ? localRequest : props.openRequest?.rootId === selected
     || (!props.openRequest?.rootId && root.id === roots[0]?.id) ? props.openRequest : undefined;
   const content = <WorkspaceExplorerContent {...props} key={`${props.sessionId}:${root.id}`} executionKey={`${props.executionKey}:${root.id}:${root.path}`}
-    openRequest={requested} listDirectory={list} readPreview={read} />;
-  return <div className="workspace-multi-root">
-    <label className="workspace-root-picker">文件夹<select aria-label="选择项目文件夹" value={root.id} onChange={(event) => { setSelected(event.target.value); setLocalRequest(undefined); }}>
-      {roots.map((entry, index) => <option key={entry.id} value={entry.id}>{entry.path.split("/").filter(Boolean).at(-1)}{index === 0 ? " · 主要" : entry.shared ? " · 共享" : ""}</option>)}
-    </select></label>
-    <ArtifactProvider value={actions ? { ...actions, executionRoot: root.path,
-      openFile: (path, position) => setLocalRequest({ path, ...position, rootId: root.id, requestId: ++sequence.current }),
-      openExternal: actions.openExternal ? (path) => actions.openExternal?.(`${root.path}/${path}`) : undefined,
-      showInFinder: actions.showInFinder ? (path) => actions.showInFinder?.(`${root.path}/${path}`) : undefined,
-    } : undefined}>{content}</ArtifactProvider>
-  </div>;
+    openRequest={requested} listDirectory={list} readPreview={read}
+    roots={roots} selectedRootId={root.id} onSelectRoot={(id) => { setSelected(id); setLocalRequest(undefined); }} />;
+  return <ArtifactProvider value={actions ? { ...actions, executionRoot: root.path, rootId: root.id,
+    openFile: (path, position) => setLocalRequest({ path, ...position, rootId: root.id, requestId: ++sequence.current }),
+    openExternal: actions.openExternal ? (path) => actions.openExternal?.(`${root.path}/${path}`) : undefined,
+    showInFinder: actions.showInFinder ? (path) => actions.showInFinder?.(`${root.path}/${path}`) : undefined,
+  } : undefined}>{content}</ArtifactProvider>;
 }
 
 function WorkspaceExplorerContent({
@@ -182,8 +183,12 @@ function WorkspaceExplorerContent({
   listDirectory = defaultListDirectory,
   readPreview = defaultReadPreview,
   subscribeChanges = defaultSubscribeChanges,
+  roots,
+  selectedRootId,
+  onSelectRoot,
 }: WorkspaceExplorerProps) {
   const actions = useArtifacts();
+  const workspaceRoot = actions?.executionRoot;
   const [treeContextMenu, setTreeContextMenu] = useState<{
     path: string;
     name: string;
@@ -485,7 +490,7 @@ function WorkspaceExplorerContent({
     for (const path of openPreviewPathsRef.current) {
       if (paths.some((changed) => changed === path || path.startsWith(changed + "/"))) openFileRef.current(path, true);
     }
-  }), [executionKey, sessionId, subscribeChanges]);
+  }, workspaceRoot), [executionKey, sessionId, subscribeChanges, workspaceRoot]);
 
   const handleTreeContextMenu = useCallback((
     entry: WorkspaceDirectoryEntry,
@@ -520,6 +525,23 @@ function WorkspaceExplorerContent({
   } as CSSProperties;
   const activePreview = activePreviewPath ? previews[activePreviewPath] : undefined;
 
+  const currentRoot = roots?.find((entry) => entry.id === selectedRootId) ?? roots?.[0];
+  const currentRootName = currentRoot?.path.split("/").filter(Boolean).at(-1) ?? currentRoot?.id ?? "";
+
+  const rootMenuItems: DropdownMenuItem[] = useMemo(() => (
+    (roots ?? []).map((entry, index) => {
+      const name = entry.path.split("/").filter(Boolean).at(-1) ?? entry.id;
+      const label = `${name}${index === 0 ? " · 主要" : entry.shared ? " · 共享" : ""}`;
+      return {
+        key: entry.id,
+        label,
+        checked: entry.id === selectedRootId,
+        disabled: entry.id === selectedRootId,
+        onClick: () => onSelectRoot?.(entry.id),
+      };
+    })
+  ), [roots, selectedRootId, onSelectRoot]);
+
   return (
     <section
       ref={explorerRef}
@@ -528,6 +550,24 @@ function WorkspaceExplorerContent({
       aria-label="Workspace 文件浏览器"
     >
       <aside className="workspace-tree-pane" aria-label="文件树">
+        {roots && roots.length > 1 && (
+          <div className="workspace-tree-root-header">
+            <DropdownMenu
+              className="workspace-tree-root-dropdown"
+              menuClassName="workspace-tree-root-menu"
+              label="项目文件夹"
+              triggerAriaLabel="选择项目文件夹"
+              trigger={(
+                <span className="workspace-tree-root-trigger" title={`当前文件夹：${currentRoot?.path ?? ""}`}>
+                  <span className="workspace-tree-root-icon" aria-hidden="true"><WorkspaceFolderIcon /></span>
+                  <span className="workspace-tree-root-label">{currentRootName}</span>
+                  <span className="dropdown-caret" aria-hidden="true">▾</span>
+                </span>
+              )}
+              items={rootMenuItems}
+            />
+          </div>
+        )}
         {error && (
           <ToastContainer
             toasts={[{ id: "workspace-explorer-error", message: error, type: "error", duration: 3500 }]}
@@ -960,8 +1000,10 @@ function WorkspacePreview({ preview, navigation }: { preview: WorkspaceFilePrevi
           <PdfViewer
             url={url}
             title={preview.path}
-            onOpenExternal={actions?.sessionId ? () => {
-              void window.eidosRuntime?.openWorkspacePathInEditor?.(actions.sessionId, preview.path);
+            onOpenExternal={actions?.sessionId && !actions.sessionId.startsWith("draft-") ? () => {
+              void (actions.rootId
+                ? window.eidosRuntime?.openWorkspacePathInEditor?.(actions.sessionId, preview.path, actions.rootId)
+                : window.eidosRuntime?.openWorkspacePathInEditor?.(actions.sessionId, preview.path));
             } : undefined}
             onError={(msg) => setLoadError(msg)}
           />

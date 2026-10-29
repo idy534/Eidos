@@ -90,7 +90,7 @@ class SessionProjectDto(ClosedModel):
 
 
 class ProjectDto(ClosedModel):
-    def to_json_value(self):
+    def to_json_value(self) -> dict[str, JsonValue]:
         value = super().to_json_value()
         value["revision"] = self.revision
         return value

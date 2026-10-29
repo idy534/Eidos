@@ -9,12 +9,15 @@ import subprocess
 from dulwich.repo import Repo
 
 from eidos_runtime.db.storage import WorkspaceIdentity
+from eidos_runtime.domain.project_workspace import DirectoryIdentity
 from eidos_runtime.git.backend import DulwichGitBackend
 from eidos_runtime.runtime.shell_orchestration import (
+    GitWriteAccessError,
     ShellOrchestrationRequest,
     ShellOrchestrationRuntime,
     resolve_git_write_roots,
 )
+from eidos_runtime.workspace.reader import capture_workspace_identity
 from eidos_runtime.runtime.tool_orchestrator import (
     ExecApprovalRequirement,
     OrchestratorContext,
@@ -202,6 +205,36 @@ class ShellApprovalPolicyTests(unittest.TestCase):
 
         self.assertEqual(roots, (str((self.root / ".git").resolve()),))
 
+    def test_git_write_roots_reject_same_path_metadata_replacement(self) -> None:
+        Repo.init(self.root)
+        discovery = DulwichGitBackend().discover(self.root)
+        git_metadata = capture_workspace_identity(discovery.git_dir)
+        identity = WorkspaceIdentity(
+            self.root,
+            self.identity.device,
+            self.identity.inode,
+            self.identity.owner,
+            git_dir=Path(discovery.git_dir),
+            git_common_dir=Path(discovery.git_common_dir),
+            git_dir_identity=DirectoryIdentity(
+                device=git_metadata.device,
+                inode=git_metadata.inode,
+                owner=git_metadata.owner,
+            ),
+            git_common_identity=DirectoryIdentity(
+                device=git_metadata.device,
+                inode=git_metadata.inode,
+                owner=git_metadata.owner,
+            ),
+        )
+        (self.root / ".git").rename(self.root / ".git-old")
+        Repo.init(self.root)
+
+        with self.assertRaises(GitWriteAccessError) as context:
+            resolve_git_write_roots(identity)
+
+        self.assertEqual(str(context.exception), "git_repository_identity_changed")
+
     def test_linked_worktree_uses_verified_worktree_and_common_git_roots(self) -> None:
         source = self.root / "source"
         linked = self.root / "linked"
@@ -235,6 +268,8 @@ class ShellApprovalPolicyTests(unittest.TestCase):
         )
         discovery = DulwichGitBackend().discover(linked)
         metadata = linked.stat()
+        git_dir_identity = capture_workspace_identity(discovery.git_dir)
+        git_common_identity = capture_workspace_identity(discovery.git_common_dir)
         identity = WorkspaceIdentity(
             linked,
             metadata.st_dev,
@@ -242,6 +277,16 @@ class ShellApprovalPolicyTests(unittest.TestCase):
             metadata.st_uid,
             git_dir=Path(discovery.git_dir),
             git_common_dir=Path(discovery.git_common_dir),
+            git_dir_identity=DirectoryIdentity(
+                device=git_dir_identity.device,
+                inode=git_dir_identity.inode,
+                owner=git_dir_identity.owner,
+            ),
+            git_common_identity=DirectoryIdentity(
+                device=git_common_identity.device,
+                inode=git_common_identity.inode,
+                owner=git_common_identity.owner,
+            ),
         )
 
         roots = resolve_git_write_roots(identity)

@@ -16,7 +16,7 @@ def discard_legacy_projectless_sessions(database: Database) -> int:
             """SELECT s.id FROM sessions s
                WHERE substr(s.workspace_root, 1, ?) = ?
                  AND s.worktree_id IS NULL AND s.associated_worktree_id IS NULL
-                 AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.workspace_root = s.workspace_root)
+                 AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.id=s.project_id OR (s.project_id IS NULL AND p.workspace_root=s.workspace_root))
                  AND NOT EXISTS (SELECT 1 FROM agent_delegations d WHERE d.child_session_id = s.id)
                ORDER BY s.creation_seq LIMIT 100""",
             (len(legacy), legacy),

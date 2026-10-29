@@ -567,13 +567,10 @@ class SessionHistoryRepository(Repository):
                 if worktree_id
                 else SessionExecutionMode.LOCAL,
                 project_id=projection.project.id if projection.project else None,
+                workspace_roots=projection.session.roots or None,
                 projectless=projection.project is None,
                 title=projection.session.title or "新会话",
                 transaction_connection=connection,
-            )
-            connection.execute(
-                "UPDATE sessions SET workspace_roots_json=(SELECT workspace_roots_json FROM sessions WHERE id=?) WHERE id=?",
-                (request.source_session_id, session_id),
             )
             connection.executemany(
                 "INSERT INTO session_history_entries VALUES (?,?,?,?,?,?,?,?)",

@@ -25,7 +25,7 @@ pytestmark = pytest.mark.integration
 
 @pytest.mark.parametrize("entry", ["database", "layout"])
 def test_v41_upgrade_removes_mode_preserves_notes_and_keeps_old_sources_revoked(
-    tmp_path, entry
+    tmp_path, entry, downgrade_project_workspaces_schema
 ):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -60,6 +60,7 @@ def test_v41_upgrade_removes_mode_preserves_notes_and_keeps_old_sources_revoked(
     legacy_epochs = {**before.epochs, "session:" + session["id"]: 0}
     store.close()
     with sqlite3.connect(directory / "state.sqlite") as connection:
+        downgrade_project_workspaces_schema(connection)
         # Recreate the actual v41 columns before running all later migrations.
         connection.execute("ALTER TABLE memory_documents DROP COLUMN archived")
         connection.execute("DROP TABLE personalization_settings")

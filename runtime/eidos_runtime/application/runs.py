@@ -376,6 +376,10 @@ class RunApplication:
             raise ApplicationError(
                 _run_worktree_error_code(error), str(error)
             ) from error
+        except WorkspaceIdentityChangedError as error:
+            raise ApplicationError("WORKSPACE_IDENTITY_CHANGED", str(error)) from error
+        except WorkspaceBoundaryError as error:
+            raise ApplicationError("WORKSPACE_BOUNDARY_VIOLATION", str(error)) from error
         except StorageError as error:
             raise ApplicationError("INVALID_STATE", str(error)) from error
         from eidos_runtime.extensions.hook_sources import HookSourceCatalog
@@ -585,7 +589,19 @@ class RunApplication:
             raise ResourceNotFoundError("session not found")
         if projection.worktree is None:
             return None
-        identity = manager.execution_identity(projection.worktree.worktree_id)
+        managed = manager.execution_identity(projection.worktree.worktree_id)
+        if self._store is None:
+            raise ApplicationError("INTERNAL_ERROR", "Run store is unavailable")
+        identity = self._store.workspace_for_session(session_id)
+        if not identity.path.is_relative_to(managed.path):
+            raise WorkspaceBoundaryError("session workspace is outside its Worktree")
+        from eidos_runtime.workspace.reader import WorkspaceReader, WorkspacePathError
+        try:
+            for root in (identity, *identity.additional_roots):
+                with WorkspaceReader(root):
+                    pass
+        except WorkspacePathError as error:
+            raise WorkspaceIdentityChangedError(error.code) from error
         touch = getattr(manager, "touch_last_used", None)
         if touch_last_used and touch is not None:
             touch(projection.worktree.worktree_id)

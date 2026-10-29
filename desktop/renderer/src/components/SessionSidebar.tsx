@@ -10,7 +10,12 @@ import { SearchIcon } from "./FindBar.js";
 import { EidosMark } from "./EidosMark.js";
 import { ForkIcon } from "./ForkIcon.js";
 import { PrimaryActionButton } from "./PrimaryActionButton.js";
-import { SidebarTooltip, type SidebarTooltipState, type SidebarTooltipTarget } from "./SidebarTooltip.js";
+import {
+  SidebarTooltip,
+  buildProjectTooltipRoots,
+  type SidebarTooltipState,
+  type SidebarTooltipTarget,
+} from "./SidebarTooltip.js";
 import { Tooltip } from "./Tooltip.js";
 import settingsIcon from "./settings.svg";
 
@@ -409,6 +414,11 @@ export function SessionSidebar({
 
   const renderProject = (project: ProjectSessionGroup) => {
     const isExpanded = !collapsedProjects.has(project.key);
+    const tooltipRoots = buildProjectTooltipRoots(project);
+    const isPinned = Boolean(
+      project.projectId && pins.some((pin) => pin.kind === "project" && pin.id === project.projectId)
+    );
+    const sessionCount = project.sessions.length;
     return (
       <li key={project.key}>
         <section className={`workspace-group${project.projectless ? " workspace-group--recent" : ""}`} aria-label={project.displayName} data-project-id={project.projectId}>
@@ -427,6 +437,9 @@ export function SessionSidebar({
                       kind: "project",
                       projectName: project.displayName,
                       workspaceRoot: project.workspaceRoot,
+                      roots: tooltipRoots,
+                      sessionCount,
+                      isPinned,
                       projectless: true,
                     },
                     e.currentTarget,
@@ -439,6 +452,9 @@ export function SessionSidebar({
                       kind: "project",
                       projectName: project.displayName,
                       workspaceRoot: project.workspaceRoot,
+                      roots: tooltipRoots,
+                      sessionCount,
+                      isPinned,
                       projectless: true,
                     },
                     e.currentTarget,
@@ -465,6 +481,9 @@ export function SessionSidebar({
                       kind: "project",
                       projectName: project.displayName,
                       workspaceRoot: project.workspaceRoot,
+                      roots: tooltipRoots,
+                      sessionCount,
+                      isPinned,
                       projectless: false,
                     },
                     rowElement,
@@ -478,6 +497,9 @@ export function SessionSidebar({
                       kind: "project",
                       projectName: project.displayName,
                       workspaceRoot: project.workspaceRoot,
+                      roots: tooltipRoots,
+                      sessionCount,
+                      isPinned,
                       projectless: false,
                     },
                     rowElement,
@@ -544,6 +566,9 @@ export function SessionSidebar({
                       kind: "project",
                       projectName: project.displayName,
                       workspaceRoot: project.workspaceRoot,
+                      roots: tooltipRoots,
+                      sessionCount,
+                      isPinned,
                       projectless: false,
                     },
                     rowElement,

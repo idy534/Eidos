@@ -1,3 +1,4 @@
+import { ProjectMutationRetry } from "./project-mutation-retry.js";
 import type { ProjectRootInput } from "../../../shared/project-workspaces.generated.js";
 import { ProjectEditorDialog } from "../components/ProjectEditorDialog.js";
 import { AgentList, AgentWorkspacePanel, useAgentState } from "../components/AgentPanel.js";
@@ -672,7 +673,11 @@ export function AppShell({ runtime }: AppShellProps) {
     handleCreateSession(project);
   }
 
+  const projectCreateRetry = useRef(new ProjectMutationRetry());
+  const projectEditRetry = useRef(new ProjectMutationRetry());
+
   function handleOpenCreateProject(): void {
+    projectCreateRetry.current.reset();
     setProjectPickerOpen(false);
     setCreateProjectError(undefined);
     setCreateProjectFolder(undefined);
@@ -708,9 +713,9 @@ export function AppShell({ runtime }: AppShellProps) {
     const first = roots[0]; if (!first) return;
     setCreateProjectBusy(true); setCreateProjectError(undefined);
     try {
-      const project = await window.eidosRuntime.createProjectFolders({
-        operationId: crypto.randomUUID(), roots: [first, ...roots.slice(1)], primaryRootId, ...(name ? { name } : {}),
-      });
+      const project = await window.eidosRuntime.createProjectFolders(projectCreateRetry.current.prepare({
+        roots: [first, ...roots.slice(1)], primaryRootId, ...(name ? { name } : {}),
+      }));
       await sessionActions.loadProjects();
       setCreateProjectOpen(false); handleCreateSession(project);
     } catch (cause) { setCreateProjectError(userFacingError(cause)); }
@@ -718,6 +723,7 @@ export function AppShell({ runtime }: AppShellProps) {
   }
 
   async function handleEditProject(project: Project) {
+    projectEditRetry.current.reset();
     const generation = ++projectEditorGeneration.current;
     setProjectToEdit(project); setProjectEditBusy(true); setProjectEditError(undefined);
     try {
@@ -733,10 +739,10 @@ export function AppShell({ runtime }: AppShellProps) {
     const first = roots[0]; if (!first) return;
     setProjectEditBusy(true); setProjectEditError(undefined);
     try {
-      await window.eidosRuntime.updateProject({
+      await window.eidosRuntime.updateProject(projectEditRetry.current.prepare({
         projectId: projectToEdit.id, expectedRevision: projectToEdit.revision ?? 1,
-        operationId: crypto.randomUUID(), roots: [first, ...roots.slice(1)], primaryRootId, ...(name ? { name } : {}),
-      });
+        roots: [first, ...roots.slice(1)], primaryRootId, ...(name ? { name } : {}),
+      }));
       setProjectToEdit(undefined); await sessionActions.loadProjects();
     } catch (cause) { setProjectEditError(userFacingError(cause)); }
     finally { setProjectEditBusy(false); }
@@ -1051,11 +1057,13 @@ export function AppShell({ runtime }: AppShellProps) {
   const selectedProject = currentSnapshot?.session.project?.id
     ? sessionState.projects.find((project) => project.id === currentSnapshot.session.project?.id)
     : undefined;
-  const sessionProject = selectedProject ?? currentSnapshot?.session.project;
+  const sessionProject = isDraft ? selectedProject ?? currentSnapshot?.session.project
+    : currentSnapshot?.session.project ? { ...currentSnapshot.session.project, ...(selectedProject?.name ? { name: selectedProject.name } : {}) } : undefined;
   // Draft 状态下也允许根据关联项目类型计算 hasProject/hasGit，
   // 使环境信息在新会话有项目时也能显示。
   const sessionHasProject = Boolean(currentSnapshot && currentSnapshot.session.projectless !== true && sessionProject);
-  const sessionHasGit = sessionProject?.gitAvailable === true || Boolean(currentSnapshot?.session.roots?.some((root) => root.repositoryRoot));
+  const sessionHasGit = sessionProject?.gitAvailable === true;
+  const sessionHasGitRepositories = sessionHasGit || Boolean(currentSnapshot?.session.roots?.some((root) => root.repositoryRoot));
   const sessionBranch = gitReviewState.status?.branch ?? sessionWorktree?.branch ?? null;
   const handoffBusy = Boolean(snapshot && sessionState.pending.handoffSessionId === snapshot.session.id);
   const restoreBusy = Boolean(snapshot && sessionState.pending.restoringWorktreeSessionId === snapshot.session.id);
@@ -1073,11 +1081,11 @@ export function AppShell({ runtime }: AppShellProps) {
   const availableTools = useMemo<WorkspaceToolKind[]>(() => currentSnapshot
     ? [
         ...(agents.state?.agents?.length ? ["agent" as const] : []),
-        ...(sessionHasGit ? ["review" as const] : []),
+        ...(sessionHasGitRepositories ? ["review" as const] : []),
         ...(sessionHasProject ? ["terminal", "files"] as const : []),
         "browser",
       ]
-    : [], [currentSnapshot, agents.state?.agents?.length, sessionHasGit, sessionHasProject]);
+    : [], [currentSnapshot, agents.state?.agents?.length, sessionHasGitRepositories, sessionHasProject]);
 
   useEffect(() => {
     setEnvironmentPopoverOpen(false);
@@ -1373,13 +1381,6 @@ export function AppShell({ runtime }: AppShellProps) {
               <h2>环境信息</h2>
             </header>
             <div className="environment-popover__body">
-              {(currentSnapshot.session.roots?.length ?? 0) > 1 && <div className="environment-popover__section">
-                <div className="environment-popover__section-title">项目文件夹</div>
-                {currentSnapshot.session.roots?.map((root, index) => <div className="environment-popover__row" key={root.id} title={root.path}>
-                  <span>{root.path}</span><span>{index === 0 ? "主要" : root.shared ? "共享" : ""}</span>
-                </div>)}
-                <p className="project-editor-note">Checkpoint 只保存主仓库的 Git 文件状态。其他仓库、普通目录和忽略文件不在恢复范围内。</p>
-              </div>}
               <OutputContent
                 artifacts={outputArtifacts}
                 loading={completeSessionItems.loading}
@@ -1468,7 +1469,9 @@ export function AppShell({ runtime }: AppShellProps) {
       showInFinder: handleShowInFinder,
       showToast,
     } : undefined}>
-    <InputContextProvider ready={runState.draftReady && isStorageReady} sessionId={currentSnapshot?.session.id} workspaceRoot={currentSnapshot?.session.worktree?.worktreeRoot ?? currentSnapshot?.session.workspaceRoot}
+    <InputContextProvider ready={runState.draftReady && isStorageReady} sessionId={currentSnapshot?.session.id} workspaceRoot={currentSnapshot?.session.roots?.[0]?.path ?? currentSnapshot?.session.worktree?.worktreeRoot ?? currentSnapshot?.session.workspaceRoot}
+      workspaceRoots={currentSnapshot?.session.roots?.map(root => root.path)}
+      projectId={sessionProject?.id}
       onAdd={runActions.addReference} onInsert={runActions.insertReference} onSettings={(section) => { setSettingsCategory(section === "agents" ? "agents" : section === "mcp" ? "mcp" : section === "skills" ? "skills" : "plugins"); setSettingsOpen(true); setDockOpen(false); }}
       onNavigateToSession={(target) => {
         if (settingsOpen) setSettingsOpen(false);
@@ -1865,11 +1868,12 @@ export function AppShell({ runtime }: AppShellProps) {
                     );
                   }
                   if (tab.kind === "review") {
-                    return sessionHasGit ? (
+                    return sessionHasGitRepositories ? (
                       <GitChangesPanel
+                        projectId={currentSnapshot.session.project?.id}
                         roots={currentSnapshot.session.roots}
                         sessionId={currentSnapshot.session.id}
-                        workspaceRoot={currentSnapshot.session.project?.workspaceRoot ?? currentSnapshot.session.workspaceRoot}
+                        workspaceRoot={currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.roots?.[0]?.repositoryRoot ?? currentSnapshot.session.workspaceRoot}
                         items={completeSessionItems.items}
                         latestRunId={currentSnapshot.runs.filter((run) => !run.inherited).at(-1)?.id}
                         previousItemId={currentSnapshot.previousItemId}

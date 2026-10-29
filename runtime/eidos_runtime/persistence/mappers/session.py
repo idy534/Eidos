@@ -130,8 +130,17 @@ def session_from_legacy_dict(value: object) -> Session:
         if isinstance(worktree_value, Mapping)
         else None
     )
+    roots_value = value.get("roots", ())
+    if not isinstance(roots_value, (list, tuple)):
+        raise PersistenceCorruptionError(
+            "persistence_record_invalid",
+            record="session_operation_result",
+            field="roots",
+        )
     return session_from_row({
         "id": reader.text("id"),
+        "project_id": reader.optional_text("projectId") if "projectId" in value else None,
+        "workspace_roots_json": json.dumps(roots_value),
         "workspace_root": reader.text("workspaceRoot"),
         "worktree_id": (
             reader.optional_text("worktreeId")
@@ -242,6 +251,10 @@ def session_to_operation_dict(session: Session) -> dict[str, object]:
     """Keep the managed binding in internal operation replay state only."""
 
     value = session_to_legacy_dict(session)
+    if session.project_id is not None:
+        value["projectId"] = session.project_id
+    if session.roots:
+        value["roots"] = [root.model_dump(mode="json") for root in session.roots]
     if session.worktree_id is not None:
         value["worktreeId"] = session.worktree_id
     if session.associated_worktree_id is not None:

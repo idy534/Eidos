@@ -709,7 +709,7 @@ export type RuntimeNotification =
   | { method: "automation/changed"; params: { id: string } }
   | { method: "sidebar/pinsChanged"; params: { eventId: number } }
   | { method: "run/queueChanged"; params: import("./queued-runs.js").QueuedRunChangeResponse }
-  | { method: "workspace/changed"; params: { sessionId: string; paths: string[] } }
+  | { method: "workspace/changed"; params: { sessionId: string; paths: string[]; workspaceRoot?: string } }
   | { method: "project/updated"; params: { id: string } }
   | { method: "session/titleUpdated"; params: { sessionId: string; title: string } }
   | { method: "run/started"; params: { sessionId: string; run: Run } }

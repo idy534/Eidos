@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import sqlite3
+
+from eidos_runtime.domain.project_workspace import SessionRoot
 
 from eidos_runtime.db.database import Repository
 from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
@@ -61,8 +64,8 @@ class WorktreeLifecycleRepository(Repository):
                         checkpoint_id, include_local_changes, source_head,
                         source_branch, source_dirty, source_fingerprint,
                         snapshot_id, snapshot_head, snapshot_fingerprint,
-                        error_code, created_at, updated_at, request_hash
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        error_code, created_at, updated_at, request_hash, workspace_roots_json, project_revision
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         operation.scope.value,
@@ -95,6 +98,8 @@ class WorktreeLifecycleRepository(Repository):
                         created_at,
                         updated_at,
                         operation.request_hash,
+                        json.dumps([root.model_dump(mode="json") for root in operation.workspace_roots]),
+                        operation.project_revision,
                     ),
                 )
             except sqlite3.IntegrityError as error:
@@ -326,6 +331,7 @@ def _same_plan(
             "snapshot_id",
             "snapshot_head",
             "snapshot_fingerprint",
+            "workspace_roots", "project_revision",
         )
     )
 
@@ -336,6 +342,8 @@ def _map(row: sqlite3.Row | None) -> WorktreeLifecycleOperation | None:
     return WorktreeLifecycleOperation.model_validate({
         "scope": WorktreeLifecycleScope(row["scope"]),
         "request_hash": row["request_hash"] if "request_hash" in row.keys() else None,
+        "workspace_roots": tuple(SessionRoot.model_validate(value) for value in json.loads(row["workspace_roots_json"])) if "workspace_roots_json" in row.keys() else (),
+        "project_revision": row["project_revision"] if "project_revision" in row.keys() else None,
         "operation_id": row["operation_id"],
         "state": WorktreeLifecycleState(row["state"]),
         "project_id": row["project_id"],

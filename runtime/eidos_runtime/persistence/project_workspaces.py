@@ -8,7 +8,8 @@ from eidos_runtime.db.database import CommittedMutation, Repository, now_ms
 from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
 from eidos_runtime.db.events import append_event
 from eidos_runtime.domain.project import Project, default_project_name
-from eidos_runtime.domain.project_workspace import ProjectRoot, SessionRoot
+from eidos_runtime.domain.session import Session
+from eidos_runtime.domain.project_workspace import DirectoryIdentity, ProjectRoot, SessionRoot
 from eidos_runtime.persistence.mappers.worktree import project_from_row
 from eidos_runtime.runtime.state_machine import EventType
 
@@ -45,25 +46,58 @@ def ensure_project_root(
              git_dir, project.git_common_dir),
         )
         connection.execute("UPDATE projects SET primary_root_id=? WHERE id=?", (identifier, project.id))
+    elif project.has_git:
+        connection.execute(
+            "UPDATE project_roots SET repository_root=?,git_dir=?,git_common_dir=? "
+            "WHERE project_id=? AND path=?",
+            (project.git_repository_root, git_dir, project.git_common_dir, project.id, project.workspace_root),
+        )
     row = connection.execute("SELECT * FROM projects WHERE id=?", (project.id,)).fetchone()
     return complete_project(connection, row)
 
 
 def capture_session_roots(roots: tuple[ProjectRoot, ...]) -> tuple[SessionRoot, ...]:
-    from eidos_runtime.workspace.reader import capture_workspace_identity
+    from eidos_runtime.workspace.reader import capture_directory_identity
     result = []
     for root in roots:
-        identity = capture_workspace_identity(root.path)
+        from eidos_runtime.git.backend import DulwichGitBackend
+        from eidos_runtime.git.discovery import GitRepositoryDiscoveryService
+        identity = capture_directory_identity(root.path)
+        git = GitRepositoryDiscoveryService(DulwichGitBackend()).resolve(identity.path)
+        def metadata_identity(path: str | None) -> DirectoryIdentity | None:
+            if path is None:
+                return None
+            fixed = capture_directory_identity(path)
+            return DirectoryIdentity(device=fixed.device, inode=fixed.inode, owner=fixed.owner)
         result.append(SessionRoot(
-            **root.model_dump(), device=identity.device, inode=identity.inode, owner=identity.owner,
+            id=root.id, path=str(identity.path),
+            repository_root=git.repository_root if git else None,
+            git_dir=git.git_dir if git else None, git_common_dir=git.git_common_dir if git else None,
+            git_dir_identity=metadata_identity(git.git_dir if git else None),
+            git_common_identity=metadata_identity(git.git_common_dir if git else None),
+            device=identity.device, inode=identity.inode, owner=identity.owner,
         ))
     return tuple(result)
+
+
+def verify_session_roots(roots: tuple[SessionRoot, ...]) -> None:
+    from pathlib import Path
+    from eidos_runtime.workspace.reader import capture_directory_identity, WorkspacePathError
+    for root in roots:
+        expected = [(root.path, DirectoryIdentity(device=root.device, inode=root.inode, owner=root.owner))]
+        expected.extend((path, fixed) for path, fixed in (
+            (root.git_dir, root.git_dir_identity), (root.git_common_dir, root.git_common_identity),
+        ) if path is not None and fixed is not None)
+        for path, fixed in expected:
+            actual = capture_directory_identity(path)
+            if actual.path != Path(path) or (actual.device, actual.inode, actual.owner) != (fixed.device, fixed.inode, fixed.owner):
+                raise WorkspacePathError("workspace_identity_changed")
 
 
 class ProjectWorkspaceRepository(Repository):
     def create(
         self, *, name: str | None, roots: tuple[ProjectRoot, ...],
-        primary_root_id: str, operation_id: str,
+        primary_root_id: str, operation_id: str, operation_request: dict[str, object] | None = None,
     ) -> CommittedMutation[Project]:
         primary = next((root for root in roots if root.id == primary_root_id), None)
         if primary is None or len({root.path for root in roots}) != len(roots) or len({root.id for root in roots}) != len(roots):
@@ -88,7 +122,7 @@ class ProjectWorkspaceRepository(Repository):
 
         return self._write_committed(
             write, operation_id=operation_id, operation_scope="project/createFolders",
-            operation_request={"name": name, "roots": [root.model_dump(mode="json") for root in roots], "primaryRootId": primary_root_id},
+            operation_request=operation_request or {"name": name, "roots": [root.model_dump(mode="json") for root in roots], "primaryRootId": primary_root_id},
             serialize_value=lambda value: value.model_dump(mode="json"), deserialize_value=lambda value: Project.model_validate_json(json.dumps(value)),
         )
 
@@ -102,7 +136,7 @@ class ProjectWorkspaceRepository(Repository):
 
     def update(
         self, project_id: str, *, expected_revision: int, name: str | None,
-        roots: tuple[ProjectRoot, ...], primary_root_id: str, operation_id: str,
+        roots: tuple[ProjectRoot, ...], primary_root_id: str, operation_id: str, operation_request: dict[str, object] | None = None,
     ) -> CommittedMutation[Project]:
         primary = next((root for root in roots if root.id == primary_root_id), None)
         if primary is None or not roots or len({root.path for root in roots}) != len(roots):
@@ -145,28 +179,13 @@ class ProjectWorkspaceRepository(Repository):
             return CommittedMutation(updated, (event,))
 
         return self._write_committed(
-            write, operation_id=operation_id, operation_scope="project/update", operation_request=request,
+            write, operation_id=operation_id, operation_scope="project/update", operation_request=operation_request or request,
             serialize_value=lambda value: value.model_dump(mode="json"),
             deserialize_value=lambda value: Project.model_validate_json(json.dumps(value)),
         )
 
-    def bind_session(self, session_id: str, project_id: str) -> None:
-        def write(connection: sqlite3.Connection) -> None:
-            project = connection.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
-            if project is None:
-                raise ResourceNotFoundError("project not found")
-            roots = capture_session_roots(project_roots(connection, project_id))
-            primary = project["primary_root_id"]
-            roots = tuple(sorted(roots, key=lambda root: root.id != primary))
-            connection.execute(
-                "UPDATE sessions SET project_id=?,workspace_roots_json=? WHERE id=?",
-                (project_id, json.dumps([root.model_dump(mode="json") for root in roots]), session_id),
-            )
-        self._write(write)
 
-
-
-def project_for_session(project: Project, session) -> Project:
+def project_for_session(project: Project, session: Session) -> Project:
     root = session.roots[0] if session.roots else None
     if root is None:
         return project

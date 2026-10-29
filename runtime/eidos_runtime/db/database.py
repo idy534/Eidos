@@ -14,6 +14,8 @@ import time
 from typing import Callable, Generic, Iterator, TypeVar
 from typing import TYPE_CHECKING
 
+from eidos_runtime.domain.project_workspace import DirectoryIdentity
+
 if TYPE_CHECKING:
     from eidos_runtime.memory.service import MemoryService
 
@@ -62,6 +64,7 @@ from eidos_runtime.db.schema import (
     V34_SCHEMA_VERSION,
     V35_SCHEMA_VERSION,
     V36_SCHEMA_VERSION,
+    V46_SCHEMA_VERSION,
     PLANNING_SCHEMA_SQL,
     V13_TO_V14_MIGRATION_SQL,
     V12_TO_V13_MIGRATION_SQL,
@@ -119,6 +122,8 @@ class WorkspaceIdentity:
     owner: int
     git_dir: Path | None = None
     git_common_dir: Path | None = None
+    git_dir_identity: DirectoryIdentity | None = None
+    git_common_identity: DirectoryIdentity | None = None
     root_id: str = field(default="", compare=False)
     additional_roots: tuple[WorkspaceIdentity, ...] = ()
 
@@ -207,6 +212,8 @@ class Database:
                     42,
                     43,
                     44,
+                    45,
+                    V46_SCHEMA_VERSION,
                     SCHEMA_VERSION,
                     4,
                 }
@@ -504,6 +511,20 @@ class Database:
                 from eidos_runtime.db.project_workspaces_migration import migrate_project_workspaces
                 try:
                     migrate_project_workspaces(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == 45:
+                from eidos_runtime.db.project_binding_migration import migrate_project_bindings
+                try:
+                    migrate_project_bindings(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == 46:
+                from eidos_runtime.db.worktree_git_identity_migration import (
+                    migrate_worktree_git_identity,
+                )
+                try:
+                    migrate_worktree_git_identity(connection)
                 except sqlite3.Error as error:
                     raise StorageError("schema_migration_failed") from error
             _verify_integrity(connection)
