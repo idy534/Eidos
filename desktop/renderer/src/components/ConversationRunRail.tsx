@@ -196,12 +196,12 @@ export function computeMarkerWidths(count: number, hoverIndex: number): number[]
 }
 
 /**
- * 自适应行高计算：默认 18px，当轮次很多时平滑压缩至最低 8px。
+ * 自适应行高计算：默认 11px，当轮次很多时平滑压缩至最低 6px。
  */
 export function computeItemHeight(availableHeight: number, count: number): number {
-  if (count <= 0) return 18;
+  if (count <= 0) return 11;
   const target = Math.floor(availableHeight / count);
-  return Math.min(18, Math.max(8, target));
+  return Math.min(11, Math.max(6, target));
 }
 
 const EMPTY_COMPACTIONS: readonly ContextCompactionActivity[] = [];
@@ -526,6 +526,7 @@ export const ConversationRunRail = memo(function ConversationRunRail({
       {anchors.map((anchor, index) => {
         const isCurrentActive = activeId === anchor.runId;
         const width = markerWidths[index] ?? 6;
+        const isHovered = hoverIndex === index;
         const isFocused = focusedIndex === index;
 
         return (
@@ -554,7 +555,7 @@ export const ConversationRunRail = memo(function ConversationRunRail({
               }}
             >
               <span
-                className={`run-rail-marker${isCurrentActive ? " active" : ""}${isFocused ? " is-focused" : ""}`}
+                className={`run-rail-marker${isCurrentActive ? " active" : ""}${isHovered ? " is-hovered" : ""}${isFocused ? " is-focused" : ""}`}
                 style={{ width: `${width}px` }}
               />
             </button>

@@ -121,8 +121,8 @@
   overflow: visible;
   vertical-align: baseline;
   line-height: inherit;
-  --inline-ref-color: #1d4ed8;
-  --inline-ref-bg-hover: rgba(29, 78, 216, 0.08);
+  --inline-ref-color: var(--link-color, #2b5da7);
+  --inline-ref-bg-hover: rgba(43, 93, 167, 0.08);
 }
 .input-reference--inline-token.input-reference--kind-skill {
   --inline-ref-color: #b45309;
@@ -141,8 +141,8 @@
   --inline-ref-bg-hover: rgba(109, 51, 166, 0.08);
 }
 .input-reference--inline-token.input-reference--kind-history {
-  --inline-ref-color: #1d4ed8;
-  --inline-ref-bg-hover: rgba(29, 78, 216, 0.08);
+  --inline-ref-color: var(--link-color, #2b5da7);
+  --inline-ref-bg-hover: rgba(43, 93, 167, 0.08);
 }
 .input-reference--inline-token:hover,
 .input-reference--inline-token:focus-within {
@@ -276,7 +276,7 @@
   color: #6d33a6;
 }
 .input-reference__icon--history {
-  color: #1d4ed8;
+  color: var(--link-color, #2b5da7);
 }
 .input-reference__icon--excerpt {
   color: #5b4699;

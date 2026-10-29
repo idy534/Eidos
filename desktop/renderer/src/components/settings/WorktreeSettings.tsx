@@ -157,7 +157,7 @@ export function WorktreeSettings({ onShowToast }: WorktreeSettingsProps = {}) {
     return (
       <div className="settings-panel worktree-settings-panel">
         <div className="settings-panel-header">
-          <h1>Worktrees</h1>
+          <h1>Git 工作树</h1>
           <p className="settings-panel-subtitle">管理本地 Git Managed Worktree 的生命周期与清理策略。</p>
         </div>
         {error ? (
@@ -173,8 +173,8 @@ export function WorktreeSettings({ onShowToast }: WorktreeSettingsProps = {}) {
           </AlertBanner>
         ) : (
           <div className="worktree-loading-state">
-            <Spinner size="md" tone="muted" ariaLabel="正在读取 Worktree 设置…" />
-            <p>正在读取 Worktree 设置…</p>
+            <Spinner size="md" tone="muted" ariaLabel="正在读取 Git 工作树设置…" />
+            <p>正在读取 Git 工作树设置…</p>
           </div>
         )}
       </div>
@@ -187,7 +187,7 @@ export function WorktreeSettings({ onShowToast }: WorktreeSettingsProps = {}) {
       <div className="settings-panel-header">
         <div className="header-title-with-stats">
           <div>
-            <h1>Worktrees</h1>
+            <h1>Git 工作树</h1>
             <p className="settings-panel-subtitle">
               Eidos 基于独立 Git Worktree 为会话提供代码执行与分支隔离。自动清理策略仅针对 Managed Worktree 目录，会话记录与差异快照均永久保留。
             </p>

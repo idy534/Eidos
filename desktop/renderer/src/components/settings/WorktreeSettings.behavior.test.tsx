@@ -48,7 +48,7 @@ describe("WorktreeSettings Component", () => {
 
     // Should display the loaded header and subtitle
     expect(await screen.findByText(/基于独立 Git Worktree 为会话提供代码执行与分支隔离/)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1, name: "Worktrees" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Git 工作树" })).toBeInTheDocument();
 
     // Summary cards
     expect(screen.getByText("执行隔离机制")).toBeInTheDocument();
@@ -77,7 +77,7 @@ describe("WorktreeSettings Component", () => {
     const onShowToast = vi.fn();
     render(<WorktreeSettings onShowToast={onShowToast} />);
 
-    await screen.findByRole("heading", { level: 1, name: "Worktrees" });
+    await screen.findByRole("heading", { level: 1, name: "Git 工作树" });
 
     const toggle = screen.getByRole("switch", { name: "自动清理 managed Worktree" });
     expect(toggle).toBeChecked();
@@ -96,7 +96,7 @@ describe("WorktreeSettings Component", () => {
     const onShowToast = vi.fn();
     render(<WorktreeSettings onShowToast={onShowToast} />);
 
-    await screen.findByRole("heading", { level: 1, name: "Worktrees" });
+    await screen.findByRole("heading", { level: 1, name: "Git 工作树" });
 
     const plusBtn = screen.getByRole("button", { name: "增加 1 个" });
     await user.click(plusBtn);
@@ -113,7 +113,7 @@ describe("WorktreeSettings Component", () => {
     const onShowToast = vi.fn();
     render(<WorktreeSettings onShowToast={onShowToast} />);
 
-    await screen.findByRole("heading", { level: 1, name: "Worktrees" });
+    await screen.findByRole("heading", { level: 1, name: "Git 工作树" });
 
     const minusBtn = screen.getByRole("button", { name: "减少 1 个" });
     await user.click(minusBtn);
@@ -130,7 +130,7 @@ describe("WorktreeSettings Component", () => {
     const onShowToast = vi.fn();
     render(<WorktreeSettings onShowToast={onShowToast} />);
 
-    await screen.findByRole("heading", { level: 1, name: "Worktrees" });
+    await screen.findByRole("heading", { level: 1, name: "Git 工作树" });
 
     const chip30 = screen.getByRole("button", { name: "30 个" });
     await user.click(chip30);
@@ -147,7 +147,7 @@ describe("WorktreeSettings Component", () => {
     const onShowToast = vi.fn();
     render(<WorktreeSettings onShowToast={onShowToast} />);
 
-    await screen.findByRole("heading", { level: 1, name: "Worktrees" });
+    await screen.findByRole("heading", { level: 1, name: "Git 工作树" });
 
     const input = screen.getByRole("textbox", { name: "保留最近的 Worktree 数量" });
     expect(input).toHaveValue("15");
@@ -166,7 +166,7 @@ describe("WorktreeSettings Component", () => {
     const user = userEvent.setup();
     render(<WorktreeSettings />);
 
-    await screen.findByRole("heading", { level: 1, name: "Worktrees" });
+    await screen.findByRole("heading", { level: 1, name: "Git 工作树" });
 
     const input = screen.getByRole("textbox", { name: "保留最近的 Worktree 数量" });
 
@@ -202,7 +202,7 @@ describe("WorktreeSettings Component", () => {
 
     render(<WorktreeSettings onShowToast={onShowToast} />);
 
-    await screen.findByRole("heading", { level: 1, name: "Worktrees" });
+    await screen.findByRole("heading", { level: 1, name: "Git 工作树" });
 
     const plusBtn = screen.getByRole("button", { name: "增加 1 个" });
     await user.click(plusBtn);

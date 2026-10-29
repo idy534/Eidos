@@ -131,9 +131,9 @@ describe("ConversationRunRail pure helpers", () => {
   });
 
   it("computes item height adapting to available vertical height", () => {
-    expect(computeItemHeight(600, 20)).toBe(18);
-    expect(computeItemHeight(600, 50)).toBe(12);
-    expect(computeItemHeight(600, 100)).toBe(8);
+    expect(computeItemHeight(600, 20)).toBe(11);
+    expect(computeItemHeight(600, 70)).toBe(8);
+    expect(computeItemHeight(600, 100)).toBe(6);
   });
 
   it("builds stable anchors and filters queued and superseded runs", () => {
@@ -233,6 +233,7 @@ describe("ConversationRunRail component interaction", () => {
 
     // Hover second button
     fireEvent.focus(buttons[1]!);
+    expect(buttons[1]?.querySelector(".run-rail-marker")?.classList.contains("is-hovered")).toBe(true);
     expect(screen.getByRole("tooltip")).toBeInTheDocument();
     expect(screen.getByText("第 2 轮提问")).toBeInTheDocument();
     expect(screen.getByText("第 2 轮回答内容")).toBeInTheDocument();

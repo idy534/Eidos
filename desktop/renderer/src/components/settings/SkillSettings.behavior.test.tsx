@@ -121,8 +121,8 @@ describe("Skill settings", () => {
     render(<SettingsPage {...props({ mcpServers: [manual, {
       ...manual, pluginId: "demo", serverId: "plugin-server", errorCode: "STARTUP_FAILED",
     }] })} />);
-    const tab = screen.getByRole("tab", { name: /MCP Servers/ });
-    expect(tab).toHaveTextContent("MCP Servers1");
+    const tab = screen.getByRole("tab", { name: /MCP 服务/ });
+    expect(tab).toHaveTextContent("MCP 服务1");
     expect(tab.querySelector(".settings-nav-badge--danger")).toBeNull();
     await user.click(tab);
     expect(screen.getByRole("button", { name: "查看 local-manual 工具" })).toBeInTheDocument();

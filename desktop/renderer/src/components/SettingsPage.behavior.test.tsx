@@ -236,7 +236,7 @@ describe("Model settings", () => {
     render(<SettingsPage {...props({ onCreateMcp })} />);
 
     await screen.findByRole("button", { name: "添加模型" });
-    await user.click(screen.getByRole("tab", { name: /MCP Servers/ }));
+    await user.click(screen.getByRole("tab", { name: /MCP 服务/ }));
     await user.click(screen.getByRole("button", { name: "添加 MCP" }));
     await user.type(screen.getByLabelText("名称"), "filesystem");
     expect(screen.getByLabelText("工作目录")).toHaveAttribute(
@@ -285,7 +285,7 @@ describe("Model settings", () => {
     render(<SettingsPage {...props({ mcpServers: [server], onUpdateMcp, onRemoveMcp })} />);
 
     await screen.findByRole("button", { name: "添加模型" });
-    await user.click(screen.getByRole("tab", { name: /MCP Servers/ }));
+    await user.click(screen.getByRole("tab", { name: /MCP 服务/ }));
     await user.click(screen.getByRole("button", { name: "编辑" }));
     expect(screen.getByRole("heading", { name: "编辑 MCP Server" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("名称")).toHaveFocus());
@@ -343,7 +343,7 @@ describe("Model settings", () => {
     const { container } = render(<SettingsPage {...props({ mcpServers: [server] })} />);
 
     await screen.findByRole("button", { name: "添加模型" });
-    await user.click(screen.getByRole("tab", { name: /MCP Servers/ }));
+    await user.click(screen.getByRole("tab", { name: /MCP 服务/ }));
 
     expect(screen.queryByRole("button", { name: "展开技术参数" })).not.toBeInTheDocument();
     expect(screen.queryByText("启动指令")).not.toBeInTheDocument();

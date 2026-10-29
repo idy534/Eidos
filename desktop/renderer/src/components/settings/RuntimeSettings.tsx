@@ -19,7 +19,7 @@ export function RuntimeSettings({ runtime, onShowToast }: RuntimeSettingsProps) 
     return (
       <div className="settings-panel">
         <div className="settings-panel-header">
-          <h1>Runtime 状态</h1>
+          <h1>运行环境状态</h1>
           <p className="settings-panel-subtitle">系统引擎当前未准备就绪。</p>
         </div>
         <AlertBanner
@@ -37,7 +37,7 @@ export function RuntimeSettings({ runtime, onShowToast }: RuntimeSettingsProps) 
   return (
     <div className="settings-panel">
       <div className="settings-panel-header">
-        <h1>Runtime 引擎环境</h1>
+        <h1>运行环境</h1>
         <p className="settings-panel-subtitle">
           Eidos 本地沙箱与 Runtime 服务的运行指标与安全自检状态。
         </p>

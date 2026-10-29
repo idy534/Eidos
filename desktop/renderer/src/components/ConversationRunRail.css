@@ -28,21 +28,23 @@
   justify-content: flex-start;
 }
 
-.conversation-run-rail-item__btn {
+.conversation-run-rail-item__btn,
+.conversation-run-rail-item__btn:hover,
+.conversation-run-rail-item__btn:active,
+.conversation-run-rail-item__btn:focus,
+.conversation-run-rail-item__btn:focus-visible {
   display: flex;
   align-items: center;
   width: 100%;
   height: 100%;
   padding: 0;
   border: 0;
-  background: transparent;
+  border-radius: 0 !important;
+  background: transparent !important;
+  background-color: transparent !important;
   cursor: pointer;
-  outline: none;
-  box-shadow: none;
-}
-
-.conversation-run-rail-item__btn:focus-visible {
-  outline: none;
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 .run-rail-marker {
@@ -54,11 +56,13 @@
   pointer-events: none;
 }
 
-.run-rail-marker.active {
+.run-rail-marker.active,
+.run-rail-marker.is-hovered,
+.run-rail-marker.is-focused {
   background: var(--text, #1d1d1f);
 }
 
-.run-rail-marker.is-focused {
+.conversation-run-rail-item__btn:hover .run-rail-marker {
   background: var(--text, #1d1d1f);
 }
 
@@ -126,6 +130,7 @@
     background: rgba(0, 0, 0, 0.45);
   }
   .run-rail-marker.active,
+  .run-rail-marker.is-hovered,
   .run-rail-marker.is-focused {
     background: #000000;
   }

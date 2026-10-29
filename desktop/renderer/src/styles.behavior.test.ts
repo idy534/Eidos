@@ -223,6 +223,9 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.markdown-body a\s*\{[^}]*text-decoration:\s*none;/s);
     expect(styles).toMatch(/\.markdown-body a:hover[^{]*\{[^}]*text-decoration:\s*underline;/s);
     expect(styles).toMatch(/\.markdown-body a\.markdown-file-link[^{]*\{[^}]*text-decoration:\s*none !important;/s);
+    expect(styles).not.toMatch(/\.input-reference--kind-history\s*\{[^}]*--inline-ref-color:\s*#1d4ed8;/s);
+    expect(styles).toMatch(/\.input-reference--kind-history\s*\{[^}]*--inline-ref-color:\s*var\(--link-color/s);
+    expect(styles).toMatch(/\.input-reference__icon--history\s*\{[^}]*color:\s*var\(--link-color/s);
   });
 
   it("scales code block fonts appropriately to match body text proportions", () => {

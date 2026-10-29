@@ -10,7 +10,7 @@ import type {
   SkillRemoval,
 } from "../../contracts.js";
 import type { SettingsCategory, SettingsPendingAction, SettingsToast } from "./settings-types.js";
-import { SettingsCategoryItem, SettingsNavigation } from "./SettingsNavigation.js";
+import { SettingsCategoryItem, SettingsNavGroup, SettingsNavigation } from "./SettingsNavigation.js";
 import { ModelSettings } from "./ModelSettings.js";
 import { PluginSettings } from "./PluginSettings.js";
 import { SkillSettings } from "./SkillSettings.js";
@@ -151,23 +151,43 @@ export function SettingsPage({
 
   // Navigation badge counts & warnings
   const mcpHasError = standaloneServers.some((s) => Boolean(s.errorCode));
-  const categories: SettingsCategoryItem[] = [
-    { id: "personalization", label: "个性化" },
-    { id: "model", label: "模型" },
-    { id: "web_search", label: "网页搜索" },
-    { id: "channels", label: "助理" },
-    { id: "memory", label: "记忆" },
-    { id: "plugins", label: "Plugins", count: plugins.length },
-    { id: "skills", label: "技能", count: standaloneSkills.length },
-    { id: "agents", label: "智能体" },
+  const groups: SettingsNavGroup[] = [
     {
-      id: "mcp",
-      label: "MCP Servers",
-      count: standaloneServers.length,
-      badgeTone: mcpHasError ? "danger" : undefined,
+      title: "使用偏好",
+      items: [
+        { id: "personalization", label: "个性化" },
+        { id: "memory", label: "记忆" },
+      ],
     },
-    { id: "worktrees", label: "Worktrees" },
-    { id: "runtime", label: "Runtime" },
+    {
+      title: "模型与智能体",
+      items: [
+        { id: "model", label: "模型" },
+        { id: "agents", label: "智能体" },
+      ],
+    },
+    {
+      title: "工具与连接",
+      items: [
+        { id: "web_search", label: "网页搜索" },
+        { id: "plugins", label: "插件", count: plugins.length },
+        { id: "skills", label: "技能", count: standaloneSkills.length },
+        {
+          id: "mcp",
+          label: "MCP 服务",
+          count: standaloneServers.length,
+          badgeTone: mcpHasError ? "danger" : undefined,
+        },
+        { id: "channels", label: "消息渠道" },
+      ],
+    },
+    {
+      title: "工作环境",
+      items: [
+        { id: "worktrees", label: "Git 工作树" },
+        { id: "runtime", label: "运行环境" },
+      ],
+    },
   ];
 
   return (
@@ -196,7 +216,7 @@ export function SettingsPage({
         <div className="settings-container">
           <aside className="settings-sidebar-col">
             <SettingsNavigation
-              categories={categories}
+              groups={groups}
               activeCategory={activeCategory}
               onSelectCategory={category => { if (category !== activeCategory) navigate(category); }}
             />

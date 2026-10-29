@@ -349,10 +349,10 @@ export function ChannelForm({
                 type="button"
                 className="channel-back-link-btn"
                 onClick={onBack}
-                aria-label="接入助理"
+                aria-label="消息渠道"
               >
                 <BackArrowIcon />
-                <span>接入助理</span>
+                <span>消息渠道</span>
               </button>
               <div className="channel-topbar-divider" />
             </>

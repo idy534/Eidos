@@ -156,7 +156,7 @@ export function PluginSettings({
       <div className="settings-panel-header">
         <div className="header-title-with-stats">
           <div>
-            <h1>Plugins 扩展</h1>
+            <h1>插件</h1>
             <p className="settings-panel-subtitle">
               导入本地Eidos插件(兼容Codex)，也可以导入新版本完成更新。
             </p>
@@ -192,10 +192,10 @@ export function PluginSettings({
         <div className="stat-badge stat-badge--active">已启用 {enabledCount} 项</div>
       </div>
 
-      <SettingSection title="已安装的 Plugins">
+      <SettingSection title="已安装的插件">
         {plugins.length === 0 ? (
           <EmptyState
-            title="尚未导入任何 Plugin"
+            title="尚未导入任何插件"
             description="您可以在插件市场查看随应用提供的官方内置插件，也可以导入本地开发的插件包。"
             action={
               <div className="empty-state-actions">
