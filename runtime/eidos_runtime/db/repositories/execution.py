@@ -982,36 +982,6 @@ class ExecutionRepository(Repository):
             )
         return CommittedMutation(_run_from_row(updated), (event,))
 
-    def reconciliation_intent_scopes(self, run_id: str) -> frozenset[str]:
-        """Return origins for unresolved durable intents in a run.
-
-        The run-level barrier can outlive the tool result that opened it. The
-        durable intent and its persisted tool metadata are the only safe way
-        to decide whether a workspace refresh can verify that barrier.
-        """
-        with self.lock:
-            rows = self._connection().execute(
-                """
-                SELECT tool_calls.tool_name, tool_calls.provenance_json,
-                       durable_intents.preconditions_json
-                FROM durable_intents
-                JOIN tool_calls ON tool_calls.id = durable_intents.tool_call_id
-                WHERE durable_intents.run_id = ?
-                  AND durable_intents.status IN (?, ?, ?)
-                  AND NOT (durable_intents.status='running' AND tool_calls.tool_name='run_shell'
-                    AND tool_calls.status='completed'
-                    AND COALESCE(json_extract(tool_calls.result_json,'$.data.executionStatus'),'')='running'
-                    AND COALESCE(json_extract(tool_calls.result_json,'$.reconciliationRequired'),1)=0)
-                """,
-                (run_id, *_RECONCILIATION_INTENT_STATUSES),
-            ).fetchall()
-        return frozenset(
-            _reconciliation_intent_scope(
-                row["tool_name"], row["provenance_json"], row["preconditions_json"],
-            )
-            for row in rows
-        )
-
     def reconciliation_file_paths(self, run_id: str) -> frozenset[str] | None:
         """Known uncertain Workspace targets, or None when scope is unknown.
 
@@ -1343,12 +1313,6 @@ class ExecutionRepository(Repository):
     ) -> CommittedMutation[dict[str, object]]:
         return self._create_item_committed(run_id, "assistant_message", model_step_index, model_attempt_id=model_attempt_id)
 
-    def create_finalization_assistant_item(
-        self, run_id: str
-    ) -> dict[str, object]:
-        """Create an explicitly step-less Item while the Run is finalizing."""
-        return self.create_finalization_assistant_item_committed(run_id).value
-
     def create_finalization_assistant_item_committed(
         self, run_id: str
     ) -> CommittedMutation[dict[str, object]]:
@@ -1419,16 +1383,10 @@ class ExecutionRepository(Repository):
         item = self.read_item(item_id)
         return CommittedMutation(item, events)
 
-    def complete_assistant_item(self, item_id: str) -> dict[str, object]:
-        return self.complete_assistant_item_committed(item_id).value
-
     def complete_assistant_item_committed(
         self, item_id: str
     ) -> CommittedMutation[dict[str, object]]:
         return self._complete_item_committed(item_id, "completed")
-
-    def mark_assistant_incomplete(self, item_id: str) -> dict[str, object]:
-        return self.mark_assistant_incomplete_committed(item_id).value
 
     def mark_assistant_incomplete_committed(
         self, item_id: str
@@ -2422,11 +2380,6 @@ class ExecutionRepository(Repository):
                 injected.append((item_id, str(entry["content"])))
         return tuple(injected)
 
-    def _create_item(
-        self, run_id: str, kind: str, model_step_index: int | None
-    ) -> dict[str, object]:
-        return self._create_item_committed(run_id, kind, model_step_index).value
-
     def _create_item_committed(
         self, run_id: str, kind: str, model_step_index: int | None, *, model_attempt_id: str | None = None
     ) -> CommittedMutation[dict[str, object]]:
@@ -2475,9 +2428,6 @@ class ExecutionRepository(Repository):
                 if changed.rowcount != 1:
                     raise InvalidRunStateError("model attempt already owns an assistant item")
         return CommittedMutation(self.read_item(item_id), (event,))
-
-    def _complete_item(self, item_id: str, status_value: str) -> dict[str, object]:
-        return self._complete_item_committed(item_id, status_value).value
 
     def _complete_item_committed(
         self, item_id: str, status_value: str

@@ -123,7 +123,7 @@ def test_child_summary_keeps_failure_and_stop_facts_separate(tmp_path):
     store, _, parent = _parent(tmp_path)
     try:
         repository, child, _ = _spawn(store, parent, 0)
-        assert store.claim_next_run()["id"] == child.run_id
+        assert store.claim_next_run_committed().value["id"] == child.run_id
         cause = RunTermination(stage="model", reason="provider_timeout", http_status=504)
         store.fail_run(child.run_id, "MODEL_REQUEST_FAILED", termination=cause)
         summary = repository.state(str(parent["id"])).agents[0]
@@ -142,7 +142,7 @@ def test_busy_followup_is_a_message_and_never_restarts_after_completion(tmp_path
         first = repository.followup(parent['id'], item['id'], child.id, 'Include the new constraint.')
         assert first.run_id == child.run_id
         assert repository.state(child.run_id).messages[-1].content == 'Include the new constraint.'
-        assert store.claim_next_run()['id'] == child.run_id
+        assert store.claim_next_run_committed().value['id'] == child.run_id
         store.fail_run(child.run_id, 'fixture_done')
         repeated = repository.followup(parent['id'], item['id'], child.id, 'Include the new constraint.')
         assert repeated.run_id == child.run_id
@@ -208,7 +208,7 @@ def test_child_runs_shell_through_normal_runtime_and_commits_result(tmp_path: Pa
         session = store.create_session(str(workspace))
         parent, _ = store.create_run(session['id'], 'delegate statistics', approval_mode=mode)
         repository, child, _item = _spawn(store, parent, 0, role=role)
-        assert store.claim_next_run()['id'] == child.run_id
+        assert store.claim_next_run_committed().value['id'] == child.run_id
         model = ScriptedModel([
             ModelResponse(tool_calls=(ModelToolCall('child-patch', 'apply_patch', {'patch': '*** Begin Patch\n*** Add File: child-output.txt\n+verified\n*** End Patch'}),)),
             ModelResponse(tool_calls=(ModelToolCall('child-shell', 'run_shell', {'command': 'wc -l < source.py', 'yieldTimeMs': 30000}),)),
@@ -251,7 +251,7 @@ def test_child_followup_preserves_unknown_evidence_without_blocking_new_run(tmp_
         repository = CollaborationRepository(store.database)
         spawn = store.create_tool_item(parent['id'], 1, 0, 'spawn-worker', 'spawn_agent', '{}')
         child = repository.spawn(parent['id'], spawn['id'], SpawnAgent(task_name='worker', message='Work on the task', role=role))
-        assert store.claim_next_run()['id'] == child.run_id
+        assert store.claim_next_run_committed().value['id'] == child.run_id
         store.connection.execute('UPDATE runs SET reconciliation_required=1 WHERE id=?', (parent['id'],))
         store.connection.commit()
         message = store.create_tool_item(parent['id'], 2, 0, 'busy-worker', 'followup_task', '{}')
@@ -284,12 +284,12 @@ def test_eight_child_run_limit_is_per_parent_and_does_not_block_other_runs(tmp_p
     try:
         repository = CollaborationRepository(store.database)
         children = [_spawn(store, parent, index)[1] for index in range(9)]
-        claimed = [store.claim_next_run() for _ in range(8)]
+        claimed = [store.claim_next_run_committed() for _ in range(8)]
 
-        assert {str(run["id"]) for run in claimed if run is not None} == {
+        assert {str(run.value["id"]) for run in claimed if run is not None} == {
             child.run_id for child in children[:8]
         }
-        assert store.claim_next_run() is None
+        assert store.claim_next_run_committed() is None
         assert set(repository.child_runs(str(parent["id"]))) == {
             child.run_id for child in children
         }
@@ -297,17 +297,17 @@ def test_eight_child_run_limit_is_per_parent_and_does_not_block_other_runs(tmp_p
         # A full delegation group must not consume another parent's capacity.
         session = store.create_session(str(_session["workspaceRoot"]))
         other, _ = store.enqueue_run(str(session["id"]), "independent task")
-        assert store.claim_next_run()["id"] == other["id"]
+        assert store.claim_next_run_committed().value["id"] == other["id"]
         peers = [_spawn(store, other, index)[1] for index in range(9)]
-        claimed = [store.claim_next_run() for _ in range(8)]
-        assert {run["id"] for run in claimed if run is not None} == {
+        claimed = [store.claim_next_run_committed() for _ in range(8)]
+        assert {run.value["id"] for run in claimed if run is not None} == {
             child.run_id for child in peers[:8]
         }
-        assert store.claim_next_run() is None
+        assert store.claim_next_run_committed() is None
 
         # Freeing one local slot admits only that parent's queued child.
         store.fail_run(children[0].run_id, "test_child_finished")
-        assert store.claim_next_run()["id"] == children[8].run_id
+        assert store.claim_next_run_committed().value["id"] == children[8].run_id
         assert store.read_run(peers[8].run_id)["status"] == "queued"
     finally:
         store.close()
@@ -413,7 +413,7 @@ def test_child_followup_keeps_role_and_parent_permission_mode(tmp_path: Path, ro
         spawn_item = store.create_tool_item(str(parent["id"]), 1, 5, "spawn-worker", "spawn_agent", "{}")
         worker = repository.spawn(str(parent["id"]), str(spawn_item["id"]),
             SpawnAgent(task_name="worker", message="Inspect and fix the issue", role=role))
-        assert store.claim_next_run()["id"] == worker.run_id
+        assert store.claim_next_run_committed().value["id"] == worker.run_id
         store.fail_run(worker.run_id, "done")
         followup_item = store.create_tool_item(str(parent["id"]), 2, 6, "followup-worker", "followup_task", "{}")
         resumed = repository.followup(str(parent["id"]), str(followup_item["id"]), worker.id, "Check the fix")
@@ -465,7 +465,7 @@ def test_wait_wakes_after_child_completion_and_after_timeout(tmp_path: Path) -> 
         assert store.read_run(str(parent["id"]))["status"] == "waiting_agents"
         assert repository.wait_record(str(parent["id"])).status == "pending"
 
-        assert store.claim_next_run()["id"] == child.run_id
+        assert store.claim_next_run_committed().value["id"] == child.run_id
         store.fail_run(child.run_id, "child_done")
         repository.wake()
         assert store.read_run(str(parent["id"]))["status"] == "queued"
@@ -474,7 +474,7 @@ def test_wait_wakes_after_child_completion_and_after_timeout(tmp_path: Path) -> 
         assert repository.wait_record(str(parent["id"])) is None
 
         # A second wait uses a new tool item and can finish by its deadline.
-        assert store.claim_next_run()["id"] == parent["id"]
+        assert store.claim_next_run_committed().value["id"] == parent["id"]
         _repository, timeout_child, _spawn_item_id = _spawn(store, parent, 1)
         wait_item = store.create_tool_item(
             str(parent["id"]), 1, 11, "wait-call-timeout", "wait_agents", "{}"
@@ -504,7 +504,7 @@ def test_parent_cancel_stops_active_children_and_rejects_late_child_message(
     store, session, parent = _parent(tmp_path)
     try:
         repository, child, _item_id = _spawn(store, parent, 0, role=role)
-        assert store.claim_next_run()["id"] == child.run_id
+        assert store.claim_next_run_committed().value["id"] == child.run_id
 
         class Events:
             def publish(self, *_args: object, **_kwargs: object) -> None:
@@ -579,7 +579,7 @@ def test_failed_parent_requests_cancel_for_running_child(tmp_path: Path) -> None
     store, _session, parent = _parent(tmp_path)
     try:
         _repository, child, _item_id = _spawn(store, parent, 0)
-        assert store.claim_next_run()["id"] == child.run_id
+        assert store.claim_next_run_committed().value["id"] == child.run_id
         supervisor = RunSupervisor(
             store, model_for=lambda _run_id: None, notify=lambda _event: None,
             scan_feedback=lambda _text: "", can_run=lambda: False,

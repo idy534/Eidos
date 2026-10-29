@@ -138,7 +138,6 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.assertEqual(recovered["status"], "interrupted")
         self.assertTrue(recovered["sideEffectsMayExist"])
         self.assertTrue(recovered["reconciliationRequired"])
-        self.assertFalse(self.store.side_effects_blocked(run["id"]))
         connection = self.store.connection
         assert connection is not None
         self.assertEqual(
@@ -161,7 +160,6 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
             json.dumps({"outcome": "error", "code": "file_commit_uncertain"}),
             item_status="failed", tool_status="failed",
         )
-        self.assertFalse(self.store.side_effects_blocked(run["id"]))
         pending_epoch = self.store.context_projection_facts(
             run["id"]
         ).reconciliation_epoch
@@ -173,7 +171,6 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
             read["id"], json.dumps({"outcome": "success", "code": None})
         )
         self.store.complete_current_step(run["id"], "completed")
-        self.assertFalse(self.store.side_effects_blocked(run["id"]))
         self.assertTrue(self.store.read_run(run["id"])["reconciliationRequired"])
         self.assertEqual(
             self.store.context_projection_facts(

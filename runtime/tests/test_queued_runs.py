@@ -61,8 +61,8 @@ def test_update_preserves_fifo_model_permissions_and_references(queue):
     assert store.read_model_profile(first["id"]) == before
     assert store.read_run(first["id"])["approvalMode"] == "auto_review"
     store.cancel_run(active["id"])
-    claimed = store.claim_next_run()
-    assert claimed["id"] == first["id"] and claimed["userInput"] == "edited"
+    claimed = store.claim_next_run_committed()
+    assert claimed.value["id"] == first["id"] and claimed.value["userInput"] == "edited"
     assert store.read_run(second["id"])["status"] == "queued"
 
 
@@ -76,10 +76,10 @@ def test_queued_inputs_stay_out_of_current_context_and_compaction_until_fifo_sta
     context = ContextBuilder(store).build(active["id"]).model_context
     assert not {"next task", "last task"} & {item.get("content") for item in context}
     store.cancel_run(active["id"])
-    assert store.claim_next_run()["id"] == first["id"]
+    assert store.claim_next_run_committed().value["id"] == first["id"]
     assert [item.content for item in store.context_projection_facts(first["id"]).items if item.kind == "user_message"] == ["current task", "next task"]
     store.cancel_run(first["id"])
-    assert store.claim_next_run()["id"] == second["id"]
+    assert store.claim_next_run_committed().value["id"] == second["id"]
     assert [row.user_input for row in repo.list(session).items] == []
     # Even a later completed Run cannot rewrite an older Run's projection.
     assert second_item["id"] not in {item.item_id for item in store.context_projection_facts(first["id"]).items}
@@ -123,7 +123,7 @@ def test_fifo_context_keeps_previous_run_complete_before_queued_goal(queue, rest
         assert "Keep this queued" not in [item.get("content") for item in context]
         assert current.read_run(later["id"])["status"] == "queued"
 
-    assert store.claim_next_run()["id"] == queued["id"]
+    assert store.claim_next_run_committed().value["id"] == queued["id"]
     check(store)
     if restart:
         directory = store.database.data_directory
@@ -180,7 +180,7 @@ def test_steer_rejects_stale_target_or_source_without_losing_message(queue):
     with pytest.raises(SteerTargetUnavailable):
         steer(repo, session, source, active)
     assert [row.run_id for row in repo.list(session).items] == [source["id"]]
-    store.claim_next_run()
+    store.claim_next_run_committed()
     with pytest.raises(InvalidRunStateError):
         steer(repo, session, source, active)
 
@@ -209,7 +209,7 @@ def test_multiple_steers_keep_acceptance_order_and_survive_restart_without_dupli
     try:
         reopened.initialize()
         if reopened.read_run(active["id"])["status"] == "queued":
-            reopened.claim_next_run()
+            reopened.claim_next_run_committed()
         assert reopened.consume_pending_input_facts(active["id"]) == ((a.item_id, "second queued"), (b.item_id, "first queued"))
         assert reopened.consume_pending_input_facts(active["id"]) == ()
         assert [item.content for item in reopened.context_projection_facts(active["id"]).items if item.kind == "user_message"] == ["active", "second queued", "first queued"]
@@ -289,7 +289,7 @@ def test_steer_survives_restart_and_cancel_does_not_inject_it_into_later_runs(qu
         assert reopened.read_item(result.value.item_id)["runId"] == active["id"]
         assert [row.run_id for row in QueuedRunRepository(reopened.database).list(session).items] == [other["id"]]
         reopened.cancel_run(active["id"])
-        assert reopened.claim_next_run()["id"] == other["id"]
+        assert reopened.claim_next_run_committed().value["id"] == other["id"]
         assert "pending steer" not in [item.content for item in reopened.context_projection_facts(other["id"]).items]
     finally:
         reopened.close()
@@ -319,7 +319,7 @@ def test_delete_removes_only_queued_input_and_does_not_enter_later_context(queue
 def test_claim_wins_over_stale_edit_or_delete(queue, delete):
     store, session, repo = queue
     run, _ = store.enqueue_run(session, "pending")
-    store.claim_next_run()
+    store.claim_next_run_committed()
     with pytest.raises(InvalidRunStateError):
         change(repo, session, run, None if delete else "edited")
     assert store.read_run(run["id"])["status"] == "running"

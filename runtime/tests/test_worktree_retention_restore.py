@@ -250,7 +250,7 @@ def test_retention_reconciles_after_worktree_remove_before_lifecycle_update(
     service.settings.update(automatic_cleanup=True, managed_worktree_limit=1)
 
     operation = service._find_or_prepare_cleanup(first)
-    service._save_snapshot(first, operation.snapshot_id or "")
+    service.snapshot_service.save(first, operation.snapshot_id or "")
     operation = manager.lifecycle.update_state(
         operation.scope,
         operation.operation_id,

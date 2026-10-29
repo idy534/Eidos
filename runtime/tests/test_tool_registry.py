@@ -126,7 +126,7 @@ class ToolRegistryTests(unittest.TestCase):
         call = validated.tool_calls[0]
         self.assertEqual(call.arguments, {"command": "true"})
         self.assertEqual(call.raw_payload.arguments, arguments)
-        self.assertTrue(dispatcher.validate_execution(call, dispatcher.plan(call)))
+        self.assertTrue(dispatcher.validate_execution(call, dispatcher.plan(call)).valid)
         self.assertFalse(base.validate_arguments({"value": "x", "shell": "bash"}).valid)
 
     def test_shell_uses_valid_optional_values_and_discards_invalid_ones(self) -> None:

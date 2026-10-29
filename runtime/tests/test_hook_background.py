@@ -139,7 +139,7 @@ def test_parent_session_end_cancels_child_hook_resources_and_removes_transcript(
         lifecycle.enter_run(parent["id"])
         item = store.create_tool_item(parent["id"], 1, 0, "spawn", "spawn_agent", "{}")
         child = CollaborationRepository(store.database).spawn(parent["id"], item["id"], SpawnAgent(task_name="inspect", message="Read", role="explorer"))
-        assert store.claim_next_run()["id"] == child.run_id
+        assert store.claim_next_run_committed().value["id"] == child.run_id
         service = HookService(store, child.run_id, resources=resources, events=lifecycle.events, sensitive=SensitiveScanner(),
             async_kernel=kernel, background_submit=lifecycle.submit)
         service.start(lifecycle.enter_run(child.run_id), lifecycle.key, threading.Event())

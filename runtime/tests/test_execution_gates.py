@@ -268,7 +268,6 @@ def test_unknown_shell_does_not_block_new_child_with_inherited_execution_tools(e
     children = e.app.repository.state(e.run['id']).agents
     assert len(children) == 1
     assert e.store.read_run(e.run['id'])["reconciliationRequired"]
-    assert not e.store.side_effects_blocked(e.run['id'])
 
 
 def test_deferred_completion_keeps_shell_manager_available_for_continuation(execution, monkeypatch):
@@ -313,7 +312,6 @@ def test_unknown_shell_does_not_block_messages_or_stopping_owned_children(execut
     ), threading.Event())
     assert not result.error_fingerprints
     assert e.store.read_run(e.run["id"])["reconciliationRequired"]
-    assert not e.store.side_effects_blocked(e.run["id"])
     continued = _execute(e, (
         ModelToolCall("new-shell", "run_shell", {"command": "printf allowed"}),
     ), threading.Event())
@@ -334,7 +332,6 @@ def test_unchanged_patch_preserves_unknown_shell_evidence_without_blocking_next_
     assert not result.error_fingerprints, _results(e)
     assert [code for _, code, _ in _results(e)][-2:] == ["no_changes", "ok"]
     assert e.store.read_run(e.run["id"])["reconciliationRequired"]
-    assert not e.store.side_effects_blocked(e.run["id"])
     assert e.store.connection.execute(
         "SELECT reconciliation_epoch FROM runs WHERE id=?", (e.run["id"],),
     ).fetchone()[0] == 1
@@ -376,7 +373,7 @@ def test_wait_keeps_live_shell_owned_and_can_be_canceled(execution):
         # An independent Session can still claim its Run while this owner waits.
         session2 = e.store.create_session(str(e.workspace))
         other, _ = e.store.enqueue_run(session2["id"], "independent")
-        claimed = {e.store.claim_next_run()["id"], e.store.claim_next_run()["id"]}
+        claimed = {e.store.claim_next_run_committed().value["id"], e.store.claim_next_run_committed().value["id"]}
         assert other["id"] in claimed
     finally:
         cancel.set()
@@ -388,7 +385,7 @@ def test_wait_keeps_live_shell_owned_and_can_be_canceled(execution):
 def test_resource_owning_wait_returns_completed_children_and_checks_ownership(execution):
     e = execution
     child = _spawn(e)[0]
-    assert e.store.claim_next_run()["id"] == child.run_id
+    assert e.store.claim_next_run_committed().value["id"] == child.run_id
     e.store.fail_run(child.run_id, "fixture_finished")
     result = e.app.wait(e.run["id"], None, WaitAgents(), cancel=threading.Event(), keep_worker=True)
     assert result.agents[0].status == "failed"
@@ -414,7 +411,6 @@ def test_coordination_does_not_wait_for_workspace_recovery(execution):
     assert not result.error_fingerprints
     assert calls == []
     assert e.store.read_run(e.run["id"])["reconciliationRequired"]
-    assert not e.store.side_effects_blocked(e.run["id"])
 
 
 def test_repeated_coordination_does_not_scan_unresolved_workspace(execution):
@@ -425,7 +421,6 @@ def test_repeated_coordination_does_not_scan_unresolved_workspace(execution):
     _execute(e, tuple(ModelToolCall(f"list-{i}", "list_agents", {}) for i in range(3)), threading.Event())
     assert calls == []
     assert e.store.read_run(e.run["id"])["reconciliationRequired"]
-    assert not e.store.side_effects_blocked(e.run["id"])
 
 
 @pytest.mark.parametrize("name,conditions", [
@@ -458,7 +453,6 @@ def test_unknown_side_effect_does_not_create_a_file_operation_gate(execution, ta
     assert result.result == {"outcome": "success"}
     assert calls == ["write"]
     assert e.store.read_run(e.run["id"])["reconciliationRequired"]
-    assert not e.store.side_effects_blocked(e.run["id"])
 
 
 def test_unknown_outcome_during_commit_window_does_not_block_prepared_file_operation(execution):
@@ -479,7 +473,6 @@ def test_unknown_outcome_during_commit_window_does_not_block_prepared_file_opera
     assert result.result == {"outcome": "success"}
     assert calls == ["write"]
     assert e.store.read_run(e.run["id"])["reconciliationRequired"]
-    assert not e.store.side_effects_blocked(e.run["id"])
 
 
 @pytest.mark.parametrize('origin', ['apply_patch', 'run_shell'])
@@ -499,7 +492,6 @@ def test_completion_does_not_refresh_or_gate_on_unknown_workspace_effects(execut
     assert completed['status'] == 'succeeded'
     assert completed['reconciliationRequired']
     assert completed['sideEffectsMayExist']
-    assert not e.store.side_effects_blocked(e.run['id'])
     assert scans == []
 
 
@@ -512,10 +504,8 @@ def test_target_recovery_commit_rechecks_epoch_and_affected_paths(execution):
     assert e.store.clear_reconciliation_after_workspace_refresh_committed(
         e.run['id'], epoch, observed_paths=frozenset({'other.txt'})) is None
     assert e.store.read_run(e.run['id'])['reconciliationRequired']
-    assert not e.store.side_effects_blocked(e.run['id'])
     mutation = e.store.clear_reconciliation_after_workspace_refresh_committed(
         e.run['id'], epoch, observed_paths=frozenset({'changed.txt'}))
     assert mutation is not None
     assert mutation.events[-1]['payload']['reason'] == 'workspace_target_observation'
     assert not e.store.read_run(e.run['id']).get('reconciliationRequired', False)
-    assert not e.store.side_effects_blocked(e.run['id'])

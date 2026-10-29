@@ -510,18 +510,6 @@ class SessionRepository(Repository):
             ).fetchone()
         return row is not None
 
-    def session_model_id(self, session_id: str) -> str | None:
-        with self.lock:
-            row = self._connection().execute(
-                """
-                SELECT model_id FROM runs
-                WHERE session_id = ?
-                ORDER BY creation_seq LIMIT 1
-                """,
-                (session_id,),
-            ).fetchone()
-        return str(row["model_id"]) if row is not None else None
-
     def rename_session(
         self,
         session_id: str,

@@ -262,7 +262,7 @@ def test_long_history_recovery_keeps_all_personalization_layers(store, tmp_path,
     for index in range(15):
         item = store.create_assistant_item(run["id"], index + 1)
         store.append_item_content(item["id"], f"Earlier discussion {index} " * 20)
-        store.complete_assistant_item(item["id"])
+        store.complete_assistant_item_committed(item["id"])
     complete = ContextBuilder(store).build(run["id"])
     recovered = ContextBuilder(store).build(run["id"], recovery_level=recovery_level)
     for original in complete.model_context:

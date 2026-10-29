@@ -309,7 +309,6 @@ class RuntimeRecoveryInvariantTests(unittest.TestCase):
         recovered = self.store.read_run(run["id"])
         self.assertEqual(recovered["status"], "queued")
         self.assertTrue(recovered["reconciliationRequired"])
-        self.assertFalse(self.store.side_effects_blocked(run["id"]))
 
     def test_recovery_does_not_requeue_finalization(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "finalize")
@@ -933,10 +932,10 @@ class ReliableCancelTests(unittest.TestCase):
 
     def test_cancel_without_active_handle_preserves_uncertainty(self) -> None:
         run, _ = self.store.enqueue_run(self.session["id"], "cancel queued")
-        claimed = self.store.claim_next_run()
+        claimed = self.store.claim_next_run_committed()
         self.assertIsNotNone(claimed)
         assert claimed is not None
-        self.assertEqual(claimed["id"], run["id"])
+        self.assertEqual(claimed.value["id"], run["id"])
         connection = self.store.connection
         assert connection is not None
         connection.execute(

@@ -313,7 +313,6 @@ class RunRepository(Repository):
                     git_common_identity=execution_workspace.git_common_identity,
                 ),
                 data_directory=self.database.data_directory,
-                projectless=bool(session["projectless"]),
                 created_at=now,
             )
             connection.execute(
@@ -431,10 +430,6 @@ class RunRepository(Repository):
             run_id=run_id,
             item_id=item_id,
         )
-
-    def claim_next_run(self) -> dict[str, object] | None:
-        mutation = self.claim_next_run_committed()
-        return mutation.value if mutation is not None else None
 
     def claim_next_run_committed(
         self, excluded_run_ids: tuple[str, ...] = (),
@@ -627,14 +622,6 @@ class RunRepository(Repository):
             return cwd
         return workspace_root
 
-    def set_run_effective_cwd(self, run_id: str, cwd: Path) -> None:
-        """Persist the effective working directory for a run."""
-        with self.lock, self._connection() as connection:
-            connection.execute(
-                "UPDATE runs SET effective_cwd = ? WHERE id = ?",
-                (str(cwd), run_id),
-            )
-
     def clear_rejects(self, run_id: str) -> None:
         with self.lock, self._connection() as connection:
             connection.execute(
@@ -672,9 +659,6 @@ class RunRepository(Repository):
                    ORDER BY creation_seq DESC LIMIT 1""", (run_id, fingerprint),
             ).fetchone()
         return approval_from_row(row) if row is not None else None
-
-    def approval_prompt_blocked(self, run_id: str, fingerprint: str) -> bool:
-        return self.rejected_approval(run_id, fingerprint) is not None
 
     def run_permission_grants(self, run_id: str) -> AdditionalPermissionProfile:
         from eidos_runtime.sandbox.permissions import merge_permissions
@@ -730,17 +714,6 @@ class RunRepository(Repository):
                 "UPDATE runs SET consecutive_sensitive_tool_inputs = 0 WHERE id = ?",
                 (run_id,),
             )
-
-    def side_effects_blocked(self, run_id: str) -> bool:
-        with self.lock:
-            row = self._connection().execute(
-                "SELECT reconciliation_required FROM runs WHERE id = ?",
-                (run_id,),
-            ).fetchone()
-        if row is None:
-            raise ResourceNotFoundError("run not found")
-        # Kept for older callers; uncertain outcomes are evidence, never a gate.
-        return False
 
     def record_protocol_error(self, run_id: str) -> int:
         with self.lock, self._connection() as connection:
@@ -845,9 +818,6 @@ class RunRepository(Repository):
                 (run_id,),
             ).fetchall()
         return tuple(_finalization_attempt(row) for row in rows)
-
-    def stop_run(self, run_id: str, reason: str) -> dict[str, object]:
-        return self.stop_run_committed(run_id, reason).value
 
     def stop_run_committed(
         self, run_id: str, reason: str

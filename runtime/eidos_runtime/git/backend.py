@@ -716,10 +716,6 @@ def _optional_object_id(value: object | None) -> str | None:
     return None if value is None else _object_id(value)
 
 
-def _decode_path(value: bytes | str) -> str:
-    return os.fsdecode(value)
-
-
 def _snapshot_ref(snapshot_id: str) -> Ref:
     if (
         not snapshot_id

@@ -26,7 +26,7 @@ class ExecutionAttemptPersistenceTests(unittest.TestCase):
     def create_tool_item(self) -> tuple[dict[str, object], dict[str, object]]:
         session = self.store.create_session(str(self.workspace))
         run, _item = self.store.enqueue_run(session["id"], "run command")
-        claimed = self.store.claim_next_run()
+        claimed = self.store.claim_next_run_committed()
         assert claimed is not None
         self.store.increment_model_step(run["id"])
         item = self.store.create_tool_item(

@@ -441,7 +441,7 @@ def test_child_only_emits_subagent_stop_and_uses_parent_session(tmp_path: Path) 
     try:
         item = store.create_tool_item(parent["id"], 1, 0, "spawn", "spawn_agent", "{}")
         child = CollaborationRepository(store.database).spawn(parent["id"], item["id"], SpawnAgent(task_name="inspect", message="Read the project", role="explorer"))
-        assert store.claim_next_run()["id"] == child.run_id
+        assert store.claim_next_run_committed().value["id"] == child.run_id
         RuntimeEngine(store, ScriptedModel([ModelResponse(text="child report")]), lambda _: None).run(child.run_id, threading.Event())
         assert store.read_run(child.run_id)["status"] == "succeeded"
         rows = store.connection.execute("SELECT event,input_json,result_json FROM hook_invocations WHERE run_id=?", (child.run_id,)).fetchall()

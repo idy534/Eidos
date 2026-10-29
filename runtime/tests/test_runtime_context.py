@@ -609,7 +609,7 @@ class ContextPersistenceTests(unittest.TestCase):
             assistant["id"],
             "I decided to trace RuntimeEngine before inspecting the model gateway. Next, run the tests.",
         )
-        self.store.complete_assistant_item(assistant["id"])
+        self.store.complete_assistant_item_committed(assistant["id"])
         read = self.store.create_tool_item(
             old["id"], 2, 0, "read-engine", "read_file",
             '{"path":"runtime/eidos_runtime/runtime/engine.py"}',
@@ -957,7 +957,7 @@ class ContextPersistenceTests(unittest.TestCase):
         self.store.append_item_content(
             item["id"], "x" * (768 * 1024 + 4_096)
         )
-        self.store.complete_assistant_item(item["id"])
+        self.store.complete_assistant_item_committed(item["id"])
         self.store.fail_run(old["id"], "fixture")
         current, _ = self.store.create_run(self.session["id"], "continue")
 
@@ -1140,12 +1140,12 @@ class ContextPersistenceTests(unittest.TestCase):
         for step in range(1, RECENT_CONTEXT_STEPS + 2):
             item = self.store.create_assistant_item(current["id"], step)
             self.store.append_item_content(item["id"], f"progress {step}")
-            self.store.complete_assistant_item(item["id"])
+            self.store.complete_assistant_item_committed(item["id"])
         compactor.compact(current["id"], "mid_turn")
         for step in range(RECENT_CONTEXT_STEPS + 2, RECENT_CONTEXT_STEPS + 6):
             another = self.store.create_assistant_item(current["id"], step)
             self.store.append_item_content(another["id"], f"more {step}")
-            self.store.complete_assistant_item(another["id"])
+            self.store.complete_assistant_item_committed(another["id"])
 
         compactor.compact(current["id"], "mid_turn")
         self.assertEqual(self.store.compaction_count(current["id"]), 3)

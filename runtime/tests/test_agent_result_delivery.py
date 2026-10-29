@@ -41,10 +41,10 @@ def spawn(store, parent, application, index=0):
 
 
 def finish_child(store, child, answer):
-    assert store.claim_next_run()['id'] == child.run_id
+    assert store.claim_next_run_committed().value['id'] == child.run_id
     progress = store.create_assistant_item(child.run_id, 1)
     store.append_item_content(progress['id'], 'PROCESS_ONLY: intermediate investigation details')
-    store.complete_assistant_item(progress['id'])
+    store.complete_assistant_item_committed(progress['id'])
     item = store.create_assistant_item(child.run_id, 2)
     store.append_item_content(item['id'], answer)
     store.complete_assistant_and_run(item['id'], child.run_id)
@@ -144,7 +144,7 @@ def test_status_projection_keeps_sixteen_agents_and_does_not_duplicate_answers(c
 def test_recovery_keeps_valid_json_and_only_full_messages_receive_receipts(collaboration, monkeypatch):
     store, parent, application = collaboration
     child = spawn(store, parent, application)
-    assert store.claim_next_run()['id'] == child.run_id
+    assert store.claim_next_run_committed().value['id'] == child.run_id
     for index in range(16):
         application.repository.send(child.run_id, f'message-{index}', 'parent', '中' * 2000)
     section, _ = evidence(store, parent['id'])
@@ -167,7 +167,7 @@ def test_recovery_keeps_valid_json_and_only_full_messages_receive_receipts(colla
 def test_long_message_readback_is_delivered_and_not_reinjected(collaboration):
     store, parent, application = collaboration
     child = spawn(store, parent, application)
-    assert store.claim_next_run()['id'] == child.run_id
+    assert store.claim_next_run_committed().value['id'] == child.run_id
     message = '中' * 20_000
     application.repository.send(child.run_id, 'long-message', 'parent', message)
     store.fail_run(child.run_id, 'fixture_complete')
@@ -198,7 +198,7 @@ def test_result_tool_runs_through_the_controller_with_a_large_page(collaboration
 def test_cancel_after_model_acceptance_does_not_consume_the_message(collaboration, monkeypatch):
     store, parent, application = collaboration
     child = spawn(store, parent, application)
-    assert store.claim_next_run()['id'] == child.run_id
+    assert store.claim_next_run_committed().value['id'] == child.run_id
     application.repository.send(child.run_id, 'cancel-message', 'parent', 'Evidence remains pending after cancellation.')
     store.fail_run(child.run_id, 'fixture_complete')
     original = CollaborationRepository.record_model_delivery
@@ -218,7 +218,7 @@ def test_cancel_after_model_acceptance_does_not_consume_the_message(collaboratio
 def test_saved_results_and_unread_messages_survive_restart(collaboration):
     store, parent, application = collaboration
     child = spawn(store, parent, application)
-    assert store.claim_next_run()['id'] == child.run_id
+    assert store.claim_next_run_committed().value['id'] == child.run_id
     application.repository.send(child.run_id, 'saved-message', 'parent', 'A decision is required.')
     item = store.create_assistant_item(child.run_id, 1)
     answer = '中' * 5_000 + 'SAVED_END'
