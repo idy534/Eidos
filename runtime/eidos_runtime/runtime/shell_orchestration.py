@@ -66,6 +66,19 @@ def resolve_git_write_roots(workspace: WorkspaceIdentity) -> tuple[str, ...]:
         raise GitWriteAccessError("git_repository_unavailable") from error
 
 
+def verify_git_metadata_identities(workspace: WorkspaceIdentity) -> None:
+    """Check frozen Git metadata even when a Shell does not request Git writes."""
+    for root in (workspace, *workspace.additional_roots):
+        if not any((
+            root.git_dir,
+            root.git_common_dir,
+            root.git_dir_identity,
+            root.git_common_identity,
+        )):
+            continue
+        resolve_git_write_roots(root)
+
+
 def _verify_git_directory_identity(
     path: Path | None, expected: DirectoryIdentity | None
 ) -> None:

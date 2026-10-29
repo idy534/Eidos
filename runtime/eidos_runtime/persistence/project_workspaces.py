@@ -48,12 +48,88 @@ def ensure_project_root(
         connection.execute("UPDATE projects SET primary_root_id=? WHERE id=?", (identifier, project.id))
     elif project.has_git:
         connection.execute(
-            "UPDATE project_roots SET repository_root=?,git_dir=?,git_common_dir=? "
+            "UPDATE project_roots SET repository_root=?,git_dir=COALESCE(?,git_dir),git_common_dir=? "
             "WHERE project_id=? AND path=?",
-            (project.git_repository_root, git_dir, project.git_common_dir, project.id, project.workspace_root),
+            (
+                project.git_repository_root,
+                git_dir,
+                project.git_common_dir,
+                project.id,
+                project.workspace_root,
+            ),
         )
     row = connection.execute("SELECT * FROM projects WHERE id=?", (project.id,)).fetchone()
     return complete_project(connection, row)
+
+
+def sync_project_git_metadata(
+    connection: sqlite3.Connection,
+    project: Project,
+    roots: tuple[SessionRoot, ...],
+    *,
+    updated_at: int,
+) -> bool:
+    """Refresh saved Git paths from identities captured for a new Session."""
+    if not roots:
+        return False
+
+    current_roots = project_roots(connection, project.id)
+    current_bindings = {root.id: root.path for root in current_roots}
+    frozen_bindings = {root.id: root.path for root in roots}
+    if (
+        len(current_bindings) != len(current_roots)
+        or len(frozen_bindings) != len(roots)
+        or current_bindings != frozen_bindings
+        or roots[0].id != project.primary_root_id
+    ):
+        # A concurrent project edit owns the current root binding. Keep the
+        # Session's frozen snapshot, but do not apply it to the Project.
+        return False
+
+    changed = False
+    for root in roots:
+        row = connection.execute(
+            "SELECT path,repository_root,git_dir,git_common_dir FROM project_roots "
+            "WHERE project_id=? AND id=?",
+            (project.id, root.id),
+        ).fetchone()
+        if row is None or row["path"] != root.path:
+            return False
+        metadata = (root.repository_root, root.git_dir, root.git_common_dir)
+        if metadata != (row["repository_root"], row["git_dir"], row["git_common_dir"]):
+            connection.execute(
+                "UPDATE project_roots SET repository_root=?,git_dir=?,git_common_dir=? "
+                "WHERE project_id=? AND id=?",
+                (*metadata, project.id, root.id),
+            )
+            changed = True
+
+    primary = next(
+        (root for root in roots if root.id == project.primary_root_id), None
+    )
+    if primary is None:
+        raise StorageError("project_workspace_primary_root_unavailable")
+    if (
+        primary.repository_root != project.git_repository_root
+        or primary.git_common_dir != project.git_common_dir
+    ):
+        connection.execute(
+            "UPDATE projects SET git_repository_root=?,git_common_dir=?,updated_at=? "
+            "WHERE id=?",
+            (
+                primary.repository_root,
+                primary.git_common_dir,
+                updated_at,
+                project.id,
+            ),
+        )
+        changed = True
+    elif changed:
+        connection.execute(
+            "UPDATE projects SET updated_at=? WHERE id=?",
+            (updated_at, project.id),
+        )
+    return changed
 
 
 def capture_session_roots(roots: tuple[ProjectRoot, ...]) -> tuple[SessionRoot, ...]:

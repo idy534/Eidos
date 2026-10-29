@@ -416,6 +416,9 @@ def test_v45_project_session_migration_pins_git_metadata_before_replacement(
     legacy.execute(
         "ALTER TABLE worktree_lifecycle_operations DROP COLUMN workspace_roots_json"
     )
+    legacy.execute("ALTER TABLE worktrees DROP COLUMN git_dir_uid")
+    legacy.execute("ALTER TABLE worktrees DROP COLUMN git_dir_inode")
+    legacy.execute("ALTER TABLE worktrees DROP COLUMN git_dir_dev")
     legacy.execute("PRAGMA user_version = 45")
     legacy.commit()
     legacy.close()
@@ -568,6 +571,9 @@ def test_new_sessions_discover_git_created_after_the_project_was_saved(tmp_path:
         assert not before["project"]["gitAvailable"]
         assert after["project"]["gitAvailable"]
         assert after["worktree"]["projectId"] == project.id
+        refreshed_project = projects.read(ProjectReadRequest(projectId=project.id))
+        assert refreshed_project.git_available
+        assert refreshed_project.roots[0].repository_root == str(workspace.resolve())
     finally:
         store.close()
 
@@ -584,6 +590,32 @@ def test_git_controls_accept_an_attached_repository_subdirectory(tmp_path: Path)
         request = SessionGitStatusRequestDto(sessionId=session["id"], rootId="subdirectory")
         result = sessions.for_git_request(request).git_status(request).root
         assert "src/child.txt" in result["untrackedFiles"]
+    finally:
+        store.close()
+
+
+def test_session_creation_keeps_saved_git_directory_for_draft_review(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path / "repository", "base\n")
+    store, _manager, projects, sessions = _runtime(tmp_path)
+    try:
+        project = _create_project(projects, [("root", repository)], "root")
+        session = sessions.create(SessionCreateRequestDto(projectId=project.id)).root
+        saved_git_dir = store.connection.execute(
+            "SELECT git_dir FROM project_roots WHERE project_id=? AND id=?",
+            (project.id, "root"),
+        ).fetchone()[0]
+        assert saved_git_dir == str((repository / ".git").resolve())
+
+        request = SessionGitStatusRequestDto(
+            sessionId=f"draft-{uuid4()}",
+            projectId=project.id,
+            rootId="root",
+        )
+        status = sessions.for_git_request(request).git_status(request).root
+        assert status["head"]
+        assert session["id"]
     finally:
         store.close()
 

@@ -68,6 +68,73 @@ def _run(
     return run["id"], _result(store, run["id"])
 
 
+def test_ordinary_shell_rejects_replaced_frozen_git_metadata(tmp_path: Path) -> None:
+    repository = _repository(tmp_path / "repository", "base\n")
+    store, _manager, projects, sessions = _runtime(tmp_path)
+    try:
+        project = _create_project(projects, [("root", repository)], "root")
+        session = sessions.create(SessionCreateRequestDto(projectId=project.id)).root
+        run, _ = store.create_run(session["id"], "run a harmless command")
+
+        old_git_dir = repository / ".git"
+        old_git_dir.rename(repository / ".git-old")
+        subprocess.run(
+            ["git", "init", "-q", "-b", "replacement"],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "shell",
+                            "run_shell",
+                            {
+                                "command": "touch should-not-exist",
+                                "cwd": str(repository),
+                                "yieldTimeMs": 250,
+                            },
+                        ),
+                    )
+                ),
+                ModelResponse(text="Checked"),
+            ]
+        )
+        RuntimeEngine(
+            store, model, lambda _: None, shell_available=True
+        ).run(run["id"], threading.Event())
+
+        result = _result(store, run["id"])
+        assert result["code"] == "git_repository_identity_changed"
+        assert not (repository / "should-not-exist").exists()
+    finally:
+        store.close()
+
+
+def test_ordinary_shell_allows_unbound_nested_git_cwd(tmp_path: Path) -> None:
+    outer = _repository(tmp_path / "outer", "outer\n")
+    _repository(outer / "nested", "nested\n")
+    store, _manager, projects, sessions = _runtime(tmp_path)
+    try:
+        project = _create_project(projects, [("outer", outer)], "outer")
+        session = sessions.create(SessionCreateRequestDto(projectId=project.id)).root
+
+        _run_id, result = _run(
+            store,
+            session["id"],
+            {"command": "pwd", "cwd": "nested"},
+            mode="full_access",
+        )
+
+        assert result["code"] == "ok", result
+        assert Path(result["data"]["stdout"].strip()) == outer / "nested"
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize("mode", ["manual", "auto_review", "full_access"])
 @pytest.mark.parametrize("execution", ["local", "worktree"])
 def test_real_run_shell_can_use_a_secondary_directory_as_cwd(

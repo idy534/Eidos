@@ -165,6 +165,10 @@ def _backfill_session_git_metadata(connection: sqlite3.Connection) -> None:
                 discovery is None
                 or discovery.repository_root != root.repository_root
                 or (
+                    root.git_dir is not None
+                    and discovery.git_dir != root.git_dir
+                )
+                or (
                     root.git_common_dir is not None
                     and discovery.git_common_dir != root.git_common_dir
                 )

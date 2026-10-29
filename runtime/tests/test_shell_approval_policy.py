@@ -16,6 +16,7 @@ from eidos_runtime.runtime.shell_orchestration import (
     ShellOrchestrationRequest,
     ShellOrchestrationRuntime,
     resolve_git_write_roots,
+    verify_git_metadata_identities,
 )
 from eidos_runtime.workspace.reader import capture_workspace_identity
 from eidos_runtime.runtime.tool_orchestrator import (
@@ -233,6 +234,9 @@ class ShellApprovalPolicyTests(unittest.TestCase):
         with self.assertRaises(GitWriteAccessError) as context:
             resolve_git_write_roots(identity)
 
+        self.assertEqual(str(context.exception), "git_repository_identity_changed")
+        with self.assertRaises(GitWriteAccessError) as context:
+            verify_git_metadata_identities(identity)
         self.assertEqual(str(context.exception), "git_repository_identity_changed")
 
     def test_linked_worktree_uses_verified_worktree_and_common_git_roots(self) -> None:

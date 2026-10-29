@@ -200,7 +200,6 @@ class TypedSessionRepositoryPort(Protocol):
         self,
         operation_id: str,
         project_id: str,
-        workspace_root: str | None,
     ) -> dict[str, object] | None: ...
 
     def read_session_projection(self, session_id: str) -> SessionProjection | None: ...
@@ -641,7 +640,9 @@ class SessionApplication:
                 if request.project_id is not None and request.project_id != pending.project_id:
                     raise ApplicationError("OPERATION_ID_REUSED")
                 primary = pending.workspace_roots[0]
-                if request.project_id is not None and request.workspace_root is not None and str(Path(request.workspace_root).resolve(strict=False)) != primary.path:
+                if request.workspace_root is not None and str(
+                    Path(request.workspace_root).expanduser().resolve(strict=False)
+                ) != primary.path:
                     raise ApplicationError("OPERATION_ID_REUSED")
                 if request.workspace_root is not None and self._worktree_manager.discover(request.workspace_root).repository_root != pending.repository_root:
                     raise ApplicationError("OPERATION_ID_REUSED")
@@ -3227,7 +3228,7 @@ class SessionApplication:
         request: SessionCreateRequestDto,
         replay: object,
     ) -> SessionCreateResponseDto:
-        if request.project_id is None or not isinstance(replay, dict):
+        if not isinstance(replay, dict):
             raise ApplicationError("OPERATION_ID_REUSED")
         session_id = replay.get("id")
         if not isinstance(session_id, str):
@@ -3235,11 +3236,42 @@ class SessionApplication:
         session = self._repository.read_session(session_id)
         if session is None:
             raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
-        if (
-            session.project_id != request.project_id
-            or session.execution_mode is not SessionExecutionMode(request.execution_mode)
-        ):
+        if session.execution_mode is not SessionExecutionMode(request.execution_mode):
             raise ApplicationError("OPERATION_ID_REUSED")
+        if request.project_id is not None and session.project_id != request.project_id:
+            raise ApplicationError("OPERATION_ID_REUSED")
+        if request.project_id is None:
+            manager = self._worktree_manager
+            lifecycle_operation = (
+                manager.lifecycle.read(
+                    WorktreeLifecycleScope.SESSION_CREATE,
+                    request.operation_id,
+                )
+                if manager is not None and request.operation_id is not None
+                else None
+            )
+            if (
+                manager is None
+                or request.workspace_root is None
+                or session.execution_mode is not SessionExecutionMode.WORKTREE
+                or session.project_id is None
+                or session.worktree_id is None
+                or lifecycle_operation is None
+                or lifecycle_operation.state is not WorktreeLifecycleState.COMPLETED
+                or lifecycle_operation.project_id != session.project_id
+                or lifecycle_operation.session_id != session.id
+                or lifecycle_operation.worktree_id != session.worktree_id
+            ):
+                raise ApplicationError("OPERATION_ID_REUSED")
+            try:
+                worktree = manager.read_worktree(session.worktree_id)
+            except WorktreeError as error:
+                raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
+            if (
+                worktree.project_id != session.project_id
+                or worktree.repository_root != lifecycle_operation.repository_root
+            ):
+                raise ApplicationError("OPERATION_ID_REUSED")
         result_workspace_root = replay.get("workspaceRoot")
         if (
             isinstance(result_workspace_root, str)
@@ -3247,18 +3279,37 @@ class SessionApplication:
         ):
             raise ApplicationError("OPERATION_ID_REUSED")
         if request.workspace_root is not None:
-            allowed_roots = {session.workspace_root}
-            manager = self._worktree_manager
-            if manager is not None:
+            requested_root = str(Path(request.workspace_root).expanduser().resolve(strict=False))
+            frozen_root = session.roots[0].path if session.roots else session.workspace_root
+            if requested_root != frozen_root:
+                manager = self._worktree_manager
+                if (
+                    request.project_id is None
+                    or session.execution_mode is not SessionExecutionMode.LOCAL
+                    or manager is None
+                ):
+                    raise ApplicationError("OPERATION_ID_REUSED")
                 try:
-                    allowed_roots.add(manager.project(request.project_id).workspace_root)
+                    current_project_root = str(
+                        Path(manager.project(request.project_id).workspace_root)
+                        .expanduser()
+                        .resolve(strict=False)
+                    )
                 except WorktreeError as error:
                     raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
-            requested_root = str(
-                Path(request.workspace_root).expanduser().resolve(strict=False)
-            )
-            if requested_root not in allowed_roots:
-                raise ApplicationError("OPERATION_ID_REUSED")
+                if requested_root != current_project_root:
+                    raise ApplicationError("OPERATION_ID_REUSED")
+            if session.worktree_id is not None:
+                manager = self._worktree_manager
+                if manager is None:
+                    raise ApplicationError("OPERATION_ID_REUSED")
+                try:
+                    worktree = manager.read_worktree(session.worktree_id)
+                    requested_repository = manager.discover(requested_root).repository_root
+                except WorktreeError as error:
+                    raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
+                if requested_repository != worktree.repository_root:
+                    raise ApplicationError("OPERATION_ID_REUSED")
         return _result(
             SessionCreateResponseDto,
             self._project_session(self._projection_for_session(session.id)),

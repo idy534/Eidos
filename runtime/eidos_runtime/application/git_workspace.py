@@ -65,9 +65,8 @@ def scoped_git_application(application, request):
             )
         except (WorkspacePathError, WorktreeError) as error:
             raise ApplicationError("WORKSPACE_IDENTITY_CHANGED") from error
-        if (
-            worktree_identity.git_common_dir
-            != str(Path(root.git_common_dir).resolve(strict=False))
+        if worktree_identity.git_common_dir != str(
+            Path(root.git_common_dir).resolve(strict=False)
         ):
             raise ApplicationError("WORKSPACE_IDENTITY_CHANGED")
         return application
@@ -80,7 +79,11 @@ def scoped_git_application(application, request):
         raise ApplicationError("WORKSPACE_IDENTITY_CHANGED") from error
     if (identity.device, identity.inode, identity.owner) != (root.device, root.inode, root.owner):
         raise ApplicationError("WORKSPACE_IDENTITY_CHANGED")
-    if (discovery.repository_root, discovery.git_common_dir) != (root.repository_root, root.git_common_dir):
+    if (
+        discovery.repository_root,
+        discovery.git_dir,
+        discovery.git_common_dir,
+    ) != (root.repository_root, root.git_dir, root.git_common_dir):
         raise ApplicationError("WORKSPACE_IDENTITY_CHANGED")
     selected = session.model_copy(update={
         "workspace_root": root.repository_root, "execution_mode": SessionExecutionMode.LOCAL,

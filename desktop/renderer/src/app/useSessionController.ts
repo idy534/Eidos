@@ -60,6 +60,7 @@ export interface SessionControllerActions {
   loadSessions: () => Promise<void>;
   createProject: (name: string | undefined, workspaceRoot: string) => Promise<Project | undefined>;
   startDraft: (project?: Project | null) => void;
+  updateDraftProject: (project: Project) => void;
   updateDraftExecutionMode: (mode: "local" | "worktree") => void;
   materializeDraft: (workspaceNameHint?: string) => Promise<SessionSnapshot | undefined>;
   discardDraft: () => void;
@@ -264,6 +265,33 @@ export function useSessionController(): [SessionControllerState, SessionControll
     setDraft((prev) => prev
       ? { ...prev, session: { ...prev.session, executionMode: mode, updatedAt: Date.now() } }
       : prev);
+  }, []);
+
+  const updateDraftProject = useCallback((project: Project): void => {
+    setDraft((prev) => {
+      if (!prev || prev.session.project?.id !== project.id) return prev;
+      const session = { ...prev.session };
+      if (project.roots) session.roots = project.roots;
+      else delete session.roots;
+      return {
+        ...prev,
+        session: {
+          ...session,
+          workspaceRoot: project.workspaceRoot,
+          ...(project.roots ? { roots: project.roots } : {}),
+          project: {
+            id: project.id,
+            ...(project.name ? { name: project.name } : {}),
+            workspaceRoot: project.workspaceRoot,
+            gitAvailable: project.gitAvailable,
+          },
+          executionMode: project.gitAvailable
+            ? (prev.session.executionMode ?? "local")
+            : "local",
+          updatedAt: Date.now(),
+        },
+      };
+    });
   }, []);
 
   const selectSession = useCallback(async (session: Session, focusItemId?: string): Promise<SessionSnapshot | undefined> => {
@@ -743,6 +771,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     loadSessions,
     createProject,
     startDraft,
+    updateDraftProject,
     updateDraftExecutionMode,
     materializeDraft,
     discardDraft,

@@ -158,7 +158,10 @@ def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(
             elif schema_version == 45:
                 connection.execute("ALTER TABLE worktree_lifecycle_operations DROP COLUMN workspace_roots_json")
                 connection.execute("ALTER TABLE worktree_lifecycle_operations DROP COLUMN project_revision")
-            else:
+                connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_uid")
+                connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_inode")
+                connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_dev")
+            elif schema_version == 46:
                 connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_uid")
                 connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_inode")
                 connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_dev")

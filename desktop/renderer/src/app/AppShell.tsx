@@ -739,10 +739,11 @@ export function AppShell({ runtime }: AppShellProps) {
     const first = roots[0]; if (!first) return;
     setProjectEditBusy(true); setProjectEditError(undefined);
     try {
-      await window.eidosRuntime.updateProject(projectEditRetry.current.prepare({
+      const updatedProject = await window.eidosRuntime.updateProject(projectEditRetry.current.prepare({
         projectId: projectToEdit.id, expectedRevision: projectToEdit.revision ?? 1,
         roots: [first, ...roots.slice(1)], primaryRootId, ...(name ? { name } : {}),
       }));
+      sessionActions.updateDraftProject(updatedProject);
       setProjectToEdit(undefined); await sessionActions.loadProjects();
     } catch (cause) { setProjectEditError(userFacingError(cause)); }
     finally { setProjectEditBusy(false); }
@@ -1034,7 +1035,10 @@ export function AppShell({ runtime }: AppShellProps) {
   const handleFeedFork = useCallback((item: Item) => {
     const source = sessionState.snapshot?.session;
     if (!source || sessionState.pending.creatingSession) return;
-    if (!source.project?.gitAvailable) {
+    const sourceHasGit = source.roots === undefined
+      ? source.project?.gitAvailable === true
+      : source.roots[0]?.repositoryRoot !== undefined;
+    if (!sourceHasGit) {
       void createConversationFork(source, item, "same_workspace");
       return;
     }
@@ -1062,7 +1066,11 @@ export function AppShell({ runtime }: AppShellProps) {
   // Draft 状态下也允许根据关联项目类型计算 hasProject/hasGit，
   // 使环境信息在新会话有项目时也能显示。
   const sessionHasProject = Boolean(currentSnapshot && currentSnapshot.session.projectless !== true && sessionProject);
-  const sessionHasGit = sessionProject?.gitAvailable === true;
+  const sessionHasGit = isDraft
+    ? sessionProject?.gitAvailable === true
+    : currentSnapshot?.session.roots !== undefined
+      ? currentSnapshot.session.roots[0]?.repositoryRoot !== undefined
+      : sessionProject?.gitAvailable === true;
   const sessionHasGitRepositories = sessionHasGit || Boolean(currentSnapshot?.session.roots?.some((root) => root.repositoryRoot));
   const sessionBranch = gitReviewState.status?.branch ?? sessionWorktree?.branch ?? null;
   const handoffBusy = Boolean(snapshot && sessionState.pending.handoffSessionId === snapshot.session.id);
@@ -1780,7 +1788,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   branchChanging={sessionState.pending.branchSessionId === currentSnapshot.session.id}
                   onSelectProject={() => void handleSelectProject()}
                   onLeaveProject={() => handleCreateSession()}
-                  onExecutionModeChange={sessionProject?.gitAvailable === true ? requestExecutionModeChange : undefined}
+                  onExecutionModeChange={sessionHasGit ? requestExecutionModeChange : undefined}
                 />
                 </ComposerSlot>
                 </SessionCanvas>

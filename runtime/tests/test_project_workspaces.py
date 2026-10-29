@@ -3,7 +3,9 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+import shutil
 import sqlite3
+import subprocess
 import time
 from uuid import uuid4
 
@@ -453,7 +455,15 @@ def test_v44_to_v45_migration_preserves_project_and_session_bindings(
     data_directory.mkdir(mode=0o700)
     workspace = tmp_path / "legacy-workspace"
     workspace.mkdir()
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main"],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     metadata = workspace.stat()
+    git_common_dir = workspace / ".git"
     project_id = "legacy-project"
     session_id = str(uuid4())
     database_path = data_directory / STATE_DATABASE_NAME
@@ -467,9 +477,17 @@ def test_v44_to_v45_migration_preserves_project_and_session_bindings(
             INSERT INTO projects (
                 id, name, workspace_root, git_repository_root, git_common_dir,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, NULL, NULL, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (project_id, "Legacy project", str(workspace.resolve()), 1000, 2000),
+            (
+                project_id,
+                "Legacy project",
+                str(workspace.resolve()),
+                str(workspace.resolve()),
+                str(git_common_dir.resolve()),
+                1000,
+                2000,
+            ),
         )
         connection.execute(
             """
@@ -503,7 +521,7 @@ def test_v44_to_v45_migration_preserves_project_and_session_bindings(
             (project_id,),
         ).fetchone()
         root = connection.execute(
-            "SELECT id,path,position FROM project_roots WHERE project_id=?",
+            "SELECT id,path,position,git_dir FROM project_roots WHERE project_id=?",
             (project_id,),
         ).fetchone()
         session = connection.execute(
@@ -511,7 +529,7 @@ def test_v44_to_v45_migration_preserves_project_and_session_bindings(
             (session_id,),
         ).fetchone()
 
-        assert revision == 46
+        assert revision == 47
         assert project["id"] == project_id
         assert project["name"] == "Legacy project"
         assert project["workspace_root"] == str(workspace.resolve())
@@ -520,23 +538,125 @@ def test_v44_to_v45_migration_preserves_project_and_session_bindings(
         assert root["id"] == f"root_{project_id}"
         assert root["path"] == str(workspace.resolve())
         assert root["position"] == 0
+        assert root["git_dir"] == str(git_common_dir.resolve())
         assert session["id"] == session_id
         assert session["project_id"] == project_id
         session_roots = json.loads(session["workspace_roots_json"])
-        assert session_roots == [
-            {
-                "id": f"root_{project_id}",
-                "path": str(workspace.resolve()),
-                "device": metadata.st_dev,
-                "inode": metadata.st_ino,
-                "owner": metadata.st_uid,
-                "repository_root": None,
-                "git_dir": None,
-                "git_common_dir": None,
-            }
-        ]
+        assert len(session_roots) == 1
+        session_root = session_roots[0]
+        assert session_root["id"] == f"root_{project_id}"
+        assert session_root["path"] == str(workspace.resolve())
+        assert session_root["device"] == metadata.st_dev
+        assert session_root["inode"] == metadata.st_ino
+        assert session_root["owner"] == metadata.st_uid
+        assert session_root["repository_root"] == str(workspace.resolve())
+        assert session_root["git_dir"] == str(git_common_dir.resolve())
+        assert session_root["git_common_dir"] == str(git_common_dir.resolve())
+        assert session_root["git_dir_identity"] is not None
+        assert session_root["git_common_identity"] is not None
     finally:
         database.close()
+
+
+def test_v45_git_metadata_backfill_rejects_a_replaced_frozen_git_dir(
+    tmp_path: Path,
+) -> None:
+    from eidos_runtime.db.project_binding_migration import (
+        _backfill_session_git_metadata,
+    )
+    from eidos_runtime.domain.project_workspace import SessionRoot
+    from eidos_runtime.git.backend import DulwichGitBackend
+    from eidos_runtime.git.discovery import GitRepositoryDiscoveryService
+    from eidos_runtime.workspace.reader import capture_directory_identity
+
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main"], cwd=repository, check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Eidos Tests"],
+        cwd=repository,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "eidos-tests@example.com"],
+        cwd=repository,
+        check=True,
+    )
+    (repository / "README.md").write_text("base\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "README.md"], cwd=repository, check=True
+    )
+    subprocess.run(
+        ["git", "commit", "-qm", "initial"], cwd=repository, check=True
+    )
+    linked = tmp_path / "linked"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "--detach", str(linked)],
+        cwd=repository,
+        check=True,
+    )
+
+    discovery_service = GitRepositoryDiscoveryService(DulwichGitBackend())
+    frozen_discovery = discovery_service.resolve(linked)
+    assert frozen_discovery is not None
+    workspace = capture_directory_identity(linked)
+    frozen_root = SessionRoot(
+        id="root",
+        path=str(workspace.path),
+        device=workspace.device,
+        inode=workspace.inode,
+        owner=workspace.owner,
+        repository_root=frozen_discovery.repository_root,
+        git_dir=frozen_discovery.git_dir,
+        git_common_dir=frozen_discovery.git_common_dir,
+    )
+
+    replacement_git_dir = (
+        Path(frozen_discovery.git_common_dir)
+        / "worktrees"
+        / "migration-replacement"
+    )
+    shutil.copytree(frozen_discovery.git_dir, replacement_git_dir)
+    (replacement_git_dir / "gitdir").write_text(
+        f"{(linked / '.git').resolve()}\n", encoding="utf-8"
+    )
+    (linked / ".git").write_text(
+        f"gitdir: {replacement_git_dir}\n", encoding="utf-8"
+    )
+    current_discovery = discovery_service.resolve(linked)
+    assert current_discovery is not None
+    assert current_discovery.repository_root == frozen_discovery.repository_root
+    assert current_discovery.git_common_dir == frozen_discovery.git_common_dir
+    assert current_discovery.git_dir != frozen_discovery.git_dir
+
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.execute(
+        "CREATE TABLE sessions (id TEXT PRIMARY KEY, project_id TEXT, workspace_roots_json TEXT)"
+    )
+    connection.execute(
+        "INSERT INTO sessions(id,project_id,workspace_roots_json) VALUES(?,?,?)",
+        (
+            "session",
+            "project",
+            json.dumps([frozen_root.model_dump(mode="json")]),
+        ),
+    )
+    _backfill_session_git_metadata(connection)
+    migrated_root = SessionRoot.model_validate(
+        json.loads(
+            connection.execute(
+                "SELECT workspace_roots_json FROM sessions WHERE id='session'"
+            ).fetchone()[0]
+        )[0]
+    )
+
+    assert migrated_root.git_dir is None
+    assert migrated_root.git_dir_identity is None
+    assert migrated_root.git_common_identity is None
+    connection.close()
 
 
 def test_project_update_replay_survives_a_missing_directory_and_runtime_restart(tmp_path: Path) -> None:

@@ -224,7 +224,7 @@ class SessionForkApplication:
                     state=WorktreeLifecycleState.PREPARED,
                     project_id=plan.project_id,
                     workspace_roots=source.session.roots,
-                    repository_root=source.project.workspace_root,
+                    repository_root=plan.repository_root,
                     worktree_id=plan.id,
                     worktree_root=plan.worktree_root,
                     base_ref=plan.base_ref,

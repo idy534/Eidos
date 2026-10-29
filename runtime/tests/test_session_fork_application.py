@@ -176,6 +176,42 @@ def test_worktree_fork_copies_current_changes_without_creating_a_run_or_modifyin
         store.close()
 
 
+def test_worktree_fork_maps_project_subdirectory_into_child_worktree(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    git(repository, "init", "-q", "-b", "main")
+    git(repository, "config", "user.name", "Eidos Tests")
+    git(repository, "config", "user.email", "tests@example.com")
+    project_root = repository / "src"
+    project_root.mkdir()
+    (project_root / "main.py").write_text("print('source')\n", encoding="utf-8")
+    git(repository, "add", ".")
+    git(repository, "commit", "-qm", "base")
+    store, sessions, forks = applications(tmp_path)
+    try:
+        source = sessions.create(
+            SessionCreateRequestDto(workspaceRoot=str(project_root))
+        ).root
+        item = completed_answer(store, source["id"])
+        target = forks.fork(
+            SessionForkRequest(
+                operationId=str(uuid4()),
+                sourceSessionId=source["id"],
+                sourceItemId=item,
+                target={"kind": "new_worktree"},
+            )
+        ).session
+
+        worktree_root = Path(target.worktree.worktree_root)
+        mapped_root = (worktree_root / "src").resolve()
+        run, _ = store.create_run(target.id, "use the forked project")
+        assert target.roots[0].path == str(mapped_root)
+        assert store.workspace_for_session(target.id).path == mapped_root
+        assert store.workspace_for_run(run["id"]).path == mapped_root
+    finally:
+        store.close()
+
+
 def test_fork_request_rejects_unknown_target_fields_and_unfinished_answers(tmp_path):
     from pydantic import ValidationError
 

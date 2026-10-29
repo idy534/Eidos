@@ -70,6 +70,7 @@ def migrate_project_workspaces(connection: sqlite3.Connection) -> None:
     connection.execute("PRAGMA foreign_keys=OFF")
     try:
         connection.executescript("BEGIN IMMEDIATE;\n" + PROJECT_WORKSPACES_SCHEMA_SQL)
+        _backfill_project_git_directories(connection)
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise sqlite3.IntegrityError("workspace migration foreign key mismatch")
         connection.execute("PRAGMA user_version=45")
@@ -79,4 +80,34 @@ def migrate_project_workspaces(connection: sqlite3.Connection) -> None:
         raise
     finally:
         connection.execute("PRAGMA foreign_keys=ON")
+
+
+def _backfill_project_git_directories(connection: sqlite3.Connection) -> None:
+    """Restore the Git directory path omitted by the legacy Project schema."""
+    from eidos_runtime.git.backend import DulwichGitBackend
+    from eidos_runtime.git.discovery import GitRepositoryDiscoveryService
+    from eidos_runtime.git.errors import WorktreeError
+    from eidos_runtime.workspace.reader import WorkspacePathError, capture_directory_identity
+
+    discovery_service = GitRepositoryDiscoveryService(DulwichGitBackend())
+    rows = connection.execute(
+        "SELECT id,path,repository_root,git_common_dir FROM project_roots "
+        "WHERE repository_root IS NOT NULL AND git_common_dir IS NOT NULL"
+    ).fetchall()
+    for row in rows:
+        try:
+            identity = capture_directory_identity(row[1])
+            discovery = discovery_service.resolve(identity.path)
+        except (OSError, WorktreeError, WorkspacePathError):
+            continue
+        if (
+            discovery is None
+            or discovery.repository_root != row[2]
+            or discovery.git_common_dir != row[3]
+        ):
+            continue
+        connection.execute(
+            "UPDATE project_roots SET git_dir=? WHERE id=?",
+            (discovery.git_dir, row[0]),
+        )
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useSessionController } from "./useSessionController.js";
-import type { EidosRuntimeAPI, Run, Session, SessionListResult, SessionSnapshot } from "../contracts.js";
+import type { EidosRuntimeAPI, Project, Run, Session, SessionListResult, SessionSnapshot } from "../contracts.js";
 
 const mockSession1: Session = {
   id: "session-1",
@@ -608,6 +608,44 @@ describe("useSessionController real Hook behavior", () => {
     expect(createSession).toHaveBeenCalledWith(project.workspaceRoot, { executionMode: "local", projectId: project.id });
     expect(result.current[0].snapshot).toEqual(mockSnapshot1);
     expect(result.current[0].draft).toBeDefined();
+  });
+
+  it("refreshes an open project draft after the project folders are saved", async () => {
+    const project: Project = {
+      id: "project-edit",
+      name: "Project",
+      workspaceRoot: "/workspace/old",
+      gitAvailable: true,
+      roots: [{ id: "root", path: "/workspace/old" }],
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const updatedProject: Project = {
+      ...project,
+      workspaceRoot: "/workspace/new",
+      roots: [{ id: "root", path: "/workspace/new" }],
+      updatedAt: 2,
+    };
+    const createSession = vi.fn().mockResolvedValue(mockSession1);
+    setupMockRuntime({ createSession });
+    const { result } = renderHook(() => useSessionController());
+
+    act(() => {
+      result.current[1].startDraft(project);
+      result.current[1].updateDraftExecutionMode("worktree");
+      result.current[1].updateDraftProject(updatedProject);
+    });
+
+    expect(result.current[0].draft?.session.workspaceRoot).toBe("/workspace/new");
+    expect(result.current[0].draft?.session.roots?.[0]?.path).toBe("/workspace/new");
+    expect(result.current[0].draft?.session.executionMode).toBe("worktree");
+    await act(async () => {
+      await result.current[1].materializeDraft();
+    });
+    expect(createSession).toHaveBeenCalledWith("/workspace/new", {
+      executionMode: "worktree",
+      projectId: "project-edit",
+    });
   });
 
   it("projects the first Run into the snapshot task status without an authoritative reload", async () => {

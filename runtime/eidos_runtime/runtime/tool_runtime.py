@@ -83,6 +83,7 @@ from eidos_runtime.runtime.shell_orchestration import (
     ShellOrchestrationRuntime,
     effective_shell_permissions,
     resolve_git_write_roots,
+    verify_git_metadata_identities,
 )
 from eidos_runtime.runtime.tool_orchestrator import (
     OrchestratorApprovalRequest,
@@ -726,6 +727,18 @@ class ShellToolHandler:
             )
         workspace = runtime.implementation.executor.workspace  # type: ignore[attr-defined]
         git_write_roots: tuple[str, ...] = ()
+        try:
+            verify_git_metadata_identities(workspace)
+        except GitWriteAccessError as error:
+            return HandlerOutcome(
+                tool_error(
+                    call.name,
+                    str(error),
+                    "Shell Git metadata no longer matches the saved workspace",
+                ),
+                "failed",
+                "failed",
+            )
         if shell_input.gitWriteAccess is GitWriteAccess.REQUEST and not full_access:
             try:
                 git_write_roots = resolve_git_write_roots(cwd)
@@ -927,6 +940,17 @@ class ShellToolHandler:
                         "tool_call_id": item["toolCall"]["id"],
                         "reason_code": str(error),
                     })
+            else:
+                try:
+                    verify_git_metadata_identities(workspace)
+                except GitWriteAccessError as error:
+                    manifest_after = replace(manifest_after, complete=False)
+                    result["reconciliationRequired"] = True
+                    logger.warning("shell_git_metadata_observation_incomplete", extra={
+                        "run_id": run_id,
+                        "tool_call_id": item["toolCall"]["id"],
+                        "reason_code": str(error),
+                    })
             return diff_workspace_manifests(manifest_before, manifest_after)
 
         def execute_shell_attempt(
@@ -941,6 +965,7 @@ class ShellToolHandler:
                 )
                 if approved_cwd != cwd:
                     raise WorkspacePathError("workspace_identity_changed")
+                verify_git_metadata_identities(workspace)
                 if git_write_roots and resolve_git_write_roots(approved_cwd) != git_write_roots:
                     raise GitWriteAccessError("git_repository_identity_changed")
             except ToolCancelled:
@@ -1005,6 +1030,7 @@ class ShellToolHandler:
                     dependency_environment=dependency_environment,
                     environment_policy=ShellEnvironmentRepository(self.dependencies.store.database).read().policy,
                 )
+                verify_git_metadata_identities(workspace)
                 raw_result = shell_process_manager.start(
                     launch,
                     yield_time_ms=yield_time_ms,
@@ -1019,6 +1045,15 @@ class ShellToolHandler:
                         raw_result,
                         dependency_provenance,
                     )
+            except GitWriteAccessError as error:
+                return (
+                    tool_error(
+                        call.name,
+                        str(error),
+                        "Shell Git metadata changed before execution",
+                    ),
+                    None,
+                )
             except ShellWorkspaceChangedError:
                 result = workspace_changed_result(skill_invocation=skill_invocation)
                 if dependency_provenance is not None:

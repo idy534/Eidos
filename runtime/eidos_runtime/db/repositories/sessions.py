@@ -288,12 +288,20 @@ class SessionRepository(Repository):
                     bound_project = connection.execute("SELECT id FROM projects WHERE workspace_root=?", (str(workspace),)).fetchone()[0]
                 project_row = connection.execute("SELECT * FROM projects WHERE id=?", (bound_project,)).fetchone()
                 saved = ensure_project_root(connection, project_from_row(project_row))
+                project_git_metadata_changed = False
                 if workspace_roots is not None:
                     from eidos_runtime.persistence.project_workspaces import verify_session_roots
                     verify_session_roots(workspace_roots)
                     if not workspace_roots or workspace_roots[0].path != str(workspace):
                         raise WorkspaceBoundaryError("session workspace snapshot does not match its source")
                     roots = workspace_roots
+                    from eidos_runtime.persistence.project_workspaces import sync_project_git_metadata
+                    project_git_metadata_changed = sync_project_git_metadata(
+                        connection,
+                        saved,
+                        roots,
+                        updated_at=now,
+                    )
                 else:
                     roots = capture_session_roots(project_roots(connection, bound_project))
                     roots = tuple(sorted(roots, key=lambda root: root.id != saved.primary_root_id))
@@ -301,6 +309,18 @@ class SessionRepository(Repository):
                     bound_project, json.dumps([root.model_dump(mode="json") for root in roots]), session_id,
                 ))
                 session = session.model_copy(update={"project_id": bound_project, "roots": roots})
+            else:
+                project_git_metadata_changed = False
+            events = []
+            if project_git_metadata_changed:
+                events.append(
+                    append_event(
+                        connection,
+                        EventType.PROJECT_UPDATED,
+                        now,
+                        {"id": bound_project},
+                    )
+                )
             event = append_event(
                 connection,
                 EventType.SESSION_CREATED,
@@ -308,12 +328,13 @@ class SessionRepository(Repository):
                 {"session": session_to_legacy_dict(session)},
                 session_id=session_id,
             )
+            events.append(event)
             if projectless_creation_id is not None:
                 connection.execute(
                     "UPDATE projectless_workspace_creations SET status = 'completed' WHERE operation_id = ?",
                     (projectless_creation_id,),
                 )
-            return CommittedMutation(session, (event,))
+            return CommittedMutation(session, tuple(events))
 
         if transaction_connection is not None:
             return write(transaction_connection)

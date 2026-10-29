@@ -44,9 +44,13 @@ vi.mock("../components/SessionSidebar.js", () => ({
 }));
 vi.mock("../components/Composer.js", async () => {
   const { ApprovalModeSelector } = await import("../components/ApprovalModeSelector.js");
-  return { Composer: ({ approvalMode, onApprovalModeChange }: {
+  return { Composer: ({ approvalMode, onApprovalModeChange, onExecutionModeChange }: {
     approvalMode: ApprovalMode; onApprovalModeChange: (mode: ApprovalMode) => void;
-  }) => <ApprovalModeSelector mode={approvalMode} onChange={onApprovalModeChange} /> };
+    onExecutionModeChange?: (mode: "local" | "worktree") => void;
+  }) => <>
+    <ApprovalModeSelector mode={approvalMode} onChange={onApprovalModeChange} />
+    {onExecutionModeChange && <button onClick={() => onExecutionModeChange("worktree")}>切换到工作树</button>}
+  </> };
 });
 vi.mock("../components/ComposerSlot.js", () => ({
   ComposerSlot: ({ children }: { children: React.ReactNode }) => children,
@@ -342,7 +346,8 @@ describe("AppShell conversation fork targets", () => {
 
   it("lets a Git conversation choose an independent Worktree", async () => {
     const snapshot = selectedAnswer();
-    snapshot.session.project!.gitAvailable = true;
+    snapshot.session.project!.gitAvailable = false;
+    snapshot.session.roots = [{ id: "root", path: "/workspace", repositoryRoot: "/workspace" }];
     renderShell();
     fireEvent.click(screen.getByRole("button", { name: "从这里分叉" }));
     const dialog = await screen.findByRole("alertdialog", { name: "从这里分叉" });
@@ -351,6 +356,26 @@ describe("AppShell conversation fork targets", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "创建分叉" }));
     await waitFor(() => expect(fixture.forkSession).toHaveBeenCalledWith(snapshot.session.id, "selected", { kind: "new_worktree", state: "current_workspace" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog", { name: "从这里分叉" })).not.toBeInTheDocument());
+  });
+
+  it("uses the Session's frozen Git root after the Project changes", () => {
+    const snapshot = fixture.snapshot!;
+    snapshot.session.project!.gitAvailable = false;
+    snapshot.session.roots = [{
+      id: "root",
+      path: "/workspace",
+      repositoryRoot: "/workspace",
+    }];
+    renderShell();
+    expect(screen.getByRole("button", { name: "切换到工作树" })).toBeInTheDocument();
+  });
+
+  it("does not offer Worktree mode when only the current Project has Git", () => {
+    const snapshot = fixture.snapshot!;
+    snapshot.session.project!.gitAvailable = true;
+    snapshot.session.roots = [{ id: "root", path: "/workspace" }];
+    renderShell();
+    expect(screen.queryByRole("button", { name: "切换到工作树" })).not.toBeInTheDocument();
   });
 
   it("requires an independent Worktree for managed conversations", async () => {

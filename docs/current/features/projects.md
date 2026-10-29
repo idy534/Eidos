@@ -10,11 +10,13 @@ Eidos 的项目保存稳定的 Project ID、名称、多个文件夹、一个主
 
 新会话固定 Project ID、主要文件夹、文件夹顺序、目录身份和 Git 来源。项目编辑只影响之后创建的会话。已有会话和运行中的 Run 保留原绑定。项目改名仍会刷新侧栏名称。系统不会因为修改主要文件夹而把旧会话改成无项目会话。
 
+保存项目时打开的草稿会同步新的文件夹、主要文件夹和 Git 可用状态。Session 创建时会把已核验的 Git 来源写回仍匹配当前项目配置的根。并发项目编辑不会用 Session 的旧根快照覆盖新配置。
+
 创建会话和草稿浏览都会按项目保存的绝对路径逐级使用 `O_NOFOLLOW` 核验目录。父目录被替换成符号链接时，Runtime 会拒绝该目录，不会把链接目标改成新的项目根。
 
 主要文件夹提供 Agent Shell 的默认 cwd。Agent 可以用绝对路径访问其他已绑定文件夹，也可以把 Shell cwd 设到这些文件夹及其子目录。`run_shell.cwd` 省略或使用 `.` 时，每次都从主要文件夹开始。相对 cwd 参数也以主要文件夹为起点。命令中的相对路径以本次 cwd 为起点。Shell 内的 `cd` 不改变下一次调用的默认 cwd。文件读取、Patch、图片、Shell 和 workspace_read MCP 使用这些根。系统保留身份、文件版本、Durable Intent、审批和结果核验。默认沙盒保护各根的 `.git`、`.agents`、`.eidos` 和实际 Git metadata；附加根没有单独的逐次写入审批。普通 Skill 和受保护路径继续使用原审批规则。完全访问模式继续遵循其已确认的权限语义。
 
-`gitWriteAccess=request` 选择本次 cwd 所属的仓库，并要求 `justification`。Runtime 从 Session 固定的 Git metadata 目录身份创建 Run 快照，并在审批前、启动前和命令结束后核对身份。Git metadata 被同路径替换时，Shell 不会启动；命令运行时身份发生变化会要求后续对账。项目的主要文件夹可以没有 Git；次文件夹仍可独立申请 Git 写入。多个已绑定文件夹相互嵌套时，cwd 解析后优先使用最深目录的身份。Runtime 不解析 Shell 命令中的 `cd` 或 `git -C` 来推断授权仓库。Agent 需要把 cwd 设到目标仓库或其子目录。Shell 启动前会在环境准备前后核对所有冻结的根；目录被替换时，命令返回 `workspace_identity_changed`，并且不会启动。
+`gitWriteAccess=request` 选择本次 cwd 所属的仓库，并要求 `justification`。Runtime 从 Session 固定的 Git metadata 目录身份创建 Run 快照，并在审批前、启动前和命令结束后核对身份。普通 Shell 也会在启动前核对所有冻结根的 Git metadata 身份。Git metadata 被同路径替换时，Shell 不会启动；命令运行时身份发生变化会要求后续对账。项目的主要文件夹可以没有 Git；次文件夹仍可独立申请 Git 写入。多个已绑定文件夹相互嵌套时，cwd 解析后优先使用最深目录的身份。Runtime 不解析 Shell 命令中的 `cd` 或 `git -C` 来推断授权仓库。Agent 需要把 cwd 设到目标仓库或其子目录。Shell 启动前会在环境准备前后核对所有冻结的根；目录被替换时，命令返回 `workspace_identity_changed`，并且不会启动。
 
 Files 面板提供文件夹选择器。文件预览、资源读取、文件内查找和通知按具体根处理。文件引用候选包含各个根，并用路径区分同名文件。文件链接携带根身份。MCP 在启动和调用前核验固定的目录身份。Hook 的改动观察复用现有 fd 扫描，并在扫描前后核对根。Shell 的改动观察同时覆盖各根；嵌套根中同一文件只报告一次，并沿用主要根的相对路径；不完整观察继续报告未知范围。
 
@@ -28,7 +30,7 @@ Review 面板按 checkout 选择 Git 目标。每个 checkout 保留独立状态
 
 主要文件夹属于 Git 仓库时，新会话可以选择 Eidos 管理的 Worktree。系统会把同一源 checkout 中的挂载目录映射到新 Worktree 的对应相对位置，并用 fd-relative、拒绝符号链接的方式核验映射目录。替换映射路径的任一目录组件会返回 `WORKSPACE_IDENTITY_CHANGED`，不会把 Worktree 外的目录加入 Run 权限或 Workspace Explorer 的读取范围。其他 checkout 和普通目录继续共享原位置。界面显示“共享”。Desktop Terminal 默认使用会话主要目录的实际执行位置。
 
-主要文件夹只是仓库子目录时，Shell 使用已核验仓库的 `.git` 标记。受保护数据目录内的 Worktree 允许读取已核验的 Git metadata 和 checkout 目录本身。这个目录权限不递归开放未挂载文件的内容或写入。默认 Git metadata 写入仍被拒绝；用户批准的 Git 写入继续使用原有权限流程。用户配置的保密路径拒绝规则继续生效。
+主要文件夹只是仓库子目录时，Shell 使用已核验仓库的 `.git` 标记。Fork 会把来源 Session 的挂载子目录映射到新 Worktree 中对应的位置。受保护数据目录内的 Worktree 允许读取已核验的 Git metadata 和 checkout 目录本身。这个目录权限不递归开放未挂载文件的内容或写入。默认 Git metadata 写入仍被拒绝；用户批准的 Git 写入继续使用原有权限流程。用户配置的保密路径拒绝规则继续生效。
 
 Worktree、Session 根快照、保留快照和生命周期记录固定源 repository root 与 common directory。Session 根快照也保存 Git metadata 目录身份；按根读取 Git 状态或 Diff 前会核对身份，替换 metadata 会返回 `WORKSPACE_IDENTITY_CHANGED`。切换项目主要文件夹后，旧 Worktree 的运行、Fork、Handoff、恢复和清理仍使用原仓库。新会话会重新发现 Git，所以项目保存后才初始化的仓库也能被新会话识别。
 

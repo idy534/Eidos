@@ -14,7 +14,7 @@ def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 @pytest.fixture
 def downgrade_project_workspaces_schema():
-    """Remove v45 additions before fixtures rebuild a legacy database."""
+    """Remove v45 and v47 additions before fixtures rebuild a legacy database."""
     def downgrade(connection: sqlite3.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS project_roots")
         for index in ("sessions_project", "review_comments_workspace"):
@@ -23,7 +23,13 @@ def downgrade_project_workspaces_schema():
             "projects": ("revision", "primary_root_id"),
             "sessions": ("project_id", "workspace_roots_json"),
             "review_comments": ("root_id",),
-            "worktrees": ("repository_root", "git_common_dir"),
+            "worktrees": (
+                "repository_root",
+                "git_common_dir",
+                "git_dir_dev",
+                "git_dir_inode",
+                "git_dir_uid",
+            ),
             "worktree_snapshots": ("repository_root", "git_common_dir"),
             "worktree_lifecycle_operations": ("workspace_roots_json", "project_revision"),
         }.items():
