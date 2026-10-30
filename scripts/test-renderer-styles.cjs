@@ -93,8 +93,14 @@ app.whenReady().then(async () => {
     assert.equal((await read("#model-trigger", ["outlineStyle"])).outlineStyle, "none", "Pointer focus paints no ring");
 
     await show("selected");
-    const selected = ["session", "git", "project", "tree", "model", "mode", "skill", "handoff", "clarification", "mcp"];
-    const selectedBackground = (await read("#selected-session", ["backgroundColor"])).backgroundColor;
+    const sessionStyles = await read("#selected-session", ["backgroundColor", "boxShadow"]);
+    assert.equal(sessionStyles.backgroundColor, "rgb(255, 255, 255)", "Sidebar session uses elevated white surface");
+    assert.notEqual(sessionStyles.boxShadow, "none", "Sidebar session uses elevated shadow");
+    await pointer("#selected-session");
+    assert.equal((await read("#selected-session", ["backgroundColor"])).backgroundColor, "rgb(255, 255, 255)", "session remains selected on hover");
+
+    const selected = ["git", "project", "tree", "model", "mode", "skill", "handoff", "clarification", "mcp"];
+    const selectedBackground = (await read("#selected-git", ["backgroundColor"])).backgroundColor;
     for (const name of selected) {
       const selector = `#selected-${name}`;
       assert.equal((await read(selector, ["backgroundColor"])).backgroundColor, selectedBackground, `${name} shares selected color`);
@@ -238,7 +244,7 @@ app.whenReady().then(async () => {
       }
     }
     assert.deepEqual(pageErrors, [], "Fixture must not report renderer errors");
-    console.log(JSON.stringify({ status: "passed", controlStates: true, selectedStates: selected.length, menuSurfaces: menuSurfaces.length, scrollbars: scrollbarCount, baselineCompared: Boolean(baselineFile), layouts: snapshots }));
+    console.log(JSON.stringify({ status: "passed", controlStates: true, selectedStates: selected.length + 1, menuSurfaces: menuSurfaces.length, scrollbars: scrollbarCount, baselineCompared: Boolean(baselineFile), layouts: snapshots }));
   } catch (error) {
     exitCode = 1; console.error(error);
   } finally {

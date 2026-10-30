@@ -336,7 +336,7 @@ const RunSegment = memo(function RunSegment({
   const visibleProcess = segment.process.filter((entry) => {
     if (entry.kind === "compaction") return true;
     const item = entry.item;
-    if (item.toolCall?.toolName !== "write_stdin") return true;
+    if (!item.toolCall || !["write_stdin", "control_shell"].includes(item.toolCall.toolName)) return true;
     const data = objectField(parseObject(item.toolCall.resultJson), "data");
     return item.status === "failed" && !stringField(data, "executionStatus");
   });
@@ -1083,7 +1083,7 @@ function ProcessItem({
   }
   if (!item.toolCall) return null;
 
-  if (item.toolCall.toolName === "write_stdin") {
+  if (["write_stdin", "control_shell"].includes(item.toolCall.toolName)) {
     return item.status === "failed" ? <p className="shell-error-summary">命令跟进失败 · {stringField(parseObject(item.toolCall.resultJson), "code") || "暂时无法读取命令状态"}</p> : null;
   }
 
@@ -1149,7 +1149,11 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
   const reconciliationRequired = result.reconciliationRequired === true;
   const truncated = booleanField(data, "truncated");
   const truncationReason = stringField(data, "truncationReason");
-  const outputSegments = shellOutputSegments(item.content, stdout, stderr);
+  // The bounded live preview stops before the retained output tail. Prefer
+  // final evidence once that preview cannot contain the complete output.
+  const useRetainedOutput = !running && numberField(data, "outputRevision") !== undefined
+    && (truncated || (numberField(data, "originalBytes") ?? 0) > 256 * 1024);
+  const outputSegments = shellOutputSegments(useRetainedOutput ? undefined : item.content, stdout, stderr);
   const hasOutput = outputSegments.length > 0;
   const pendingVerification = reconciliationRequired && !gateRejected;
   const failed = result.outcome === "error"

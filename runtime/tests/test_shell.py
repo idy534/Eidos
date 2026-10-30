@@ -973,7 +973,9 @@ class ShellProcessManagerTests(unittest.TestCase):
         self.assertTrue(data["truncated"])
         self.assertEqual(data["originalBytes"], original_bytes)
         self.assertEqual(data["omittedBytes"], original_bytes - accepted_bytes)
-        self.assertEqual(len(data["stdout"].encode("utf-8")), accepted_bytes)
+        self.assertEqual(data["stdout"].count("x"), accepted_bytes)
+        self.assertIn("output bytes omitted", data["stdout"])
+        self.assertLess(len(data["stdout"].encode("utf-8")), accepted_bytes + 128)
         self.assertIsInstance(data["sessionId"], str)
 
     def test_subsequent_poll_returns_only_new_output(self) -> None:

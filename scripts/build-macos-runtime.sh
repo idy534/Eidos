@@ -138,6 +138,7 @@ required_resources=(
   "eidos_runtime/__main__.py"
   "eidos_runtime/sandbox/seatbelt.sbpl"
   "eidos_runtime/sandbox/file_commit_helper.py"
+  "eidos_runtime/sandbox/pty_exec_helper.py"
   "eidos_runtime/sandbox/sensitive_rules.json"
   "eidos_runtime/sandbox/mcp_connector.sbpl"
   "eidos_runtime/sandbox/mcp_workspace_read.sbpl"

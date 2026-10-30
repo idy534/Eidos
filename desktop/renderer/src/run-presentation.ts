@@ -64,7 +64,7 @@ const messages: Record<string, string> = {
 
 const toolNames: Record<string, string> = {
   read_file: "读取文件", read_file_range: "读取文件", list_files: "列出文件",
-  search_text: "搜索文件内容", run_shell: "执行命令", write_stdin: "跟进命令",
+  search_text: "搜索文件内容", run_shell: "执行命令", write_stdin: "跟进命令", control_shell: "控制命令",
   apply_patch: "修改文件", declare_outputs: "登记交付文件",
 };
 const parameterNames: Record<string, string> = {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import codecs
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import errno
 import os
 import selectors
 import select
@@ -29,6 +30,8 @@ from eidos_runtime.sandbox.shell import (
     _terminate_group,
 )
 from eidos_runtime.sandbox.sensitive import SensitiveScanner, StreamingSensitiveScanner, SensitiveScanError
+from eidos_runtime.runtime.shell_output_buffer import ShellOutputBuffer
+from eidos_runtime.runtime.shell_process_transport import ShellProcessTransport, spawn_shell_process
 
 
 class ShellProcessSessionNotFound(KeyError):
@@ -48,13 +51,16 @@ class ShellProcessSession:
     launch: ShellLaunchSpec
     started_at: float
     resource: RuntimeResource | None = None
-    stdout_text: str = ""
-    stderr_text: str = ""
+    transport: ShellProcessTransport | None = None
+    output: dict[str, ShellOutputBuffer] = field(default_factory=lambda: {
+        name: ShellOutputBuffer(MAX_OUTPUT_BYTES) for name in ("stdout", "stderr")
+    })
     stdout_cursor: int = 0
     stderr_cursor: int = 0
     original_bytes: int = 0
-    accepted_bytes: int = 0
-    truncated: bool = False
+    delta_bytes: int = 0
+    columns: int | None = None
+    rows: int | None = None
     exit_code: int | None = None
     execution_status: str = "running"
     termination: str = "running"
@@ -74,6 +80,18 @@ class ShellProcessSession:
     finalization_error: Exception | None = None
 
     @property
+    def stdout_text(self) -> str:
+        return self.output["stdout"].read().text
+
+    @property
+    def stderr_text(self) -> str:
+        return self.output["stderr"].read().text
+
+    @property
+    def truncated(self) -> bool:
+        return any(buffer.omitted_bytes for buffer in self.output.values())
+
+    @property
     def resource_id(self) -> str | None:
         return self.resource.resource_id if self.resource is not None else None
 
@@ -81,7 +99,7 @@ class ShellProcessSession:
     def omitted_bytes(self) -> int:
         return min(
             MAX_OUTPUT_METADATA_BYTES,
-            max(0, self.original_bytes - self.accepted_bytes),
+            max(0, self.original_bytes - sum(buffer.retained_bytes for buffer in self.output.values())),
         )
 
 
@@ -115,15 +133,8 @@ class ShellProcessManager:
             if self._closed:
                 raise RuntimeError("shell process manager is closed")
         try:
-            process = subprocess.Popen(
-                launch.argv,
-                cwd=launch.cwd,
-                env=launch.environment,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                start_new_session=True,
-            )
+            transport = spawn_shell_process(launch, cancel=cancel)
+            process = transport.process
         except (OSError, ValueError) as error:
             raise ShellProcessStartError("shell_process_start_failed") from error
         session_id = f"shell-{uuid.uuid4()}"
@@ -134,10 +145,11 @@ class ShellProcessManager:
             process_group_id=process.pid,
             launch=launch,
             started_at=time.monotonic(),
+            transport=transport,
+            columns=launch.columns if launch.tty else None,
+            rows=launch.rows if launch.tty else None,
         )
         try:
-            if on_started is not None:
-                on_started()
             session.on_output = on_output
             if sensitive is not None:
                 for name in ("stdout", "stderr"):
@@ -167,6 +179,12 @@ class ShellProcessManager:
             )
             session.thread = thread
             thread.start()
+            if on_started is not None:
+                on_started()
+            if cancel is not None and cancel.is_set():
+                self._terminate(session)
+            else:
+                transport.start_execution()
         except Exception:
             self._terminate(session)
             try:
@@ -225,7 +243,7 @@ class ShellProcessManager:
         on_input: Callable[[], None] | None = None,
     ) -> dict[str, object]:
         session = self._session(session_id)
-        if chars == "\x03":
+        if chars == "\x03" and not session.launch.tty:
             with session.lock:
                 if session.execution_status == "running":
                     if on_input is not None:
@@ -236,7 +254,7 @@ class ShellProcessManager:
                         pass
         elif chars:
             self._write(session, chars, cancel=cancel, on_input=on_input)
-        if chars == "\x03":
+        if chars == "\x03" and not session.launch.tty:
             if not session.done.wait(min(yield_time_ms / 1000, 1.0)):
                 self._terminate(session)
                 if not session.done.wait(2):
@@ -249,6 +267,49 @@ class ShellProcessManager:
         if session.terminal_result is not None:
             data = result["data"]
             result = {**session.terminal_result, "toolName": "write_stdin", "data": {**session.terminal_result["data"], "stdout": data["stdout"], "stderr": data["stderr"]}}
+        return result
+
+    def control(
+        self, session_id: str, action: str, *, columns: int | None = None,
+        rows: int | None = None, yield_time_ms: int = 250,
+        cancel: threading.Event | None = None,
+        on_input: Callable[[], None] | None = None,
+    ) -> dict[str, object]:
+        session = self._session(session_id)
+        if cancel is not None and cancel.is_set():
+            raise RuntimeError("shell_control_canceled")
+        transport = session.transport
+        assert transport is not None
+        with session.write_lock:
+            if action == "terminate":
+                if session.execution_status == "running":
+                    if on_input is not None:
+                        on_input()
+                    self._terminate(session, termination="terminated")
+            else:
+                if session.execution_status != "running" or session.process.poll() is not None:
+                    raise RuntimeError("shell_session_exited")
+                if action == "resize":
+                    if columns is None or rows is None or not (2 <= columns <= 500 and 2 <= rows <= 500):
+                        raise RuntimeError("shell_invalid_terminal_size")
+                    if transport.terminal_fd is None:
+                        raise RuntimeError("shell_not_a_terminal")
+                    if on_input is not None:
+                        on_input()
+                    transport.resize(rows, columns)
+                    with session.lock:
+                        session.columns, session.rows = columns, rows
+                elif action == "close_stdin":
+                    if transport.terminal_fd is not None:
+                        raise RuntimeError("shell_terminal_cannot_close_stdin")
+                    if on_input is not None and not transport.stdin_closed:
+                        on_input()
+                    transport.close_stdin()
+                else:
+                    raise RuntimeError("shell_invalid_control")
+        result = self.write_stdin(session_id, yield_time_ms=yield_time_ms, cancel=cancel)
+        result["toolName"] = "control_shell"
+        result["data"]["controlAction"] = action
         return result
 
     def require_session(self, session_id: str) -> None:
@@ -356,17 +417,20 @@ class ShellProcessManager:
                     break
                 session.done.wait(min(0.1, remaining))
         with session.lock:
-            stdout = session.stdout_text[0 if cumulative else session.stdout_cursor:]
-            stderr = session.stderr_text[0 if cumulative else session.stderr_cursor:]
+            stdout = session.output["stdout"].read(0 if cumulative else session.stdout_cursor)
+            stderr = session.output["stderr"].read(0 if cumulative else session.stderr_cursor)
             if not cumulative:
-                session.stdout_cursor = len(session.stdout_text)
-                session.stderr_cursor = len(session.stderr_text)
+                session.stdout_cursor = stdout.next_offset
+                session.stderr_cursor = stderr.next_offset
             running = session.execution_status == "running"
             data: dict[str, object] = {
                 "executionStatus": "running" if running else "exited",
                 "exitCode": None if running else session.exit_code,
-                "stdout": stdout,
-                "stderr": stderr,
+                "stdout": stdout.text,
+                "stderr": stderr.text,
+                "transport": "pty" if session.launch.tty else "pipe",
+                "outputMerged": session.launch.tty,
+                "outputRevision": min(MAX_OUTPUT_METADATA_BYTES, session.original_bytes * 2 + int(not running)),
                 "truncated": session.truncated,
                 "termination": "running" if running else session.termination,
                 "durationMs": max(
@@ -384,6 +448,8 @@ class ShellProcessManager:
                 data["shellKind"] = session.launch.shell_kind
             if session.launch.environment_source is not None:
                 data["environmentSource"] = session.launch.environment_source
+            if session.launch.tty:
+                data.update(columns=session.columns, rows=session.rows)
             return {
                 "schemaVersion": 1,
                 "toolName": tool_name,
@@ -444,18 +510,16 @@ class ShellProcessManager:
         payload = chars.encode("utf-8")
         if not payload:
             return
-        process_stdin = session.process.stdin
-        if process_stdin is None:
-            raise RuntimeError("shell_stdin_unavailable")
         if session.execution_status != "running" or session.process.poll() is not None:
             raise RuntimeError("shell_stdin_closed")
-        descriptor = process_stdin.fileno()
+        assert session.transport is not None
         with session.write_lock:
+            descriptor = session.transport.input_fd
             offset = 0
             deadline = time.monotonic() + 30.0
             os.set_blocking(descriptor, False)
             while offset < len(payload):
-                if cancel is not None and cancel.is_set():
+                if session.stop.is_set() or (cancel is not None and cancel.is_set()):
                     raise RuntimeError("shell_stdin_canceled")
                 try:
                     written = os.write(descriptor, payload[offset:])
@@ -477,12 +541,12 @@ class ShellProcessManager:
                         on_input()
                     offset += written
 
-    def _terminate(self, session: ShellProcessSession) -> bool:
+    def _terminate(self, session: ShellProcessSession, *, termination: str = "canceled") -> bool:
         with session.lock:
             session.stop.set()
             stopped = session.process.poll() is None or _process_group_exists(session.process_group_id)
             if stopped and session.execution_status == "running":
-                session.termination = "canceled"
+                session.termination = termination
         _terminate_group(session.process_group_id)
         return stopped
 
@@ -492,23 +556,21 @@ class ShellProcessManager:
             stream: codecs.getincrementaldecoder("utf-8")(errors="replace")
             for stream in ("stdout", "stderr")
         }
-        streams = {
-            "stdout": session.process.stdout,
-            "stderr": session.process.stderr,
-        }
+        assert session.transport is not None
         try:
-            for name, stream in streams.items():
-                if stream is not None:
-                    selector.register(stream, selectors.EVENT_READ, name)
+            for name, descriptor in session.transport.output_descriptors():
+                selector.register(descriptor, selectors.EVENT_READ, name)
             termination_started_at: float | None = None
             while selector.get_map() or session.process.poll() is None:
                 ready = selector.select(timeout=0.1) if selector.get_map() else ()
                 for key, _mask in ready:
                     try:
-                        chunk = os.read(key.fileobj.fileno(), 64 * 1024)
-                    except OSError:
+                        chunk = os.read(key.fd, 64 * 1024)
+                    except BlockingIOError:
+                        continue
+                    except OSError as error:
                         with session.lock:
-                            if session.drain_error is None:
+                            if session.drain_error is None and not (session.launch.tty and error.errno == errno.EIO):
                                 session.drain_error = "output_read_failed"
                         chunk = b""
                     if not chunk:
@@ -518,6 +580,8 @@ class ShellProcessManager:
                             pass
                         continue
                     self._capture(session, key.data, chunk, decoders[key.data])
+                if not selector.get_map() and session.process.poll() is None:
+                    session.stop.wait(0.01)
                 if session.process.poll() is not None:
                     with session.lock:
                         if session.exit_code is None:
@@ -567,7 +631,11 @@ class ShellProcessManager:
                     scanner.finish()
                 except SensitiveScanError:
                     session.drain_error = "sensitive_content_rejected"
+            with session.lock:
+                for buffer in session.output.values():
+                    buffer.finished = True
             selector.close()
+            session.stop.set()
             self._close_pipes(session)
             with session.lock:
                 if session.exit_code is None:
@@ -599,14 +667,9 @@ class ShellProcessManager:
                 MAX_OUTPUT_METADATA_BYTES,
                 session.original_bytes + len(chunk),
             )
-            remaining = max(0, MAX_OUTPUT_BYTES - session.accepted_bytes)
-            accepted = chunk[:remaining]
-            if len(accepted) < len(chunk):
-                session.truncated = True
-            if not accepted:
-                return
-            session.accepted_bytes += len(accepted)
-            text = decoder.decode(accepted, final=False)
+            if stream not in session.scanners:
+                session.output[stream].append(chunk)
+            text = decoder.decode(chunk, final=False)
             ShellProcessManager._append_decoded(session, stream, text)
 
     @staticmethod
@@ -627,19 +690,26 @@ class ShellProcessManager:
     @staticmethod
     def _append_safe(session: ShellProcessSession, stream: str, text: str) -> None:
         with session.lock:
-            if stream == "stdout":
-                session.stdout_text += text
-            else:
-                session.stderr_text += text
-        if session.on_output is not None:
+            if stream in session.scanners:
+                session.output[stream].append(text.encode("utf-8"))
+            # Persist only a bounded live preview. Polls and the final result
+            # carry the latest retained tail without unbounded delta events.
+            remaining = max(0, MAX_OUTPUT_BYTES - session.delta_bytes)
+            preview = text.encode("utf-8")[:remaining].decode("utf-8", errors="ignore")
+            session.delta_bytes += len(preview.encode("utf-8"))
+        if preview and session.on_output is not None:
             try:
-                session.on_output(text)
+                session.on_output(preview)
             except Exception:
                 session.drain_error = "output_persistence_failed"
                 logging.getLogger("eidos.runtime").exception("Shell output persistence failed")
 
     @staticmethod
     def _close_pipes(session: ShellProcessSession) -> None:
+        if session.transport is not None:
+            with session.write_lock:
+                session.transport.close()
+            return
         for stream in (session.process.stdin, session.process.stdout, session.process.stderr):
             if stream is None:
                 continue

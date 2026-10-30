@@ -221,6 +221,7 @@ required = (
     "eidos_runtime/__main__.py",
     "eidos_runtime/sandbox/seatbelt.sbpl",
     "eidos_runtime/sandbox/file_commit_helper.py",
+    "eidos_runtime/sandbox/pty_exec_helper.py",
     "eidos_runtime/sandbox/sensitive_rules.json",
     "eidos_runtime/extensions/mcp_launcher.py",
     "eidos_runtime/workspace/apply_patch.lark",
@@ -229,6 +230,21 @@ required = (
 )
 for relative in required:
     assert (app_root / relative).is_file(), relative
+
+from eidos_runtime.runtime.shell_process_manager import ShellProcessManager
+from eidos_runtime.sandbox.shell import ShellLaunchSpec
+with tempfile.TemporaryDirectory(prefix="eidos-bundled-pty-") as terminal_directory:
+    manager = ShellProcessManager(owner_run_id="bundled-pty")
+    try:
+        launch = ShellLaunchSpec(
+            argv=(sys.executable, "-I", "-c", "import os; fd=os.open('/dev/tty',os.O_RDWR); os.close(fd); print([os.isatty(i) for i in (0,1,2)])"),
+            cwd=Path(terminal_directory), environment={"PATH":"/usr/bin:/bin"}, sandboxed=False, tty=True,
+        )
+        terminal_result = manager.start(launch, yield_time_ms=3000)
+        assert terminal_result["data"]["exitCode"] == 0, terminal_result
+        assert "[True, True, True]" in terminal_result["data"]["stdout"], terminal_result
+    finally:
+        manager.cleanup()
 
 for name, body, expected in (
     ("content", "+one\n+\n+two\n", "one\n\ntwo\n"),

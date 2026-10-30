@@ -329,7 +329,7 @@ test("shows shell termination and bounded-output diagnostics", () => {
   const html = renderToStaticMarkup(
     <ExecutionFeed
       items={[item({
-        id: "truncated-shell", ordinal: 1, kind: "command_execution",
+        id: "truncated-shell", ordinal: 1, kind: "command_execution", content: "STALE PREVIEW",
         toolCall: {
           id: "tool-truncated-shell", itemId: "truncated-shell", modelStepIndex: 1,
           batchOrder: 0, providerCallId: "provider-truncated-shell", toolName: "run_shell",
@@ -340,6 +340,7 @@ test("shows shell termination and bounded-output diagnostics", () => {
             data: {
               exitCode: 2, stdout: "partial", stderr: "failed",
               termination: "exit", truncated: true, truncationReason: "output_limit",
+              outputRevision: 900001,
             },
           }),
         },
@@ -356,6 +357,8 @@ test("shows shell termination and bounded-output diagnostics", () => {
   assert.doesNotMatch(html, /Command failed/);
   assert.doesNotMatch(html, /结束方式/);
   assert.match(html, /输出已截断 · output_limit/);
+  assert.match(html, /partial/);
+  assert.doesNotMatch(html, /STALE PREVIEW/);
 });
 
 test("hides shell_exit_nonzero error lines and shows exit code pill next to 失败", () => {
@@ -993,7 +996,7 @@ test("renders in-progress read_file as an expandable details element", () => {
   assert.match(html, /正在读取 src\/utils\/generate_sunset\.js/);
 });
 
-test("keeps a managed command running and hides normal Shell followups", () => {
+for (const followupName of ["write_stdin", "control_shell"]) test(`keeps a managed command running and hides ${followupName} followups`, () => {
   const command = item({ id: "managed", ordinal: 1, kind: "command_execution", content: "progress\n", toolCall: {
     id: "managed-tool", itemId: "managed", modelStepIndex: 1, batchOrder: 0,
     providerCallId: "start", toolName: "run_shell", status: "completed", startedAt: 1_000,
@@ -1002,13 +1005,13 @@ test("keeps a managed command running and hides normal Shell followups", () => {
   } });
   const followup = item({ id: "followup", ordinal: 2, kind: "tool_call", toolCall: {
     id: "followup-tool", itemId: "followup", modelStepIndex: 2, batchOrder: 0,
-    providerCallId: "poll", toolName: "write_stdin", status: "completed", startedAt: 2_000,
+    providerCallId: "poll", toolName: followupName, status: "completed", startedAt: 2_000,
     argumentsJson: JSON.stringify({ sessionId: "shell-1" }), resultJson: JSON.stringify({ code: "shell_running" }),
   } });
   const html = renderToStaticMarkup(<ExecutionFeed items={[command, followup]} runs={[{ ...run, status: "running" }]} approvals={[]} />);
   assert.match(html, /正在运行 pnpm test/);
   assert.match(html, /progress/);
-  assert.doesNotMatch(html, /write_stdin|✓ 成功|失败 · shell_running/);
+  assert.doesNotMatch(html, /write_stdin|control_shell|✓ 成功|失败 · shell_running/);
   assert.equal((html.match(/tool-item--shell/g) ?? []).length, 1);
 });
 

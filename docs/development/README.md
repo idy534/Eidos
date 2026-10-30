@@ -21,6 +21,8 @@ Agent 在 Eidos Shell 内执行本仓库测试时，应先核对实际执行权�
 
 uv 缓存写入失败时，Agent 应选择已有可写缓存或临时目录，或申请具体路径权限。Agent 不应默认放开整个 HOME。缓存清理不能解除未知 Shell Intent。测试报告应记录退出码、实际完成的阶段和最终汇总；输出不完整时，测试者必须把总数和未核验结论标为未验证。
 
+Agent Shell 的 PIPE 与 PTY 定向测试入口为 `uv run --locked pytest -q runtime/tests/test_agent_pty.py runtime/tests/test_shell.py runtime/tests/test_read_tool_output.py`。真实 macOS 权限验证继续使用 `pnpm test:seatbelt-native`。打包脚本会检查 `sandbox/pty_exec_helper.py`，bundled Runtime smoke 会用打包解释器创建控制终端。工具示例和输出边界见 [Agent Shell](../current/features/agent-shell.md)。
+
 Agent Shell 的 zsh/bash 默认开启 `pipefail`。Agent zsh 在用户启动脚本加载后通过固定初始化关闭 `NOMATCH`，没有匹配文件的模式默认原样交给程序。正常匹配的文件模式仍会展开，调用方仍应给需要原样传递的模式加引号。该初始化不改变环境继承，也不作用于 Desktop Terminal。验证命令优先直接输出到工具的有界捕获，不要用 `head` 提前关闭管道。多个有依赖关系的阶段使用 `&&`；分号后最后一条命令的成功不能证明前面阶段通过。POSIX sh 保持原来的退出码行为。
 
 开发过程中，执行者优先运行与改动行为直接相关的 focused tests。执行者只有在确认 `test:affected` 的映射范围合适时才运行该入口：

@@ -130,7 +130,7 @@ function parsedDiffChanges(diff: string): ParsedFileChange[] {
 function recordedTextChanges(item: Item): ParsedFileChange[] {
   const changes = new Map(parsedDiffChanges(item.toolCall?.changeDiff ?? "").map((change) => [change.path, change]));
   const toolName = item.toolCall?.toolName ?? "";
-  if (["run_shell", "write_stdin", "shell"].includes(toolName)) return [...changes.values()];
+  if (["run_shell", "write_stdin", "control_shell", "shell"].includes(toolName)) return [...changes.values()];
   const result = parseObject(item.toolCall?.resultJson);
   const data = objectField(result, "data");
   const addRecordedPath = (value: unknown, deleted: boolean): void => {

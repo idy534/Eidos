@@ -196,7 +196,7 @@
 
 ### Run 并发与资源模型
 
-- 执行门控整改的 Linux 定向验证与当时的完整回归结果记录在 PR #103。PR #103 所用快照中的 Runtime Full 和 Desktop Main 测试失败可在原始 main 上复现。2026-10-14 的 `pnpm test` 通过：Runtime 2,475 项、Desktop 合约 4 项、Renderer state 171 项、Main 88 项和 Renderer behavior 599 项；2 项 `large_repository` 按配置排除。这个历史结果不代表后续改动已通过完整回归。正常完成检查覆盖运行时控制事实，不自动判定测试覆盖率、交付物质量或用户目标是否全部满足。模型辅助压缩与首批同步用户 Hooks 现已接入；Agent Shell PTY 和流式工具调度仍属后续工作。当前 Hooks 已接入 12 个事件、同步与后台命令、MCP 处理器，具体边界见[当前 Hooks](features/hooks.md)。
+- 执行门控整改的 Linux 定向验证与当时的完整回归结果记录在 PR #103。PR #103 所用快照中的 Runtime Full 和 Desktop Main 测试失败可在原始 main 上复现。2026-10-14 的 `pnpm test` 通过：Runtime 2,475 项、Desktop 合约 4 项、Renderer state 171 项、Main 88 项和 Renderer behavior 599 项；2 项 `large_repository` 按配置排除。这个历史结果不代表后续改动已通过完整回归。正常完成检查覆盖运行时控制事实，不自动判定测试覆盖率、交付物质量或用户目标是否全部满足。模型辅助压缩与首批同步用户 Hooks 现已接入；Agent Shell 已增加可选 PTY；完整终端画面和流式工具调度仍属后续工作。当前 Hooks 已接入 12 个事件、同步与后台命令、MCP 处理器，具体边界见[当前 Hooks](features/hooks.md)。
 
 - 普通 Run 没有并发上限。Runtime 按 Session 分别维护持久 FIFO，同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run；不同 Session 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。每个 Run 有独立的 `ToolConcurrencyGate` 和 `ShellProcessManager`，所以不同 Session 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。同一 Run 的长 Shell 不再占有执行门控，其他文件变更、命令和协作调用可以继续；`write_stdin` 继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
 - 当前每个活动 Run 使用一个 Worker Thread。模型异步 I/O、MCP、Managed Task 和安全只读批次由唯一 RuntimeAsyncKernel 管理。当前没有把整个 RuntimeEngine/RunSupervisor 改成原生 async 的实现。
@@ -245,13 +245,13 @@
 - `outputComplete=false` 表示输出尚未完整获得，原因可能是仍在运行、捕获失败或原始输出截断。旧结果缺少该字段时，系统不能推断输出完整。`outputCaptureError` 只保存捕获原因码，不能恢复已经丢失的内容；当前 Shell 聚合输出不会因可识别凭据被拒绝。本次历史 Run 的具体捕获子原因不会被新代码补写。
 - 对账恢复不设固定轮数；语义无进展仍会触发恢复或收尾，并保留未解决的事实。系统不自动重放未知操作。模型的测试报告指引要求区分收集数与完成数，也要求标明缺失汇总和未执行阶段；这项指引不等于系统能够自动证明任意测试结论。
 
-- Agent Shell 按 Run 独立管理，支持同一 Run 内的管道 stdin 和分段等待，但不提供 PTY，也不跨 Run 或 Runtime 重启恢复进程。不同 Session 的 Shell 可以并行，即使共享同一个 Workspace；同一 Run 的长 Shell 不再阻止其他普通副作用和协作调用。并发修改仍需协调文件范围；最后退出会清理尚未结束的命令。
+- Agent Shell 按 Run 独立管理，支持同一 Run 内的 PIPE、可选 PTY、输入和分段等待，但不跨 Run 或 Runtime 重启恢复进程。不同 Session 的 Shell 可以并行，即使共享同一个 Workspace；同一 Run 的长 Shell 不再阻止其他普通副作用和协作调用。并发修改仍需协调文件范围；最后退出会清理尚未结束的命令。
 - Runtime 会检测并清理 background child，但 Agent Shell 不能管理持久后台进程。
 - ShellEnvironmentSnapshot 不恢复 aliases、functions 或其他 shell state。
 - Skill 依赖自动绑定只适用于现有识别器能识别的直接脚本调用，包括 `$RUNTIME_PYTHON` 和 `$RUNTIME_NODE`。Runtime 不会从任意 Shell 包装、变量脚本路径或已激活 Skill 列表推断普通命令的依赖，也不会自动安装缺失包。
 - manual 与 auto_review 要求 Shell cwd 位于 Workspace 内。调用方可以使用 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径。full_access 允许 Workspace 外的 absolute cwd，但准备和启动仍核验目录身份。
-- Agent Shell 的 raw stdout/stderr 仍有 256 KiB 上限。它不提供无限输出流。
-- Agent Shell 会对 stdout 和 stderr 做 UTF-8 增量解码。Desktop Execution Feed 在运行中和终态保留两条流的展示脱敏片段顺序，并把 ANSI/OSC 控制序列按纯文本处理；聚合结果仍保留原始 stdout/stderr。旧 Item 缺少或为空的 `content` 时，Feed 使用结果中的 stdout/stderr 回退，并在结果存在时展示 `attemptCount`、`sandboxed` 和 `escalated` 事实。
+- Agent Shell 的 stdout/stderr 各保留最多 256 KiB 首尾，合计最多 512 KiB。PTY 使用一条合并流，最多保留 256 KiB。实时 Feed 预览合计最多 256 KiB，完整终态展示使用保留结果。系统不提供无限输出或完整 TUI，具体边界见 [Agent Shell](features/agent-shell.md)。
+- Agent Shell 会对 stdout 和 stderr 做 UTF-8 增量解码。Desktop Execution Feed 在有界实时预览内保留两条流的展示脱敏片段顺序；预览不足时，终态使用保留的首尾，并把 ANSI/OSC 控制序列按纯文本处理；聚合结果仍保留原始 stdout/stderr。旧 Item 缺少或为空的 `content` 时，Feed 使用结果中的 stdout/stderr 回退，并在结果存在时展示 `attemptCount`、`sandboxed` 和 `escalated` 事实。
 - 模型收到的 `run_shell` 输出每条 stdout/stderr 流最多 16 KiB，整个结果 JSON 最多 48 KiB。模型投影保留每条流的首尾，并用独立的 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 说明模型省略的 stdout/stderr UTF-8 字节。原始 `truncated` 和 `omittedBytes` 仍表示 Shell 原始输出限制，已丢失的原始字节不能恢复。
 - `read_tool_output` 可读取当前 Run 活动 Shell 的累计快照和同 Session 历史 Run 的持久终态输出。跨 Run 活动 Shell、跨 Session、缺失或歧义 ID 仍拒绝。provider tool call ID 不能换成 Shell session ID。`maxBytes` 范围为 4 字节至 16 KiB，按 UTF-8 边界分页，调用方按 `nextOffset` 继续。该工具不消费等待游标，不重放 Shell，也不清除 reconciliation。
 - Desktop Terminal 是另一条 Main-owned PTY 路径。Agent Shell 的限制不会改变 Desktop Terminal 的现有说明。

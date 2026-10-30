@@ -203,6 +203,7 @@ class ToolOutputPage(EidosFrozenStrictModel):
     raw_truncated: bool | None
     raw_omitted_bytes: int | None
     output_complete: bool | None = None
+    output_revision: int | None = None
 
 
 class ToolOutputReadError(LookupError):
@@ -264,6 +265,7 @@ class ExecutionRepository(Repository):
         from_end: bool,
         live_output_reader: Callable[[str], dict[str, object]] | None = None,
         item_id: str | None = None,
+        output_revision: int | None = None,
     ) -> ToolOutputPage:
         if stream not in {"stdout", "stderr", "result", "context"}:
             raise ToolOutputReadError("invalid_output_stream")
@@ -357,6 +359,16 @@ class ExecutionRepository(Repository):
             except LookupError:
                 raise ToolOutputReadError("tool_output_not_available") from None
             data = observed.get('data')
+            if offset_bytes and isinstance(data, dict) and data.get("truncated") and output_revision is None:
+                raise ToolOutputReadError("output_snapshot_changed")
+        revision = data.get("outputRevision") if isinstance(data, dict) else None
+        if revision is not None and (
+            isinstance(revision, bool) or not isinstance(revision, int)
+            or not 0 <= revision <= 9_007_199_254_740_991
+        ):
+            raise ToolOutputReadError("output_unavailable")
+        if output_revision is not None and output_revision != revision:
+            raise ToolOutputReadError("output_snapshot_changed")
         content = data.get(stream) if isinstance(data, dict) else None
         if not isinstance(content, str):
             raise ToolOutputReadError("output_unavailable")
@@ -374,9 +386,10 @@ class ExecutionRepository(Repository):
             or raw_omitted_bytes > 9_007_199_254_740_991
         ):
             raise ToolOutputReadError("output_unavailable")
-        return _output_page(str(rows[0]["provider_call_id"]), stream, content,
+        page = _output_page(str(rows[0]["provider_call_id"]), stream, content,
                             offset_bytes, max_bytes, from_end, raw_truncated=raw_truncated,
                             raw_omitted_bytes=raw_omitted_bytes, output_complete=output_complete)
+        return page.model_copy(update={"output_revision": revision})
 
     def _historical_context_result(self, run_id: str, call_id: str, item_id: str | None) -> str:
         with self.lock:

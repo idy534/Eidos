@@ -768,6 +768,10 @@ Runtime 重启可以恢复 R1 的结构化待批请求。恢复只接受没有�
 
 Desktop 的 `ComposerSlot` 在 `waiting_approval` 时用 `ApprovalComposer` 替换普通输入框。文件、Shell、网络、MCP 和权限申请共用批准、拒绝、响应中、失效和错误状态。Eidos State 的既有文件变更映射保持兼容。Feed 只显示审批历史。Session 的 `activeRunStatus` 从 Active Run 派生，不写入 Session 表；Sidebar 对等待审批显示“等待批准”。
 
+## Agent Shell 的 PIPE 与 PTY
+
+`run_shell` 默认使用 PIPE，`tty=true` 创建当前 Run 所有的控制终端。`write_stdin` 继续提供输入和分段等待。`control_shell` 提供 PTY 尺寸调整、进程组停止和 PIPE 输入关闭。两条路径共用权限、Seatbelt、Durable Intent、SQLite 结果和资源清理。独立 Python helper 在资源登记和执行开始记录后才运行用户命令。具体契约、输出首尾保留和重启边界见 [Agent Shell](features/agent-shell.md)。
+
 ## Run 收尾与 Shell 执行期限
 
 `run_shell` 只有 `command` 必填。模型看到的 Schema 只声明标准参数名、类型和默认值。工具说明要求模型省略不需要的可选字段。后端保留原有 `yield_time_ms` 别名，模型看到的名称仍是 `yieldTimeMs`。

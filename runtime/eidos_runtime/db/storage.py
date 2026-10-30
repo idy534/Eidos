@@ -789,9 +789,11 @@ class SessionStore:
         from_end: bool,
         live_output_reader: Callable[[str], dict[str, object]] | None = None,
         item_id: str | None = None,
+        output_revision: int | None = None,
     ) -> ToolOutputPage:
         return self._repository(self._execution).read_tool_output(
             run_id,
+            output_revision=output_revision,
             tool_call_id=tool_call_id,
             stream=stream,
             offset_bytes=offset_bytes,

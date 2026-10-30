@@ -75,6 +75,8 @@ from eidos_runtime.tools.contracts import (
     RunShellResultData,
     WriteStdinInput,
     WriteStdinResultData,
+    ControlShellInput,
+    ControlShellResultData,
     SearchTextInput,
     SearchTextWaitInput,
     SearchTextResultData,
@@ -204,7 +206,9 @@ _RUN_SHELL_DESCRIPTION = (
     "Run a command in a separate shell process. "
     "The working directory defaults to the current Run's workspace. "
     "Set cwd to start in another directory. "
-    "Return output or a sessionId for ongoing interaction."
+    "Return output or a sessionId for ongoing interaction. "
+    "Use tty=true for commands that need a terminal; PIPE is the default. "
+    "Use write_stdin to read new output or send input, and control_shell to resize or stop the command."
 )
 
 
@@ -217,6 +221,7 @@ _BUILTIN_CONTRACTS = (
     ("apply_patch", _APPLY_PATCH_DESCRIPTION, "workspace", False, 120, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
     ("run_shell", _RUN_SHELL_DESCRIPTION, "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
     ("write_stdin", "Write input to a running shell session and return recent output.", "none", False, 600, "single", WriteStdinInput, WriteStdinResultData, "run_shell"),
+    ("control_shell", "Resize a PTY, stop a command, or close PIPE stdin in this Run. PTY Ctrl-D is terminal input, not a stdin half-close.", "none", False, 600, "single", ControlShellInput, ControlShellResultData, "run_shell"),
 )
 TOOL_SPECS = tuple(ToolSpec.model_validate({
     "name": name,
@@ -316,7 +321,7 @@ def builtin_tool_registry(
     supports_tool_grammar: bool = False,
 ) -> ToolRegistry:
     operations = (
-        "list", "read", "range", "search", "search_wait", "patch", "shell", "shell"
+        "list", "read", "range", "search", "search_wait", "patch", "shell", "shell", "shell"
     )
     specs = _tool_specs(
         supports_custom_tools=supports_custom_tools,
@@ -335,7 +340,7 @@ def builtin_tool_registry(
         provenance = ToolProvenance.model_validate({
             "kind": "builtin",
             "sourceId": "eidos",
-            "sourceVersion": "2" if spec.name == "apply_patch" else "1",
+            "sourceVersion": "2" if spec.name in {"apply_patch", "run_shell", "write_stdin"} else "1",
             "contentHash": hashlib.sha256(encoded).hexdigest(),
         })
         adapter = _BuiltinAdapter(executor, spec, operation)
