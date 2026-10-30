@@ -900,6 +900,8 @@ Markdown 的组件映射不再依赖整个 ArtifactActions 上下文对象。链
 
 文本和 PNG/JPEG 图片使用内容快照。目录使用最多 200 项的一层目录摘要。未解析的二进制文件和较大的文本使用位置引用。目录和位置引用不代表子文件或二进制正文已经进入模型上下文。Runtime 不会因为引用而赋予模型额外写权限。后续工具读取和操作继续使用现有权限流程。
 
+文件引用按来源路径和内容区分。用户可以分别引用不同目录下的同名文件，包括 `SKILL.md`。`input/prepare` 默认拒绝 Eidos 数据目录中的路径；已有 Session 的当前工作区位于数据目录内时，系统只允许引用该工作区中的路径，数据目录本身不能作为例外。该保护也覆盖数据目录内的 Skill 文件。界面将 `WORKSPACE_SENSITIVE_PATH` 显示为路径受保护，并提示用户将需要引用的普通文档复制到当前工作区后重新选择。
+
 Context Builder 从用户消息关联的持久引用读取内容，并标记来源、SHA256 和资料边界。图片通过现有 Pydantic AI `BinaryContent` 进入支持图片的 Provider。Context 预算排除 base64 字符串的文本计数，并加入按尺寸估算的图片开销。压缩事实保留引用来源和 ID。Skill 使用现有 Catalog、Activation、Resource 流程；MCP 和 Plugin 选择激活现有 deferred tools，不安装扩展、不绕过授权，也不在运行中替换快照。
 
 Python 的输入 DTO 通过 `node scripts/generate-input-contracts.mjs` 生成 `desktop/shared/input-context.generated.ts`。生成器使用现有 Python 环境和已锁定的 `json-schema-to-typescript`，没有引入生产依赖。Main 与 RuntimeClient 继续执行边界校验。

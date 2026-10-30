@@ -62,6 +62,57 @@ def test_text_file_selection_is_persisted_and_read_with_line_bounds(
         store.close()
 
 
+def test_same_named_files_remain_distinct_after_a_run_and_restart(tmp_path: Path) -> None:
+    store, application, session_id, workspace = _application(tmp_path)
+    try:
+        sources = [workspace / name / "SKILL.md" for name in ("docx", "pptx")]
+        # The contents deliberately match: the source path must distinguish them.
+        for source in sources:
+            source.parent.mkdir()
+            source.write_text("Shared instructions\n", encoding="utf-8")
+        first = application.prepare(InputPrepareRequest(
+            sessionId=session_id, kind="file", source=str(sources[0]),
+        )).reference
+        store.create_run(session_id, "Translate this file", references=[first])
+        store.close()
+        store = SessionStore(tmp_path / "data")
+        store.initialize()
+        application = InputContextApplication(store, SimpleNamespace(), lambda value: value)
+
+        second = application.prepare(InputPrepareRequest(
+            sessionId=session_id, kind="file", source=str(sources[1]),
+        )).reference
+
+        assert first.label == second.label == "SKILL.md"
+        assert first.id != second.id
+        assert first.sha256 == second.sha256
+        for reference, source in zip((first, second), sources, strict=True):
+            preview = application.read(InputReadRequest(id=reference.id))
+            assert preview.reference.source == str(source)
+            assert preview.text == "Shared instructions\n"
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("with_session", [False, True])
+def test_data_directory_skill_file_is_protected(
+    tmp_path: Path, with_session: bool,
+) -> None:
+    store, application, session_id, _workspace = _application(tmp_path)
+    try:
+        source = tmp_path / "data" / "skills" / ".system" / "docx" / "SKILL.md"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("Protected instructions\n", encoding="utf-8")
+        with pytest.raises(ApplicationError) as error:
+            application.prepare(InputPrepareRequest(
+                sessionId=session_id if with_session else None,
+                kind="file", source=str(source),
+            ))
+        assert error.value.code == "WORKSPACE_SENSITIVE_PATH"
+    finally:
+        store.close()
+
+
 def test_directory_selection_is_location_only_and_bounded(tmp_path: Path) -> None:
     store, application, session_id, workspace = _application(tmp_path)
     try:

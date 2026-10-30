@@ -387,6 +387,7 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   QUEUED_RUN_INPUT_CONFLICT: "这条排队消息已被修改，请重新打开后编辑。",
   APPROVAL_NO_LONGER_PENDING: "这个审批已经失效，无需再次处理。",
   WORKSPACE_BOUNDARY_VIOLATION: "所选路径超出 Workspace 安全边界，操作已拒绝。",
+  WORKSPACE_SENSITIVE_PATH: "所选路径受 Eidos 保护，无法添加引用或读取预览。",
   SANDBOX_UNAVAILABLE: "Shell 沙箱当前不可用，命令未执行。",
   STORAGE_HEALTH_ONLY: "状态存储需要修复；当前仅提供健康检查，未执行任何业务操作。",
   SENSITIVE_CONTENT_REJECTED: "内容包含受保护信息，已在写入或发送前拒绝。",
