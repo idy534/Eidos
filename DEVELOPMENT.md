@@ -20,6 +20,8 @@ pnpm start
 
 `uv sync --locked` 创建仓库 `.venv`。`pnpm start` 先构建 Preload、Main 和 Renderer，再启动 Electron。源码 Runtime 默认使用 `.venv/bin/python`，开发者不使用全局 Python 安装项目依赖。
 
+开发者调试文档 Skill 脚本时，可以运行 `uv sync --locked --group document-skills` 安装对应的开发依赖。正式 App 保留核心解释器，文档扩展依赖由 Eidos 准备到 `~/Eidos/Resource/`。开发者在 Eidos 内验收这四个 Skill 前，需要先运行 `pnpm build:runtime:mac`，以生成依赖清单与资源索引；开发依赖 group 本身不提供发布绑定。详细构建与验证见[内置文档 Skill](docs/current/features/document-skills.md)。
+
 ## 隔离开发数据
 
 开发者可以同时指定独立的数据目录与 Projectless 工作空间，避免测试写入日常使用目录：

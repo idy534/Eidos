@@ -1555,6 +1555,11 @@ ipcMain.handle(IPC.PLUGIN_SET_HOOK_TRUST, (_event, pluginId: unknown, contentHas
 });
 
 ipcMain.handle(IPC.SKILL_LIST, () => clientOrThrow().listSkills());
+ipcMain.handle(IPC.RESOURCE_STATUS, () => clientOrThrow().getResourceStatus());
+ipcMain.handle(IPC.RESOURCE_RETRY, (_event, request: unknown) => {
+  if (!isResourceRetryRequest(request)) throw new Error("资源参数无效。");
+  return clientOrThrow().retryResource(request);
+});
 function skillId(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.length > 256) {
     throw new Error("技能参数无效。");
@@ -1679,3 +1684,4 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
+import { isResourceRetryRequest } from "../shared/managed-resources.js";

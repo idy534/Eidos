@@ -17,12 +17,14 @@ const nodeExecutable = path.join(nodeRoot, "bin", "node");
 const nodeLoader = path.join(nodeRoot, "runtime-loader.mjs");
 const pythonDependencyRoot = path.join(bundleRoot, "dependencies", "python");
 const pythonExecutable = path.join(pythonRoot, "bin", "python3");
+const managedResources = await stat(path.join(bundleRoot, "resource-index.json")).then(() => true, () => false);
 
 
 function bundledEnvironment(dataDirectory) {
   const environment = {
     ...process.env,
-    EIDOS_DATA_DIR: dataDirectory,
+    EIDOS_DATA_DIR: path.join(dataDirectory, "data"),
+    HOME: path.join(dataDirectory, "home"),
     PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
     PYTHONDONTWRITEBYTECODE: "1",
     PYTHONNOUSERSITE: "1",
@@ -203,16 +205,17 @@ with tempfile.TemporaryDirectory(prefix="eidos-offline-tokenizer-") as token_cac
         with patch("requests.get", side_effect=AssertionError("tokenizer must be offline")):
             assert estimate_text_tokens("Read source and preserve user constraints.") < 15
 snapshot = RuntimeDependencyCatalog.from_manifest(bundle_root / "runtime.json").snapshot()
-assert snapshot.python_path == (str(dependency_root),), snapshot.python_path
+assert snapshot.python_path == ((str(app_root),) if (bundle_root / 'resource-index.json').is_file() else (str(dependency_root),)), snapshot.python_path
 for module in ("anyio", "httpx", "lark", "mcp", "openai", "pydantic", "pydantic_ai", "pydantic_core", "tree_sitter", "dingtalk_stream", "aibot", "lark_channel", "Crypto.Cipher.AES", "eidos_runtime.infrastructure.feishu_stream"):
     __import__(module)
 assert Path(lark.__file__).resolve().is_relative_to(app_root), lark.__file__
-import docx
-import lxml
-import typing_extensions
-assert Path(docx.__file__).resolve().is_relative_to(dependency_root), docx.__file__
-assert Path(lxml.__file__).resolve().is_relative_to(dependency_root), lxml.__file__
-assert Path(typing_extensions.__file__).resolve().is_relative_to(dependency_root), typing_extensions.__file__
+if not (bundle_root / 'resource-index.json').is_file():
+    import docx
+    import lxml
+    import typing_extensions
+    assert Path(docx.__file__).resolve().is_relative_to(dependency_root), docx.__file__
+    assert Path(lxml.__file__).resolve().is_relative_to(dependency_root), lxml.__file__
+    assert Path(typing_extensions.__file__).resolve().is_relative_to(dependency_root), typing_extensions.__file__
 
 required = (
     "eidos_runtime/__main__.py",
@@ -365,6 +368,13 @@ async function verifyRuntimeProtocol() {
     assert.equal(initialized.result.protocolVersion, 1);
     assert.equal(initialized.result.runtimeVersion, packageJson.version);
 
+    const skills = await request("skill/list", {});
+    for (const name of ["docx", "pptx", "xlsx", "pdf"]) {
+      assert.ok(skills.result.skills.some(
+        (skill) => skill.qualifiedId === `system:${name}` && skill.enabled && skill.sourceKind === "system",
+      ), `bundled ${name} Skill is unavailable`);
+    }
+
     const health = await request("runtime/health", {});
     assert.deepEqual(health.result, { state: "ready" });
 
@@ -387,13 +397,17 @@ async function main() {
   assert.equal(process.arch, "arm64", "bundled Runtime supports macOS arm64 only");
   assert.ok(!pythonExecutable.includes(".venv"));
   assert.ok(!pythonExecutable.startsWith("/usr/bin/"));
-  const nodeMetadata = await stat(nodeExecutable);
-  assert.ok((nodeMetadata.mode & 0o111) !== 0);
-  assert.equal((await spawnCapture(nodeExecutable, ["--version"], {
-    cwd: appRoot,
-    env: bundledNodeEnvironment(),
-  })).code, 0);
-  await verifyBundledNodeDependencies();
+  if (!managedResources) {
+    const nodeMetadata = await stat(nodeExecutable);
+    assert.ok((nodeMetadata.mode & 0o111) !== 0);
+    assert.equal((await spawnCapture(nodeExecutable, ["--version"], {
+      cwd: appRoot, env: bundledNodeEnvironment(),
+    })).code, 0);
+    await verifyBundledNodeDependencies();
+  } else {
+    assert.equal(await stat(nodeExecutable).then(() => true, () => false), false,
+      "managed document Node must not remain in the core App");
+  }
   const pythonMetadata = await stat(pythonExecutable);
   assert.ok((pythonMetadata.mode & 0o111) !== 0);
   await verifyBundledImportsAndRipgrep();

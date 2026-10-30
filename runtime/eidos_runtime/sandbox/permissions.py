@@ -188,6 +188,7 @@ def base_permission_profile_for_workspace(
     workspace_root: Path,
     data_directory: Path | None,
 ) -> BasePermissionProfile:
+    from eidos_runtime.resource_paths import managed_resource_directory
     return BasePermissionProfile.for_workspace(
         workspace_root=workspace_root,
         protected_paths=(data_directory,) if data_directory is not None else (),
@@ -198,6 +199,7 @@ def base_permission_profile_for_workspace(
             Path(__file__).resolve().parents[1],
             Path(sys.prefix).resolve(),
             Path(sys.base_prefix).resolve(),
+            managed_resource_directory(),
             *(
                 (data_directory / "skills" / ".system",)
                 if data_directory is not None

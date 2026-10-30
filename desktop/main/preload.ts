@@ -423,6 +423,8 @@ const api: EidosRuntimeAPI = {
 
   // Skills
   listSkills: (): Promise<SkillListResult> => ipcRenderer.invoke(IPC.SKILL_LIST),
+  getResourceStatus: () => ipcRenderer.invoke(IPC.RESOURCE_STATUS),
+  retryResource: (request: ResourceRetryRequest) => ipcRenderer.invoke(IPC.RESOURCE_RETRY, request),
   readSkillDetail: (qualifiedId: string): Promise<SkillDetail> =>
     ipcRenderer.invoke(IPC.SKILL_DETAIL, qualifiedId),
   setSkillEnabled: (qualifiedId: string, enabled: boolean): Promise<SkillMetadata> =>
@@ -475,3 +477,4 @@ const api: EidosRuntimeAPI = {
 contextBridge.exposeInMainWorld("eidosRuntime", api);
 import type { AutomationExecuteRequest, AutomationHistoryRequest, AutomationRunNowRequest, AutomationResponse } from "../shared/automation.js";
 import type { ContextDetails, ContextCompactionRecord } from "../shared/context-management.js";
+import type { ResourceRetryRequest } from "../shared/managed-resources.js";

@@ -400,9 +400,13 @@ Runtime 会记录 Shell 和其他工具的未知结果。系统不会因此建�
 
 Runtime 内部维护经过校验的 Python、ripgrep、Python import roots 和受支持包版本的 Catalog。内置依赖发现工具已移除。`run_shell` 对识别到的 Skill 脚本自动选择该 Skill 声明的 binding，并复用现有校验、权限和启动前复检。普通项目命令保留原环境，激活 Skill 本身不会切换环境。`dependencyBindingId` 输入保留兼容，显式值仍校验 Run 和 Skill 归属。
 
-Bundled Runtime dependency 使用三层资源边界。Skill 内容层保存 `SKILL.md`、`agents/eidos.yaml`、脚本和其他 Skill 资源。产品依赖层保存 `resources/runtime-dependencies/` 中的 Python 与 Node 锁定输入，并把构建结果放入 Bundle 的 `dependencies/` 目录。Runtime manifest 层在 Bundle 根目录生成并校验 `runtime.json`，文件记录固定版本、相对路径和 SHA-256 inventory。构建和发布通过 `scripts/generate-runtime-manifest.mjs` 执行逐文件 Hash 和完整 inventory 覆盖校验。Python Runtime 已删除对应的文件 Hash、递归扫描和严格模式分支，不保留第二套全量校验。Catalog 层在日常 Runtime 初始化时读取清单，并检查版本、包 metadata、必要文件类型、owner、执行位和路径范围；它不检查依赖文件内容 Hash，也不递归遍历目录。Runtime 按目录复用路径规范化结果，一次建立 canonical path 查找表，再直接查找包文件，避免重复遍历。Shell 启动前重新检查清单与必要路径，拒绝清单变化、缺失文件、路径越界或执行位丢失。Activation 层在 Run 中固定 manifest hash、Catalog snapshot hash 和 Skill requirements，并为每个 active Skill 生成 `dependencyBindingId`。Resource 层把已验证 binding 投影到现有 Shell environment 和 permission profile。它把 Bundle root 和依赖 root 设为受保护的只读路径。它把 Workspace 保持为唯一的工作目录。
+Runtime dependency 保留内容、声明和绑定三层。Skill 保存说明、脚本与 typed metadata；App 的 `runtime.json` 固定核心解释器与文件范围；`resource-index.json` 固定可下载资源的版本与清单。构建器核对完整文件范围。Runtime 日常检查 metadata、owner、文件类型、执行位与路径范围；它不在每个 Turn 重新计算全部文件内容。新增下载资源在安装时逐文件核对，验证完成后才进入绑定。
 
-`runtime.json` 只描述随 App 发布的系统依赖。Python 依赖位于 Bundle 的 `dependencies/python`，Node 依赖位于 Bundle 的 `dependencies/node`。Skill 的 `agents/eidos.yaml` 只保存 typed declaration。Skill 目录不承载依赖包。Node loader 使用 Bundle 的 Node 和 `node_modules`，并为 CJS 与 ESM 保留各自的相对导入语义。普通没有 binding 的 Shell 仍走既有 `run_shell`、Host shell snapshot、Approval 和 Seatbelt 链路。
+四个文档 Skill 通过 `scripts/run.py [--resource PROFILE] python|node SCRIPT` 使用依赖。核心 Python 继续随 App 提供。Node、文档 Python 库、Office、PDF 增强、图像、OCR 与字体位于 `~/Eidos/Resource/` 的固定版本目录。`ManagedResourceCatalog` 只允许核心 Bundle 与这个受管根，不开放任意外部路径。普通 Shell 对整个资源根拒写，准备服务负责下载与原子发布。Shell 默认禁网、权限、Durable Intent 与启动前核验保持原链路。
+
+Runtime 在 Run 开始时固定核心与资源发布声明。准备成功后，协调器为具体操作创建绑定；它不替换已冻结快照，也不保存缺失资源的失败绑定。基础文档包在核心初始化后后台准备，其他资源由实际操作触发。同资源请求共享准备工作。现有 SQLite Async Operation 保存安装结果，内存只保存协调与进度。`resource/status` 和 `resource/retry` 通过原 JSON-RPC、Main 与 typed IPC 连接设置界面。准备状态与 Skill 启停分开。下载不占用新的全局 Run 配额。
+
+旧随包 Catalog 继续兼容。系统 Skill 升级保留个人文件，并在既有 `skill_states` 事务中一次性切换默认启停状态。当前版本没有增加 SQLite Schema。详情见[内置文档 Skill](features/document-skills.md)。
 
 已有普通文件的候选内容通过 stdin 有界传入受控 helper，不生成临时文件。helper 使用 `O_NOFOLLOW` 打开并核验目标，检查当前内容哈希后执行 `ftruncate`、完整写入、`fsync` 和内容/路径身份核验。Runtime 不再克隆已有文件，也不再复制或逐字节比较 xattr/ACL。文件保留原 inode，系统管理现有元数据。真实 ACL 或 mode 拒绝写入时，Runtime 不会通过替换 inode 或 chmod 绕过限制。Runtime 仍然拒绝 symlink、hardlink、特殊文件、owner 不匹配、特殊 mode 和文件 flags。
 

@@ -1,4 +1,23 @@
-# package-name==version: import roots copied into the Skill dependency root
+# Generated distribution-to-import mapping for the Skill bundle.
+cffi==2.1.0: cffi
+charset-normalizer==3.5.1: charset_normalizer
+cryptography==50.0.0: cryptography
+defusedxml==0.7.1: defusedxml
+et-xmlfile==2.0.0: et_xmlfile
+lxml==6.1.3: lxml
+numpy==2.5.4: numpy
+openpyxl==3.1.5: openpyxl
+pandas==3.1.0: pandas
+pdfminer-six==20260107: pdfminer
+pdfplumber==0.11.10: pdfplumber
+pillow==13.0.0: PIL
+pycparser==3.0: pycparser
+pypdf==6.21.4: pypdf
+pypdfium2==5.14.0: pypdfium2
+python-dateutil==2.9.0.post0: dateutil
 python-docx==1.2.0: docx
-lxml==6.1.2: lxml
+python-pptx==1.0.2: pptx
+reportlab==5.1.0: reportlab
+six==1.17.0: six
 typing-extensions==4.16.0: typing_extensions
+xlsxwriter==3.3.1: xlsxwriter

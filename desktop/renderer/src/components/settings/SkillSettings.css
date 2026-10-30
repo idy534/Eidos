@@ -1,4 +1,28 @@
 .skill-settings { width: 100%; }
+.managed-resources {
+  margin: 0 0 1rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  font-size: 0.8125rem;
+}
+.managed-resources summary { cursor: pointer; color: var(--text); }
+.managed-resources summary > span { margin-left: 0.6rem; color: var(--muted); }
+.managed-resources p { color: var(--muted); line-height: 1.5; }
+.managed-resources ul { list-style: none; margin: 0; padding: 0; }
+.managed-resources li { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 0.6rem; min-height: 2rem; }
+.managed-resource-name { flex: 1; min-width: 8rem; }
+.managed-resources li > [role="status"] { color: var(--muted); }
+.managed-resources button {
+  border: 1px solid var(--border); border-radius: var(--radius-sm, 6px);
+  background: var(--surface); color: var(--text); padding: 0.2rem 0.5rem;
+  font: inherit; cursor: pointer;
+}
+.managed-resources button:hover { background: var(--surface-muted); }
+.managed-resources button:disabled { opacity: 0.55; cursor: default; }
+.managed-resources small { flex-basis: 100%; color: var(--muted); }
+.managed-resource-directory { overflow-wrap: anywhere; margin-bottom: 0; }
+.managed-resources .managed-resources-error { color: var(--danger); }
 .skill-search {
   margin: 0.5rem 0 1.25rem;
 }

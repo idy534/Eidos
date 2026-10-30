@@ -910,3 +910,58 @@ def test_shell_result_dependency_provenance_is_typed_and_bounded() -> None:
 
     assert result.dependencyBinding is not None
     assert result.dependencyBinding.bindingId == "a" * 64
+
+
+def test_managed_skill_launcher_prepares_before_shell_permission_and_binding(tmp_path: Path) -> None:
+    import io
+    import tarfile
+    import httpx2 as httpx
+    from eidos_runtime.infrastructure.managed_resources import ManagedResourceManager
+    from eidos_runtime.infrastructure.managed_resource_catalog import ManagedResourceCatalog
+    from eidos_runtime.models.managed_resources import ResourceIndex, ResourcePack
+    from eidos_runtime.models.runtime_dependencies import RuntimeDependencyManifest, RuntimeDependencyInventoryFile
+
+    _, manifest_path = _make_bundle(tmp_path)
+    data = b"managed resource fixture\n"
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as archive:
+        entry = tarfile.TarInfo("NOTICE.txt")
+        entry.size = len(data)
+        archive.addfile(entry, io.BytesIO(data))
+    payload = output.getvalue()
+    resource_manifest = RuntimeDependencyManifest(
+        schema_version=1, bundle_id="fixture", bundle_version="1", target="darwin-arm64",
+        files=(RuntimeDependencyInventoryFile(path="NOTICE.txt", sha256=hashlib.sha256(data).hexdigest()),),
+    )
+    pack = ResourcePack(id="document-python", title="Fixture", version="1", location="packages/python/fixture/1",
+        url="https://github.com/idy534/Eidos/releases/download/test/fixture.tar.gz",
+        archive_sha256=hashlib.sha256(payload).hexdigest(), archive_bytes=len(payload), expanded_bytes=len(data), manifest=resource_manifest)
+    calls = []
+    def download(request):
+        calls.append(request.url)
+        return httpx.Response(200, content=payload)
+    resources = ManagedResourceManager(ResourceIndex(version="1", packs=(pack,)), root=tmp_path.resolve() / "Resource",
+        client_factory=lambda: httpx.Client(transport=httpx.MockTransport(download)))
+    catalog = ManagedResourceCatalog(RuntimeDependencyCatalog.from_manifest(manifest_path), resources)
+    store, run_id, executor, manager, controller, dispatcher, binding = _make_shell_controller(tmp_path, catalog, with_skills=True)
+    launcher = tmp_path / "data/skills/.system/docx/scripts/run.py"
+    arguments = _shell_arguments(binding.binding_id, command=f'"$RUNTIME_PYTHON" "{launcher}" python generate.py')
+    del arguments["dependencyBindingId"]
+    launches = []
+    def shell(launch, **_kwargs):
+        assert resources.is_ready("document-python") and len(calls) == 1
+        assert launch.environment["EIDOS_RESOURCE_PROFILE"] == "python"
+        assert launch.environment["RUNTIME_PYTHON"].endswith("bin/python3")
+        launches.append(launch)
+        return {"outcome":"success","code":"ok","summary":"Completed", "data": {
+            "exitCode":0,"stdout":"","stderr":"","truncated":False,"termination":"exit","executionStatus":"exited"}, "sideEffectsMayExist":True}
+    try:
+        with _seatbelt_ready():
+            outcome = _execute_shell(store, run_id, controller, dispatcher, arguments, shell)
+        assert outcome.result["code"] == "ok", outcome.result
+        assert len(launches) == 1
+        assert outcome.result["data"]["dependencyBinding"]["skillQualifiedId"] == "system:docx"
+    finally:
+        manager.close()
+        executor.close()
+        store.close()

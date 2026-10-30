@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import os
+import json
 from pathlib import Path
 
 from pydantic import Field, ValidationInfo, field_validator
@@ -77,6 +78,9 @@ _DEPENDENCY_CONTROL_ENV_NAMES = frozenset(
         "RUNTIME_NODE",
         "RUNTIME_NODE_MODULES",
         "RUNTIME_BIN_DIR",
+        "RUNTIME_NODE_MODULES_PATHS",
+        "EIDOS_DOCUMENT_FONTS",
+        "EIDOS_RESOURCE_PROFILE",
     }
     | _PYTHON_CONTROL_ENV_NAMES
     | _NODE_CONTROL_ENV_NAMES
@@ -96,6 +100,9 @@ class DependencyShellEnvironment(EidosFrozenStrictModel):
     python_path: tuple[str, ...] = ()
     node_executable: str | None = None
     node_modules: str | None = None
+    node_modules_paths: tuple[str, ...] = ()
+    document_fonts: str | None = None
+    resource_profile: str | None = None
     node_loader: str | None = None
     bin_paths: tuple[str, ...] = ()
 
@@ -109,6 +116,7 @@ class DependencyShellEnvironment(EidosFrozenStrictModel):
         "node_executable",
         "node_modules",
         "node_loader",
+        "document_fonts",
     )
     @classmethod
     def validate_optional_absolute_path(
@@ -120,7 +128,7 @@ class DependencyShellEnvironment(EidosFrozenStrictModel):
             return None
         return _validate_absolute_path(value, info.field_name)
 
-    @field_validator("python_path", "bin_paths")
+    @field_validator("python_path", "bin_paths", "node_modules_paths")
     @classmethod
     def validate_absolute_paths(
         cls,
@@ -178,7 +186,13 @@ def apply_dependency_environment(
         effective["RUNTIME_NODE"] = dependency_environment.node_executable
     if dependency_environment.node_modules is not None:
         effective["RUNTIME_NODE_MODULES"] = dependency_environment.node_modules
-    if dependency_environment.node_loader is not None:
+    if dependency_environment.node_modules_paths:
+        effective["RUNTIME_NODE_MODULES_PATHS"] = json.dumps(dependency_environment.node_modules_paths)
+    if dependency_environment.document_fonts is not None:
+        effective["EIDOS_DOCUMENT_FONTS"] = dependency_environment.document_fonts
+    if dependency_environment.resource_profile is not None:
+        effective["EIDOS_RESOURCE_PROFILE"] = dependency_environment.resource_profile
+    if dependency_environment.node_loader is not None and dependency_environment.node_modules is not None:
         effective["NODE_OPTIONS"] = (
             "--import="
             f"{Path(dependency_environment.node_loader).as_uri()}"

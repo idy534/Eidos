@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import time
+import threading
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.skill_manifest import SkillAgentMetadata
@@ -183,6 +184,7 @@ class RuntimeDependencyCoordinator:
         *,
         context_id: str | None = None,
         qualified_skill_id: str | None = None,
+        resource_packs: tuple[str, ...] | None = None,
     ) -> RuntimeDependencyBinding:
         """Resolve and durably record one concrete binding."""
 
@@ -203,10 +205,13 @@ class RuntimeDependencyCoordinator:
         )
         _validate_identifier(resolved_context, "context_id", MAX_CONTEXT_ID_CHARS)
         _validate_run_context(self.run_id, resolved_context)
-        binding = self._catalog.resolve(
-            requirements,
-            context_id=resolved_context,
-        )
+        from eidos_runtime.infrastructure.managed_resource_catalog import ManagedResourceCatalog
+        if resource_packs is not None and isinstance(self._catalog, ManagedResourceCatalog):
+            binding = self._catalog.resolve_profile(
+                requirements, context_id=resolved_context, pack_ids=resource_packs,
+            )
+        else:
+            binding = self._catalog.resolve(requirements, context_id=resolved_context)
         self._admit_binding(binding)
         self._bindings[binding.binding_id] = binding
         self._persist_binding(binding, qualified_skill_id=qualified_skill_id)
@@ -216,11 +221,14 @@ class RuntimeDependencyCoordinator:
         self,
         qualified_skill_id: str,
         metadata: SkillAgentMetadata | None = None,
+        *, profile: str | None = None,
     ) -> RuntimeDependencyBinding | None:
         """Resolve the declaration from trusted metadata in the frozen Skill snapshot."""
 
         _validate_identifier(qualified_skill_id, "qualified_skill_id", MAX_SKILL_ID_CHARS)
-        existing = self._skill_bindings.get(qualified_skill_id)
+        selected_profile = profile or "python"
+        key = qualified_skill_id if profile is None else f"{qualified_skill_id}:{profile}"
+        existing = self._skill_bindings.get(key)
         if existing is not None:
             return existing
         trusted_metadata = metadata or self._skill_metadata(qualified_skill_id)
@@ -236,13 +244,43 @@ class RuntimeDependencyCoordinator:
         if requirements is None:
             # Skills without the optional declaration retain legacy behavior.
             return None
+        packs = None
+        context = f"{self.run_id}:{qualified_skill_id}"
+        if trusted_metadata.runtime_resources is not None:
+            packs = trusted_metadata.runtime_resources.profiles.get(selected_profile)
+            if packs is None:
+                raise RuntimeDependencyCatalogError("resource_profile_invalid", "Skill does not declare this resource profile")
+            context += f":{selected_profile}"
         binding = self.resolve(
             requirements,
-            context_id=f"{self.run_id}:{qualified_skill_id}",
+            context_id=context,
             qualified_skill_id=qualified_skill_id,
+            resource_packs=packs,
         )
-        self._skill_bindings[qualified_skill_id] = binding
+        self._skill_bindings[key] = binding
         return binding
+
+    def prepare_skill_resources(
+        self, qualified_skill_id: str, command: str, cwd: Path,
+        script_path: Path, cancel: threading.Event,
+    ) -> str | None:
+        """Prepare product-owned resources before admitting a Shell binding."""
+        from eidos_runtime.extensions.resource_invocation import resource_profile
+        from eidos_runtime.infrastructure.managed_resource_catalog import ManagedResourceCatalog
+        metadata = self._skill_metadata(qualified_skill_id)
+        if metadata.runtime_resources is None:
+            return None
+        try:
+            profile = resource_profile(command, cwd, script_path)
+        except ValueError as error:
+            raise RuntimeDependencyCatalogError("resource_profile_invalid", "managed launcher arguments are invalid") from error
+        packs = metadata.runtime_resources.profiles.get(profile)
+        if packs is None:
+            raise RuntimeDependencyCatalogError("resource_profile_invalid", "Skill does not declare this resource profile")
+        catalog = self._ensure_catalog()
+        if isinstance(catalog, ManagedResourceCatalog):
+            catalog.resources.ensure(packs, cancel)
+        return profile
 
     def verify_binding(
         self,
@@ -284,6 +322,7 @@ class RuntimeDependencyCoordinator:
         *,
         active_skill_ids: Iterable[str] = (),
         implicit_skill_id: str | None = None,
+        implicit_profile: str | None = None,
     ) -> tuple[RuntimeDependencyBinding, str | None]:
         """Select a verified binding for one Shell invocation.
 
@@ -298,7 +337,7 @@ class RuntimeDependencyCoordinator:
                 "qualified_skill_id",
                 MAX_SKILL_ID_CHARS,
             )
-            binding = self.binding_for_skill(implicit_skill_id)
+            binding = self.binding_for_skill(implicit_skill_id, profile=implicit_profile)
             if binding is None or binding.binding_id != binding_id:
                 raise RuntimeDependencyVerificationError(
                     "binding_skill_mismatch",
@@ -307,7 +346,7 @@ class RuntimeDependencyCoordinator:
             return (
                 self.verify_binding(
                     binding,
-                    context_id=f"{self.run_id}:{implicit_skill_id}",
+                    context_id=binding.context_id,
                     qualified_skill_id=implicit_skill_id,
                 ),
                 implicit_skill_id,
@@ -337,7 +376,7 @@ class RuntimeDependencyCoordinator:
             return (
                 self.verify_binding(
                     binding,
-                    context_id=f"{self.run_id}:{qualified_id}",
+                        context_id=binding.context_id,
                     qualified_skill_id=qualified_id,
                 ),
                 qualified_id,
@@ -364,6 +403,7 @@ class RuntimeDependencyCoordinator:
     def shell_environment(
         self,
         binding: RuntimeDependencyBinding,
+        *, resource_profile: str | None = None,
     ) -> DependencyShellEnvironment:
         """Project a verified binding into the low-level Shell environment port."""
 
@@ -374,11 +414,23 @@ class RuntimeDependencyCoordinator:
             {"python", "python3"},
         )
         node_executable = _executable_path(selected, {"node", "nodejs"})
+        node_roots: list[str] = []
+        if selected.node_modules:
+            node_roots.append(selected.node_modules)
+        for package in selected.node_package_roots:
+            parts = Path(package.path).parts
+            if "node_modules" in parts:
+                node_roots.append(str(Path(*parts[:parts.index("node_modules") + 1])))
+        from eidos_runtime.infrastructure.managed_resource_catalog import ManagedResourceCatalog
+        fonts = self._catalog.document_fonts(selected) if isinstance(self._catalog, ManagedResourceCatalog) else None
         return DependencyShellEnvironment(
             binding_id=selected.binding_id,
             python_executable=python_executable,
             python_path=selected.python_path,
             node_executable=node_executable,
+            node_modules_paths=tuple(dict.fromkeys(node_roots)),
+            document_fonts=fonts,
+            resource_profile=resource_profile,
             node_modules=selected.node_modules,
             node_loader=selected.node_loader,
             bin_paths=selected.native_bin_paths,
@@ -456,7 +508,7 @@ class RuntimeDependencyCoordinator:
                 active.append({
                     "skillQualifiedId": qualified_id,
                     "bindingId": "invalid",
-                    "status": "invalid",
+                    "status": "preparing" if error.code == "resource_not_ready" else "invalid",
                     "code": error.code,
                 })
                 continue
@@ -544,8 +596,10 @@ class RuntimeDependencyCoordinator:
             source="runtime-dependencies",
             content=(
                 "Selected Skill Runtime dependency status: "
-                f"{encoded}. Continue with another tool or tell the user which "
-                "required dependency is unavailable."
+                f"{encoded}. For preparing managed resources, invoke the Skill's "
+                "documented scripts/run.py launcher with its resource profile; "
+                "Eidos prepares the pinned dependencies before execution. For other "
+                "unavailable dependencies, use another tool or explain the missing dependency."
             ),
         )
 
@@ -581,7 +635,8 @@ class RuntimeDependencyCoordinator:
             manifest = self._manifest_path or _discover_manifest_path()
             if manifest is None:
                 return None
-            catalog = RuntimeDependencyCatalog.from_manifest(manifest)
+            catalog = discover_runtime_dependency_catalog(manifest_path=manifest, store=self.store)
+            assert catalog is not None
             snapshot = catalog.snapshot()
             if not isinstance(snapshot, RuntimeDependencySnapshot):
                 raise RuntimeDependencyCatalogError(
@@ -674,12 +729,14 @@ class RuntimeDependencyCoordinator:
         self._validate_inventory_paths((entry.path for entry in snapshot.files), bundle_root)
 
     def _validate_inventory_paths(self, paths: Iterable[str], bundle_root: Path) -> None:
+        from eidos_runtime.infrastructure.managed_resource_catalog import ManagedResourceCatalog
+        roots = self._catalog.trusted_roots if isinstance(self._catalog, ManagedResourceCatalog) else (bundle_root,)
         for value in paths:
             path = Path(value)
             if (
                 not path.is_absolute()
                 or ".." in path.parts
-                or not _contained(path, bundle_root)
+                or not any(_contained(path, root) for root in roots)
                 or any(_contained(path, forbidden) for forbidden in self._forbidden_roots)
             ):
                 raise RuntimeDependencyPathError(
@@ -687,9 +744,11 @@ class RuntimeDependencyCoordinator:
                 )
 
     def _validate_paths(self, paths: Iterable[str], bundle_root: Path) -> None:
+        from eidos_runtime.infrastructure.managed_resource_catalog import ManagedResourceCatalog
+        roots = self._catalog.trusted_roots if isinstance(self._catalog, ManagedResourceCatalog) else (bundle_root,)
         for value in paths:
             path = _canonical_path(value)
-            if not _contained(path, bundle_root):
+            if not any(_contained(path, root) for root in roots):
                 raise RuntimeDependencyPathError(
                     "runtime_path_outside_bundle",
                     "resolved dependency path is outside the runtime bundle",
@@ -815,11 +874,23 @@ class RuntimeDependencyCoordinator:
 def discover_runtime_dependency_catalog(
     *,
     manifest_path: Path | None = None,
+    store: SessionStore | None = None,
+    resource_root: Path | None = None,
 ) -> RuntimeDependencyCatalog | None:
     path = manifest_path or _discover_manifest_path()
     if path is None:
         return None
-    return RuntimeDependencyCatalog.from_manifest(path)
+    base = RuntimeDependencyCatalog.from_manifest(path)
+    index_path = path.parent / "resource-index.json"
+    if index_path.is_file():
+        from eidos_runtime.infrastructure.managed_resources import ManagedResourceManager, load_resource_index
+        from eidos_runtime.infrastructure.managed_resource_catalog import ManagedResourceCatalog
+        manager = ManagedResourceManager(load_resource_index(index_path), root=resource_root)
+        if store is not None:
+            from eidos_runtime.application.managed_resources import installation_operation
+            manager.installation_operation = installation_operation(store, manager)
+        return ManagedResourceCatalog(base, manager)
+    return base
 
 
 def _discover_manifest_path() -> Path | None:

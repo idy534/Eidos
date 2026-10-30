@@ -770,6 +770,23 @@ class ShellToolHandler:
         dependency_environment = None
         dependency_provenance: RuntimeDependencyBindingProvenance | None = None
         dependency_binding_id = shell_input.dependencyBindingId
+        dependency_profile = None
+        if skill_invocation is not None and skill_invocation.script_path is not None:
+            coordinator = self.dependencies.runtime_dependencies
+            if coordinator is not None:
+                try:
+                    dependency_profile = coordinator.prepare_skill_resources(
+                        skill_invocation.qualified_id, command, cwd.path,
+                        skill_invocation.script_path, cancel,
+                    )
+                except RuntimeDependencyCatalogError as error:
+                    if cancel.is_set():
+                        raise RuntimeCancelled from None
+                    return HandlerOutcome(
+                        _dependency_binding_error_result(call.name, error.code,
+                            "Document components could not be prepared. Retry this operation or check resource status."),
+                        "failed", "failed",
+                    )
         if dependency_binding_id is None and skill_invocation is not None:
             coordinator = self.dependencies.runtime_dependencies
             if coordinator is None:
@@ -780,7 +797,7 @@ class ShellToolHandler:
                     ), "failed", "failed",
                 )
             try:
-                selected = coordinator.binding_for_skill(skill_invocation.qualified_id)
+                selected = coordinator.binding_for_skill(skill_invocation.qualified_id, profile=dependency_profile)
                 if selected is not None:
                     dependency_binding_id = selected.binding_id
             except RuntimeDependencyCatalogError as error:
@@ -818,10 +835,11 @@ class ShellToolHandler:
                             if skill_invocation is not None
                             else None
                         ),
+                        implicit_profile=dependency_profile,
                     )
                 )
                 dependency_environment = coordinator.shell_environment(
-                    dependency_binding
+                    dependency_binding, resource_profile=dependency_profile,
                 )
                 dependency_provenance = coordinator.binding_provenance(
                     dependency_binding,
@@ -994,15 +1012,11 @@ class ShellToolHandler:
                 try:
                     dependency_binding = coordinator.verify_binding(
                         dependency_binding,
-                        context_id=(
-                            f"{run_id}:{dependency_skill_id}"
-                            if dependency_skill_id is not None
-                            else f"{run_id}:default"
-                        ),
+                        context_id=dependency_binding.context_id,
                         qualified_skill_id=dependency_skill_id,
                     )
                     dependency_environment = coordinator.shell_environment(
-                        dependency_binding
+                        dependency_binding, resource_profile=dependency_profile,
                     )
                     dependency_provenance = coordinator.binding_provenance(
                         dependency_binding,

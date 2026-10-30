@@ -28,15 +28,16 @@ const INVENTORY_ROOTS = [
   "dependencies/node",
   "dependencies/python",
 ];
+const OPTIONAL_INVENTORY_ROOTS = ["dependencies/fonts"];
 const PREFERRED_INVENTORY_PATHS = new Set([
   "python/bin/python3",
   "dependencies/node/bin/node",
   "app/eidos_runtime/resources/bin/ripgrep/darwin-arm64/rg",
 ]);
-const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
+const MAX_MANIFEST_BYTES = 8 * 1024 * 1024;
 const MAX_MANIFEST_FILES = 32 * 1024;
 const MAX_RUNTIME_FILE_BYTES = 512 * 1024 * 1024;
-const MAX_RUNTIME_INVENTORY_BYTES = 1024 * 1024 * 1024;
+const MAX_RUNTIME_INVENTORY_BYTES = 3 * 1024 * 1024 * 1024;
 const MAX_CONFIG_BYTES = 2 * 1024 * 1024;
 const HASH_CHUNK_BYTES = 1024 * 1024;
 
@@ -197,8 +198,13 @@ function walkInventory(bundleRoot, rootRelativePath) {
 
 
 function inventoryFiles(bundleRoot) {
-  const candidates = INVENTORY_ROOTS.flatMap((rootRelativePath) =>
+  const roots = [...INVENTORY_ROOTS, ...OPTIONAL_INVENTORY_ROOTS.filter(
+    (relativePath) => existsSync(path.join(bundleRoot, relativePath)),
+  )].filter((relativePath) => existsSync(path.join(bundleRoot, relativePath)));
+  const candidates = roots.flatMap((rootRelativePath) =>
     walkInventory(bundleRoot, rootRelativePath));
+  const resourceIndex = path.join(bundleRoot, "resource-index.json");
+  if (existsSync(resourceIndex)) candidates.push({ path: "resource-index.json", canonicalPath: resolvedFileForHash(resourceIndex, bundleRoot, "resource index") });
   candidates.sort((left, right) => {
     const leftPriority = PREFERRED_INVENTORY_PATHS.has(left.path) ? 0 : 1;
     const rightPriority = PREFERRED_INVENTORY_PATHS.has(right.path) ? 0 : 1;
@@ -339,6 +345,7 @@ function executableEntries(bundleRoot, options, files) {
       { name: "rg", version: options.ripgrepVersion },
     ],
   ]);
+  if (options.coreOnly) fixedEntries.delete("dependencies/node/bin/node");
   const usedNames = new Set([...fixedEntries.values()].map(({ name }) => name));
   const entries = [];
   for (const file of files) {
@@ -415,11 +422,12 @@ function validateManifestShape(bundleRoot, manifest) {
   if (manifest.target !== TARGET) fail(`target must be ${TARGET}`);
   if (!Array.isArray(manifest.executables) || manifest.executables.length === 0) fail("executables must be non-empty");
   if (!Array.isArray(manifest.pythonPath)) fail("pythonPath must be an array");
-  if (manifest.pythonPath.length !== 1 || manifest.pythonPath[0] !== "dependencies/python") {
+  const coreOnly = manifest.pythonPath.length === 1 && manifest.pythonPath[0] === "app" && manifest.nodeModules == null;
+  if (!coreOnly && (manifest.pythonPath.length !== 1 || manifest.pythonPath[0] !== "dependencies/python")) {
     fail("pythonPath must be exactly dependencies/python");
   }
   if (!Array.isArray(manifest.pythonPackages)) fail("pythonPackages must be an array");
-  if (typeof manifest.nodeModules !== "string") fail("nodeModules is required");
+  if (!coreOnly && typeof manifest.nodeModules !== "string") fail("nodeModules is required");
   if (!Array.isArray(manifest.nodePackages)) fail("nodePackages must be an array");
   if (!Array.isArray(manifest.nativeBinPaths) || manifest.nativeBinPaths.length !== 0) fail("nativeBinPaths must be an empty array");
   if (!Array.isArray(manifest.files)) fail("files must be an array");
@@ -427,7 +435,7 @@ function validateManifestShape(bundleRoot, manifest) {
   for (const relativePath of manifest.pythonPath) {
     resolveInside(bundleRoot, relativePath, "pythonPath");
   }
-  resolveInside(bundleRoot, manifest.nodeModules, "nodeModules");
+  if (manifest.nodeModules != null) resolveInside(bundleRoot, manifest.nodeModules, "nodeModules");
   if (manifest.nodeLoader != null) {
     resolveInside(bundleRoot, manifest.nodeLoader, "nodeLoader");
   }
@@ -454,14 +462,14 @@ function validateManifestShape(bundleRoot, manifest) {
 
 function manifestOptions(options) {
   const bundleRoot = asAbsolutePath(options.bundleRoot, "bundleRoot");
-  const pythonLock = asAbsolutePath(options.pythonLock, "pythonLock");
-  const nodeModules = options.nodeModules ?? "dependencies/node/node_modules";
-  const nodeLoader = options.nodeLoader ?? "dependencies/node/runtime-loader.mjs";
-  const pythonPath = options.pythonPath ?? ["dependencies/python"];
+  const pythonLock = options.coreOnly ? null : asAbsolutePath(options.pythonLock, "pythonLock");
+  const nodeModules = options.coreOnly ? null : options.nodeModules ?? "dependencies/node/node_modules";
+  const nodeLoader = options.coreOnly ? "app/eidos_runtime/resources/runtime-loader.mjs" : options.nodeLoader ?? "dependencies/node/runtime-loader.mjs";
+  const pythonPath = options.coreOnly ? ["app"] : options.pythonPath ?? ["dependencies/python"];
   if (!Array.isArray(pythonPath) || pythonPath.length === 0) {
     fail("pythonPath must contain the isolated dependency root");
   }
-  if (pythonPath.length !== 1 || pythonPath[0] !== "dependencies/python") {
+  if (!options.coreOnly && (pythonPath.length !== 1 || pythonPath[0] !== "dependencies/python")) {
     fail("pythonPath must be exactly dependencies/python");
   }
   return {
@@ -478,8 +486,9 @@ function manifestOptions(options) {
 export function generateRuntimeManifestSync(options) {
   const normalized = manifestOptions(options);
   const { bundleRoot } = normalized;
-  const pythonPackages = parsePythonLock(normalized.pythonLock);
-  const nodeModulesPath = resolveInside(bundleRoot, normalized.nodeModules, "nodeModules");
+  const pythonPackages = normalized.coreOnly
+    ? JSON.parse(readFileSync(normalized.sharedPython, "utf8")) : parsePythonLock(normalized.pythonLock);
+  const nodeModulesPath = normalized.nodeModules == null ? null : resolveInside(bundleRoot, normalized.nodeModules, "nodeModules");
   for (const relativePath of normalized.pythonPath) {
     resolveInside(bundleRoot, relativePath, "pythonPath");
   }
@@ -494,7 +503,7 @@ export function generateRuntimeManifestSync(options) {
     pythonPath: [...normalized.pythonPath],
     pythonPackages,
     nodeModules: normalized.nodeModules,
-    nodePackages: collectNodePackages(nodeModulesPath, bundleRoot),
+    nodePackages: nodeModulesPath == null ? [] : collectNodePackages(nodeModulesPath, bundleRoot),
     nodeLoader: normalized.nodeLoader,
     nativeBinPaths: [],
     files,
@@ -564,6 +573,7 @@ function parseArguments(argv) {
       options.verify = true;
       continue;
     }
+    if (argument === "--core-only") { options.coreOnly = true; continue; }
     const valueArguments = new Set([
       "--bundle-root",
       "--bundle-id",
@@ -575,6 +585,7 @@ function parseArguments(argv) {
       "--python-path",
       "--node-modules",
       "--node-loader",
+      "--shared-python",
     ]);
     if (!valueArguments.has(argument)) {
       fail(`unknown argument: ${argument}`);
@@ -592,7 +603,7 @@ function parseArguments(argv) {
   }
   if (typeof options.bundleRoot !== "string") fail("--bundle-root is required");
   if (options.verify) return options;
-  for (const required of ["bundleId", "bundleVersion", "pythonVersion", "nodeVersion", "ripgrepVersion", "pythonLock"]) {
+  for (const required of ["bundleId", "bundleVersion", "pythonVersion", "ripgrepVersion", ...(options.coreOnly ? ["sharedPython"] : ["nodeVersion", "pythonLock"])]) {
     if (typeof options[required] !== "string") fail(`--${required.replaceAll(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)} is required`);
   }
   return options;

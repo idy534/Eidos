@@ -6,6 +6,7 @@ import { EmptyState } from "../EmptyState.js";
 import { SearchInput } from "../SearchInput.js";
 import { SkillDetailDialog, SkillIcon } from "./SkillDetailDialog.js";
 import { Toggle } from "../Toggle.js";
+import { ManagedResourceSettings } from "./ManagedResourceSettings.js";
 
 interface SkillSettingsProps {
   skills: SkillMetadata[];
@@ -72,6 +73,7 @@ export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
           value={query}
           onChange={setQuery}
         />
+        {category === "system" && <ManagedResourceSettings />}
         <div className="skill-categories" role="group" aria-label="技能分类">
           <button type="button" aria-pressed={category === "personal"} onClick={() => setCategory("personal")}>个人</button>
           <button type="button" aria-pressed={category === "system"} onClick={() => setCategory("system")}>系统</button>

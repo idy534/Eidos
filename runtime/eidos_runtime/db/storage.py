@@ -676,6 +676,9 @@ class SessionStore:
     def save_skill_state(self, state: SkillState) -> None:
         self._repository(self._extensions).save_skill_state(state)
 
+    def save_skill_states(self, states: tuple[SkillState, ...]) -> None:
+        self._repository(self._extensions).save_skill_states(states)
+
     def restore_removed_skill(self, qualified_id: str) -> None:
         self._repository(self._extensions).restore_removed_skill(qualified_id)
 

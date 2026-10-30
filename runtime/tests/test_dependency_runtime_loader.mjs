@@ -218,7 +218,7 @@ for (const entry of [hostEsmEntry, hostCjsEntry]) {
   assert.notEqual(result.status, 0);
   assert.match(
     `${result.stderr}\n${result.stdout}`,
-    /outside RUNTIME_NODE_MODULES/,
+    /outside its managed Node roots/,
   );
 }
 
@@ -229,7 +229,7 @@ const escapedResult = spawnSync(process.execPath, [escapedEntry], {
 assert.notEqual(escapedResult.status, 0);
 assert.match(
   `${escapedResult.stderr}\n${escapedResult.stdout}`,
-  /outside RUNTIME_NODE_MODULES/,
+  /outside its managed Node roots/,
 );
 
 const missingRoot = { ...environment };

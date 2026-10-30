@@ -397,6 +397,7 @@ export class RuntimeClient {
   private stdoutBuffer = Buffer.alloc(0);
   private nextRequestId = 1;
   private closed = false;
+  private shutdownRequested = false;
 
   constructor(options: RuntimeClientOptions) {
     const environment = buildRuntimeEnvironment({
@@ -1194,6 +1195,25 @@ export class RuntimeClient {
     return this.validatedRequest("skill/list", {}, isSkillListResult);
   }
 
+  async getResourceStatus(): Promise<ResourceStatus> {
+    const unavailable: ResourceStatus = { available: false, directory: "", packs: [] };
+    if (this.shutdownRequested) return unavailable;
+    try {
+      const status = await this.validatedRequest("resource/status", {}, isResourceStatus);
+      return this.shutdownRequested ? unavailable : status;
+    } catch (error) {
+      // A read already in flight can lose its reply when normal shutdown closes
+      // stdio. Only explicit shutdown makes this expected; crashes still reject.
+      if (this.shutdownRequested) return unavailable;
+      throw error;
+    }
+  }
+
+  retryResource(request: ResourceRetryRequest): Promise<ResourceRetryResponse> {
+    if (this.shutdownRequested) return Promise.resolve({ accepted: false });
+    return this.validatedRequest("resource/retry", { ...request }, isResourceRetryResponse);
+  }
+
   readSkillDetail(qualifiedId: string): Promise<SkillDetail> {
     return this.validatedRequest("skill/detail", { qualifiedId }, isSkillDetail);
   }
@@ -1259,6 +1279,7 @@ export class RuntimeClient {
   }
 
   async shutdown(): Promise<void> {
+    this.shutdownRequested = true;
     if (this.closed) {
       return;
     }
@@ -2896,3 +2917,4 @@ function approvalRequestFrom(
 }
 import { isContextDetails, isContextCompactionRecord, isContextCompactionActivity } from "../shared/context-management.js";
 import type { ContextDetails, ContextCompactionRecord } from "../shared/context-management.js";
+import { isResourceStatus, isResourceRetryResponse, type ResourceStatus, type ResourceRetryRequest, type ResourceRetryResponse } from "../shared/managed-resources.js";

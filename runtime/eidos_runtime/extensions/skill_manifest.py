@@ -10,6 +10,7 @@ from typing import Callable
 import yaml
 
 from eidos_runtime.models.skill_runtime import RuntimeRequirements
+from eidos_runtime.models.managed_resources import SkillResourceProfiles
 
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,7 @@ class SkillAgentMetadata:
     policy: SkillPolicy | None = None
     runtime_dependencies: RuntimeRequirements | None = None
     runtime_dependency_error: str | None = None
+    runtime_resources: SkillResourceProfiles | None = None
 
 
 def parse_skill_manifest(
@@ -303,6 +305,12 @@ def _parse_agent_metadata(value: dict[object, object], skill_root: Path) -> Skil
     policy = _parse_policy(value.get("policy"))
     runtime_dependencies: RuntimeRequirements | None = None
     runtime_dependency_error: str | None = None
+    runtime_resources: SkillResourceProfiles | None = None
+    if "runtimeResources" in value:
+        try:
+            runtime_resources = SkillResourceProfiles.model_validate(value["runtimeResources"])
+        except (TypeError, ValueError):
+            runtime_dependency_error = "runtime_resources_invalid"
     if "runtimeDependencies" in value:
         try:
             runtime_dependencies = RuntimeRequirements.model_validate(
@@ -322,6 +330,7 @@ def _parse_agent_metadata(value: dict[object, object], skill_root: Path) -> Skil
         policy=policy,
         runtime_dependencies=runtime_dependencies,
         runtime_dependency_error=runtime_dependency_error,
+        runtime_resources=runtime_resources,
     )
 
 
