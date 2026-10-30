@@ -534,6 +534,7 @@ span.tool-file-link:hover {
   max-width: 100%;
   max-height: 220px;
   object-fit: contain;
+  background: var(--surface-raised);
   border-radius: var(--radius-sm, 0.25rem);
 }
 .tool-image-empty {

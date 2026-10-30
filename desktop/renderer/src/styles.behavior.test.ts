@@ -285,4 +285,16 @@ describe("interactive color tokens", () => {
       /\.environment-popover__body::-webkit-scrollbar-thumb:hover\s*\{[^}]*background:\s*var\(--scrollbar-thumb-hover\);/s,
     );
   });
+
+  it("provides an opaque light surface backing for image previews so transparent PNGs remain legible", () => {
+    expect(styles).toMatch(
+      /\.artifact-image-preview img\s*\{[^}]*background:\s*var\(--surface-raised\);/s,
+    );
+    expect(styles).toMatch(
+      /\.tool-image-thumbnail-btn img\s*\{[^}]*background:\s*var\(--surface-raised\);/s,
+    );
+    expect(styles).toMatch(
+      /\.artifact-image-button img,\s*\.artifact-preview-image\s*\{[^}]*background:\s*var\(--surface-raised\);/s,
+    );
+  });
 });
