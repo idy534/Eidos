@@ -7,6 +7,30 @@
   margin-top: 1.5rem;
 }
 
+/* Align header title and toggle horizontally */
+.managed-resources-section .setting-section-header {
+  align-items: center;
+}
+
+.managed-resources-auto-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  user-select: none;
+}
+
+.managed-resources-auto-toggle-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary, #666);
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+
+.managed-resources-auto-toggle-label:hover {
+  color: var(--text, #1d1d1f);
+}
+
 /* Disclosure root - completely borderless to blend into the parent .setting-section */
 .managed-resources,
 .managed-resources-mac {

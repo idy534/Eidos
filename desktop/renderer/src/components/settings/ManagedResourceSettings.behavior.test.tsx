@@ -31,7 +31,26 @@ describe("managed document resources", () => {
     expect(screen.getByText("1/3 已就绪")).toBeVisible();
     expect(screen.getByText("下载中 25%")).toBeVisible();
     expect(screen.getByText("磁盘空间不足，请清理后重试。")).toBeVisible();
-    expect(screen.queryByRole("switch")).toBeNull();
+    expect(screen.getByRole("switch", { name: "自动预下载" })).toBeChecked();
+    expect(screen.queryByRole("switch", { name: "基础文档处理" })).toBeNull();
+  });
+
+  it("toggles auto-download and automatically downloads missing packs", async () => {
+    const retry = vi.fn().mockResolvedValue({ accepted: true });
+    const missingStatus: ResourceStatus = {
+      available: true, directory: "/Users/test/Eidos/Resource",
+      packs: [
+        { id: "ocr", title: "OCR 引擎", version: "1", phase: "missing" },
+      ],
+    };
+    const read = vi.fn().mockResolvedValue(missingStatus);
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { getResourceStatus: read, retryResource: retry } });
+    render(<ManagedResourceSettings />);
+    await waitFor(() => expect(retry).toHaveBeenCalledWith({ packId: "ocr" }));
+    const toggle = screen.getByRole("switch", { name: "自动预下载" });
+    expect(toggle).toBeChecked();
+    await userEvent.click(toggle);
+    expect(toggle).not.toBeChecked();
   });
 
   it("retries only the requested resource and refreshes its state", async () => {

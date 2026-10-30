@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ResourceProgress, ResourceStatus } from "../../../../shared/managed-resources.js";
 import { userFacingError } from "../../session-state.js";
 import { SettingSection } from "../SettingSection.js";
+import { Toggle } from "../Toggle.js";
 
 const PHASES: Record<ResourceProgress["phase"], string> = {
   missing: "",
@@ -47,13 +48,26 @@ export function _resetResourceCacheForTest(): void {
   cachedStatus = null;
 }
 
+const AUTO_DOWNLOAD_STORAGE_KEY = "eidos.managed_resources.auto_download";
+
+function getInitialAutoDownload(): boolean {
+  try {
+    const saved = localStorage.getItem(AUTO_DOWNLOAD_STORAGE_KEY);
+    return saved !== null ? saved === "true" : true;
+  } catch {
+    return true;
+  }
+}
+
 export function ManagedResourceSettings({ onShowToast }: {
   onShowToast?: ((message: string, type: "success" | "info" | "error") => void) | undefined;
 } = {}) {
   const [status, setStatus] = useState<ResourceStatus | null>(() => cachedStatus);
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState<string>();
+  const [autoDownload, setAutoDownload] = useState<boolean>(getInitialAutoDownload);
   const mounted = useRef(false);
+  const autoTriggeredPacks = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     mounted.current = true;
@@ -96,6 +110,30 @@ export function ManagedResourceSettings({ onShowToast }: {
     }
   }
 
+  // Auto-download missing packs when autoDownload is enabled
+  useEffect(() => {
+    if (!autoDownload || !status?.available) return;
+    const packs = status.packs ?? [];
+    const missingPacks = packs.filter((p) => p.phase === "missing");
+    for (const pack of missingPacks) {
+      if (!autoTriggeredPacks.current.has(pack.id)) {
+        autoTriggeredPacks.current.add(pack.id);
+        void prepare(pack.id);
+      }
+    }
+  }, [autoDownload, status]);
+
+  function handleToggleAutoDownload(next: boolean) {
+    setAutoDownload(next);
+    try {
+      localStorage.setItem(AUTO_DOWNLOAD_STORAGE_KEY, String(next));
+    } catch {}
+    if (next) {
+      autoTriggeredPacks.current.clear();
+      onShowToast?.("已开启自动预下载，缺失组件将自动在后台下载", "info");
+    }
+  }
+
   if (status && !status.available && !error) return null;
   const packs = status?.packs ?? [];
   const ready = packs.filter((pack) => pack.phase === "ready").length;
@@ -121,7 +159,21 @@ export function ManagedResourceSettings({ onShowToast }: {
   return (
     <SettingSection
       title="运行时组件与依赖"
-      description="管理 runtime 所需的依赖包。"
+      headerAction={
+        <div className="managed-resources-auto-toggle">
+          <span
+            className="managed-resources-auto-toggle-label"
+            onClick={() => handleToggleAutoDownload(!autoDownload)}
+          >
+            自动预下载
+          </span>
+          <Toggle
+            checked={autoDownload}
+            onChange={handleToggleAutoDownload}
+            label="自动预下载"
+          />
+        </div>
+      }
       className="managed-resources-section"
     >
       <details className="managed-resources-mac">
