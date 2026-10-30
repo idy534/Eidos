@@ -1,0 +1,45 @@
+runtimeDependencies:
+  schemaVersion: 1
+  dependencies:
+  - kind: executable
+    name: python3
+    version: '>=3.11,<3.13'
+  - kind: python-package
+    name: python-pptx
+    version: '>=1'
+    importName: pptx
+runtimeResources:
+  schemaVersion: 1
+  profiles:
+    python:
+    - document-python
+    node:
+    - document-python
+    - document-node
+    office:
+    - document-python
+    - office
+    thumbnail:
+    - document-python
+    - office
+    - pdf
+    render:
+    - pdf
+    pdf:
+    - pdf
+    - fonts
+    data:
+    - data
+    images:
+    - document-python
+    - images
+    ocr-eng:
+    - pdf
+    - ocr-eng
+    ocr-chi-sim:
+    - pdf
+    - ocr-chi-sim
+    ocr-bilingual:
+    - pdf
+    - ocr-eng
+    - ocr-chi-sim

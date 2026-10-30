@@ -89,6 +89,7 @@
   background: var(--surface);
   box-shadow: var(--apple-shadow-lg);
   overflow: hidden;
+  color: var(--text);
 }
 .skill-detail-header {
   display: flex;
@@ -235,6 +236,7 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-sm, 6px);
   background: var(--surface-raised);
+  color: var(--text);
 }
 .skill-detail-body .markdown-body {
   overflow-wrap: anywhere;

@@ -45,11 +45,14 @@ class ReadToolOutputInput(StrictToolModel):
         le=READ_TOOL_OUTPUT_MAX_BYTES,
     )
     fromEnd: bool = False
+    outputRevision: StrictInt | None = Field(default=None, ge=0, le=_JSON_SAFE_INTEGER_MAX)
 
     @model_validator(mode="after")
     def validate_tail_offset(self) -> ReadToolOutputInput:
         if self.fromEnd and self.offsetBytes:
             raise ValueError("tail_read_cannot_set_offset")
+        if self.outputRevision is not None and self.stream not in {"stdout", "stderr"}:
+            raise ValueError("output_revision_requires_shell_stream")
         return self
 
 
@@ -72,6 +75,7 @@ class ReadToolOutputResultData(StrictToolModel):
     rawOmittedBytes: StrictInt | None = Field(
         default=None, ge=0, le=_JSON_SAFE_INTEGER_MAX
     )
+    outputRevision: StrictInt | None = Field(default=None, ge=0, le=_JSON_SAFE_INTEGER_MAX)
 
     @model_validator(mode="after")
     def validate_range(self) -> ReadToolOutputResultData:
@@ -130,6 +134,7 @@ class ReadToolOutputAdapter:
                 max_bytes=min(request.maxBytes, READ_TOOL_OUTPUT_MODEL_PAGE_BYTES),
                 from_end=request.fromEnd,
                 item_id=request.itemId,
+                output_revision=request.outputRevision,
                 live_output_reader=(self.shell_process_manager.read_output if self.shell_process_manager is not None else None),
             )
         except ToolOutputReadError as error:
@@ -166,7 +171,9 @@ def read_tool_output_entry(
             "current Session, including live output in this Run. Pass its outputCallId as callId "
             "(the original provider callId, never a Shell sessionId). "
             "Set fromEnd=true for the tail; raw bytes omitted by the Shell output "
-            "limit are not recoverable. Use stream='result' and the itemId/callId "
+            "limit are not recoverable. When paging live stdout/stderr, pass the returned "
+            "outputRevision on the next page; if it changed, restart or use fromEnd=true. "
+            "Use stream='result' and the itemId/callId "
             "from a contextCleared marker to page the original saved JSON result "
             "of any completed tool call, including fork history. Use stream='context' and a saved message itemId as callId to page the original user or assistant text. "
             "Reading saved output does not execute the operation again."
@@ -187,7 +194,7 @@ def read_tool_output_entry(
         provenance=ToolProvenance.model_validate({
             "kind": "builtin",
             "sourceId": "eidos.read-tool-output",
-            "sourceVersion": "2",
+            "sourceVersion": "3",
             "contentHash": hashlib.sha256(encoded).hexdigest(),
         }),
         adapter=ReadToolOutputAdapter(store, run_id, shell_process_manager),
@@ -219,6 +226,7 @@ def _page_result(
             "rawTruncated": page.raw_truncated,
             "rawOmittedBytes": page.raw_omitted_bytes,
             "outputComplete": page.output_complete,
+            "outputRevision": page.output_revision,
         },
         "sideEffectsMayExist": False,
         "reconciliationRequired": False,
@@ -244,6 +252,8 @@ def _summary_for_code(code: str) -> str:
         return "The tool callId is ambiguous; use the source itemId"
     if code == "invalid_output_offset":
         return "The output offset is not at a UTF-8 character boundary"
+    if code == "output_snapshot_changed":
+        return "The live output snapshot changed. Restart at offsetBytes=0 or use fromEnd=true; pass the returned outputRevision when paging."
     if code == "tool_output_not_available":
         return (
             "No available output matches this provider callId and itemId in the current Session. "

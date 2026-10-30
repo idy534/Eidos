@@ -117,11 +117,6 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
   return createPortal(
     <>
       <div className="modal-backdrop agent-editor-backdrop" aria-hidden={expandedMd}>
-        {error && (
-          <ToastContainer
-            toasts={[{ id: "agent-editor-error", message: error, type: "error", duration: 3500 }]}
-          />
-        )}
         <form
           ref={dialogRef}
           noValidate
@@ -165,6 +160,11 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
         </header>
 
         <div className="modal-body agent-editor__body">
+          {error && (
+            <ToastContainer
+              toasts={[{ id: `agent-editor-error-${error}`, message: error, type: "error", duration: 4000 }]}
+            />
+          )}
           <fieldset disabled={busy} className="agent-editor__fieldset">
             {/* 紧凑基本配置区块 */}
             <div className="agent-editor__section agent-editor__section--compact">

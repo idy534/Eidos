@@ -493,7 +493,12 @@ export function GitWorkflowControls({
         {dialogContent}
         {error && (
           <ToastContainer
-            toasts={[{ id: "git-workflow-error", message: error, type: "error", duration: 3500 }]}
+            toasts={[{
+              id: `git-workflow-error-${error}`,
+              message: error,
+              type: "error",
+              duration: 4000,
+            }]}
             onDismiss={() => setError(undefined)}
           />
         )}
@@ -539,7 +544,12 @@ export function GitWorkflowControls({
         {dialogContent}
         {error && (
           <ToastContainer
-            toasts={[{ id: "git-workflow-error", message: error, type: "error", duration: 3500 }]}
+            toasts={[{
+              id: `git-workflow-error-${error}`,
+              message: error,
+              type: "error",
+              duration: 4000,
+            }]}
             onDismiss={() => setError(undefined)}
           />
         )}
@@ -606,7 +616,12 @@ export function GitWorkflowControls({
 
       {error && (
         <ToastContainer
-          toasts={[{ id: "git-workflow-error", message: error, type: "error", duration: 3500 }]}
+          toasts={[{
+            id: `git-workflow-error-${error}`,
+            message: error,
+            type: "error",
+            duration: 4000,
+          }]}
           onDismiss={() => setError(undefined)}
         />
       )}

@@ -1,4 +1,5 @@
 import type { ProjectUpdateRequest, ProjectCreateFoldersRequest, GitWorkspaceRequest, GitWorkspaceContract } from "./project-workspaces.js";
+import type { ResourceStatus, ResourceRetryRequest, ResourceRetryResponse } from "./managed-resources.js";
 import type { ShellEnvironmentReadRequest, ShellEnvironmentRefreshRequest, ShellEnvironmentSaveRequest, ShellEnvironmentResponse } from "./shell-environment.js";
 import type { PersonalizationReadRequest, PersonalizationSaveRequest, PersonalizationResponse } from "./personalization.js";
 import type { HookActivityPage, HookConfigurationRequest, HookHistoryRequest, HookSourceList } from "./hooks.js";
@@ -350,6 +351,8 @@ export interface EidosRuntimeAPI {
   removePlugin(pluginId: string): Promise<PluginRecord>;
 
   listSkills(): Promise<SkillListResult>;
+  getResourceStatus(): Promise<ResourceStatus>;
+  retryResource(request: ResourceRetryRequest): Promise<ResourceRetryResponse>;
   readSkillDetail(qualifiedId: string): Promise<SkillDetail>;
   setSkillEnabled(qualifiedId: string, enabled: boolean): Promise<SkillMetadata>;
   removeSkill(qualifiedId: string): Promise<SkillRemoval>;

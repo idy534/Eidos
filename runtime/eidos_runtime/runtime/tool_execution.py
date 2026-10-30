@@ -483,7 +483,7 @@ class ToolExecutionController:
     ) -> HandlerOutcome:
         tool_call = item.get("toolCall")
         rejection = None
-        if (self.hooks is not None and call.name != "write_stdin"
+        if (self.hooks is not None and call.name not in {"write_stdin", "control_shell"}
                 and (validation := self.dispatcher.validate_execution(call, plan)) is not None
                 and validation.valid):
             arguments = {"patch": call.payload.input} if isinstance(call.payload, CustomToolPayload) else call.arguments
@@ -824,6 +824,7 @@ class ToolExecutionController:
                     "search_text",
                     "run_shell",
                     "write_stdin",
+                    "control_shell",
                     "read_tool_output",
                     "apply_patch",
                 },
@@ -921,7 +922,7 @@ class ToolExecutionController:
             self._execution_state.phase = ToolExecutionPhase.COMMITTING
             duration_ms = max(0, int((self.monotonic() - started) * 1000))
             post_hook_event = None
-            if (self.hooks is not None and call.name != "write_stdin" and hook_rejection is None
+            if (self.hooks is not None and call.name not in {"write_stdin", "control_shell"} and hook_rejection is None
                     and (validation := self.dispatcher.validate_execution(call, plan)) is not None
                     and validation.valid):
                 if call.name != "run_shell" or outcome.result.get("data", {}).get("executionStatus") != "running":

@@ -21,6 +21,7 @@ from eidos_runtime.models.skill_settings import (
 logger = logging.getLogger(__name__)
 
 MAX_ICON_BYTES = 256 * 1024
+BUILTIN_DOCUMENT_SKILLS = ("docx", "pptx", "xlsx", "pdf")
 
 
 def _read_skill_icon(skill_root: Path, skill_name: str) -> str | None:
@@ -67,6 +68,33 @@ class SkillManagement:
             if source.qualified_id == qualified_id:
                 return source
         raise SkillReadError("skill_unavailable")
+
+    def migrate_builtin_documents(self) -> None:
+        """Prefer new built-ins once, without modifying personal Skill files.
+
+        Existing Runs retain their frozen catalog and personal directories.
+        Users can explicitly re-enable their personal copy in settings.
+        """
+        sources = {source.qualified_id: source for source in self._sources()}
+        states = {state.qualified_id: state for state in self.store.skill_states()}
+        for name in BUILTIN_DOCUMENT_SKILLS:
+            system_id, user_id = f"system:{name}", f"user:{name}"
+            if system_id in states or system_id not in sources or user_id not in sources:
+                continue
+            prior = states.get(user_id)
+            if prior is not None and prior.removed:
+                continue
+            system, user = sources[system_id], sources[user_id]
+            self.store.save_skill_states((
+                SkillState(
+                    qualified_id=system_id, enabled=prior.enabled if prior else True,
+                    source_kind="system", content_hash=system.content_hash,
+                ),
+                SkillState(
+                    qualified_id=user_id, enabled=False, source_kind="user",
+                    directory_name=user.root.name, content_hash=user.content_hash,
+                ),
+            ))
 
     def list(self) -> tuple[ManagedSkill, ...]:
         self.cleanup()

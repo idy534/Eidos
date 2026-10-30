@@ -676,6 +676,9 @@ class SessionStore:
     def save_skill_state(self, state: SkillState) -> None:
         self._repository(self._extensions).save_skill_state(state)
 
+    def save_skill_states(self, states: tuple[SkillState, ...]) -> None:
+        self._repository(self._extensions).save_skill_states(states)
+
     def restore_removed_skill(self, qualified_id: str) -> None:
         self._repository(self._extensions).restore_removed_skill(qualified_id)
 
@@ -786,9 +789,11 @@ class SessionStore:
         from_end: bool,
         live_output_reader: Callable[[str], dict[str, object]] | None = None,
         item_id: str | None = None,
+        output_revision: int | None = None,
     ) -> ToolOutputPage:
         return self._repository(self._execution).read_tool_output(
             run_id,
+            output_revision=output_revision,
             tool_call_id=tool_call_id,
             stream=stream,
             offset_bytes=offset_bytes,

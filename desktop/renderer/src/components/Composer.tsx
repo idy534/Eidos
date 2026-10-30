@@ -103,6 +103,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   const {
     activateReference: activateInlineReference,
     error: inlineActivationError,
+    clearError: clearInlineActivationError,
     dialogs: inlineActivationDialogs,
   } = useReferenceActivation();
   const [picker, setPicker] = useState<{
@@ -443,11 +444,15 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       {(context?.error || inlineActivationError) && (
         <ToastContainer
           toasts={[{
-            id: "composer-reference-error",
+            id: `composer-reference-error-${context?.error ?? inlineActivationError}`,
             message: (context?.error ?? inlineActivationError)!,
             type: "error",
-            duration: 3500,
+            duration: 4000,
           }]}
+          onDismiss={() => {
+            context?.clearError?.();
+            clearInlineActivationError?.();
+          }}
         />
       )}
       {showStatus && <p className="input-reference-hint">{context?.sessionId} · {contextUsage ? formatContextUsage(contextUsage) : "暂无上下文统计"}</p>}

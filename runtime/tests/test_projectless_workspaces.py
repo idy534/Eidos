@@ -101,6 +101,55 @@ def test_create_replay_and_rename_keep_one_directory(store: SessionStore, tmp_pa
     ).fetchone()[0] == 1
 
 
+@pytest.mark.parametrize(("hint", "expected"), [
+    ("中" * 32, "中" * 16),
+    ("a" * 96, "a" * 48),
+    ("a" * 47 + "中", "a" * 47),
+])
+def test_new_directory_names_use_48_bytes(
+    store: SessionStore, hint: str, expected: str,
+) -> None:
+    app = application(store)
+    created = app.create(request(hint, "short-name")).root
+    root = Path(created["workspaceRoot"])
+    assert root.name == expected
+    assert root.is_dir()
+    assert app.create(request(hint, "short-name")).root == created
+    duplicate = app.create(request(hint)).root
+    assert Path(duplicate["workspaceRoot"]).name == expected + "-2"
+
+
+@pytest.mark.parametrize("completed", [False, True])
+@pytest.mark.parametrize(("hint", "expected"), [("中" * 32, "中" * 16), ("a" * 96, "a" * 48)])
+def test_existing_long_directory_names_survive_restart(
+    store: SessionStore, monkeypatch: pytest.MonkeyPatch, completed: bool, hint: str, expected: str,
+) -> None:
+    create_request = request(hint, "existing-long-name")
+    with monkeypatch.context() as legacy:
+        legacy.setattr("eidos_runtime.persistence.projectless_workspaces.MAX_NEW_NAME_BYTES", 96)
+        if completed:
+            created = application(store).create(create_request).root
+            root = Path(created["workspaceRoot"])
+        else:
+            repository = store.typed_runtime_repository().projectless_workspaces()
+            creation = repository.prepare(create_request.operation_id, hint, projectless_root())
+            identity = ProjectlessDirectoryAllocator().create(Path(creation.workspace_root))
+            repository.mark_created(creation, identity)
+            root = identity.path
+    (root / "keep.txt").write_text("existing content")
+    data = store.data_directory
+    store.close()
+    store.__init__(data)
+    store.initialize()
+    assert store.health_state == "ready"
+    restored = application(store).create(create_request).root
+    assert restored["workspaceRoot"] == str(root)
+    assert root.name == hint
+    assert (root / "keep.txt").read_text() == "existing content"
+    new = application(store).create(request(hint)).root
+    assert Path(new["workspaceRoot"]).name == expected
+
+
 def test_concurrent_and_existing_names_allocate_numeric_suffixes(store: SessionStore, tmp_path: Path) -> None:
     parent = tmp_path / "Eidos" / date.today().isoformat()
     parent.mkdir(parents=True)

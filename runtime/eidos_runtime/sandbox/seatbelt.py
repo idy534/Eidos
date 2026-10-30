@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path
+import re
 import signal
 import stat
 import socket
@@ -208,7 +209,9 @@ class SeatbeltProfile:
             active_skill_roots=verified_skill_roots,
         )
 
-    def command(self, command: Sequence[str]) -> list[str]:
+    def command(
+        self, command: Sequence[str], *, terminal_device: Path | None = None,
+    ) -> list[str]:
         if not command or any(not isinstance(argument, str) for argument in command):
             raise ValueError("sandbox command must contain string arguments")
         if not is_seatbelt_ready():
@@ -245,6 +248,16 @@ class SeatbeltProfile:
                 f"-D{key}={value}"
                 for key, value in compiled.parameters.items()
             ]
+        if terminal_device is not None:
+            # Only Runtime-allocated, identity-checked slave devices reach here.
+            if not re.fullmatch(r"/dev/ttys[0-9]+", str(terminal_device)):
+                raise ValueError("invalid terminal device")
+            policy = (profile_arguments[1] if profile_arguments[0] == "-p"
+                      else profile_path.read_text(encoding="utf-8"))
+            policy += ('\n(allow file-write-data (literal "/dev/tty") '
+                       '(literal (param "SHELL_TTY_DEVICE")))\n')
+            profile_arguments = ["-p", policy]
+            additional_definitions.append(f"-DSHELL_TTY_DEVICE={terminal_device}")
         git_definition = self.git_directory or (self.workspace_root / ".git")
         command = [
             SANDBOX_EXECUTABLE,

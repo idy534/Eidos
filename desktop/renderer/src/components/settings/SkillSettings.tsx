@@ -18,12 +18,19 @@ interface SkillSettingsProps {
 }
 
 export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
-  const { onToggleSkill, pendingAction, pendingSkillIds = EMPTY_PENDING_SKILL_IDS, storageReady, onShowToast } = actions;
+  const {
+    onToggleSkill,
+    pendingAction,
+    pendingSkillIds = EMPTY_PENDING_SKILL_IDS,
+    storageReady,
+    onShowToast,
+  } = actions;
   const [category, setCategory] = useState<"personal" | "system">("personal");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string>();
   const [togglingIds, setTogglingIds] = useState<ReadonlySet<string>>(() => new Set());
   const searchRef = useRef<HTMLInputElement>(null);
+
   const standalone = skills.filter((skill) => skill.sourceKind !== "plugin");
   const selected = standalone.find((skill) => skill.qualifiedId === selectedId);
   const normalizedQuery = query.trim().toLocaleLowerCase();

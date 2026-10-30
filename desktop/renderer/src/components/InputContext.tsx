@@ -30,6 +30,7 @@ interface InputContextValue {
   projectId: string | undefined;
   busy: boolean;
   error: string | undefined;
+  clearError?: () => void;
   add(request: InputPrepareRequest, range?: { start: number; end: number }): Promise<void>;
   paths(paths: string[]): Promise<void>;
   paste(): Promise<void>;
@@ -141,8 +142,14 @@ export function InputContextProvider({
     void add({ kind: "excerpt", source: `session:${sessionId ?? ""}:selection`, label: "选中内容", text });
   }), [sessionId, add]);
 
+  const clearError = useCallback(() => {
+    if (sessionId) {
+      setErrors((previous) => ({ ...previous, [sessionId]: undefined }));
+    }
+  }, [sessionId]);
+
   return <Context.Provider value={sessionId ? {
-    sessionId, workspaceRoot: workspaceRoot ?? "", workspaceRoots: workspaceRoots ?? (workspaceRoot ? [workspaceRoot] : []), projectId, busy: Boolean(counts[sessionId]), error: errors[sessionId], add, paths,
+    sessionId, workspaceRoot: workspaceRoot ?? "", workspaceRoots: workspaceRoots ?? (workspaceRoot ? [workspaceRoot] : []), projectId, busy: Boolean(counts[sessionId]), error: errors[sessionId], clearError, add, paths,
     paste: () => work(() => window.eidosRuntime.pasteInputImage()), settings: onSettings,
     reuse: (reference) => { if (ready) commitReference(sessionId, reference); },
     navigateToSession: onNavigateToSession,
@@ -284,7 +291,7 @@ export function useReferenceActivation() {
     </>
   );
 
-  return { activateReference, error, dialogs };
+  return { activateReference, error, clearError: () => setError(undefined), dialogs };
 }
 
 export function InlineReferenceProse({
@@ -296,7 +303,7 @@ export function InlineReferenceProse({
   references: readonly InputReference[];
   variant?: "composer" | "bubble";
 }) {
-  const { activateReference, error, dialogs } = useReferenceActivation();
+  const { activateReference, error, clearError, dialogs } = useReferenceActivation();
   const inlineRefs = references.filter(isInlineReference);
   const segments = parseInlineSegments(content, inlineRefs);
   if (segments.length === 0) return null;
@@ -335,11 +342,12 @@ export function InlineReferenceProse({
       {error && (
         <ToastContainer
           toasts={[{
-            id: "input-reference-list-error",
+            id: `input-reference-list-error-${error}`,
             message: error,
             type: "error",
             duration: 3500,
           }]}
+          onDismiss={() => clearError()}
         />
       )}
       {dialogs}
@@ -358,7 +366,7 @@ export function InputReferenceCards({
   variant?: "composer" | "bubble";
   placement?: "all" | "shelf" | "inline";
 }) {
-  const { activateReference, error, dialogs } = useReferenceActivation();
+  const { activateReference, error, clearError, dialogs } = useReferenceActivation();
 
   const visibleReferences =
     placement === "shelf"
@@ -472,11 +480,12 @@ export function InputReferenceCards({
       {error && (
         <ToastContainer
           toasts={[{
-            id: "input-reference-cards-error",
+            id: `input-reference-list-error-${error}`,
             message: error,
             type: "error",
             duration: 3500,
           }]}
+          onDismiss={() => clearError()}
         />
       )}
       {dialogs}

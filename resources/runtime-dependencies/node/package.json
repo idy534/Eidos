@@ -1,8 +1,16 @@
 {
   "name": "eidos-runtime-node-dependencies",
   "private": true,
+  "packageManager": "pnpm@11.7.0",
   "type": "module",
   "dependencies": {
-    "docx": "9.7.1"
+    "@deepseek-ai/libreoffice-kit": "0.2.3",
+    "@deepseek-ai/libreoffice-kit-darwin-arm64": "0.2.3",
+    "@tesseract.js-data/chi_sim": "1.0.0",
+    "@tesseract.js-data/eng": "1.0.0",
+    "docx": "9.7.1",
+    "pptxgenjs": "4.0.1",
+    "sharp": "0.35.5",
+    "tesseract.js": "7.0.0"
   }
 }

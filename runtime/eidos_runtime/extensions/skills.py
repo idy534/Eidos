@@ -1487,8 +1487,12 @@ def _write_tree(
     for relative, data in files.items():
         safe_relative = _safe_relative(relative)
         target = destination.joinpath(*safe_relative.parts)
-        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(target.parent, 0o700)
+        # mkdir(parents=True) applies mode only to the leaf. Deep resource
+        # trees need every intermediate directory to satisfy private reads.
+        parent = destination
+        for part in safe_relative.parts[:-1]:
+            parent = parent / part
+            _private_directory(parent)
         mode = 0o700 if safe_relative.as_posix() in executable_paths else 0o600
         descriptor = os.open(
             target,

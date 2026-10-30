@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import codecs
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import os
 from pathlib import Path
 import selectors
@@ -65,6 +65,18 @@ class ShellLaunchSpec:
     sandboxed: bool
     shell_kind: str | None = None
     environment_source: str | None = None
+    tty: bool = False
+    columns: int = 100
+    rows: int = 30
+    terminal_profile: SeatbeltProfile | None = None
+    shell_argv: tuple[str, ...] = ()
+
+    def terminal_command(self, device: Path) -> tuple[str, ...]:
+        if not self.sandboxed:
+            return self.argv
+        if self.terminal_profile is None or not self.shell_argv:
+            raise ValueError("missing sandboxed terminal launch")
+        return tuple(self.terminal_profile.command(self.shell_argv, terminal_device=device))
 
 
 def run_shell(
@@ -338,6 +350,7 @@ def prepare_shell_launch_for_execution(
     active_skill_roots: Sequence[Path] = (),
     dependency_environment: DependencyShellEnvironment | None = None,
     environment_policy: ShellEnvironmentPolicy | None = None,
+    *, tty: bool = False, columns: int = 100, rows: int = 30,
 ) -> ShellLaunchSpec:
     """Prepare a verified launch without owning the process lifetime."""
     workspace_fd = -1
@@ -351,7 +364,7 @@ def prepare_shell_launch_for_execution(
             for root in (workspace, *workspace.additional_roots)
         ):
             raise ValueError("shell cwd is outside workspace")
-        return _prepare_verified_shell_launch(
+        launch = _prepare_verified_shell_launch(
             workspace,
             command,
             cwd,
@@ -360,6 +373,12 @@ def prepare_shell_launch_for_execution(
             dependency_environment,
             environment_policy,
         )
+        if tty:
+            launch = replace(launch, environment={
+                **launch.environment, "TERM": "dumb", "NO_COLOR": "1",
+                "PAGER": "cat", "GIT_PAGER": "cat",
+            })
+        return replace(launch, tty=tty, columns=columns, rows=rows)
     finally:
         if cwd_fd >= 0:
             os.close(cwd_fd)
@@ -487,6 +506,8 @@ def prepare_shell_launch(
         sandboxed=sandboxed,
         shell_kind=shell.kind,
         environment_source=environment_source,
+        terminal_profile=profile if sandboxed else None,
+        shell_argv=tuple(shell_argv),
     )
 
 

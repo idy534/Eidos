@@ -116,5 +116,18 @@ export function useInputDrafts(sessionId: string | undefined, storageReady: bool
     await write(id, values.current[id] ?? EMPTY);
   }, [write]);
 
-  return { drafts, values, update, add, insert, flush, error: sessionId ? errors[sessionId] : undefined, ready: !sessionId || loaded[sessionId] === true };
+  const clearError = useCallback((id?: string) => {
+    if (id) {
+      setErrors((previous) => {
+        if (!previous[id]) return previous;
+        const next = { ...previous };
+        delete next[id];
+        return next;
+      });
+    } else {
+      setErrors({});
+    }
+  }, []);
+
+  return { drafts, values, update, add, insert, flush, clearError, error: sessionId ? errors[sessionId] : undefined, ready: !sessionId || loaded[sessionId] === true };
 }

@@ -324,17 +324,15 @@
 }
 
 .session-list > .session-item > button.selected {
-  background: var(--surface-selected);
-  border-color: rgba(49, 95, 74, 0.22);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  background: rgba(255, 255, 255, 0.65);
+  box-shadow: none;
   color: var(--text);
   font-weight: 500;
 }
 
 .session-list > .session-item > button.selected:hover,
 .session-list > .session-item > button.selected:active {
-  background: var(--surface-selected);
-  border-color: rgba(49, 95, 74, 0.22);
+  background: rgba(255, 255, 255, 0.65);
   color: var(--text);
 }
 

@@ -53,12 +53,15 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.btn--danger:active:not\(:disabled\)\s*\{[^}]*color:\s*var\(--text-on-accent\);[^}]*background:\s*var\(--action-danger-active\);/s);
   });
 
-  it("does not wash out the selected session item on hover", () => {
+  it("does not wash out the selected session item on hover and keeps it borderless matching hover surface", () => {
     expect(styles).toMatch(
       /\.session-list\s*>\s*\.session-item\s*>\s*button:not\(\.selected\):hover:not\(:disabled\)\s*\{[^}]*background:\s*rgba\(255,\s*255,\s*255,\s*0\.65\);/s,
     );
     expect(styles).toMatch(
-      /\.session-list\s*>\s*\.session-item\s*>\s*button\.selected:hover[^{]*\{[^}]*background:\s*var\(--surface-selected\);/s,
+      /\.session-list\s*>\s*\.session-item\s*>\s*button\.selected:hover[^{]*\{[^}]*background:\s*rgba\(255,\s*255,\s*255,\s*0\.65\);/s,
+    );
+    expect(styles).not.toMatch(
+      /\.session-list\s*>\s*\.session-item\s*>\s*button\.selected\s*\{[^}]*border-color:/s,
     );
   });
 

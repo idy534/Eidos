@@ -143,6 +143,10 @@ from eidos_runtime.runtime.supervisor import (
 )
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle
 from eidos_runtime.runtime.events import RuntimeOutputClosedError
+from eidos_runtime.application.managed_resources import ManagedResourceApplication
+from eidos_runtime.models.managed_resources import (
+    ResourceStatusRequest, ResourceStatus, ResourceRetryRequest, ResourceRetryResponse,
+)
 from eidos_runtime.runtime.resource_registry import ResourceRegistryError
 from eidos_runtime.runtime.async_kernel import (
     AsyncKernelCloseError,
@@ -802,6 +806,7 @@ class RuntimeServer:
             self._cleanup_extensions,
             repository_runtime=self.repository_runtime,
         )
+        self.managed_resources = ManagedResourceApplication(self.supervisor.start_managed_task)
         self.method_registry = self._build_method_registry()
 
     def handle(self, message: object) -> None:
@@ -1429,6 +1434,14 @@ class RuntimeServer:
                 _request: self._applications_or_error().extensions.list_skills(),
             ),
             (
+                "resource/status", ResourceStatusRequest, ResourceStatus,
+                lambda _id, _request: self.managed_resources.status(),
+            ),
+            (
+                "resource/retry", ResourceRetryRequest, ResourceRetryResponse,
+                lambda _id, request: self.managed_resources.retry(request),
+            ),
+            (
                 "skill/detail",
                 method_dtos.SkillDetailRequestDto,
                 method_dtos.SkillDetailResponseDto,
@@ -1995,7 +2008,10 @@ class RuntimeServer:
                 self.store.initialize()
             if self.store.health_state == "ready":
                 with startup_phase("runtime_dependencies"):
-                    self.runtime_dependency_catalog = discover_runtime_dependency_catalog()
+                    self.runtime_dependency_catalog = discover_runtime_dependency_catalog(store=self.store)
+                    from eidos_runtime.infrastructure.managed_resource_catalog import ManagedResourceCatalog
+                    if isinstance(self.runtime_dependency_catalog, ManagedResourceCatalog):
+                        self.managed_resources.manager = self.runtime_dependency_catalog.resources
                     self.supervisor.bind_runtime_dependency_catalog(self.runtime_dependency_catalog)
                 self._attach_storage_logging()
                 self.worktree_manager = WorktreeManager(self.store.database)
@@ -2016,7 +2032,9 @@ class RuntimeServer:
                     deploy_system_skills(self.store.data_directory)
                     self.plugins = PluginCatalog(self.store)
                     self.plugins.connections.recover()
-                    SkillManagement(SkillCatalog(self.plugins)).cleanup()
+                    skill_management = SkillManagement(SkillCatalog(self.plugins))
+                    skill_management.migrate_builtin_documents()
+                    skill_management.cleanup()
                 with startup_phase("model_config"):
                     self.model_config.initialize()
                 self.async_kernel = RuntimeAsyncKernel(
@@ -2108,6 +2126,7 @@ class RuntimeServer:
             with startup_phase("pending_events"):
                 self.supervisor.events.deliver_pending()
         logger.info("Runtime initialized duration_ms=%.3f", (time.perf_counter() - startup_started) * 1000)
+        self.managed_resources.warmup()
         self.supervisor.schedule_next()
 
     def _idle_maintenance(self, cancel: threading.Event) -> None:

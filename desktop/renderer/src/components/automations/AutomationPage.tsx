@@ -18,6 +18,7 @@ interface Props {
   initialAutomationId?: string | undefined;
   onClose: () => void;
   onOpenSession: (id: string) => void;
+  onShowToast?: ((message: string, type?: ToastType, duration?: number) => void) | undefined;
 }
 
 interface AutomationTemplate {
@@ -149,6 +150,7 @@ export function AutomationPage({
   initialAutomationId,
   onClose,
   onOpenSession,
+  onShowToast,
 }: Props) {
   const [items, setItems] = useState<AutomationSummary[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -173,12 +175,16 @@ export function AutomationPage({
   }, []);
 
   const showToast = useCallback((message: string, type: ToastType = "info", duration = 3500) => {
+    if (onShowToast) {
+      onShowToast(message, type, duration);
+      return;
+    }
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     setToasts((prev) => [
       ...prev.filter((t) => !(t.type === type && t.message === message)),
       { id, type, message, duration },
     ]);
-  }, []);
+  }, [onShowToast]);
 
   const clearErrors = useCallback(() => {
     setToasts((prev) => prev.filter((t) => t.type !== "error"));
@@ -375,10 +381,12 @@ export function AutomationPage({
 
   return (
     <div className="automation-page-wrapper">
-      <ToastContainer
-        toasts={toasts}
-        onDismiss={dismissToast}
-      />
+      {!onShowToast && (
+        <ToastContainer
+          toasts={toasts}
+          onDismiss={dismissToast}
+        />
+      )}
       <header className="automation-page-header">
         <div className="header-left">
           <Button

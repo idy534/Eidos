@@ -12,7 +12,7 @@ from pydantic import Field
 from eidos_runtime.db.database import Repository, WorkspaceIdentity, canonical_hash, now_ms
 from eidos_runtime.db.errors import OperationConflictError, StorageError, WorkspaceBoundaryError
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
-from eidos_runtime.workspace.projectless import creation_date, readable_workspace_name
+from eidos_runtime.workspace.projectless import MAX_NEW_NAME_BYTES, creation_date, readable_workspace_name
 
 
 class ProjectlessWorkspaceCreation(EidosFrozenStrictModel):
@@ -59,6 +59,8 @@ class ProjectlessWorkspaceRepository(Repository):
                 "SELECT 1 FROM operations WHERE id = ? AND scope = 'session/create'", (operation_id,),
             ).fetchone() is not None:
                 raise OperationConflictError("operation id was reused")
+            # Keep the original request identity and existing reservations across upgrades.
+            name = readable_workspace_name(name, max_bytes=MAX_NEW_NAME_BYTES)
             timestamp = now_ms()
             parent = root / creation_date(timestamp)
             suffix, path = self._available_path(connection, parent, name, 1)

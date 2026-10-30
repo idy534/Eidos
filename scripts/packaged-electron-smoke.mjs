@@ -68,7 +68,8 @@ async function findAppPath() {
 function bundledEnvironment(dataDirectory, sentinelRoot) {
   const environment = {
     ...process.env,
-    EIDOS_DATA_DIR: dataDirectory,
+    EIDOS_DATA_DIR: path.join(dataDirectory, "data"),
+    HOME: path.join(dataDirectory, "home"),
     EIDOS_ELECTRON_SMOKE: "1",
     PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
     PYTHONPATH: sentinelRoot,
@@ -238,7 +239,8 @@ async function verifyRuntimeProtocol({ appRoot, pythonExecutable }) {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-packaged-runtime-data-"));
   const environment = {
     ...process.env,
-    EIDOS_DATA_DIR: dataDirectory,
+    EIDOS_DATA_DIR: path.join(dataDirectory, "data"),
+    HOME: path.join(dataDirectory, "home"),
     PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
     PYTHONPATH: appRoot,
     PYTHONDONTWRITEBYTECODE: "1",

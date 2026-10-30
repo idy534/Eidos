@@ -126,6 +126,8 @@ env -u NODE_OPTIONS node "$ROOT_DIR/scripts/build-runtime-python.mjs" \
   --python "$PYTHON_EXECUTABLE" \
   --target "$PYTHON_DEPENDENCY_ROOT"
 
+env -u NODE_OPTIONS bash "$ROOT_DIR/scripts/build-runtime-fonts.sh"
+
 rsync -a \
   --exclude '__pycache__/' \
   --exclude '*.pyc' \
@@ -136,6 +138,7 @@ required_resources=(
   "eidos_runtime/__main__.py"
   "eidos_runtime/sandbox/seatbelt.sbpl"
   "eidos_runtime/sandbox/file_commit_helper.py"
+  "eidos_runtime/sandbox/pty_exec_helper.py"
   "eidos_runtime/sandbox/sensitive_rules.json"
   "eidos_runtime/sandbox/mcp_connector.sbpl"
   "eidos_runtime/sandbox/mcp_workspace_read.sbpl"
@@ -145,6 +148,10 @@ required_resources=(
   "eidos_runtime/resources/bin/ripgrep/manifest.json"
   "eidos_runtime/resources/bin/ripgrep/darwin-arm64/rg"
   "eidos_runtime/resources/skills/.system"
+  "eidos_runtime/resources/skills/.system/docx/scripts/run.py"
+  "eidos_runtime/resources/skills/.system/pptx/scripts/run.py"
+  "eidos_runtime/resources/skills/.system/xlsx/scripts/run.py"
+  "eidos_runtime/resources/skills/.system/pdf/scripts/run.py"
   "eidos_runtime/resources/plugins/github/plugin.json"
   "eidos_runtime/resources/plugins/github/mcp.json"
   "eidos_runtime/resources/plugins/github/skills/github/SKILL.md"
@@ -181,7 +188,11 @@ env -u EIDOS_PYTHON -u PYTHONHOME \
 BUNDLE_VERSION="$(node -p "JSON.parse(require('fs').readFileSync('$ROOT_DIR/package.json', 'utf8')).version")"
 NODE_VERSION="$(node -p "JSON.parse(require('fs').readFileSync('$ROOT_DIR/resources/runtime-dependencies/node/node-release.json', 'utf8')).version")"
 RIPGREP_VERSION="$(node -p "JSON.parse(require('fs').readFileSync('$APP_ROOT/eidos_runtime/resources/bin/ripgrep/manifest.json', 'utf8')).version")"
+env -u PYTHONHOME PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$APP_ROOT" \
+  "$PYTHON_EXECUTABLE" "$ROOT_DIR/scripts/build-resource-packs.py"
 env -u NODE_OPTIONS node "$ROOT_DIR/scripts/generate-runtime-manifest.mjs" \
+  --core-only \
+  --shared-python "$ROOT_DIR/build/resource-packages/shared-python.json" \
   --bundle-root "$BUILD_ROOT" \
   --bundle-id "com.idy.eidos" \
   --bundle-version "$BUNDLE_VERSION" \
@@ -209,11 +220,15 @@ from eidos_runtime.infrastructure.runtime_dependencies import RuntimeDependencyC
 
 manifest = Path(sys.argv[1]).resolve()
 snapshot = RuntimeDependencyCatalog.from_manifest(manifest).snapshot()
-expected_python_path = str((manifest.parent / "dependencies/python").resolve())
+expected_python_path = str((manifest.parent / "app").resolve())
 assert snapshot.python_path == (expected_python_path,), snapshot.python_path
 print(f"Verified Runtime manifest with Eidos catalog: {manifest}")
 PY
 
 env -u NODE_OPTIONS node "$ROOT_DIR/scripts/bundled-runtime-smoke.mjs"
+
+env -u EIDOS_PYTHON -u PYTHONHOME -u NODE_OPTIONS \
+  PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 PYTHONPATH="$APP_ROOT" \
+  "$PYTHON_EXECUTABLE" "$ROOT_DIR/scripts/bundled-document-skills-smoke.py"
 
 echo "Built self-contained $SUPPORTED_PLATFORM Runtime bundle at $BUILD_ROOT"

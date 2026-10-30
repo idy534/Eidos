@@ -337,11 +337,15 @@ export function AppShell({ runtime }: AppShellProps) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
     sessionActions.setError(undefined);
     sidebarPins.clearError();
+    gitReviewActions.clearError();
+    responseActionActions.clearError();
     const activeSessionId = activeSnapshot?.session.id;
     if (activeSessionId) {
       runActions.clearError(activeSessionId);
+    } else {
+      runActions.clearError();
     }
-  }, [sessionActions, runActions, activeSnapshot?.session.id, sidebarPins.clearError]);
+  }, [sessionActions, runActions, activeSnapshot?.session.id, sidebarPins.clearError, gitReviewActions.clearError, responseActionActions.clearError]);
 
   const showToast = useCallback((message: string, type: ToastType = "info", duration?: number) => {
     const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -1488,7 +1492,7 @@ export function AppShell({ runtime }: AppShellProps) {
         handleNavigateToSession(target);
       }}>
     <main className={`workbench${sidebarOpen && !settingsOpen && !automationsOpen ? "" : " workbench--sidebar-collapsed"}${settingsOpen ? " workbench--settings" : ""}${automationsOpen ? " workbench--settings workbench--automations" : ""}`}>
-      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} portal={false} />
       <SessionSidebar
         onSearch={() => setSearchMode("global")}
         collapsed={!sidebarOpen || settingsOpen || automationsOpen}
@@ -1565,6 +1569,7 @@ export function AppShell({ runtime }: AppShellProps) {
             onClose={() => setAutomationsOpen(false)}
             onOpenSession={(id) => { setAutomationsOpen(false); handleNavigateToSession(id); }}
             runtimeVersion={runtimeStatus.state === "ready" ? runtimeStatus.runtimeVersion : "0.x"}
+            onShowToast={showToast}
           />
         ) : settingsOpen ? (
           <SettingsPage
@@ -1575,6 +1580,7 @@ export function AppShell({ runtime }: AppShellProps) {
               if (source) {setSettingsOpen(false); void handleSelectSession(source);}
             }}
             runtime={runtimeStatus}
+            onShowToast={showToast}
             modelList={modelState.list}
             modelLoading={modelState.loading}
             modelError={modelState.error}

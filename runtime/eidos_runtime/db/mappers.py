@@ -90,8 +90,9 @@ def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
         "write_file": ("path",),
         "apply_patch": (),
         "delete_file": ("path",),
-        "run_shell": ("command", "cwd", "yieldTimeMs"),
+        "run_shell": ("command", "cwd", "yieldTimeMs", "tty", "columns", "rows"),
         "write_stdin": ("sessionId", "chars", "yieldTimeMs"),
+        "control_shell": ("sessionId", "action", "columns", "rows", "yieldTimeMs"),
         "write_plan": ("title", "planId", "expectedRevision", "readyForReview"),
     }
     fields = fields_by_tool.get(tool_call.get("toolName"))

@@ -331,7 +331,7 @@ describe("ExecutionFeed chat typography scope", () => {
       />,
     );
 
-    expect(container.querySelector(".user-message-bubble > p.eidos-chat-prose")?.textContent).toBe("第一行\n第二行");
+    expect(container.querySelector(".user-message-bubble p.eidos-chat-prose")?.textContent).toBe("第一行\n第二行");
     expect(container.querySelector(".process-text > .markdown-body.eidos-chat-prose")).not.toBeNull();
     expect(container.querySelector(".feed-item--assistant > .markdown-body.eidos-chat-prose strong")).toHaveTextContent("结论");
     expect(container.querySelectorAll(".eidos-chat-prose")).toHaveLength(3);
@@ -1838,7 +1838,7 @@ describe("saved output projection", () => {
     });
 
     const { container } = renderFeed(userItem, { ...baseRun, status: "succeeded" });
-    const prose = container.querySelector(".user-message-bubble > p.eidos-inline-reference-prose");
+    const prose = container.querySelector(".user-message-bubble p.eidos-inline-reference-prose");
     expect(prose).not.toBeNull();
     expect(prose?.textContent).toBe("luna-work 用这个帮我调研对比。docx 并且输出文档。");
 
@@ -1855,5 +1855,133 @@ describe("saved output projection", () => {
       );
       expect(screen.getByRole("button", { name: "已复制" })).toBeInTheDocument();
     });
+  });
+});
+
+describe("ExecutionFeed user message collapsing", () => {
+  it("does not show expand button when user input is short", () => {
+    const userItem: Item = {
+      id: "user-1",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 0,
+      kind: "user_message",
+      status: "completed",
+      createdAt: 1_000,
+      content: "短消息",
+    };
+    const { container } = renderFeed(userItem);
+    expect(screen.queryByRole("button", { name: "显示更多" })).not.toBeInTheDocument();
+    expect(container.querySelector(".user-message-fade-mask")).toBeNull();
+    expect(container.querySelector(".user-message-collapsible")?.classList.contains("is-collapsed")).toBe(false);
+  });
+
+  it("collapses long user message and shows '显示更多' button, toggles on click", () => {
+    const scrollHeightSpy = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(600);
+    try {
+      const userItem: Item = {
+        id: "user-long",
+        sessionId: baseRun.sessionId,
+        runId: baseRun.id,
+        ordinal: 0,
+        kind: "user_message",
+        status: "completed",
+        createdAt: 1_000,
+        content: "非常非常长的提问内容...".repeat(20),
+      };
+      const { container } = renderFeed(userItem);
+
+      // 默认处于折叠状态
+      const expandBtn = screen.getByRole("button", { name: "显示更多" });
+      expect(expandBtn).toBeInTheDocument();
+      expect(expandBtn).toHaveAttribute("aria-expanded", "false");
+      expect(container.querySelector(".user-message-collapsible")?.classList.contains("is-collapsed")).toBe(true);
+      expect(container.querySelector(".user-message-fade-mask")).not.toBeNull();
+      expect(container.querySelector(".user-message-expand-icon")?.classList.contains("is-expanded")).toBe(false);
+
+      // 点击展开
+      fireEvent.click(expandBtn);
+      expect(screen.getByRole("button", { name: "收起" })).toBeInTheDocument();
+      expect(expandBtn).toHaveAttribute("aria-expanded", "true");
+      expect(container.querySelector(".user-message-collapsible")?.classList.contains("is-collapsed")).toBe(false);
+      expect(container.querySelector(".user-message-fade-mask")).toBeNull();
+      expect(container.querySelector(".user-message-expand-icon")?.classList.contains("is-expanded")).toBe(true);
+
+      // 点击收起
+      fireEvent.click(expandBtn);
+      expect(screen.getByRole("button", { name: "显示更多" })).toBeInTheDocument();
+      expect(container.querySelector(".user-message-collapsible")?.classList.contains("is-collapsed")).toBe(true);
+      expect(container.querySelector(".user-message-fade-mask")).not.toBeNull();
+    } finally {
+      scrollHeightSpy.mockRestore();
+    }
+  });
+
+  it("automatically expands collapsed user message when it is the searchTarget", () => {
+    const scrollHeightSpy = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(600);
+    try {
+      const userItem: Item = {
+        id: "user-target",
+        sessionId: baseRun.sessionId,
+        runId: baseRun.id,
+        ordinal: 0,
+        kind: "user_message",
+        status: "completed",
+        createdAt: 1_000,
+        content: "文档比对长内容",
+      };
+      const { container } = render(
+        <ExecutionFeed
+          items={[userItem]}
+          runs={[baseRun]}
+          approvals={[]}
+          searchTarget={{ itemId: "user-target", query: "比对", occurrence: 0, revision: 1 }}
+        />
+      );
+
+      // 由于是 searchTarget，自动处于展开状态
+      expect(container.querySelector(".user-message-collapsible")?.classList.contains("is-collapsed")).toBe(false);
+      expect(container.querySelector(".user-message-fade-mask")).toBeNull();
+      expect(screen.getByRole("button", { name: "收起" })).toBeInTheDocument();
+    } finally {
+      scrollHeightSpy.mockRestore();
+    }
+  });
+
+  it("hides expand button and does not collapse when user enters edit mode", () => {
+    const scrollHeightSpy = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(600);
+    try {
+      const userItem: Item = {
+        id: "user-edit",
+        sessionId: baseRun.sessionId,
+        runId: baseRun.id,
+        ordinal: 0,
+        kind: "user_message",
+        status: "completed",
+        createdAt: 1_000,
+        content: "想要编辑的长消息",
+      };
+      const terminalRun: Run = { ...baseRun, status: "succeeded" };
+      const { container } = render(
+        <ExecutionFeed
+          items={[userItem]}
+          runs={[terminalRun]}
+          approvals={[]}
+          allowEditResend={true}
+        />
+      );
+
+      expect(screen.getByRole("button", { name: "显示更多" })).toBeInTheDocument();
+      const editBtn = screen.getByRole("button", { name: "编辑并重新发送" });
+      fireEvent.click(editBtn);
+
+      // 进入编辑状态，编辑框出现，折叠按钮和遮罩消失
+      expect(screen.getByRole("textbox", { name: "编辑最近一次提问" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "显示更多" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "收起" })).not.toBeInTheDocument();
+      expect(container.querySelector(".user-message-fade-mask")).toBeNull();
+    } finally {
+      scrollHeightSpy.mockRestore();
+    }
   });
 });

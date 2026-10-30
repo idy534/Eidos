@@ -18,6 +18,7 @@ from pydantic import (
     ConfigDict,
     Field,
     RootModel,
+    StrictBool,
     StrictInt,
     StrictStr,
     ValidationError,
@@ -321,6 +322,12 @@ class RunShellInput(StrictToolModel):
             "Relative paths start at that workspace root; canonical absolute paths follow the current Run permissions."
         ),
     )
+    tty: StrictBool = Field(
+        default=False,
+        description="Allocate a controlling terminal for an interactive command. Defaults to false (PIPE).",
+    )
+    columns: StrictInt = Field(default=100, ge=2, le=500, description="Initial terminal width; used only with tty=true.")
+    rows: StrictInt = Field(default=30, ge=2, le=500, description="Initial terminal height; used only with tty=true.")
     yieldTimeMs: Annotated[
         StrictInt, BeforeValidator(_cap_initial_wait), BeforeValidator(_floor_shell_wait)
     ] = Field(
@@ -496,7 +503,9 @@ class WriteStdinInput(StrictToolModel):
     chars: StrictStr = Field(
         default="",
         max_length=16 * 1024,
-        description="Input to write. Defaults to empty, which polls without writing; \u0003 interrupts the command.",
+        description=("Input to write. Empty input polls. For PTY sessions, send terminal bytes "
+                     "such as \\r (Enter) or \\u0003 (Ctrl-C); a handled Ctrl-C may leave the process running. "
+                     "Use control_shell to stop it explicitly. PIPE Ctrl-C keeps the existing stop behavior."),
     )
     yieldTimeMs: Annotated[
         StrictInt, BeforeValidator(_cap_followup_wait), BeforeValidator(_floor_shell_wait)
@@ -528,6 +537,29 @@ class WriteStdinInput(StrictToolModel):
     @classmethod
     def validate_chars(cls, value: str) -> str:
         return _utf8_limit(value, 16 * 1024, "stdin_input_too_large")
+
+
+class ControlShellInput(StrictToolModel):
+    sessionId: StrictStr = Field(
+        min_length=1, max_length=256,
+        validation_alias=AliasChoices("sessionId", "session_id"),
+        description="Shell session returned by run_shell in this Run.",
+    )
+    action: Literal["resize", "terminate", "close_stdin"]
+    columns: StrictInt | None = Field(default=None, ge=2, le=500)
+    rows: StrictInt | None = Field(default=None, ge=2, le=500)
+    yieldTimeMs: Annotated[
+        StrictInt, BeforeValidator(_cap_followup_wait), BeforeValidator(_floor_shell_wait)
+    ] = Field(default=250, validation_alias=AliasChoices("yieldTimeMs", "yield_time_ms"), ge=250, le=60_000)
+
+    @model_validator(mode="after")
+    def validate_operation(self) -> ControlShellInput:
+        if self.action == "resize":
+            if self.columns is None or self.rows is None:
+                raise ValueError("resize_requires_columns_and_rows")
+        elif self.columns is not None or self.rows is not None:
+            raise ValueError("terminal_size_requires_resize")
+        return self
 
 
 SKILL_READ_PAGE_BYTES = 24_000
@@ -847,6 +879,12 @@ class RunShellResultData(WorkspaceResultData):
     )
     sessionId: StrictStr | None = None
     executionStatus: Literal["running", "exited"] | None = None
+    transport: Literal["pipe", "pty"] | None = None
+    outputMerged: bool | None = None
+    columns: StrictInt | None = Field(default=None, ge=2, le=500)
+    rows: StrictInt | None = Field(default=None, ge=2, le=500)
+    outputRevision: StrictInt | None = Field(default=None, ge=0, le=9_007_199_254_740_991)
+    controlAction: Literal["resize", "terminate", "close_stdin"] | None = None
     outputCallId: StrictStr | None = Field(default=None, max_length=256)
     outputComplete: bool | None = None
     outputCaptureError: Literal[
@@ -899,6 +937,10 @@ class RunShellResultData(WorkspaceResultData):
 
 
 class WriteStdinResultData(RunShellResultData):
+    pass
+
+
+class ControlShellResultData(RunShellResultData):
     pass
 
 
@@ -1149,6 +1191,7 @@ _MODEL_MAX_NODES = 1_000
 _MODEL_MAX_KEYS = 256
 _MODEL_MAX_LIST_ITEMS = 100
 _SHELL_MODEL_FACT_FIELDS = frozenset({
+    "transport", "outputMerged", "columns", "rows", "outputRevision", "controlAction",
     "outputCallId", "outputComplete", "outputCaptureError",
     "sessionId", "executionStatus", "exitCode", "termination", "truncated", "truncationReason",
     "originalBytes", "omittedBytes", "attemptCount", "escalated", "sandboxed",
@@ -1175,6 +1218,7 @@ def project_tool_result(
         "delete_file": "file_change",
         "run_shell": "run_shell",
         "write_stdin": "run_shell",
+        "control_shell": "run_shell",
         "skill_read": "skill_read",
         "skill_read_resource": "skill_resource",
         "skill_create": "skill_change",
@@ -1200,7 +1244,7 @@ def _project_tool_result(
     assert isinstance(model_data, dict)
     if tool_name in MEMORY_TOOL_NAMES:
         model_result = project_memory_tool_result(tool_name, canonical_result, max_bytes=_MODEL_TOTAL_BYTES)
-    elif tool_name in {"run_shell", "write_stdin"}:
+    elif tool_name in {"run_shell", "write_stdin", "control_shell"}:
         (
             projected,
             model_projection_truncated,
@@ -1302,6 +1346,7 @@ def _project_shell_data(
     model_projection_truncated = False
 
     for key in (
+        "transport", "outputMerged", "columns", "rows", "outputRevision", "controlAction",
         "outputCallId", "outputComplete", "outputCaptureError",
         "sessionId", "executionStatus", "exitCode", "termination", "truncated", "truncationReason",
         "originalBytes", "omittedBytes", "attemptCount", "escalated", "sandboxed",

@@ -17,12 +17,14 @@ const nodeExecutable = path.join(nodeRoot, "bin", "node");
 const nodeLoader = path.join(nodeRoot, "runtime-loader.mjs");
 const pythonDependencyRoot = path.join(bundleRoot, "dependencies", "python");
 const pythonExecutable = path.join(pythonRoot, "bin", "python3");
+const managedResources = await stat(path.join(bundleRoot, "resource-index.json")).then(() => true, () => false);
 
 
 function bundledEnvironment(dataDirectory) {
   const environment = {
     ...process.env,
-    EIDOS_DATA_DIR: dataDirectory,
+    EIDOS_DATA_DIR: path.join(dataDirectory, "data"),
+    HOME: path.join(dataDirectory, "home"),
     PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
     PYTHONDONTWRITEBYTECODE: "1",
     PYTHONNOUSERSITE: "1",
@@ -203,21 +205,23 @@ with tempfile.TemporaryDirectory(prefix="eidos-offline-tokenizer-") as token_cac
         with patch("requests.get", side_effect=AssertionError("tokenizer must be offline")):
             assert estimate_text_tokens("Read source and preserve user constraints.") < 15
 snapshot = RuntimeDependencyCatalog.from_manifest(bundle_root / "runtime.json").snapshot()
-assert snapshot.python_path == (str(dependency_root),), snapshot.python_path
+assert snapshot.python_path == ((str(app_root),) if (bundle_root / 'resource-index.json').is_file() else (str(dependency_root),)), snapshot.python_path
 for module in ("anyio", "httpx", "lark", "mcp", "openai", "pydantic", "pydantic_ai", "pydantic_core", "tree_sitter", "dingtalk_stream", "aibot", "lark_channel", "Crypto.Cipher.AES", "eidos_runtime.infrastructure.feishu_stream"):
     __import__(module)
 assert Path(lark.__file__).resolve().is_relative_to(app_root), lark.__file__
-import docx
-import lxml
-import typing_extensions
-assert Path(docx.__file__).resolve().is_relative_to(dependency_root), docx.__file__
-assert Path(lxml.__file__).resolve().is_relative_to(dependency_root), lxml.__file__
-assert Path(typing_extensions.__file__).resolve().is_relative_to(dependency_root), typing_extensions.__file__
+if not (bundle_root / 'resource-index.json').is_file():
+    import docx
+    import lxml
+    import typing_extensions
+    assert Path(docx.__file__).resolve().is_relative_to(dependency_root), docx.__file__
+    assert Path(lxml.__file__).resolve().is_relative_to(dependency_root), lxml.__file__
+    assert Path(typing_extensions.__file__).resolve().is_relative_to(dependency_root), typing_extensions.__file__
 
 required = (
     "eidos_runtime/__main__.py",
     "eidos_runtime/sandbox/seatbelt.sbpl",
     "eidos_runtime/sandbox/file_commit_helper.py",
+    "eidos_runtime/sandbox/pty_exec_helper.py",
     "eidos_runtime/sandbox/sensitive_rules.json",
     "eidos_runtime/extensions/mcp_launcher.py",
     "eidos_runtime/workspace/apply_patch.lark",
@@ -226,6 +230,21 @@ required = (
 )
 for relative in required:
     assert (app_root / relative).is_file(), relative
+
+from eidos_runtime.runtime.shell_process_manager import ShellProcessManager
+from eidos_runtime.sandbox.shell import ShellLaunchSpec
+with tempfile.TemporaryDirectory(prefix="eidos-bundled-pty-") as terminal_directory:
+    manager = ShellProcessManager(owner_run_id="bundled-pty")
+    try:
+        launch = ShellLaunchSpec(
+            argv=(sys.executable, "-I", "-c", "import os; fd=os.open('/dev/tty',os.O_RDWR); os.close(fd); print([os.isatty(i) for i in (0,1,2)])"),
+            cwd=Path(terminal_directory), environment={"PATH":"/usr/bin:/bin"}, sandboxed=False, tty=True,
+        )
+        terminal_result = manager.start(launch, yield_time_ms=3000)
+        assert terminal_result["data"]["exitCode"] == 0, terminal_result
+        assert "[True, True, True]" in terminal_result["data"]["stdout"], terminal_result
+    finally:
+        manager.cleanup()
 
 for name, body, expected in (
     ("content", "+one\n+\n+two\n", "one\n\ntwo\n"),
@@ -365,6 +384,13 @@ async function verifyRuntimeProtocol() {
     assert.equal(initialized.result.protocolVersion, 1);
     assert.equal(initialized.result.runtimeVersion, packageJson.version);
 
+    const skills = await request("skill/list", {});
+    for (const name of ["docx", "pptx", "xlsx", "pdf"]) {
+      assert.ok(skills.result.skills.some(
+        (skill) => skill.qualifiedId === `system:${name}` && skill.enabled && skill.sourceKind === "system",
+      ), `bundled ${name} Skill is unavailable`);
+    }
+
     const health = await request("runtime/health", {});
     assert.deepEqual(health.result, { state: "ready" });
 
@@ -387,13 +413,17 @@ async function main() {
   assert.equal(process.arch, "arm64", "bundled Runtime supports macOS arm64 only");
   assert.ok(!pythonExecutable.includes(".venv"));
   assert.ok(!pythonExecutable.startsWith("/usr/bin/"));
-  const nodeMetadata = await stat(nodeExecutable);
-  assert.ok((nodeMetadata.mode & 0o111) !== 0);
-  assert.equal((await spawnCapture(nodeExecutable, ["--version"], {
-    cwd: appRoot,
-    env: bundledNodeEnvironment(),
-  })).code, 0);
-  await verifyBundledNodeDependencies();
+  if (!managedResources) {
+    const nodeMetadata = await stat(nodeExecutable);
+    assert.ok((nodeMetadata.mode & 0o111) !== 0);
+    assert.equal((await spawnCapture(nodeExecutable, ["--version"], {
+      cwd: appRoot, env: bundledNodeEnvironment(),
+    })).code, 0);
+    await verifyBundledNodeDependencies();
+  } else {
+    assert.equal(await stat(nodeExecutable).then(() => true, () => false), false,
+      "managed document Node must not remain in the core App");
+  }
   const pythonMetadata = await stat(pythonExecutable);
   assert.ok((pythonMetadata.mode & 0o111) !== 0);
   await verifyBundledImportsAndRipgrep();

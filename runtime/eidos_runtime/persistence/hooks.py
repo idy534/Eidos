@@ -267,7 +267,7 @@ class HookRepository(Repository):
                 "AND (json_extract(input_json,'$.tool_use_id')=? OR "
                 "json_extract(input_json,'$.tool_response.data.sessionId') IN ("
                 "SELECT json_extract(t.arguments_json,'$.sessionId') FROM tool_calls t JOIN items i ON i.id=t.item_id "
-                "WHERE i.run_id=? AND t.provider_call_id=? AND t.tool_name='write_stdin')) "
+                "WHERE i.run_id=? AND t.provider_call_id=? AND t.tool_name IN ('write_stdin','control_shell'))) "
                 "AND result_json IS NOT NULL ORDER BY created_at,rowid LIMIT 128",
                 (run_id, call_id, run_id, call_id),
             ).fetchall()

@@ -143,9 +143,9 @@ mkdir -p "$NODE_PROJECT_ROOT"
 rsync -a \
   "$SOURCE_ROOT/package.json" \
   "$SOURCE_ROOT/pnpm-lock.yaml" \
+  "$SOURCE_ROOT/pnpm-workspace.yaml" \
   "$NODE_PROJECT_ROOT/"
 env -u NODE_OPTIONS pnpm --dir "$NODE_PROJECT_ROOT" install \
-  --ignore-workspace \
   --frozen-lockfile \
   --ignore-scripts \
   --prod \
@@ -154,6 +154,7 @@ env -u NODE_OPTIONS pnpm --dir "$NODE_PROJECT_ROOT" install \
 rsync -aL --delete \
   --exclude='.pnpm/' \
   --exclude='.modules.yaml' \
+  --exclude='.gitkeep' \
   "$NODE_PROJECT_ROOT/node_modules/" \
   "$TARGET_ROOT/node_modules/"
 rsync -a "$SOURCE_ROOT/runtime-loader.mjs" "$TARGET_ROOT/runtime-loader.mjs"

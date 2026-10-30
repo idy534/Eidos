@@ -14,6 +14,7 @@ from eidos_runtime.db.database import WorkspaceIdentity
 from eidos_runtime.workspace.reader import WorkspacePathError, capture_directory_identity
 
 MAX_NAME_BYTES = 96
+MAX_NEW_NAME_BYTES = 48
 MAX_NAME_HINT_CHARACTERS = 512
 
 
@@ -25,7 +26,7 @@ def projectless_root() -> Path:
     return root.resolve(strict=False)
 
 
-def readable_workspace_name(hint: str | None) -> str:
+def readable_workspace_name(hint: str | None, *, max_bytes: int = MAX_NAME_BYTES) -> str:
     text = unicodedata.normalize("NFKC", (hint or "")[:MAX_NAME_HINT_CHARACTERS])
     text = "".join(
         " " if unicodedata.category(char).startswith("C") or char in '/\\:*?"<>|'
@@ -33,7 +34,7 @@ def readable_workspace_name(hint: str | None) -> str:
         for char in text
     )
     text = "-".join(text.split()).strip(". -_`'“”‘’")
-    text = text.encode("utf-8")[:MAX_NAME_BYTES].decode("utf-8", errors="ignore")
+    text = text.encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore")
     return text.rstrip(". -") or "新会话"
 
 

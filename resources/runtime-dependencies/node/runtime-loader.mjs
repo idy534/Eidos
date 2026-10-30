@@ -3,146 +3,77 @@ import { createRequire, isBuiltin, registerHooks } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const runtimeNodeModules = process.env.RUNTIME_NODE_MODULES;
-if (
-  typeof runtimeNodeModules !== "string" ||
-  !runtimeNodeModules ||
-  !path.isAbsolute(runtimeNodeModules)
-) {
-  throw new Error(
-    "Eidos runtime Node modules are unavailable: RUNTIME_NODE_MODULES must be an absolute path",
-  );
+const primary = process.env.RUNTIME_NODE_MODULES;
+const declared = process.env.RUNTIME_NODE_MODULES_PATHS
+  ? JSON.parse(process.env.RUNTIME_NODE_MODULES_PATHS) : [primary];
+if (!Array.isArray(declared) || declared.length === 0 || declared.length > 16) {
+  throw new Error("Eidos RUNTIME_NODE_MODULES requires a bounded list of managed roots");
 }
-try {
-  if (!statSync(runtimeNodeModules).isDirectory()) {
-    throw new Error("not a directory");
+const roots = [...new Set(declared.map((root) => {
+  if (typeof root !== "string" || !path.isAbsolute(root) || !statSync(root, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new Error("Eidos RUNTIME_NODE_MODULES requires an existing absolute directory");
   }
-} catch (error) {
-  throw new Error(
-    "Eidos runtime Node modules are unavailable: RUNTIME_NODE_MODULES must " +
-      "name an existing directory",
-    { cause: error },
-  );
-}
-
-const runtimeNodeModulesPath = path.resolve(runtimeNodeModules);
-const runtimeNodeModulesCanonicalPath = realpathSync(runtimeNodeModulesPath);
-const runtimeNodeModulesCanonicalPrefix =
-  `${runtimeNodeModulesCanonicalPath}${path.sep}`;
-
-// The anchor keeps Node's own package resolver rooted at the trusted runtime
-// modules directory.  The anchor does not need to exist on disk.
-const runtimeRootAnchor = pathToFileURL(
-  path.join(
-    runtimeNodeModulesCanonicalPath,
-    "..",
-    ".eidos-runtime-anchor.mjs",
-  ),
-).href;
-const runtimeRequire = createRequire(runtimeRootAnchor);
+  return realpathSync(root);
+}))];
+const anchors = roots.map((root) => {
+  const url = pathToFileURL(path.join(root, "..", ".eidos-runtime-anchor.mjs")).href;
+  return { url, require: createRequire(url) };
+});
 let resolvingRuntimePackage = false;
 
-function isRuntimePackageSpecifier(specifier) {
-  return (
-    typeof specifier === "string" &&
-    specifier.length > 0 &&
-    !specifier.startsWith(".") &&
-    !specifier.startsWith("/") &&
-    !specifier.startsWith("#") &&
-    !specifier.startsWith("node:") &&
-    !isBuiltin(specifier) &&
-    !specifier.includes(":")
-  );
+function insideRoots(filePath) {
+  return roots.some((root) => filePath === root || filePath.startsWith(`${root}${path.sep}`));
 }
 
-function isInsideRuntimeNodeModules(parentURL) {
-  if (typeof parentURL !== "string" || !parentURL.startsWith("file:")) {
-    return false;
-  }
-  try {
-    const parentPath = realpathSync(fileURLToPath(parentURL));
-    return (
-      parentPath === runtimeNodeModulesCanonicalPath ||
-      parentPath.startsWith(runtimeNodeModulesCanonicalPrefix)
-    );
-  } catch {
-    return false;
-  }
+function isPackage(specifier) {
+  return typeof specifier === "string" && specifier.length > 0
+    && !specifier.startsWith(".") && !specifier.startsWith("/")
+    && !specifier.startsWith("#") && !specifier.includes(":") && !isBuiltin(specifier);
 }
 
-function assertRuntimePackageResolution(specifier, result) {
-  const resolvedURL = result?.url;
-  if (typeof resolvedURL !== "string") {
-    throw new Error(
-      `Eidos runtime package ${specifier} did not resolve to a URL`,
-    );
-  }
-  if (resolvedURL.startsWith("node:")) {
-    return result;
-  }
-  if (!resolvedURL.startsWith("file:")) {
-    throw new Error(
-      `Eidos runtime package ${specifier} resolved outside RUNTIME_NODE_MODULES`,
-    );
-  }
+function insideParent(parentURL) {
+  if (!parentURL?.startsWith("file:")) return false;
+  try { return insideRoots(realpathSync(fileURLToPath(parentURL))); }
+  catch { return false; }
+}
 
-  let canonicalPath;
-  try {
-    canonicalPath = realpathSync(fileURLToPath(resolvedURL));
-  } catch (error) {
-    throw new Error(
-      `Eidos runtime package ${specifier} resolved to an unavailable file`,
-      { cause: error },
-    );
-  }
-  if (
-    canonicalPath !== runtimeNodeModulesCanonicalPath &&
-    !canonicalPath.startsWith(runtimeNodeModulesCanonicalPrefix)
-  ) {
-    throw new Error(
-      `Eidos runtime package ${specifier} resolved outside RUNTIME_NODE_MODULES`,
-    );
+function trustedResult(result) {
+  if (result?.url?.startsWith("node:")) return result;
+  if (!result?.url?.startsWith("file:") || !insideRoots(realpathSync(fileURLToPath(result.url)))) {
+    throw new Error("Eidos runtime package resolved outside its managed Node roots");
   }
   return result;
 }
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
-    if (!isRuntimePackageSpecifier(specifier)) {
-      return nextResolve(specifier, context);
-    }
-    if (resolvingRuntimePackage) {
-      return nextResolve(specifier, context);
-    }
-    if (isInsideRuntimeNodeModules(context.parentURL)) {
-      return assertRuntimePackageResolution(
-        specifier,
-        nextResolve(specifier, context),
-      );
-    }
-    if (context.conditions?.includes("require")) {
-      // Node's synchronous CJS default resolver closes over the original
-      // parent module and ignores a replacement context.parentURL.  Resolve
-      // the package with Node's native require resolver rooted at the anchor,
-      // then delegate the resulting path through the hook chain.
-      resolvingRuntimePackage = true;
-      let runtimePath;
-      try {
-        runtimePath = runtimeRequire.resolve(specifier);
-      } finally {
-        resolvingRuntimePackage = false;
+    if (!isPackage(specifier) || resolvingRuntimePackage) return nextResolve(specifier, context);
+    // Keep nearest dependencies inside a trusted pack. Dependencies in another
+    // pack use Node's resolver from that pack's anchor, never host/project npm.
+    if (insideParent(context.parentURL)) {
+      try { return trustedResult(nextResolve(specifier, context)); }
+      catch (error) {
+        if (!["MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"].includes(error.code)
+          && !error.message.includes("outside its managed Node roots")) throw error;
       }
-      return assertRuntimePackageResolution(
-        specifier,
-        nextResolve(runtimePath, context),
-      );
     }
-    return assertRuntimePackageResolution(
-      specifier,
-      nextResolve(specifier, {
-        ...context,
-        parentURL: runtimeRootAnchor,
-      }),
-    );
+    let missing;
+    for (const anchor of anchors) {
+      try {
+        if (context.conditions?.includes("require")) {
+          resolvingRuntimePackage = true;
+          let resolved;
+          try { resolved = anchor.require.resolve(specifier); }
+          finally { resolvingRuntimePackage = false; }
+          return trustedResult(nextResolve(resolved, context));
+        }
+        return trustedResult(nextResolve(specifier, { ...context, parentURL: anchor.url }));
+      } catch (error) {
+        resolvingRuntimePackage = false;
+        if (!["MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"].includes(error.code)) throw error;
+        missing = error;
+      }
+    }
+    throw missing ?? new Error(`Eidos runtime package ${specifier} is unavailable`);
   },
 });

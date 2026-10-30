@@ -46,9 +46,10 @@ const previewText = (text: string) => text.replace(/\r\n/g, "\n").replace(/\n{2,
 interface ChannelSettingsProps {
   modelList?: ModelListResult | undefined;
   initialChannel?: "list" | Channel;
+  onShowToast?: ((message: string, type?: ToastType) => void) | undefined;
 }
 
-export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelSettingsProps) {
+export function ChannelSettings({ modelList, initialChannel = "list", onShowToast }: ChannelSettingsProps) {
   const [currentView, setCurrentView] = useState<"list" | Channel>(initialChannel);
   const [responses, setResponses] = useState<Partial<Record<Channel, ChannelResponse>>>({});
   const selected = currentView === "list" ? "dingtalk" : currentView;
@@ -70,12 +71,16 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
   }, []);
 
   const showToast = useCallback((message: string, type: ToastType = "info") => {
+    if (onShowToast) {
+      onShowToast(message, type);
+      return;
+    }
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     setToasts((prev) => [...prev, { id, message, type, duration: 3500 }]);
     setTimeout(() => {
       dismissToast(id);
     }, 3500);
-  }, [dismissToast]);
+  }, [dismissToast, onShowToast]);
 
   const refreshStatus = async (showNotice = false) => {
     setRefreshing(true);
@@ -162,7 +167,7 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
 
   return (
     <div className="settings-panel channel-settings-page">
-      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+      {!onShowToast && <ToastContainer toasts={toasts} onDismiss={dismissToast} />}
 
       {/* 仅在初始化读取失败且无数据时展示静态错误横幅 */}
       {!response && error && (

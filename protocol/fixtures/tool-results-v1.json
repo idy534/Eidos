@@ -10,11 +10,78 @@
         "outcome": "success",
         "code": "ok",
         "summary": "Read file range",
-        "data": {"path": "README.md", "content": "Eidos 世界\n", "startLine": 1, "endLine": 1, "nextLine": null, "sizeBytes": 9007199254740991, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        "data": {
+          "path": "README.md",
+          "content": "Eidos 世界\n",
+          "startLine": 1,
+          "endLine": 1,
+          "nextLine": null,
+          "sizeBytes": 9007199254740991,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
         "sideEffectsMayExist": false,
         "reconciliationRequired": false
       },
       "canonicalJson": "{\"code\":\"ok\",\"data\":{\"content\":\"Eidos 世界\\n\",\"endLine\":1,\"nextLine\":null,\"path\":\"README.md\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"sizeBytes\":9007199254740991,\"startLine\":1},\"outcome\":\"success\",\"reconciliationRequired\":false,\"schemaVersion\":1,\"sideEffectsMayExist\":false,\"summary\":\"Read file range\",\"toolContractVersion\":1,\"toolName\":\"read_file_range\"}"
+    },
+    {
+      "name": "pty-running",
+      "result": {
+        "schemaVersion": 1,
+        "toolContractVersion": 1,
+        "toolName": "run_shell",
+        "outcome": "success",
+        "code": "shell_running",
+        "summary": "Command is still running",
+        "sideEffectsMayExist": true,
+        "reconciliationRequired": false,
+        "data": {
+          "workspaceChanged": false,
+          "sessionId": "shell-fixture",
+          "executionStatus": "running",
+          "transport": "pty",
+          "outputMerged": true,
+          "columns": 120,
+          "rows": 40,
+          "outputRevision": 16,
+          "exitCode": null,
+          "stdout": "提示> ",
+          "stderr": "",
+          "truncated": false,
+          "termination": "running"
+        }
+      },
+      "canonicalJson": "{\"code\":\"shell_running\",\"data\":{\"columns\":120,\"executionStatus\":\"running\",\"exitCode\":null,\"outputMerged\":true,\"outputRevision\":16,\"rows\":40,\"sessionId\":\"shell-fixture\",\"stderr\":\"\",\"stdout\":\"提示> \",\"termination\":\"running\",\"transport\":\"pty\",\"truncated\":false,\"workspaceChanged\":false},\"outcome\":\"success\",\"reconciliationRequired\":false,\"schemaVersion\":1,\"sideEffectsMayExist\":true,\"summary\":\"Command is still running\",\"toolContractVersion\":1,\"toolName\":\"run_shell\"}"
+    },
+    {
+      "name": "pty-resized",
+      "result": {
+        "schemaVersion": 1,
+        "toolContractVersion": 1,
+        "toolName": "control_shell",
+        "outcome": "success",
+        "code": "shell_running",
+        "summary": "Command is still running",
+        "sideEffectsMayExist": true,
+        "reconciliationRequired": false,
+        "data": {
+          "workspaceChanged": false,
+          "sessionId": "shell-fixture",
+          "executionStatus": "running",
+          "transport": "pty",
+          "outputMerged": true,
+          "columns": 120,
+          "rows": 40,
+          "outputRevision": 16,
+          "controlAction": "resize",
+          "exitCode": null,
+          "stdout": "提示> ",
+          "stderr": "",
+          "truncated": false,
+          "termination": "running"
+        }
+      },
+      "canonicalJson": "{\"code\":\"shell_running\",\"data\":{\"columns\":120,\"controlAction\":\"resize\",\"executionStatus\":\"running\",\"exitCode\":null,\"outputMerged\":true,\"outputRevision\":16,\"rows\":40,\"sessionId\":\"shell-fixture\",\"stderr\":\"\",\"stdout\":\"提示> \",\"termination\":\"running\",\"transport\":\"pty\",\"truncated\":false,\"workspaceChanged\":false},\"outcome\":\"success\",\"reconciliationRequired\":false,\"schemaVersion\":1,\"sideEffectsMayExist\":true,\"summary\":\"Command is still running\",\"toolContractVersion\":1,\"toolName\":\"control_shell\"}"
     }
   ]
 }

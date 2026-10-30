@@ -7,6 +7,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [Plugin 与 MCP](plugins.md) | 插件格式、版本、授权、远程连接与内置插件边界。 |
+| [内置文档 Skill](document-skills.md) | Word、PPT、Excel、PDF 的随包依赖、执行入口、升级与验证。 |
 | [Hooks](hooks.md) | 已接入事件、配置、信任、执行与兼容范围。 |
 | [记忆](memory.md) | 作用域、笔记、来源、发布、使用与撤销。 |
 | [个性化](personalization.md) | 回答偏好、用户背景、全局指令、任务快照与保存。 |

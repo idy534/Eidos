@@ -145,7 +145,7 @@ class ReadToolOutputTests(unittest.TestCase):
             pending = manager._session(shell['data']['sessionId'])
             with pending.lock:
                 cursor = pending.stdout_cursor
-                expected_increment = pending.stdout_text[cursor:]
+                expected_increment = pending.output["stdout"].read(cursor).text
             first = entry.adapter.execute({'callId': 'live-shell', 'maxBytes': 4}, threading.Event())
             self.assertEqual(first['outcome'], 'success')
             self.assertEqual(first['data']['content'], '甲')

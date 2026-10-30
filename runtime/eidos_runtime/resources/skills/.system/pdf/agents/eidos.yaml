@@ -1,0 +1,39 @@
+runtimeDependencies:
+  schemaVersion: 1
+  dependencies:
+  - kind: executable
+    name: python3
+    version: '>=3.11,<3.13'
+  - kind: python-package
+    name: pypdf
+    version: '>=6'
+    importName: pypdf
+runtimeResources:
+  schemaVersion: 1
+  profiles:
+    python:
+    - document-python
+    node:
+    - document-python
+    - document-node
+    render:
+    - pdf
+    pdf:
+    - pdf
+    - fonts
+    data:
+    - data
+    - pdf
+    images:
+    - document-python
+    - images
+    ocr-eng:
+    - pdf
+    - ocr-eng
+    ocr-chi-sim:
+    - pdf
+    - ocr-chi-sim
+    ocr-bilingual:
+    - pdf
+    - ocr-eng
+    - ocr-chi-sim

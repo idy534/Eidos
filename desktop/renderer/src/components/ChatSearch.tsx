@@ -139,7 +139,12 @@ export function ChatSearch({ mode, sessionId, projects, sessions = [], onClose, 
     <div ref={results} className={`chat-search-results${recent ? " chat-search-results--recent" : ""}`} aria-busy={busy}>
       {error && (
         <ToastContainer
-          toasts={[{ id: "chat-search-error", message: error, type: "error", duration: 3500 }]}
+          toasts={[{
+            id: `chat-search-error-${error}`,
+            message: error,
+            type: "error",
+            duration: 4000,
+          }]}
           onDismiss={() => setError("")}
         />
       )}

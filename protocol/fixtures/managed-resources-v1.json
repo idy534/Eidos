@@ -1,0 +1,13 @@
+{
+  "status": {
+    "available": true,
+    "directory": "/Users/test/Eidos/Resource",
+    "packs": [
+      {"id":"document-python","title":"基础文档处理","version":"2026.10.30.1","phase":"ready","downloadedBytes":0,"totalBytes":100,"errorCode":null},
+      {"id":"office","title":"Office 转换与重算","version":"2026.10.30.1","phase":"downloading","downloadedBytes":25,"totalBytes":100,"errorCode":null},
+      {"id":"ocr","title":"OCR 引擎","version":"2026.10.30.1","phase":"failed","downloadedBytes":0,"totalBytes":100,"errorCode":"resource_disk_full"}
+    ]
+  },
+  "retryRequest": {"packId":"ocr"},
+  "retryResponse": {"accepted":true}
+}

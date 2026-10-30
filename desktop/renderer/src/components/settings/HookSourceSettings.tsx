@@ -152,7 +152,7 @@ export function HookSourceSettings({ sessionId }: { sessionId?: string | undefin
         >
           {error && !review && (
             <ToastContainer
-              toasts={[{ id: "hook-source-error", message: error, type: "error", duration: 3500 }]}
+              toasts={[{ id: `hook-source-error-${error}`, message: error, type: "error", duration: 4000 }]}
               onDismiss={() => setError(undefined)}
             />
           )}

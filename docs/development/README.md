@@ -21,6 +21,8 @@ Agent 在 Eidos Shell 内执行本仓库测试时，应先核对实际执行权�
 
 uv 缓存写入失败时，Agent 应选择已有可写缓存或临时目录，或申请具体路径权限。Agent 不应默认放开整个 HOME。缓存清理不能解除未知 Shell Intent。测试报告应记录退出码、实际完成的阶段和最终汇总；输出不完整时，测试者必须把总数和未核验结论标为未验证。
 
+Agent Shell 的 PIPE 与 PTY 定向测试入口为 `uv run --locked pytest -q runtime/tests/test_agent_pty.py runtime/tests/test_shell.py runtime/tests/test_read_tool_output.py`。真实 macOS 权限验证继续使用 `pnpm test:seatbelt-native`。打包脚本会检查 `sandbox/pty_exec_helper.py`，bundled Runtime smoke 会用打包解释器创建控制终端。工具示例和输出边界见 [Agent Shell](../current/features/agent-shell.md)。
+
 Agent Shell 的 zsh/bash 默认开启 `pipefail`。Agent zsh 在用户启动脚本加载后通过固定初始化关闭 `NOMATCH`，没有匹配文件的模式默认原样交给程序。正常匹配的文件模式仍会展开，调用方仍应给需要原样传递的模式加引号。该初始化不改变环境继承，也不作用于 Desktop Terminal。验证命令优先直接输出到工具的有界捕获，不要用 `head` 提前关闭管道。多个有依赖关系的阶段使用 `&&`；分号后最后一条命令的成功不能证明前面阶段通过。POSIX sh 保持原来的退出码行为。
 
 开发过程中，执行者优先运行与改动行为直接相关的 focused tests。执行者只有在确认 `test:affected` 的映射范围合适时才运行该入口：
@@ -363,7 +365,9 @@ fi
 
 命令结束后，Runtime 会记录 Workspace manifest observation、diff、退出状态和 reconciliation 状态。Workspace-wide observation 不要求在 Shell 启动前完整扫描 Workspace。`unknown` observation 不等于 Runtime 已经证明了不确定副作用。Runtime 明确报告的 execution uncertainty 仍必须进入 reconciliation。
 
-PTY 和后台进程 follow-up：Agent Shell 支持同一 Run 内的管道 stdin 和分段等待，但不提供 PTY，也不跨 Run 或 Runtime 重启恢复进程。测试者应使用 Desktop Terminal 验证交互式 PTY。测试者还应验证 Agent Shell 会检测并清理 background child。
+Agent Shell 默认使用 PIPE，也支持通过 `run_shell(tty=true)` 创建 PTY。测试者应在 Agent Shell 中验证终端检测、无换行提示、中文输入和 Ctrl-C，并通过 `control_shell` 验证 PTY 尺寸调整、显式停止和 PIPE 输入关闭。程序处理 PTY Ctrl-C 后可以继续运行，测试者应使用 `terminate` 验证明确停止。测试者可在 [Agent Shell](../current/features/agent-shell.md) 中查看具体工具参数。
+
+Agent Shell 不跨 Run 或 Runtime 重启恢复进程。测试者还应验证 Run 取消和收尾会清理进程组、后台子进程及终端描述符。Desktop Terminal 使用独立的 PTY 路径，测试者需要单独验收该路径。
 
 新 Run 的 Shell 不再设置默认进程总期限。`run_shell` 首次等待默认 10 秒，范围 250 毫秒至 30 秒；模型随后使用 `write_stdin` 等待，默认 30 秒，范围 250 毫秒至 60 秒。等待窗口到期只返回 `shell_running` 和 `sessionId`，不会结束进程或触发 reconciliation。ToolSpec 的 600 秒 watchdog 只限制单次启动、审批重试或跟进调用，审批等待不计入预算。历史 3600 秒 ToolSpec 仍可读取，但新工具不会用它限制进程寿命。
 
@@ -470,17 +474,35 @@ macOS arm64 构建机可以生成独立 Runtime Bundle：
 pnpm build:runtime:mac
 pnpm test:runtime:bundled
 pnpm test:runtime:bundled-seatbelt
+pnpm test:documents:bundled
 ```
 
 Runtime Bundle 必须包含 `resources/tokenizers/cl100k_base.tiktoken`。构建脚本检查该资源，词表加载器核对固定 Hash。`test:runtime:bundled` 在空 tokenizer 缓存和禁止下载的条件下检查实际计数，避免开发机器已有缓存掩盖资源缺失。维护者更新词表时还需要同步来源、Hash、许可证和离线测试。词表更新不改变启动命令。
 
-输出目录是 `build/macos-runtime/`。Bundle 使用 managed CPython `3.12.13`、locked production dependencies、Eidos Runtime、Seatbelt 资源和受管 Ripgrep。locked production dependencies 包含 Workspace artifact 任务使用的 `python-docx` 和 `lark`。打包 Runtime 会复制 `eidos_runtime/workspace/apply_patch.lark`，并检查这个资源存在。打包 Runtime 不依赖目标机的系统 Python、uv、仓库 `.venv` 或 Xcode Command Line Tools Python。
+输出目录是 `build/macos-runtime/`。Bundle 使用 managed CPython `3.12.13`、locked production dependencies、Eidos Runtime、Seatbelt 资源和受管 Ripgrep。主环境包含 `lark`。文档依赖在构建时暂存，随后拆为固定版本资源包。App 只保留核心解释器和生产依赖。打包 Runtime 会复制 `eidos_runtime/workspace/apply_patch.lark`，并检查这个资源存在。打包 Runtime 不依赖目标机的系统 Python、uv、仓库 `.venv` 或 Xcode Command Line Tools Python。
+
+文档资源由 `scripts/build-resource-packs.py` 输出到 `build/resource-packages/`。App 的 `resource-index.json` 固定每组资源的地址、版本和文件范围。目标机把缺失资源安装到 `~/Eidos/Resource/`。基础文档 Python 包在核心 Runtime 初始化后后台准备，Office、Node、OCR 等按实际操作准备。构建机字体缓存仍位于 `.cache/document-runtime/`。完整 Runtime 构建自动执行本地资源下载响应与真实 Seatbelt 文档 smoke。`pnpm test:documents:bundled` 可以单独运行这个检查；它不访问公网 Release。详情见[内置文档 Skill](../current/features/document-skills.md)。
+
+维护者修改资源内容时，必须先更新 `resources/runtime-dependencies/resource-release.json` 的版本和 tag，再重新构建。已发布资源不得覆盖。资源版本和 Node 版本使用各自目录。资源包必须早于 App 上线，且不得成为应用更新器的 latest Release：
+
+```bash
+python3 scripts/publish-resource-packs.py
+python3 scripts/publish-resource-packs.py --publish
+pnpm exec electron scripts/test-managed-resources.cjs
+pnpm exec electron scripts/test-resource-shutdown.cjs
+```
+
+`test-resource-shutdown.cjs` 使用真实 preload、Electron IPC 和可控的 stdio 子进程，检查关闭前已发出的资源查询与关闭后的查询都正常结束。该检查需要先运行 `pnpm build`。
+
+第一条只验证本地资源包和生成 Release 说明。第二条通过现有 `gh` 登录创建公开资源 Release，并上传压缩包与索引；命令使用 `--latest=false`，没有覆盖已有版本的入口。发布后还要用 App 的下载器从真实 URL 安装，不能把本地模拟响应当作公网验收。`build/resource-packages/shared-python.json` 只供构建使用，不上传。
+
+维护者更新文档 Python 依赖后，需要更新根 `pyproject.toml` 的 `document-skills` group 与 `uv.lock`，并运行 `uv run --locked python scripts/lock-document-dependencies.py` 更新独立 wheel 清单。维护者使用同目录的独立 pnpm 锁文件和 `pnpm-workspace.yaml` 管理 Node 包，不能把 Skill 包加入 Desktop 根生产依赖。构建器在仓库外的暂存目录加载这份独立配置。维护者可以用 `pnpm audit:runtime-node` 审计文档 Node 依赖。Runtime 的 Deptry 检查不扫描独立执行的 Skill 资源；打包文档 smoke 负责验证对应包和脚本的实际导入。
 
 `pnpm test:runtime:bundled` 会在 Bundle 内导入 `lark`，检查 grammar 文件来自 Bundle，并同时验证结构化 `ApplyPatchInput → CodexPatchEncoder → Lark parser` compatibility 链路和 raw Custom `Codex Patch → parse_patch → verified Workspace action` 链路。这个 smoke 不执行真实 Provider 请求，也不代表 Provider capability 或 wire schema 已经验证。Responses native wire contract 由 Runtime mocked provider tests 验证。
 
 Runtime dependency contract 使用 Bundle 根目录下的 `runtime.json`。文件固定使用 `schemaVersion: 1` 和 `target: darwin-arm64`。文件记录 Bundle ID、固定版本、可执行文件、Python 包、Node 包和相对路径。文件和可执行文件记录 SHA-256。构建和发布流程通过 `scripts/generate-runtime-manifest.mjs` 执行完整文件 Hash 与 inventory 覆盖校验。Python Runtime 不保留这套全量检查及其模式开关。日常 Runtime 初始化读取清单，检查格式、版本、包 metadata 和必要路径；它不计算依赖文件 Hash，也不递归扫描 Bundle。Runtime 将 Catalog 传给每个 Run，并在 Shell 启动前复查清单与必要执行路径。Runtime 读取后会固定 manifest hash 和 Catalog snapshot hash；后者标识构建声明及路径，不证明当前文件内容与发布时一致。Run binding 还会固定 requirement hash 和 `dependencyBindingId`。
 
-资源分为三层。Skill 内容位于 `runtime/eidos_runtime/resources/skills/`，包括 `SKILL.md`、`agents/eidos.yaml`、脚本和其他资源。产品依赖位于 `resources/runtime-dependencies/`，构建后进入 Bundle 的 `dependencies/` 目录。Bundle 根目录的 `runtime.json` 是由构建脚本生成并校验的依赖清单。系统 Python、Node 和包文件不放进 Skill 目录。`agents/eidos.yaml` 只声明 typed requirements。Skill 不能安装包，也不能写入受保护的 Bundle 或 Skill root。默认 Agent Shell 仍然使用 Workspace cwd、默认禁网和现有 Approval/Sandbox 流程。没有 dependency binding 的普通 Shell 行为不变。
+资源分为三层。Skill 内容位于 `runtime/eidos_runtime/resources/skills/`，包括 `SKILL.md`、`agents/eidos.yaml`、脚本和其他资源。产品依赖的锁定输入位于 `resources/runtime-dependencies/`。构建器把文档扩展拆到 Release 资源包，并移除 App 中的暂存依赖目录。Bundle 根目录的 `runtime.json` 是由构建脚本生成并校验的依赖清单。系统 Python、Node 和包文件不放进 Skill 目录。`agents/eidos.yaml` 声明 typed requirements 和操作资源配置。Skill 不能安装包，也不能写入受保护的 Bundle 或 Skill root。默认 Agent Shell 仍然使用 Workspace cwd、默认禁网和现有 Approval/Sandbox 流程。没有 dependency binding 的普通 Shell 行为不变。
 
 `run_shell` 会为已识别的 Skill 脚本自动选择该 Skill 声明的已验证依赖；模型无需查询或传入 binding ID。普通项目命令不会因为 Skill 已激活而切换环境。`dependencyBindingId` 输入仍保留兼容，显式值仍校验 Run 和 Skill 归属。plugin-creator 等 Skill 脚本使用 `$RUNTIME_PYTHON`、catalog 提供的 canonical absolute Skill root 和 Workspace cwd `.`。源码环境中的 `.venv` 只能用于源码开发。它不代表目标 App 的 bundled dependency。
 

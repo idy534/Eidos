@@ -426,13 +426,13 @@ export function TextReviewPanel({
 
       {(openError || error) && (
         <ToastContainer
-          toasts={[
-            ...(openError ? [{ id: "open-error", message: openError, type: "error" as const, duration: 3500 }] : []),
-            ...(error ? [{ id: "review-error", message: `修改记录尚未完整读取：${error}`, type: "error" as const, duration: 3500 }] : []),
-          ]}
-          onDismiss={(id) => {
-            if (id === "open-error") setOpenError("");
-          }}
+          toasts={[{
+            id: `text-review-error-${openError || error}`,
+            message: openError || `修改记录尚未完整读取：${error}`,
+            type: "error",
+            duration: 4000,
+          }]}
+          onDismiss={() => setOpenError("")}
         />
       )}
 

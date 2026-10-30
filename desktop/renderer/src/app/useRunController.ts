@@ -321,8 +321,11 @@ export function useRunController(
     const sid = sessionId ?? currentSessionId;
     if (sid) {
       clearSessionError(sid);
+      draftStore.clearError(sid);
+    } else {
+      draftStore.clearError();
     }
-  }, [currentSessionId, clearSessionError]);
+  }, [currentSessionId, clearSessionError, draftStore]);
 
   const state: RunControllerState = {
     composerMode,

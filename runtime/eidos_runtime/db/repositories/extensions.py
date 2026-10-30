@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 from eidos_runtime.db.database import Repository, now_ms as _now_ms
 from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
@@ -26,27 +27,35 @@ class ExtensionRepository(Repository):
         ) for row in rows)
 
     def save_skill_state(self, state: SkillState) -> None:
+        self.save_skill_states((state,))
+
+    def save_skill_states(self, states: tuple[SkillState, ...]) -> None:
         with self.lock, self._connection() as connection:
-            connection.execute(
-                """INSERT INTO skill_states (
-                    qualified_id, enabled, removed, source_kind, directory_name,
-                    directory_device, directory_inode, content_hash, cleanup_pending, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(qualified_id) DO UPDATE SET
-                    enabled=excluded.enabled, removed=excluded.removed,
-                    source_kind=excluded.source_kind, directory_name=excluded.directory_name,
-                    directory_device=excluded.directory_device, directory_inode=excluded.directory_inode,
-                    content_hash=excluded.content_hash,
-                    cleanup_pending=excluded.cleanup_pending, updated_at=excluded.updated_at
-                """,
-                (state.qualified_id, int(state.enabled), int(state.removed),
-                 state.source_kind, state.directory_name, state.directory_device, state.directory_inode, state.content_hash,
-                 int(state.cleanup_pending), _now_ms()),
-            )
-            append_event(connection, EventType.SKILL_STATE_CHANGED, _now_ms(), {
-                "qualifiedId": state.qualified_id,
-                "enabled": state.enabled, "removed": state.removed,
-            })
+            for state in states:
+                self._save_skill_state(connection, state)
+
+    @staticmethod
+    def _save_skill_state(connection: sqlite3.Connection, state: SkillState) -> None:
+        connection.execute(
+            """INSERT INTO skill_states (
+                qualified_id, enabled, removed, source_kind, directory_name,
+                directory_device, directory_inode, content_hash, cleanup_pending, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(qualified_id) DO UPDATE SET
+                enabled=excluded.enabled, removed=excluded.removed,
+                source_kind=excluded.source_kind, directory_name=excluded.directory_name,
+                directory_device=excluded.directory_device, directory_inode=excluded.directory_inode,
+                content_hash=excluded.content_hash,
+                cleanup_pending=excluded.cleanup_pending, updated_at=excluded.updated_at
+            """,
+            (state.qualified_id, int(state.enabled), int(state.removed),
+             state.source_kind, state.directory_name, state.directory_device, state.directory_inode, state.content_hash,
+             int(state.cleanup_pending), _now_ms()),
+        )
+        append_event(connection, EventType.SKILL_STATE_CHANGED, _now_ms(), {
+            "qualifiedId": state.qualified_id,
+            "enabled": state.enabled, "removed": state.removed,
+        })
 
     def restore_removed_skill(self, qualified_id: str) -> None:
         with self.lock, self._connection() as connection:

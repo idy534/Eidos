@@ -139,6 +139,7 @@ from eidos_runtime.tools.contracts import (
     GitWriteAccess,
     RunShellInput,
     WriteStdinInput,
+    ControlShellInput,
     RuntimeDependencyBindingProvenance,
 )
 from eidos_runtime.tools.registry import (
@@ -167,6 +168,7 @@ _PRESENTATION_ONLY_TOOL_INPUTS = frozenset({
     *_WORKSPACE_READ_TOOLS,
     "run_shell",
     "write_stdin",
+    "control_shell",
     "read_tool_output",
     "apply_patch",
 })
@@ -667,6 +669,43 @@ class ShellToolHandler:
         )
         return HandlerOutcome(result, "completed" if result.get("outcome") == "success" else "failed", "completed")
 
+    def _control_shell(
+        self, run_id: str, item: dict[str, object], call: ModelToolCall,
+        cancel: threading.Event,
+    ) -> HandlerOutcome:
+        arguments = ControlShellInput.model_validate(call.arguments)
+        manager = self.dependencies.shell_process_manager
+        if manager is None:
+            raise RuntimeError("shell process manager is unavailable")
+        try:
+            manager.require_session(arguments.sessionId)
+        except ShellProcessSessionNotFound:
+            return HandlerOutcome(tool_error(call.name, "shell_session_not_found", "Shell session is unavailable in this Run"), "failed", "failed")
+        self.dependencies.authorize_workspace_side_effect(
+            item=item,
+            prepared=PreparedToolExecution(
+                approval_description={"kind": "command_input", "summary": f"Control the existing command: {arguments.action}"},
+                transition_reason="shell_session_control",
+                intent_preconditions={"sessionId": arguments.sessionId, "operation": arguments.action},
+            ),
+        )
+        try:
+            result = manager.control(
+                arguments.sessionId, arguments.action, columns=arguments.columns,
+                rows=arguments.rows, yield_time_ms=arguments.yieldTimeMs, cancel=cancel,
+                on_input=self.dependencies.mark_execution_started,
+            )
+            self.dependencies.observe_execution_result(result)
+        except ShellSessionFinalizationError:
+            result = tool_result(call.name, "error", "shell_result_commit_failed", "Command exit could not be persisted", side_effects_may_exist=True, reconciliation_required=True)
+        except (RuntimeError, OSError) as error:
+            started = self.dependencies.execution_started()
+            result = tool_result(call.name, "error", "shell_control_failed", "Shell control failed; use resize only for a live PTY and close_stdin only for PIPE", side_effects_may_exist=started, reconciliation_required=started)
+            logger.warning("Shell control failed: %s", type(error).__name__)
+        result = safe_tool_result(self.dependencies.sensitive, call.name,
+                                  bounded_tool_result(call.name, result), scan_output=False)
+        return HandlerOutcome(result, "completed" if result.get("outcome") == "success" else "failed", "completed")
+
     def execute(
         self,
         run_id: str,
@@ -677,6 +716,8 @@ class ShellToolHandler:
     ) -> HandlerOutcome:
         if call.name == "write_stdin":
             return self._write_stdin(run_id, item, call, cancel)
+        if call.name == "control_shell":
+            return self._control_shell(run_id, item, call, cancel)
         shell_input = RunShellInput.model_validate_json(
             json.dumps(call.arguments, ensure_ascii=False)
         )
@@ -770,6 +811,23 @@ class ShellToolHandler:
         dependency_environment = None
         dependency_provenance: RuntimeDependencyBindingProvenance | None = None
         dependency_binding_id = shell_input.dependencyBindingId
+        dependency_profile = None
+        if skill_invocation is not None and skill_invocation.script_path is not None:
+            coordinator = self.dependencies.runtime_dependencies
+            if coordinator is not None:
+                try:
+                    dependency_profile = coordinator.prepare_skill_resources(
+                        skill_invocation.qualified_id, command, cwd.path,
+                        skill_invocation.script_path, cancel,
+                    )
+                except RuntimeDependencyCatalogError as error:
+                    if cancel.is_set():
+                        raise RuntimeCancelled from None
+                    return HandlerOutcome(
+                        _dependency_binding_error_result(call.name, error.code,
+                            "Document components could not be prepared. Retry this operation or check resource status."),
+                        "failed", "failed",
+                    )
         if dependency_binding_id is None and skill_invocation is not None:
             coordinator = self.dependencies.runtime_dependencies
             if coordinator is None:
@@ -780,7 +838,7 @@ class ShellToolHandler:
                     ), "failed", "failed",
                 )
             try:
-                selected = coordinator.binding_for_skill(skill_invocation.qualified_id)
+                selected = coordinator.binding_for_skill(skill_invocation.qualified_id, profile=dependency_profile)
                 if selected is not None:
                     dependency_binding_id = selected.binding_id
             except RuntimeDependencyCatalogError as error:
@@ -818,10 +876,11 @@ class ShellToolHandler:
                             if skill_invocation is not None
                             else None
                         ),
+                        implicit_profile=dependency_profile,
                     )
                 )
                 dependency_environment = coordinator.shell_environment(
-                    dependency_binding
+                    dependency_binding, resource_profile=dependency_profile,
                 )
                 dependency_provenance = coordinator.binding_provenance(
                     dependency_binding,
@@ -994,15 +1053,11 @@ class ShellToolHandler:
                 try:
                     dependency_binding = coordinator.verify_binding(
                         dependency_binding,
-                        context_id=(
-                            f"{run_id}:{dependency_skill_id}"
-                            if dependency_skill_id is not None
-                            else f"{run_id}:default"
-                        ),
+                        context_id=dependency_binding.context_id,
                         qualified_skill_id=dependency_skill_id,
                     )
                     dependency_environment = coordinator.shell_environment(
-                        dependency_binding
+                        dependency_binding, resource_profile=dependency_profile,
                     )
                     dependency_provenance = coordinator.binding_provenance(
                         dependency_binding,
@@ -1029,6 +1084,7 @@ class ShellToolHandler:
                     active_skill_roots=active_skill_roots,
                     dependency_environment=dependency_environment,
                     environment_policy=ShellEnvironmentRepository(self.dependencies.store.database).read().policy,
+                    tty=shell_input.tty, columns=shell_input.columns, rows=shell_input.rows,
                 )
                 verify_git_metadata_identities(workspace)
                 raw_result = shell_process_manager.start(

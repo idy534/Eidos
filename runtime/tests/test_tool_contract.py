@@ -440,13 +440,14 @@ class ToolContractTests(unittest.TestCase):
             spec.description for spec in TOOL_SPECS if spec.name == "run_shell"
         )
 
-        self.assertEqual(
-            description,
+        self.assertTrue(description.startswith(
             "Run a command in a separate shell process. "
             "The working directory defaults to the current Run's workspace. "
             "Set cwd to start in another directory. "
             "Return output or a sessionId for ongoing interaction.",
-        )
+        ))
+        self.assertIn("tty=true", description)
+        self.assertIn("control_shell", description)
         for fragment in (
             "gitWriteAccess",
             "networkAccess",
@@ -454,7 +455,6 @@ class ToolContractTests(unittest.TestCase):
             "request_permissions",
             "additionalPermissions",
             "sandboxPermissions",
-            "write_stdin",
             "shell_running",
             "yieldTimeMs",
             "pipefail",

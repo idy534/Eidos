@@ -62,29 +62,41 @@ test("runtime dependency source pins the approved Node LTS and docx release", as
     sha256: "b7bf7707070b950ba1ec5f1af3bb6de0f2b1962c5033973d94068ab021ef3014",
   });
   assert.equal(packageJson.private, true);
+  assert.equal(packageJson.packageManager, "pnpm@11.7.0");
   assert.equal(packageJson.type, "module");
-  assert.deepEqual(packageJson.dependencies, { docx: "9.7.1" });
+  assert.equal(packageJson.dependencies.docx, "9.7.1");
+  for (const name of ["pptxgenjs", "sharp", "@deepseek-ai/libreoffice-kit", "@deepseek-ai/libreoffice-kit-darwin-arm64", "tesseract.js", "@tesseract.js-data/eng", "@tesseract.js-data/chi_sim"]) {
+    assert.match(packageJson.dependencies[name], /^\d+\.\d+\.\d+$/);
+  }
+  for (const name of ["react", "react-dom", "react-icons"]) assert.equal(packageJson.dependencies[name], undefined);
   assert.match(lock, /docx@9\.7\.1/);
   assert.match(lock, /resolution:/);
+  assert.match(lock, /fflate@0\.8\.3/);
+  assert.match(lock, /image-size@2\.0\.4/);
+  assert.doesNotMatch(lock, /fflate@0\.8\.2|image-size@1\.2\.1/);
 });
 
 
 test("Python skill lock is an audited, bounded closure", async () => {
   const lock = await readFile(pythonLockPath, "utf8");
   assert.match(lock, /^python-docx==1\.2\.0\b.*--hash=sha256:[0-9a-f]{64}/m);
-  assert.match(lock, /^lxml==6\.1\.2\b.*--hash=sha256:[0-9a-f]{64}/m);
+  assert.match(lock, /^lxml==6\.1\.3\b.*--hash=sha256:[0-9a-f]{64}/m);
   assert.match(lock, /^typing-extensions==4\.16\.0\b.*--hash=sha256:[0-9a-f]{64}/m);
   assert.match(lock, /import-name=docx/);
   assert.match(lock, /import-name=lxml/);
   assert.match(lock, /import-name=typing_extensions/);
-  assert.doesNotMatch(lock, /pydantic|anyio|openai|pillow/);
+  for (const name of ["openpyxl", "python-pptx", "pypdf", "pdfplumber", "reportlab", "pypdfium2", "pillow"]) {
+    assert.match(lock, new RegExp(`^${name}==.*--hash=sha256:[0-9a-f]{64}`, "m"));
+  }
+  assert.doesNotMatch(lock, /pydantic|anyio|openai/);
 });
 
 
 test("the root Runtime does not declare the isolated Skill dependency", async () => {
   const pyproject = await readFile(path.join(root, "pyproject.toml"), "utf8");
   const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
-  assert.doesNotMatch(pyproject, /^\s*"python-docx/m);
+  assert.doesNotMatch(pyproject.split("[dependency-groups]")[0], /^\s*"python-docx/m);
+  assert.match(pyproject, /document-skills = \[/);
   assert.equal(packageJson.dependencies?.docx, undefined);
   assert.equal(packageJson.devDependencies?.docx, undefined);
   assert.equal(packageJson.scripts["audit:runtime-node"], "pnpm --dir resources/runtime-dependencies/node audit --prod --audit-level high");
@@ -111,6 +123,9 @@ test("Runtime builder wires isolated dependencies and the E-owned loader", async
   assert.match(nodeBuilderSource, /release\.sha256|EXPECTED_SHA256/);
   assert.match(nodeBuilderSource, /LICENSE/);
   assert.match(nodeBuilderSource, /rsync -aL/);
+  assert.match(nodeBuilderSource, /--exclude='\.gitkeep'/);
+  assert.match(nodeBuilderSource, /SOURCE_ROOT\/pnpm-workspace\.yaml/);
+  assert.doesNotMatch(nodeBuilderSource, /--ignore-workspace/);
   assert.match(nodeBuilderSource, /RUNTIME_NODE_MODULES|runtime-loader\.mjs/);
   assert.match(pythonBuilderSource, /requirements\.lock/);
   assert.match(pythonBuilderSource, /top_level\.txt/);
@@ -362,4 +377,27 @@ test("manifest generator emits relocation-safe inventory and detects tampering",
   assert.notEqual(invalidPath.code, 0);
   assert.match(`${invalidPath.stdout}\n${invalidPath.stderr}`, /relative|dot|path/i);
   await rm(fixture, { recursive: true, force: true });
+});
+
+
+test("core-only manifest excludes downloadable payloads and inventories the pinned release index", async () => {
+  const fixture = await createManifestFixture();
+  try {
+    await rm(path.join(fixture, "dependencies"), { recursive: true });
+    await writeFile(path.join(fixture, "shared-python.json"), "[]");
+    await writeFile(path.join(fixture, "resource-index.json"), '{"schemaVersion":1,"version":"fixture","target":"darwin-arm64","packs":[]}\n');
+    await writeFile(path.join(fixture, "app/eidos_runtime/resources/runtime-loader.mjs"), "// trusted loader\n");
+    const result = await run(process.execPath, [manifestScript, "--core-only", "--shared-python", path.join(fixture, "shared-python.json"), "--bundle-root", fixture,
+      "--bundle-id", "eidos-runtime", "--bundle-version", "0.3.0", "--python-version", "3.12.13",
+      "--node-version", "24.20.0", "--ripgrep-version", "15.2.0"]);
+    assert.equal(result.code, 0, result.stderr);
+    const manifest = JSON.parse(await readFile(path.join(fixture, "runtime.json"), "utf8"));
+    assert.deepEqual(manifest.pythonPath, ["app"]);
+    assert.equal(manifest.nodeModules, null);
+    assert.deepEqual(manifest.nodePackages, []);
+    assert.ok(!manifest.executables.some((entry) => entry.name === "node"));
+    assert.ok(manifest.files.some((entry) => entry.path === "resource-index.json"));
+    const verified = await run(process.execPath, [manifestScript, "--verify", "--bundle-root", fixture]);
+    assert.equal(verified.code, 0, verified.stderr);
+  } finally { await rm(fixture, { recursive: true, force: true }); }
 });

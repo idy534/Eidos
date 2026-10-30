@@ -178,6 +178,7 @@
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   animation: modal-fade-in 150ms ease-out;
+  color: var(--text);
 }
 .modal-dialog {
   width: min(100%, 28rem);

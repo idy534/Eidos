@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export type ToastType = "error" | "warning" | "info" | "success";
 
@@ -9,9 +10,10 @@ export interface ToastItem {
   duration?: number;
 }
 
-interface ToastContainerProps {
+export interface ToastContainerProps {
   toasts: ToastItem[];
   onDismiss?: ((id: string) => void) | undefined;
+  portal?: boolean;
 }
 
 interface SingleToastProps {
@@ -20,6 +22,7 @@ interface SingleToastProps {
 }
 
 function SingleToast({ toast, onDismiss = () => {} }: SingleToastProps) {
+  const [dismissed, setDismissed] = useState(false);
   const duration = toast.duration ?? (toast.type === "error" || toast.type === "warning" ? 5000 : 3500);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const remainingRef = useRef<number>(duration);
@@ -27,18 +30,30 @@ function SingleToast({ toast, onDismiss = () => {} }: SingleToastProps) {
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
 
+  const handleDismiss = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setDismissed(true);
+    onDismissRef.current?.(toast.id);
+  }, [toast.id]);
+
   useEffect(() => {
+    setDismissed(false);
+    remainingRef.current = duration;
     startTimeRef.current = Date.now();
     timerRef.current = setTimeout(() => {
-      onDismissRef.current(toast.id);
+      handleDismiss();
     }, remainingRef.current);
 
     return () => {
       if (timerRef.current) {
         clearTimeout(timerRef.current);
+        timerRef.current = null;
       }
     };
-  }, [toast.id]);
+  }, [toast.id, toast.message, duration, handleDismiss]);
 
   const handleMouseEnter = () => {
     if (timerRef.current) {
@@ -50,13 +65,17 @@ function SingleToast({ toast, onDismiss = () => {} }: SingleToastProps) {
   };
 
   const handleMouseLeave = () => {
-    if (!timerRef.current) {
+    if (!timerRef.current && !dismissed) {
       startTimeRef.current = Date.now();
       timerRef.current = setTimeout(() => {
-        onDismissRef.current(toast.id);
+        handleDismiss();
       }, remainingRef.current);
     }
   };
+
+  if (dismissed) {
+    return null;
+  }
 
   const isAlert = toast.type === "error" || toast.type === "warning";
 
@@ -93,7 +112,11 @@ function SingleToast({ toast, onDismiss = () => {} }: SingleToastProps) {
       <button
         type="button"
         className="app-toast-close"
-        onClick={() => onDismiss(toast.id)}
+        onClick={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          handleDismiss();
+        }}
         aria-label="关闭提示"
       >
         ✕
@@ -102,14 +125,36 @@ function SingleToast({ toast, onDismiss = () => {} }: SingleToastProps) {
   );
 }
 
-export function ToastContainer({ toasts, onDismiss }: ToastContainerProps) {
+function getGlobalToastRoot(): HTMLElement | null {
+  if (typeof document === "undefined") return null;
+  let root = document.getElementById("eidos-global-toast-root");
+  if (!root) {
+    root = document.createElement("div");
+    root.id = "eidos-global-toast-root";
+    root.className = "app-toast-container";
+    root.setAttribute("aria-live", "polite");
+    document.body.appendChild(root);
+  }
+  return root;
+}
+
+export function ToastContainer({ toasts, onDismiss, portal = true }: ToastContainerProps) {
   if (toasts.length === 0) return null;
 
-  return (
-    <div className="app-toast-container" aria-live="polite">
-      {toasts.map((toast) => (
-        <SingleToast key={toast.id} toast={toast} onDismiss={onDismiss} />
-      ))}
-    </div>
-  );
+  const content = toasts.map((toast) => (
+    <SingleToast key={toast.id} toast={toast} onDismiss={onDismiss} />
+  ));
+
+  if (!portal) {
+    return (
+      <div className="app-toast-container" aria-live="polite">
+        {content}
+      </div>
+    );
+  }
+
+  const root = getGlobalToastRoot();
+  if (!root) return null;
+
+  return createPortal(<>{content}</>, root);
 }

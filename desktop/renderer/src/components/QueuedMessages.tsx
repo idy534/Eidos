@@ -23,7 +23,12 @@ export function QueuedMessages({ sessionId, ready, activeRunId, onChanged, onRef
     <>
       {queue.error && (
         <ToastContainer
-          toasts={[{ id: "queue-load-error", message: queue.error, type: "error", duration: 3500 }]}
+          toasts={[{
+            id: `queued-message-queue-error-${queue.error}`,
+            message: queue.error,
+            type: "error",
+            duration: 4000,
+          }]}
         />
       )}
       {queue.items.length > 0 && (
@@ -142,7 +147,12 @@ function QueuedMessage({ message, position, ready, activeRunId, onChanged, onRef
       )}
       {error && (
         <ToastContainer
-          toasts={[{ id: `queued-message-error-${message.runId}`, message: error, type: "error", duration: 3500 }]}
+          toasts={[{
+            id: `queued-message-error-${error}`,
+            message: error,
+            type: "error",
+            duration: 4000,
+          }]}
           onDismiss={() => setError(undefined)}
         />
       )}

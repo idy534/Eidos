@@ -222,7 +222,11 @@ def attach_workspace_diff(
     )
     exit_code = data.get("exitCode")
     execution_known = (
-        data.get("termination") == "exit"
+        (data.get("termination") == "exit" or (
+            data.get("termination") == "terminated"
+            and data.get("executionStatus") == "exited"
+            and isinstance(data.get("sessionId"), str)
+        ))
         and isinstance(exit_code, int)
         and not isinstance(exit_code, bool)
     )

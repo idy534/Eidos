@@ -177,12 +177,6 @@ export function McpCreateDialog({
   const formError = localError || error;
   return (
     <div className="modal-backdrop" onClick={busy || removeBusy ? undefined : onCancel}>
-      {formError && (
-        <ToastContainer
-          toasts={[{ id: "mcp-create-error", message: formError, type: "error", duration: 3500 }]}
-          onDismiss={() => setLocalError(undefined)}
-        />
-      )}
       <div
         className="modal-dialog modal-dialog--wide mcp-create-dialog"
         role="dialog"
@@ -195,6 +189,11 @@ export function McpCreateDialog({
           <p className="modal-subtitle">配置一个本地 STDIO MCP Server。保存后，Eidos 会先等待你的审阅。</p>
         </div>
         <div className="modal-body mcp-create-body">
+          {formError && (
+            <ToastContainer
+              toasts={[{ id: `mcp-create-error-${formError}`, message: formError, type: "error", duration: 4000 }]}
+            />
+          )}
           <div className="mcp-create-type-row" aria-label="MCP 类型">
             <span className="mcp-create-type-label">类型</span>
             <button type="button" className="mcp-create-type-button is-active" disabled>STDIO</button>
