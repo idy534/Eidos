@@ -1,0 +1,273 @@
+/* ==========================================================================
+   MANAGED RESOURCE SETTINGS - macOS Native Disclosure Style
+   Seamlessly integrates inside .setting-section container without nested card borders
+   ========================================================================== */
+
+.managed-resources-section {
+  margin-top: 1.5rem;
+}
+
+/* Disclosure root - completely borderless to blend into the parent .setting-section */
+.managed-resources,
+.managed-resources-mac {
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.managed-resources-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 0.9rem 1.25rem;
+  cursor: pointer;
+  list-style: none;
+  background: transparent;
+  user-select: none;
+  transition: background-color 120ms ease;
+  border: none;
+  outline: none;
+}
+
+.managed-resources-summary::-webkit-details-marker {
+  display: none;
+}
+
+.managed-resources-summary:hover {
+  background: var(--surface-muted, rgba(0, 0, 0, 0.025));
+}
+
+.managed-resources-summary:focus-visible {
+  outline: 2px solid var(--accent, #007aff);
+  outline-offset: -2px;
+}
+
+.managed-resources-summary-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.managed-resources-title {
+  font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, sans-serif);
+  font-size: 0.88rem;
+  font-weight: 550;
+  color: var(--text, #1d1d1f);
+  letter-spacing: -0.01em;
+}
+
+.managed-resources-desc {
+  font-size: 0.78rem;
+  color: var(--muted, #666);
+  line-height: 1.4;
+}
+
+.managed-resources-summary-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+
+.managed-resources-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-pill, 999px);
+  font-size: 0.775rem;
+  font-weight: 500;
+  background: var(--surface-muted, rgba(0, 0, 0, 0.05));
+  color: var(--text-secondary, #666);
+  border: 1px solid var(--line, rgba(0, 0, 0, 0.08));
+}
+
+.managed-resources-badge--ready {
+  background: rgba(52, 199, 89, 0.1);
+  color: #248a3d;
+  border-color: rgba(52, 199, 89, 0.25);
+}
+
+.managed-resources-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted, #999);
+}
+
+.managed-resources-badge--ready .managed-resources-dot {
+  background: #34c759;
+}
+
+.managed-resources-chevron {
+  display: inline-block;
+  font-size: 1.15rem;
+  line-height: 1;
+  color: var(--text-tertiary, #999);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), color 0.15s ease;
+}
+
+.managed-resources-mac[open] .managed-resources-chevron {
+  transform: rotate(90deg);
+  color: var(--text, #1d1d1f);
+}
+
+/* Subtle separator between summary and content only when expanded */
+.managed-resources-mac[open] .managed-resources-summary {
+  border-bottom: 1px solid var(--surface-muted, rgba(0, 0, 0, 0.06));
+}
+
+/* Content inside expanded details - no outer box borders */
+.managed-resources-content {
+  padding: 0.5rem 1.25rem 1.25rem;
+  border: none;
+  background: transparent;
+}
+
+.managed-resources-error {
+  margin: 0.75rem 0 0.25rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm, 6px);
+  background: rgba(255, 59, 48, 0.08);
+  color: var(--danger, #ff3b30);
+  font-size: 0.8125rem;
+}
+
+/* Grouped lists - clean section divisions without nested box cards */
+.managed-resources-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin-top: 0.5rem;
+}
+
+.managed-resource-group {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.managed-resource-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.25rem 0.35rem;
+  background: transparent;
+  border-bottom: 1px solid var(--surface-muted, rgba(0, 0, 0, 0.06));
+}
+
+.managed-resource-group-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted, #86868b);
+  letter-spacing: 0.02em;
+}
+
+.managed-resource-group-stat {
+  font-size: 0.75rem;
+  color: var(--text-tertiary, #999);
+  font-variant-numeric: tabular-nums;
+}
+
+.managed-resource-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.managed-resource-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  padding: 0.6rem 0.25rem;
+  min-height: 2.25rem;
+  border-bottom: 1px solid var(--surface-muted, rgba(0, 0, 0, 0.04));
+}
+
+.managed-resource-item:last-child {
+  border-bottom: none;
+}
+
+.managed-resource-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 10rem;
+}
+
+.managed-resource-name {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text, #1d1d1f);
+}
+
+.managed-resource-phase {
+  font-size: 0.75rem;
+  color: var(--text-tertiary, #888);
+  font-variant-numeric: tabular-nums;
+}
+
+.managed-resource-phase--ready {
+  color: #248a3d;
+  font-weight: 500;
+}
+
+.managed-resource-phase--downloading {
+  color: var(--accent, #007aff);
+  font-weight: 500;
+}
+
+.managed-resource-phase--failed {
+  color: var(--danger, #ff3b30);
+  font-weight: 500;
+}
+
+.managed-resource-btn {
+  padding: 0.25rem 0.75rem;
+  border: 1px solid var(--line, rgba(0, 0, 0, 0.12));
+  border-radius: var(--radius-sm, 5px);
+  background: var(--surface, #ffffff);
+  color: var(--text, #1d1d1f);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.managed-resource-btn:hover:not(:disabled) {
+  background: var(--surface-muted, rgba(0, 0, 0, 0.05));
+  border-color: rgba(0, 0, 0, 0.2);
+}
+
+.managed-resource-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.managed-resource-error-hint {
+  flex-basis: 100%;
+  font-size: 0.75rem;
+  color: var(--danger, #ff3b30);
+  margin-top: -0.2rem;
+}
+
+@media (max-width: 480px) {
+  .managed-resources-summary {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  .managed-resources-summary-right {
+    align-self: flex-start;
+  }
+}

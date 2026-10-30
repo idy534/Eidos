@@ -6,7 +6,6 @@ import { EmptyState } from "../EmptyState.js";
 import { SearchInput } from "../SearchInput.js";
 import { SkillDetailDialog, SkillIcon } from "./SkillDetailDialog.js";
 import { Toggle } from "../Toggle.js";
-import { ManagedResourceSettings } from "./ManagedResourceSettings.js";
 
 interface SkillSettingsProps {
   skills: SkillMetadata[];
@@ -19,12 +18,19 @@ interface SkillSettingsProps {
 }
 
 export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
-  const { onToggleSkill, pendingAction, pendingSkillIds = EMPTY_PENDING_SKILL_IDS, storageReady, onShowToast } = actions;
+  const {
+    onToggleSkill,
+    pendingAction,
+    pendingSkillIds = EMPTY_PENDING_SKILL_IDS,
+    storageReady,
+    onShowToast,
+  } = actions;
   const [category, setCategory] = useState<"personal" | "system">("personal");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string>();
   const [togglingIds, setTogglingIds] = useState<ReadonlySet<string>>(() => new Set());
   const searchRef = useRef<HTMLInputElement>(null);
+
   const standalone = skills.filter((skill) => skill.sourceKind !== "plugin");
   const selected = standalone.find((skill) => skill.qualifiedId === selectedId);
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -73,7 +79,6 @@ export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
           value={query}
           onChange={setQuery}
         />
-        {category === "system" && <ManagedResourceSettings />}
         <div className="skill-categories" role="group" aria-label="技能分类">
           <button type="button" aria-pressed={category === "personal"} onClick={() => setCategory("personal")}>个人</button>
           <button type="button" aria-pressed={category === "system"} onClick={() => setCategory("system")}>系统</button>

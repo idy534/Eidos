@@ -128,6 +128,7 @@ class ModelContractTests(unittest.TestCase):
             "<Action> <Primary Object> [Goal / Scope]",
             TITLE_SYSTEM_INSTRUCTIONS,
         )
+        self.assertIn("within 3-6 words", TITLE_SYSTEM_INSTRUCTIONS)
         self.assertIn(
             "Do not answer, execute, or explain the task.", TITLE_SYSTEM_INSTRUCTIONS
         )

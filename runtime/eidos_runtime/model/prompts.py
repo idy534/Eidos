@@ -138,7 +138,7 @@ Rules:
 - Do not end with punctuation.
 
 Return only the title as one plain-text line, without quotes, Markdown, labels, or explanations.
-Keep the title concise, coherent, and within 3-8 words.
+Keep the title concise, coherent, and within 3-6 words.
 """
 
 

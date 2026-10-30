@@ -70,7 +70,16 @@ function setRuntime(readSkillDetail: ReturnType<typeof vi.fn>, showItemInFolder 
     listModelPresets: vi.fn().mockResolvedValue(presets),
     readSkillDetail,
     showItemInFolder,
-  } as EidosRuntimeAPI;
+    readShellEnvironment: vi.fn().mockResolvedValue({ revision: 0, policy: { inherit: "all" } }),
+    getResourceStatus: vi.fn().mockResolvedValue({
+      available: true,
+      directory: "/Users/test/Eidos/Resource",
+      packs: [
+        { id: "document-python", title: "基础文档处理", version: "1", phase: "ready" },
+        { id: "office", title: "Office 转换与重算", version: "1", phase: "ready" },
+      ],
+    }),
+  } as unknown as EidosRuntimeAPI;
   return showItemInFolder;
 }
 
@@ -230,5 +239,34 @@ describe("Skill settings", () => {
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "卸载" }));
     await waitFor(() => expect(onRemoveSkill).toHaveBeenCalledWith("user:writer"));
     expect(screen.getByText("技能已卸载")).toBeInTheDocument();
+  });
+
+  it("keeps system skills clean and places document resources in runtime settings", async () => {
+    const user = userEvent.setup();
+    setRuntime(vi.fn().mockResolvedValue({}));
+    render(<SettingsPage {...props({
+      skills: [
+        skill({
+          qualifiedId: "system:docx",
+          name: "docx",
+          sourceKind: "system",
+          description: "Word document skill.",
+        }),
+      ],
+    })} />);
+
+    await user.click(screen.getByRole("tab", { name: /技能/ }));
+    await user.click(screen.getByRole("button", { name: "系统" }));
+
+    // Verify ManagedResourceSettings is not in SkillSettings
+    expect(screen.queryByText("Word、Excel、PPT 与 PDF 处理所需的运行依赖与本地离线资源")).toBeNull();
+    // Verify skill card is clean without dependency badges
+    expect(screen.queryByRole("status", { name: /运行依赖/ })).toBeNull();
+    expect(screen.getByText("docx")).toBeInTheDocument();
+
+    // Navigate to "运行环境"
+    await user.click(screen.getByRole("tab", { name: "运行环境" }));
+    expect(screen.getByRole("heading", { level: 1, name: "运行环境" })).toBeInTheDocument();
+    expect(screen.getByText("Word、Excel、PPT 与 PDF 处理所需的运行依赖与本地离线资源")).toBeInTheDocument();
   });
 });

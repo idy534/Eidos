@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ManagedResourceSettings } from "./ManagedResourceSettings.js";
+import { _resetResourceCacheForTest, ManagedResourceSettings } from "./ManagedResourceSettings.js";
 import type { ResourceStatus } from "../../../../shared/managed-resources.js";
 
 const original = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
@@ -16,6 +16,7 @@ const status: ResourceStatus = {
 
 afterEach(() => {
   cleanup();
+  _resetResourceCacheForTest();
   vi.useRealTimers();
   if (original) Object.defineProperty(window, "eidosRuntime", original);
   else Reflect.deleteProperty(window, "eidosRuntime");

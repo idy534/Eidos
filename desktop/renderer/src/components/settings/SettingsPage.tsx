@@ -16,6 +16,7 @@ import { PluginSettings } from "./PluginSettings.js";
 import { SkillSettings } from "./SkillSettings.js";
 import { McpSettings } from "./McpSettings.js";
 import { RuntimeSettings } from "./RuntimeSettings.js";
+import { prefetchResourceStatus } from "./ManagedResourceSettings.js";
 import { MemorySettings } from "./MemorySettings.js";
 import { WebSearchSettings } from "./WebSearchSettings.js";
 import { ChannelSettings } from "./ChannelSettings.js";
@@ -103,6 +104,10 @@ export function SettingsPage({
     if (target === "close") onClose();
     else setActiveCategory(target);
   }, [activeCategory, personalizationBusy, personalizationDirty, onClose]);
+
+  useEffect(() => {
+    prefetchResourceStatus();
+  }, []);
 
   useEffect(() => {
     if (!pendingNavigation || personalizationDirty || personalizationBusy) return;

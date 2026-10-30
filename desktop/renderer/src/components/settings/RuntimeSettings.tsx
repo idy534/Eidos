@@ -1,5 +1,6 @@
 import { ShellEnvironmentSettings } from "./ShellEnvironmentSettings.js";
 import { DataSettings } from "./DataSettings.js";
+import { ManagedResourceSettings } from "./ManagedResourceSettings.js";
 import type { RuntimeStatus } from "../../contracts";
 import { deriveRuntimePresentation } from "../../session-state";
 import { SettingSection } from "../SettingSection.js";
@@ -90,6 +91,7 @@ export function RuntimeSettings({ runtime, onShowToast }: RuntimeSettingsProps) 
           }
         />
       </SettingSection>
+      <ManagedResourceSettings onShowToast={onShowToast} />
       {isStorageReady && <ShellEnvironmentSettings onShowToast={onShowToast} />}
       {isStorageReady && <DataSettings onShowToast={onShowToast} />}
     </div>

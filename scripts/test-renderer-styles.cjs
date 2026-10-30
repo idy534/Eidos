@@ -94,10 +94,10 @@ app.whenReady().then(async () => {
 
     await show("selected");
     const sessionStyles = await read("#selected-session", ["backgroundColor", "boxShadow"]);
-    assert.equal(sessionStyles.backgroundColor, "rgb(255, 255, 255)", "Sidebar session uses elevated white surface");
-    assert.notEqual(sessionStyles.boxShadow, "none", "Sidebar session uses elevated shadow");
+    assert.equal(sessionStyles.backgroundColor, "rgba(255, 255, 255, 0.65)", "Sidebar session matches hover surface");
+    assert.equal(sessionStyles.boxShadow, "none", "Sidebar session has no shadow");
     await pointer("#selected-session");
-    assert.equal((await read("#selected-session", ["backgroundColor"])).backgroundColor, "rgb(255, 255, 255)", "session remains selected on hover");
+    assert.equal((await read("#selected-session", ["backgroundColor"])).backgroundColor, "rgba(255, 255, 255, 0.65)", "session remains selected on hover");
 
     const selected = ["git", "project", "tree", "model", "mode", "skill", "handoff", "clarification", "mcp"];
     const selectedBackground = (await read("#selected-git", ["backgroundColor"])).backgroundColor;
