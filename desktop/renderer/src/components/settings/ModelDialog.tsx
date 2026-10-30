@@ -68,11 +68,6 @@ export function ModelDialog({ draft, presets, busy, error, onChange, onCancel, o
   if (!draft || !presets) return null;
   return (
     <div className="modal-backdrop">
-      {error && (
-        <ToastContainer
-          toasts={[{ id: "model-dialog-error", message: error, type: "error", duration: 3500 }]}
-        />
-      )}
       <div ref={dialogRef} className={`modal-dialog model-dialog${draft.custom ? " model-dialog--custom" : ""}`} role="dialog" aria-modal="true" aria-labelledby="model-dialog-title" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header model-dialog-header">
           <div>
@@ -81,6 +76,11 @@ export function ModelDialog({ draft, presets, busy, error, onChange, onCancel, o
           </div>
         </div>
         <div className="modal-body model-dialog-fields">
+          {error && (
+            <ToastContainer
+              toasts={[{ id: `model-dialog-error-${error}`, message: error, type: "error", duration: 4000 }]}
+            />
+          )}
           <label>
             <span>提供商</span>
             <div className="model-select-control model-select-control--with-prefix model-provider-control">

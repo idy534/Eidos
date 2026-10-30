@@ -33,7 +33,7 @@ import { terminalRunPresentation } from "../session-state.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
 import { DropdownMenu } from "./DropdownMenu.js";
-import { CopyIcon, CheckmarkIcon, AutomationsIcon, CloseIcon } from "./MenuIcons.js";
+import { CopyIcon, CheckmarkIcon, AutomationsIcon, CloseIcon, ChevronDownIcon } from "./MenuIcons.js";
 import { ForkIcon } from "./ForkIcon.js";
 import { TurnResults } from "./TurnResults.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
@@ -260,6 +260,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
                     allowFeedback={allowFeedback}
                     allowRegenerate={allowRegenerate}
                     allowEditResend={allowEditResend}
+                    isSearchTarget={searchTarget?.itemId === segment.user?.id}
                   />
                 ))}
                 <RunNotice run={run} />
@@ -305,6 +306,7 @@ const RunSegment = memo(function RunSegment({
   allowFeedback = true,
   allowRegenerate = true,
   allowEditResend = true,
+  isSearchTarget = false,
 }: {
   segment: Segment;
   run: Run;
@@ -328,6 +330,7 @@ const RunSegment = memo(function RunSegment({
   allowFeedback?: boolean | undefined;
   allowRegenerate?: boolean | undefined;
   allowEditResend?: boolean | undefined;
+  isSearchTarget?: boolean | undefined;
 }) {
   // Hidden observations still determine which assistant messages are progress.
   const visibleProcess = segment.process.filter((entry) => {
@@ -351,6 +354,7 @@ const RunSegment = memo(function RunSegment({
           canEdit={isLast && canReviseRun && allowEditResend}
           revisionSubmitting={revisionSubmitting}
           onEditResend={onEditResend}
+          isSearchTarget={isSearchTarget}
         />
       )}
       {visibleProcess.length > 0 && (
@@ -548,23 +552,64 @@ function ShellCopyButton({ command }: { command: string }) {
   );
 }
 
+const USER_MESSAGE_MAX_COLLAPSED_HEIGHT = 300;
+const USER_MESSAGE_OVERFLOW_TOLERANCE = 30;
+
 function UserMessage({
   item,
   run,
   canEdit,
   revisionSubmitting,
   onEditResend,
+  isSearchTarget = false,
 }: {
   item: Item;
   run: Run;
   canEdit: boolean;
   revisionSubmitting: boolean;
   onEditResend: EditResendHandler;
+  isSearchTarget?: boolean | undefined;
 }) {
   const formattedTime = formatItemTime(item.completedAt ?? item.createdAt);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.content ?? "");
   const [draftReferences, setDraftReferences] = useState(item.references ?? []);
+  const [expanded, setExpanded] = useState(false);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isSearchTarget) {
+      setExpanded(true);
+    }
+  }, [isSearchTarget]);
+
+  useLayoutEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+
+    const checkOverflow = () => {
+      const hasOverflow = el.scrollHeight > USER_MESSAGE_MAX_COLLAPSED_HEIGHT + USER_MESSAGE_OVERFLOW_TOLERANCE;
+      setIsOverflowing(hasOverflow);
+    };
+
+    checkOverflow();
+
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(checkOverflow);
+      observer.observe(el);
+      return () => observer.disconnect();
+    }
+  }, [item.content, item.references]);
+
+  const handleToggleExpand = () => {
+    if (expanded) {
+      setExpanded(false);
+      contentRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } else {
+      setExpanded(true);
+    }
+  };
 
   useEffect(() => {
     if (!editing) { setDraft(item.content ?? ""); setDraftReferences(item.references ?? []); }
@@ -648,15 +693,38 @@ function UserMessage({
               </button>
             </div>
           </div>
-        ) : inlineReferences.length > 0 ? (
-          <InlineReferenceProse
-            content={item.content ?? ""}
-            references={inlineReferences}
-            variant="bubble"
-          />
-        ) : item.content ? (
-          <p className="eidos-chat-prose">{item.content}</p>
-        ) : null}
+        ) : (
+          <>
+            <div
+              ref={contentRef}
+              className={`user-message-collapsible ${isOverflowing && !expanded ? "is-collapsed" : ""}`}
+            >
+              {inlineReferences.length > 0 ? (
+                <InlineReferenceProse
+                  content={item.content ?? ""}
+                  references={inlineReferences}
+                  variant="bubble"
+                />
+              ) : item.content ? (
+                <p className="eidos-chat-prose">{item.content}</p>
+              ) : null}
+              {isOverflowing && !expanded && (
+                <div className="user-message-fade-mask" aria-hidden="true" />
+              )}
+            </div>
+            {isOverflowing && (
+              <button
+                type="button"
+                className="user-message-expand-btn"
+                aria-expanded={expanded}
+                onClick={handleToggleExpand}
+              >
+                <span>{expanded ? "收起" : "显示更多"}</span>
+                <ChevronDownIcon className={`user-message-expand-icon ${expanded ? "is-expanded" : ""}`} />
+              </button>
+            )}
+          </>
+        )}
       </div>
       {!editing && (
         <div className="feed-item-footer response-footer">

@@ -24,7 +24,7 @@ import { AgentSettings } from "./AgentSettings.js";
 import { PersonalizationSettings, discardPersonalizationDraft } from "./PersonalizationSettings.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { Button } from "../Button.js";
-import { ToastContainer, type ToastItem } from "../ToastContainer.js";
+import { ToastContainer, type ToastItem, type ToastType } from "../ToastContainer.js";
 
 interface SettingsPageProps {
   initialCategory?: SettingsCategory;
@@ -55,6 +55,7 @@ interface SettingsPageProps {
   onCreateMcp: (input: McpCreateInput) => Promise<void>;
   onUpdateMcp: (input: McpUpdateInput) => Promise<void>;
   onRemoveMcp: (serverId: string) => Promise<void>;
+  onShowToast?: ((message: string, type?: ToastType, duration?: number) => void) | undefined;
 }
 
 export function SettingsPage({
@@ -86,6 +87,7 @@ export function SettingsPage({
   onCreateMcp,
   onUpdateMcp,
   onRemoveMcp,
+  onShowToast,
 }: SettingsPageProps) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>(initialCategory);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -128,10 +130,14 @@ export function SettingsPage({
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }
 
-  const showToast = useCallback((message: string, type: "success" | "info" | "error" = "info") => {
+  const showToast = useCallback((message: string, type: ToastType = "info", duration?: number) => {
+    if (onShowToast) {
+      onShowToast(message, type, duration);
+      return;
+    }
     const id = `${Date.now()}-${Math.random()}`;
-    setToasts((prev) => [...prev, { id, type, message, duration: 3500 }]);
-  }, []);
+    setToasts((prev) => [...prev, { id, type, message, duration: duration ?? 3500 }]);
+  }, [onShowToast]);
 
   useEffect(() => {
     if (extensionError) {
@@ -225,7 +231,7 @@ export function SettingsPage({
           <section className="settings-content-col">
             {activeCategory === "personalization" && <PersonalizationSettings ready={storageReady} paused={pendingNavigation !== undefined} onShowToast={showToast} onDirtyChange={setPersonalizationDirty} onBusyChange={setPersonalizationBusy} />}
             {activeCategory === "web_search" && (storageReady ? <WebSearchSettings onShowToast={showToast}/> : <p role="alert">Runtime 尚未就绪。</p>)}
-            {activeCategory === "channels" && (storageReady ? <ChannelSettings modelList={modelList}/> : <p role="alert">Runtime 尚未就绪。</p>)}
+            {activeCategory === "channels" && (storageReady ? <ChannelSettings modelList={modelList} onShowToast={showToast} /> : <p role="alert">Runtime 尚未就绪。</p>)}
             {activeCategory === "memory" && storageReady && <MemorySettings onOpenSource={onOpenMemorySource} onShowToast={showToast} />}
             {activeCategory === "memory" && !storageReady && <p role="alert">Runtime 尚未就绪。</p>}
             {activeCategory === "model" && (
@@ -296,7 +302,7 @@ export function SettingsPage({
         </div>
       </main>
 
-      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+      {!onShowToast && <ToastContainer toasts={toasts} onDismiss={dismissToast} />}
       <ConfirmDialog open={pendingNavigation !== undefined} title="离开个性化设置？" description="你尚未保存的修改将被丢弃，已经自动保存的设置会保留。" confirmLabel="丢弃并离开" isDestructive busy={personalizationBusy}
         onCancel={() => setPendingNavigation(undefined)} onConfirm={() => {
           const target = pendingNavigation;

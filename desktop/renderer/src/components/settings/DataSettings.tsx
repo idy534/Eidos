@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Button } from "../Button.js";
+import { ToastContainer } from "../ToastContainer.js";
 import { SettingRow } from "../SettingRow.js";
 import { SettingSection } from "../SettingSection.js";
-import { ToastContainer } from "../ToastContainer.js";
 
 export function DataSettings({ onShowToast }: {
   onShowToast?: ((message: string, type: "success" | "info" | "error") => void) | undefined;
@@ -25,7 +25,7 @@ export function DataSettings({ onShowToast }: {
     <SettingSection title="本地数据">
       {error && !onShowToast && (
         <ToastContainer
-          toasts={[{ id: "backup-error", message: error, type: "error", duration: 3500 }]}
+          toasts={[{ id: `data-settings-error-${error}`, message: error, type: "error", duration: 4000 }]}
           onDismiss={() => setError("")}
         />
       )}

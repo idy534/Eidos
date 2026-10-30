@@ -570,7 +570,12 @@ function WorkspaceExplorerContent({
         )}
         {error && (
           <ToastContainer
-            toasts={[{ id: "workspace-explorer-error", message: error, type: "error", duration: 3500 }]}
+            toasts={[{
+              id: `workspace-explorer-error-${error}`,
+              message: error,
+              type: "error",
+              duration: 4000,
+            }]}
             onDismiss={() => setError(undefined)}
           />
         )}

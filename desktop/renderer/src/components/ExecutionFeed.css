@@ -87,6 +87,55 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.user-message-collapsible {
+  position: relative;
+}
+.user-message-collapsible.is-collapsed {
+  max-height: 300px;
+  overflow: hidden;
+}
+.user-message-fade-mask {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3.5rem;
+  background: linear-gradient(to bottom, transparent 0%, var(--surface-muted) 100%);
+  pointer-events: none;
+}
+.user-message-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+  margin-left: -0.5rem;
+  padding: 0.25rem 0.5rem;
+  font-size: var(--font-size-caption, 12px);
+  color: var(--text-secondary, #48484a);
+  background: var(--surface-muted);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+  line-height: 1.2;
+}
+.user-message-expand-btn:hover {
+  background: var(--surface-hover, #f3f3f6);
+  color: var(--text, #1d1d1f);
+}
+.user-message-expand-btn:active {
+  background: var(--surface-selected, #e5e8ec);
+}
+.user-message-expand-icon {
+  width: 12px;
+  height: 12px;
+  stroke: currentColor;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.user-message-expand-icon.is-expanded {
+  transform: rotate(180deg);
+}
 .feed-item--assistant {
   width: min(100%, var(--session-content-width));
   max-width: var(--session-content-width);

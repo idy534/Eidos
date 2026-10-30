@@ -28,6 +28,7 @@ export interface GitReviewActions {
   selectScope(scope: GitDiffScope): void;
   refresh(): void;
   handleNotification(notification: RuntimeNotification): void;
+  clearError(): void;
 }
 
 interface GitReviewControllerOptions {
@@ -298,5 +299,6 @@ export function useGitReviewController({
     selectScope,
     refresh,
     handleNotification,
+    clearError: () => setError(undefined),
   }] as const;
 }

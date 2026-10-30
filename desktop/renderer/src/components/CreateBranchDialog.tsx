@@ -82,7 +82,7 @@ export function CreateBranchDialog({
     <div className="modal-backdrop" onClick={busy ? undefined : onCancel} aria-hidden={!open}>
       {error && (
         <ToastContainer
-          toasts={[{ id: "create-branch-error", message: error, type: "error", duration: 3500 }]}
+          toasts={[{ id: `create-branch-error-${error}`, message: error, type: "error", duration: 4000 }]}
         />
       )}
       <div

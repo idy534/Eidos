@@ -694,7 +694,12 @@ function GitChangesContent(props: GitChangesPanelProps) {
       </header>
       {(localError || summaryError || error) && (
         <ToastContainer
-          toasts={[{ id: "git-review-error", message: (localError ?? summaryError ?? error)!, type: "error", duration: 3500 }]}
+          toasts={[{
+            id: `git-review-error-${localError ?? summaryError ?? error}`,
+            message: (localError ?? summaryError ?? error)!,
+            type: "error",
+            duration: 4000,
+          }]}
           onDismiss={() => {
             setLocalError(undefined);
             setSummaryError(undefined);

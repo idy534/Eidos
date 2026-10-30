@@ -277,7 +277,7 @@ export function WebSearchSettings({
   return (
     <div className="web-search-settings">
       {/* 独立环境下的全局悬浮条兜底（3.5 秒自动关闭） */}
-      {error && (
+      {error && !onShowToast && (
         <ToastContainer
           toasts={[{ id: "web-search-error", message: error, type: "error", duration: 3500 }]}
           onDismiss={() => setError("")}

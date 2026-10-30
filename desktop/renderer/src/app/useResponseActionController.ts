@@ -26,6 +26,7 @@ export interface ResponseActionControllerActions {
   ) => Promise<void>;
   projectRevision: (sessionId: string, revision: RunRevisionResult) => void;
   clear: () => void;
+  clearError: () => void;
 }
 
 export function useResponseActionController(
@@ -144,6 +145,6 @@ export function useResponseActionController(
       loadingSessionId,
       error: currentSessionId ? errors[currentSessionId] : undefined,
     },
-    { load, setFeedback, projectRevision, clear },
+    { load, setFeedback, projectRevision, clear, clearError: () => setErrors({}) },
   ];
 }

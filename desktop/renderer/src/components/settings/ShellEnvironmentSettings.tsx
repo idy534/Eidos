@@ -87,7 +87,7 @@ export function ShellEnvironmentSettings({ onShowToast }: {
     <SettingSection title="沙盒环境设置" className="shell-environment-settings">
       {error && !onShowToast && (
         <ToastContainer
-          toasts={[{ id: "shell-env-error", message: error, type: "error", duration: 3500 }]}
+          toasts={[{ id: `shell-env-error-${error}`, message: error, type: "error", duration: 4000 }]}
           onDismiss={() => setError("")}
         />
       )}

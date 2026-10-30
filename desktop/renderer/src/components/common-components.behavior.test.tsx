@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -225,6 +225,19 @@ describe("Global common components", () => {
       const closeBtn = screen.getByRole("button", { name: "关闭提示" });
       fireEvent.click(closeBtn);
       expect(onDismiss).toHaveBeenCalledWith("t1");
+      expect(screen.queryByText("提示测试")).not.toBeInTheDocument();
+    });
+
+    it("immediately hides toast when close button is clicked even without onDismiss callback", () => {
+      render(
+        <ToastContainer
+          toasts={[{ id: "t2", message: "无回调测试", type: "error" }]}
+        />,
+      );
+
+      const closeBtn = screen.getByRole("button", { name: "关闭提示" });
+      fireEvent.click(closeBtn);
+      expect(screen.queryByText("无回调测试")).not.toBeInTheDocument();
     });
 
     it("automatically dismisses toast after configured duration", () => {
@@ -239,8 +252,12 @@ describe("Global common components", () => {
         );
 
         expect(onDismiss).not.toHaveBeenCalled();
-        vi.advanceTimersByTime(2000);
+        expect(screen.getByText("自动消失")).toBeInTheDocument();
+        act(() => {
+          vi.advanceTimersByTime(2000);
+        });
         expect(onDismiss).toHaveBeenCalledWith("auto1");
+        expect(screen.queryByText("自动消失")).not.toBeInTheDocument();
       } finally {
         vi.useRealTimers();
       }

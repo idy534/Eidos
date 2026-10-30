@@ -247,13 +247,13 @@ export function McpConnectionPanel({
 
       {error && (
         <ToastContainer
-          toasts={[{ id: "mcp-connect-error", message: error, type: "error", duration: 3500 }]}
+          toasts={[{ id: `mcp-conn-error-${error}`, message: error, type: "error", duration: 4000 }]}
           onDismiss={() => setError(undefined)}
         />
       )}
       {state?.errorCode && (
         <ToastContainer
-          toasts={[{ id: "mcp-connect-state-error", message: errors[state.errorCode] || "连接未完成，请重新连接。", type: "error", duration: 3500 }]}
+          toasts={[{ id: `mcp-code-error-${state.errorCode}`, message: errors[state.errorCode] || "连接未完成，请重新连接。", type: "error", duration: 4000 }]}
         />
       )}
       {!enabled && <p className="mcp-connection-notice">请先启用插件，再连接账号。</p>}

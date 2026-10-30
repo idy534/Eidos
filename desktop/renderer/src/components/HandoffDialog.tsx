@@ -109,7 +109,7 @@ export function HandoffDialog({
     <div className="modal-backdrop" onClick={busy ? undefined : onCancel} aria-hidden={!open}>
       {error && (
         <ToastContainer
-          toasts={[{ id: "handoff-error", message: error, type: "error", duration: 3500 }]}
+          toasts={[{ id: `handoff-dialog-error-${error}`, message: error, type: "error", duration: 4000 }]}
         />
       )}
       <div

@@ -90,7 +90,7 @@ export function ForkConversationDialog({
     >
       {error && (
         <ToastContainer
-          toasts={[{ id: "fork-conversation-error", message: error, type: "error", duration: 3500 }]}
+          toasts={[{ id: `fork-dialog-error-${error}`, message: error, type: "error", duration: 4000 }]}
         />
       )}
       <div

@@ -95,7 +95,12 @@ export function ApprovalComposer({
       </div>
       {localError && (
         <ToastContainer
-          toasts={[{ id: `approval-error-${approval.id}`, message: localError, type: "error", duration: 3500 }]}
+          toasts={[{
+            id: `approval-composer-error-${localError}`,
+            message: localError,
+            type: "error",
+            duration: 4000,
+          }]}
         />
       )}
       {approval.reviewFallback && <p className="approval-fallback-note" role="status">{approval.reviewFallback} 可在此手动决定。</p>}
