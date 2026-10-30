@@ -8,7 +8,7 @@ Eidos 支持钉钉、飞书和企业微信文字消息。用户可以在“设�
 
 本地定时任务已接入 Runtime、automation 延迟工具与侧栏管理页面。计划默认使用替我审批，支持已有 Session 或每次新 Session。时间限制、持久化、来源、权限和验证边界见 [当前本地定时任务](features/automations.md)。
 
-> 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和未知结果记录。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。
+> 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。Eidos 私有数据读取与修改、Runtime、系统 Skill 和受管资源修改继续要求高危人工确认。普通 Git、项目 metadata 与沙盒外执行按实际操作走普通审批，auto_review 可以判断。沙盒外进程使用宿主权限，系统不能继续承诺 Seatbelt 路径保护。full_access 直接执行，不创建逐项 Approval。所有模式仍保留身份、版本、取消、Durable Intent、结果核验和未知结果记录。详细范围见 [审批策略](features/approval-policy.md)。
 
 本文描述当前源码中的能力。每项能力都对应生产代码；尚未验证的修改会单独标注。能力存在但没有进入默认 Run 的部分会明确标注。
 
@@ -285,7 +285,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `run_shell` 不从 `models.json` 注入 API Key，也不强制禁用用户 Git 配置。`HardenedGitRunner` 仍使用独立的 Git 执行路径。
 - 数据目录内的当前 Workspace 支持 Shell 创建子目录和读写普通文件。Seatbelt 只为其祖先补充 metadata / 存在性检查；其他会话、数据文件和父目录内容继续受保护。
 - 默认 Seatbelt 允许全盘 read、普通 executable 和 dylib mapping。Workspace、snapshot `TMPDIR` 和 canonical `/tmp` 可写。真实 `HOME` 的其他位置、Workspace 的 `.git`、`.agents`、`.eidos` 和 linked metadata 只读。Eidos 数据与凭据默认受路径保护，高危人工批准可开放具体范围。data 内 projectless 或 Worktree workspace 可读写。active Skill root 默认可读和执行；普通 Skill 的具体写入范围可经审批开放。系统 Skill 默认拒写，具体变更需要高危人工批准；full_access 不保留这些路径限制。Workspace `.env` 和其他敏感命名文件可读；命令和审批信息展示使用 best-effort 凭据脱敏，Shell 聚合 stdout/stderr 保留原始内容。默认 network denied。
-- `run_shell` 的默认 Workspace Seatbelt attempt 不需要 Approval。模型可以用高层 `networkAccess=request` 表达命令的联网需求，也可以用 `gitWriteAccess=request` 请求当前已验证 repository 的 Git metadata 写入。两个 intent 可以组合，所以 `git push` 可以用一次审批同时获得 Git metadata 写入和 network。Runtime 使用现有 GitBackend 重新解析并核验 `git_dir` 与 `git_common_dir`，模型不能提交路径。获批后的命令仍在 macOS Seatbelt 中运行；`.agents`、`.eidos`、Runtime、系统 Skill 和其他 repository 的 Git metadata 继续拒写。旧的 `sandboxPermissions` 和 `additionalPermissions` 输入继续兼容。其他 additional write 需要 Approval。显式裸 Shell unsandboxed 请求需要高危人工确认；用户可以允许本次命令使用系统直接权限。受控文件 helper 的无沙盒写入仍可单独审批，但它必须逐目标检查写入权限。
+- `run_shell` 的默认 Workspace Seatbelt attempt 不需要 Approval。模型可以用高层 `networkAccess=request` 表达命令的联网需求，也可以用 `gitWriteAccess=request` 请求当前已验证 repository 的 Git metadata 写入。两个 intent 可以组合，所以 `git push` 可以用一次审批同时获得 Git metadata 写入和 network。Runtime 使用现有 GitBackend 重新解析并核验 `git_dir` 与 `git_common_dir`，模型不能提交路径。获批后的命令仍在 macOS Seatbelt 中运行；尚未授权的项目 metadata、Runtime 和系统 Skill 继续拒写。项目 metadata 的独立明确扩权走普通审批。旧的 `sandboxPermissions` 和 `additionalPermissions` 输入继续兼容。其他 additional write 需要 Approval。显式裸 Shell unsandboxed 请求走当前模式的审批；auto_review 可以按实际影响批准普通操作，系统不会仅因关闭沙盒就强制人工确认。受控文件 helper 的无沙盒写入仍可单独审批，但它必须逐目标检查写入权限。
 - Runtime permission 投影会分别说明默认 Shell 网络状态和网络是否可通过 Approval 请求。创建项目、安装依赖和下载源码等任务不要求用户先明确说“联网”。默认 network denied 不再被投影成网络能力不存在。
 - Shell launch boundary 验证 Workspace identity 和 cwd。`run_shell.cwd` 接受 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径，并在执行前归一化。manual 与 auto_review 拒绝 Workspace 外的 absolute cwd；full_access 允许该路径，但仍核验目录身份。post-execution observation 记录 Workspace diff、退出状态和 reconciliation 需要性。
 - Tool Result 明确返回 `reconciliationRequired = false` 时，普通非零退出不会仅因为 `code = shell_exit_nonzero` 建立 barrier。此时 Item 状态是 `failed`，ToolCall 状态是 `completed`。结果仍会保留退出码、终止原因和可能副作用证据。系统仍如实记录真正未知的执行结果。

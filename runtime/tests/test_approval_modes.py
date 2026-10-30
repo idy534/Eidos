@@ -20,7 +20,7 @@ from eidos_runtime.model.client import (
 )
 from eidos_runtime.model.config import default_profile_snapshot
 from eidos_runtime.protocol.methods import RunStartRequestDto
-from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalDecision
+from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalDecision, ApprovalTransportError
 from eidos_runtime.runtime.approval_review import (
     MAX_REVIEW_INPUT_BYTES,
     review_approval,
@@ -406,5 +406,64 @@ def test_high_risk_request_cannot_be_resolved_by_the_auto_reviewer(tmp_path: Pat
             store.resolve_approval_committed(str(item['id']), 'approve', None,
                 review=ApprovalReview(source='model', decision='approve', reason_code='allowed', rationale='Model decision'))
         assert store.connection.execute('SELECT status FROM approvals').fetchone()[0] == 'pending'
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('changed', [False, True])
+def test_relaxed_policy_preserves_pending_human_confirmation(tmp_path, changed):
+    class Crash(BaseException):
+        pass
+
+    store, run, item = _approval_fixture(tmp_path, 'auto_review')
+    reviewer = _reviewer()
+    requests = []
+    coordinator = ApprovalCoordinator(
+        store, lambda *_: (_ for _ in ()).throw(Crash()), RuntimeEvents(lambda _: None),
+        RuntimePhaseTracker(), lambda _: None, lambda: None, lambda *_: None, lambda *_: None,
+        requeue=False, reviewer=reviewer,
+    )
+    description = {'kind': 'command_execution', 'command': 'printf ready',
+                   'requiresHumanConfirmation': True, 'riskWarning': 'Unsandboxed execution'}
+    try:
+        with pytest.raises(Crash):
+            coordinator.request(run['id'], item, description, threading.Event(), transition_reason='shell_approval')
+        pending = store.typed_runtime_repository().read_pending_approval(run['id'])
+        coordinator.transport._request = lambda request, _cancel: requests.append(request) or ApprovalDecision('approve')
+        current = {key: value for key, value in description.items() if key != 'requiresHumanConfirmation'}
+        if changed:
+            current['command'] = 'printf changed'
+            with pytest.raises(ApprovalTransportError):
+                coordinator.request(run['id'], item, current, threading.Event(), transition_reason='shell_approval')
+            assert requests == []
+        else:
+            result = coordinator.request(run['id'], item, current, threading.Event(), transition_reason='shell_approval')
+            assert result.decision == 'approve'
+            assert requests[0]['requiresHumanConfirmation'] is True
+            assert coordinator.last_review.source == 'manual'
+            assert store.connection.execute('SELECT id FROM approvals').fetchone()[0] == pending.id
+        assert reviewer.calls == []
+    finally:
+        store.close()
+
+
+def test_changed_script_evidence_reassesses_a_previously_rejected_command(tmp_path):
+    store, run, item = _approval_fixture(tmp_path, 'auto_review')
+    reviewer = _reviewer(outcome='deny', risk='high')
+    coordinator = ApprovalCoordinator(
+        store, None, RuntimeEvents(lambda _: None), RuntimePhaseTracker(), lambda _: None,
+        lambda: None, lambda *_: None, lambda *_: None, requeue=False, reviewer=reviewer,
+    )
+    description = {'kind': 'command_execution', 'command': 'sh render.sh'}
+    try:
+        for index, content in enumerate(['old script', 'new script']):
+            if index:
+                item = store.create_tool_item(run['id'], 2, 0, 'changed-script', 'write_file', '{}')
+            result = coordinator.request(run['id'], item, description, threading.Event(),
+                transition_reason='shell_approval', request={**description, 'reviewScriptEvidence': [
+                    {'path': 'render.sh', 'content': content, 'truncated': False, 'error': None},
+                ]})
+            assert result.decision == 'reject'
+        assert len(reviewer.calls) == 2
     finally:
         store.close()

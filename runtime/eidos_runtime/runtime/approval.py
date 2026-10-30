@@ -127,6 +127,16 @@ class ApprovalCoordinator:
         if mode == "full_access":
             self.check_cancel(run_id, cancel)
             return ApprovalOutcome(decision="approve", item=item)
+        pending = self.store.typed_runtime_repository().read_pending_approval(run_id)
+        pending_request = json.loads(pending.request_json) if pending is not None else None
+        if pending is not None and pending.item_id == str(item["id"]) and pending_request.get("requiresHumanConfirmation") is True:
+            # A relaxed policy must not silently replace an existing human
+            # confirmation. The remaining fingerprint still binds the action.
+            description = {**description, "requiresHumanConfirmation": True,
+                           "riskWarning": pending_request["riskWarning"]}
+            if request is not None:
+                request = {**request, "requiresHumanConfirmation": True,
+                           "riskWarning": pending_request["riskWarning"]}
         human_confirmation = description.get("requiresHumanConfirmation") is True
         user_evidence = self.store.approval_user_evidence(run_id)
         fingerprint = hashlib.sha256(json.dumps({
@@ -140,6 +150,9 @@ class ApprovalCoordinator:
             "diff": diff,
             "baseSha256": base_sha256,
             "userEvidence": user_evidence,
+            **({"reviewScriptEvidence": request["reviewScriptEvidence"]}
+               if request is not None and request.get("reviewScriptEvidence")
+               and (pending_request is None or "reviewScriptEvidence" in pending_request) else {}),
         }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         request = {
             **(request or description),
@@ -154,7 +167,6 @@ class ApprovalCoordinator:
                 feedback=rejected.feedback or ("Automatic approval review rejected this request previously. Do not repeat it or bypass the refusal; choose a materially safer action." if mode == "auto_review" else APPROVAL_REJECTION_GUIDANCE),
                 item=item,
             )
-        pending = self.store.typed_runtime_repository().read_pending_approval(run_id)
         if pending is None and self.hook_policy is not None:
             hook = self.hook_policy(item, cancel, fingerprint)
             if hook.permission_decision == "deny" or hook.deny:

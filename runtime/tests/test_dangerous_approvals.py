@@ -16,6 +16,7 @@ from eidos_runtime.runtime.run_resources import RunResources
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile, BasePermissionProfile, FileSystemAccessMode,
     FileSystemPermissionEntry, materialize_effective_profile,
+    base_permission_profile_for_workspace,
 )
 from eidos_runtime.sandbox.seatbelt_policy import SeatbeltPolicyCompiler
 from eidos_runtime.sandbox.seatbelt import SeatbeltProfile, is_seatbelt_usable
@@ -219,3 +220,36 @@ def test_cancel_during_human_confirmation_does_not_commit(tmp_path, monkeypatch)
         assert store.read_run(run['id'])['status'] == 'canceled'
     finally:
         store.close()
+
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='Native macOS Seatbelt required')
+def test_native_ordinary_git_grant_keeps_eidos_data_denied(tmp_path):
+    assert is_seatbelt_usable(), 'Native Seatbelt could not start'
+    workspace, data, home, scratch = (tmp_path / name for name in ('workspace', 'data', 'home', 'scratch'))
+    for root in (workspace, data, home, scratch):
+        root.mkdir()
+    git = workspace / '.git'
+    git.mkdir()
+    state = data / 'state.sqlite'
+    state.write_text('private')
+    base = base_permission_profile_for_workspace(workspace, data)
+    grant = AdditionalPermissionProfile(fileSystem=(FileSystemPermissionEntry(
+        path=str(git), access=FileSystemAccessMode.WRITE,
+    ),))
+    from eidos_runtime.runtime.permission_policy import PermissionPolicyEvaluator
+    assert not PermissionPolicyEvaluator().evaluate(base, None, grant).requires_human_confirmation
+
+    def execute(effective, command, path):
+        profile = SeatbeltProfile.create(workspace_root=workspace, sandbox_home=home,
+                                        sandbox_tmp=scratch, effective_permissions=effective)
+        return subprocess.run(profile.command(['/bin/sh', '-c', command, 'sh', str(path)]),
+                              capture_output=True, text=True, timeout=10)
+
+    target = git / 'index.lock'
+    assert execute(materialize_effective_profile(base), 'printf ready > "$1"', target).returncode != 0
+    effective = materialize_effective_profile(base, grant, allow_protected=True)
+    assert execute(effective, 'printf ready > "$1"', target).returncode == 0
+    assert target.read_text() == 'ready'
+    assert execute(effective, 'cat "$1"', state).returncode != 0
+    assert execute(effective, 'printf broken > "$1"', state).returncode != 0
+    assert state.read_text() == 'private'

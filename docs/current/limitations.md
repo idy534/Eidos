@@ -152,7 +152,7 @@
 
 - 内部 `LoopLifecycle` 仍是非权威诊断观察点。用户 Hook 已通过独立服务接入五个常用事件，并提供内容版本信任与持久化。完整 Codex 插件兼容、其他生命周期事件、async/MCP/prompt/agent 处理器和 transcript 导出尚未实现。详细边界见 [docs/current/features/hooks.md](features/hooks.md)。
 
-> 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和未知结果记录。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。
+> 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。Eidos 私有数据读取与修改、Runtime、系统 Skill 和受管资源修改继续要求高危人工确认。普通 Git、项目 metadata 与沙盒外执行按实际操作走普通审批，auto_review 可以判断。沙盒外进程使用宿主权限，系统不能继续承诺 Seatbelt 路径保护。full_access 直接执行，不创建逐项 Approval。所有模式仍保留身份、版本、取消、Durable Intent、结果核验和未知结果记录。详细范围见 [审批策略](features/approval-policy.md)。
 
 - `session/read` 不提供 Step Resolution Review 内容，兼容字段 `stepResolutions` 固定为空数组。Desktop 当前不展示这些信息，Runtime 也未新增按需详情 RPC。完整执行快照仍持久化并由执行读取入口校验；打开 Session 不承担这些 Blob 的完整性检查。本项代码修订尚未验证，不能据此宣称 UI 打开耗时已经达标。
 
@@ -207,7 +207,7 @@
 ### Workspace 与工具
 
 - 内置只读文件工具可以处理当前 Workspace 和 active Skill root 内受支持的普通 UTF-8 文件。写入工具支持普通 Workspace 写入和经审批的外部普通文件写入；普通 Skill 需要明确写入授权，`skills/.system` 默认拒写，用户可通过高危人工审批批准具体变更；full_access 沿用已确认的模式例外。已有文件使用受控原地写入，新文件使用排他提交；工具不处理 hardlink、symlink、特殊文件、特殊 mode 或文件 flags。
-- 普通 Workspace 读取、列目录和文本搜索不按敏感文件名或可识别敏感内容拒绝。`.git`、`.agents` 和 `.eidos` 默认发现时隐藏，但显式只读路径仍可列举、搜索和读取；这三个目录默认受到写入保护。获批的 `run_shell.gitWriteAccess` 可以写当前 repository 的 Git metadata；普通文件工具或其他受保护路径变更需要高危人工确认。Workspace 外的 Eidos data 和配置的保密路径默认拒绝，用户可以批准明确范围。
+- 普通 Workspace 读取、列目录和文本搜索不按敏感文件名或可识别敏感内容拒绝。`.git`、`.agents` 和 `.eidos` 默认发现时隐藏，但显式只读路径仍可列举、搜索和读取；这三个目录默认受到写入保护。获批的 `run_shell.gitWriteAccess` 可以写当前 repository 的 Git metadata；普通文件工具可以通过普通审批开放项目 metadata 的明确写入范围；Eidos 核心保护路径继续要求高危人工确认。Workspace 外的 Eidos data 和配置的保密路径默认拒绝，用户可以批准明确范围。
 - `apply_patch` 统一使用 Codex Patch：支持 Custom 和 Grammar 的相应 profile 直接提交原文；Function profile 提交 `{ "patch": "..." }`。旧的 `{ "changes": [...] }` 不再接受。两条路径的 Patch 原文预算统一为 8 MiB，Function 外层 JSON 另留转义空间。`apply_patch` 不再按内容模式或敏感文件名拒绝 Patch。单文件读取、准备和提交校验上限统一为 16 MiB；一次 Patch 的准备内容预算为 64 MiB，Diff 和结果各有 64 MiB 上限。预算约束 Runtime 资源，工具说明不规定文件拆分、补丁大小偏好或分批时机。JSON 类型、Patch 语法、当前文件匹配和最终写入验证是不同阶段；单个阶段通过不代表编辑成功。离线回归验证契约和安全行为，不能代表真实 Provider/模型的成功率；模型成功率需要另行使用相同任务集测量。
 - Custom Tool 的 input delta 在 Responses adapter 内部重组。Desktop 在完整参数通过解析并完成 Prepare 后显示持久补丁更新；它不展示尚未校验的逐 token 补丁。Prepare 完成不代表文件提交成功。
 - Add 内容会统一规范化为 LF，并按 Codex 行语义补尾部 LF。Add File 可以没有内容行；显式的 `+` 表示一条空内容行。因此空字符串、单个换行和两个换行会保持不同的解析结果。Parser 接受 CRLF 和外层空白，但不会猜测缺失的 envelope、marker 或行前缀。
@@ -360,7 +360,7 @@
 
 - 普通 Skill 的授权不能覆盖整个数据目录或包含 `.system` 的 Skill 容器。新文件的最近已存在父目录如果包含系统 Skill，工具会拒绝该宽泛授权；新建 Skill 可以使用已有的 `skill_create` 审批流程。
 - `skill_create` 可以提交超过 64 KiB 的完整文本资源，但仍保留现有存储资源边界：单文件 4 MiB、完整 Skill 8 MiB、最多 512 个文件（包含生成的 `SKILL.md`）。工具暂不接受二进制文件内容，也不提供分块续写或覆盖已有 Skill 的接口。名称、描述、相对路径、重复路径、系统 Skill 保护和审批规则继续生效。工具容量放宽不能修复模型生成的无效或未完成 JSON。新建 Skill 仍在后续 Run 的目录快照中生效；当前 Run 不会静默刷新目录。普通文件读取工具的容量和模型预览预算没有随本次修改扩大。
-- 系统 Skill 在 manual 与 auto_review 中默认受到写入保护。受保护路径变更和裸 Shell 无沙盒执行需要高危人工批准；Runtime 在批准后重新物化权限。受控文件 helper 仍逐目标核验，full_access 沿用用户确认的模式例外。
+- 系统 Skill 在 manual 与 auto_review 中默认受到写入保护。Eidos 核心保护路径变更需要高危人工批准；普通沙盒外操作由当前审批模式判断。Runtime 在批准后重新物化权限，沙盒外进程不保留 Seatbelt 的强制路径保护。受控文件 helper 仍逐目标核验，full_access 沿用用户确认的模式例外。
 
 ## 本轮产物实现的边界
 

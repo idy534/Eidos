@@ -128,6 +128,7 @@ class FileWriteApprovalTests(unittest.TestCase):
         request = self.dependencies.execute_side_effect.call_args.kwargs["prepared"]
         self.assertEqual(request.approval_kind, "escalated")
         self.assertEqual(request.approval_request["sandboxPermissions"], "require_escalated")
+        self.assertNotIn("requiresHumanConfirmation", request.approval_request)
 
     def test_protected_path_can_prepare_a_candidate_for_human_approval(self) -> None:
         self.dependencies.base_permissions = BasePermissionProfile.for_workspace(

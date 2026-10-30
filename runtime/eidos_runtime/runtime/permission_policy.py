@@ -48,7 +48,9 @@ class PermissionPolicyEvaluator:
         if base.full_access:
             return PermissionDecision(disposition=PermissionDisposition.ALLOW, reason_code="already_granted", requested_permissions=requested)
         disposition = PermissionDisposition.ASK if unsandboxed else PermissionDisposition.ALLOW
-        dangerous = unsandboxed
+        # Execution outside Seatbelt still needs approval, but its actual
+        # effects are reviewed instead of treating the execution mode as risk.
+        dangerous = False
         if requested is not None:
             existing = (*base.entries, *(granted.file_system if granted else ()))
             for entry in requested.file_system:
@@ -57,15 +59,7 @@ class PermissionPolicyEvaluator:
                     base.protected_write_paths
                     if entry.access is FileSystemAccessMode.WRITE else ()
                 ))
-                protected_request = (
-                    entry.access is FileSystemAccessMode.WRITE
-                    and any(name in PurePath(entry.path).parts for name in (".git", ".agents", ".eidos"))
-                    and not any(
-                        PurePath(entry.path) == PurePath(root)
-                        or PurePath(entry.path).is_relative_to(root)
-                        for root in base.approval_write_roots
-                    )
-                ) or any(
+                protected_request = any(
                     (_contains(block, entry.path) or _contains(entry, block.path)) and not (
                         block in base.permanent_denies
                         and block not in base.hard_confidentiality_denies

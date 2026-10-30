@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
+import shlex
 from typing import Callable
 
 from eidos_runtime.db.storage import WorkspaceIdentity
@@ -23,7 +24,63 @@ from eidos_runtime.sandbox.permissions import (
     merge_permissions,
 )
 from eidos_runtime.tools.contracts import RunShellInput
-from eidos_runtime.workspace.reader import WorkspacePathError, capture_directory_identity
+from eidos_runtime.workspace.reader import (
+    WorkspacePathError, WorkspaceReader, capture_directory_identity,
+)
+
+
+@dataclass(frozen=True)
+class ShellReviewScript:
+    path: str
+    content: str | None = None
+    truncated: bool = False
+    error: str | None = None
+    version: str | None = None
+
+
+def collect_shell_review_scripts(
+    command: str, cwd: Path, roots: tuple[WorkspaceIdentity, ...],
+) -> tuple[ShellReviewScript, ...]:
+    """Preview at most three mentioned local scripts; never interpret Shell syntax.
+
+    shlex only supplies candidate paths. Existing WorkspaceReader owns bounded,
+    fd-relative reads and identity checks. These previews grant no permissions.
+    """
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return ()
+    scripts: list[ShellReviewScript] = []
+    seen: set[Path] = set()
+    for token in tokens:
+        path = Path(token)
+        if path.suffix.lower() not in {".py", ".sh", ".zsh", ".bash", ".js", ".cjs", ".mjs", ".ts", ".rb", ".pl"}:
+            continue
+        path = path if path.is_absolute() else cwd / path
+        if path in seen:
+            continue
+        seen.add(path)
+        root = next((root for root in roots if path.is_relative_to(root.path)), None)
+        if root is None:
+            scripts.append(ShellReviewScript(path=str(path), error="outside_review_roots"))
+        else:
+            try:
+                with WorkspaceReader(root) as reader:
+                    preview = reader.read_preview(str(path.relative_to(root.path)), limit=8 * 1024)
+                scripts.append(ShellReviewScript(
+                    path=str(path), content=preview.content, truncated=preview.truncated,
+                    version=preview.version,
+                    error=preview.reason if preview.content is None else None,
+                ))
+            except (OSError, WorkspacePathError) as error:
+                scripts.append(ShellReviewScript(
+                    path=str(path), error=getattr(error, "code", "script_unavailable"),
+                ))
+        if len(scripts) == 3:
+            break
+    return tuple(scripts)
 
 
 @dataclass(frozen=True)

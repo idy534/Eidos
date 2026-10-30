@@ -361,7 +361,7 @@ fi
 
 测试者还应使用已存在的 Eidos data 路径执行 `cat "<EIDOS_DATA_DIR>/models.json" >/dev/null`，并确认读取被拒绝。测试者应在可丢弃的 Git Workspace 中尝试写入 `.git/config`，或在可丢弃的 Non-Git Workspace 中尝试创建 `workspace/.git`，并确认 Git metadata 写入被拒绝。测试者不应修改真实项目的 Git metadata。
 
-网络默认应被拒绝。测试者可以在 Agent Shell 外启动已知的 localhost listener，再在默认 profile 中使用可用的本地客户端连接，并确认连接失败。测试者随后应让 Agent 使用 `networkAccess=request` 和非空 justification 执行同一连接。Desktop 应在进程启动前展示 network-enabled Approval。用户批准后，同一命令应在 expanded macOS Seatbelt profile 中成功，而不是转成 unsandboxed。测试者还应确认用户拒绝时没有 Tool attempt 或进程副作用。旧的 additional network 参数仍可用于兼容性验收。additional write 和 unsandboxed 也必须先经过对应 Approval。Unsandboxed 需要高危人工确认，窗口说明本次命令及其子进程会失去原有路径和网络保护。明确的 network denial 不得触发 unsandboxed retry。
+网络默认应被拒绝。测试者可以在 Agent Shell 外启动已知的 localhost listener，再在默认 profile 中使用可用的本地客户端连接，并确认连接失败。测试者随后应让 Agent 使用 `networkAccess=request` 和非空 justification 执行同一连接。Desktop 应在进程启动前展示 network-enabled Approval。用户批准后，同一命令应在 expanded macOS Seatbelt profile 中成功，而不是转成 unsandboxed。测试者还应确认用户拒绝时没有 Tool attempt 或进程副作用。旧的 additional network 参数仍可用于兼容性验收。additional write 和 unsandboxed 也必须先经过对应 Approval。Unsandboxed 不再仅因执行模式触发高危人工确认。manual 继续由用户批准，auto_review 按实际操作审查。审查证据和人工窗口说明本次命令及其子进程会失去原有路径和网络保护。测试者还需要验证普通 Git 与项目 metadata 扩权可自动批准、Eidos 数据与 Runtime 等核心保护仍要求人工确认，以及审查期间脚本变化时不会启动进程。详细规则见 [审批策略](../current/features/approval-policy.md)。明确的 network denial 不得触发 unsandboxed retry。
 
 命令结束后，Runtime 会记录 Workspace manifest observation、diff、退出状态和 reconciliation 状态。Workspace-wide observation 不要求在 Shell 启动前完整扫描 Workspace。`unknown` observation 不等于 Runtime 已经证明了不确定副作用。Runtime 明确报告的 execution uncertainty 仍必须进入 reconciliation。
 

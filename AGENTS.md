@@ -204,7 +204,7 @@ RunSupervisor、ResourceRegistry、Session FIFO 和 Shutdown Quiescence 语义�
 - 并行结果保持模型声明顺序
 异步、协议、持久化和 UI 变化围绕同一用户目标时可以在同一 PR 中完成，分别验证取消、恢复、协议兼容和交互行为；不因跨层数量增加额外审批或拆 PR 门禁。
 ## 本期明确的权限模式例外
-用户明确要求增加 Codex 风格的完全访问模式。只有用户通过 Desktop 确认并创建的 `full_access` Run 可以关闭 Seatbelt，使用当前 macOS 用户的文件和网络权限，并跳过逐操作审批。该模式不能继续承诺 Eidos 数据、Runtime、系统 Skill 和 Git metadata 的永久保护。在 `manual` 与 `auto_review` 中，原有路径保护默认生效。用户可以通过 danger 样式的高危人工审批，开放本次操作的受保护路径或允许沙盒外执行。自动审查模型不能代替用户确认高危请求。完全访问模式直接执行，不创建逐项授权或审批记录。所有模式仍保留参数校验、Durable Intent、文件身份与版本核验、取消、结果验证和未知结果记录。模型、项目文件和工具参数不能切换模式。
+用户明确要求增加 Codex 风格的完全访问模式。只有用户通过 Desktop 确认并创建的 `full_access` Run 可以关闭 Seatbelt，使用当前 macOS 用户的文件和网络权限，并跳过逐操作审批。该模式不能继续承诺 Eidos 数据、Runtime、系统 Skill 和 Git metadata 的永久保护。在 `manual` 与 `auto_review` 中，原有路径保护默认生效。用户可以通过 danger 样式的高危人工审批，开放本次操作的 Eidos 私有数据与保密路径，或修改 Runtime、系统 Skill 和受管资源。普通 Git、项目 metadata 和沙盒外执行不因操作类型直接判为高危，auto_review 根据实际目标、影响和用户授权判断。系统不能承诺沙盒外进程仍受 Eidos 路径保护。自动审查模型不能代替用户确认保留的高危请求。完全访问模式直接执行，不创建逐项授权或审批记录。所有模式仍保留参数校验、Durable Intent、文件身份与版本核验、取消、结果验证和未知结果记录。模型、项目文件和工具参数不能切换模式。
 
 ## 14. Tool execution
 单 ToolCall 固定流程：
@@ -213,8 +213,8 @@ Validate → Prepare → Resolve Permission → Commit Durable Intent
 → Execute → Verify → Commit Result → Record unknown outcomes
 ```
 不得绕过任何已存在阶段。
-文件工具默认只能写入 Workspace。Workspace 外的普通路径必须经明确审批或已有有效 Run Grant 授权。文件工具必须读取当前内容，生成 Base Hash 和完整 Diff，在 Durable Intent 后重新验证版本。已有普通文件使用受控的原地写入：先打开并核验 fd，再截断、完整写入、fsync 和验证最终内容；新文件保留排他创建提交。Runtime 在事务内提交 ToolResult 与 Event。Workspace 内普通文件写入使用现有 Workspace Permission，不逐次审批。无沙盒写入必须单独获得明确审批。普通 Skill 写入需要明确审批或有效 Run Grant；数据目录下 `skills/.system` 默认拒写；用户可以通过高危人工审批允许具体变更。Projectless 当前 Workspace 的普通文件无需额外审批；不得开放整个数据目录或其他会话目录。受保护路径必须先经过高危人工审批才能放开；普通审批和模型判断不能解除这些保护。截断后的失败可能已改变文件，必须报告真实副作用；系统记录不确定结果，但不设置核验门、不阻塞后续操作，也不自动重试或回滚。
-Shell 必须每次受控执行、默认禁网、使用明确 cwd 和 timeout、有界输出、终止完整进程组并记录有效权限。默认 Workspace Seatbelt 不逐次审批。联网和附加路径必须走明确扩权和 Approval。裸 Shell 无沙盒执行必须经高危人工审批，窗口必须说明命令及其子进程会失去路径和网络保护；受控文件 helper 的无沙盒写入仍需独立审批和逐目标核验。
+文件工具默认只能写入 Workspace。Workspace 外的普通路径必须经明确审批或已有有效 Run Grant 授权。文件工具必须读取当前内容，生成 Base Hash 和完整 Diff，在 Durable Intent 后重新验证版本。已有普通文件使用受控的原地写入：先打开并核验 fd，再截断、完整写入、fsync 和验证最终内容；新文件保留排他创建提交。Runtime 在事务内提交 ToolResult 与 Event。Workspace 内普通文件写入使用现有 Workspace Permission，不逐次审批。无沙盒写入必须单独获得明确审批。普通 Skill 写入需要明确审批或有效 Run Grant；数据目录下 `skills/.system` 默认拒写；用户可以通过高危人工审批允许具体变更。Projectless 当前 Workspace 的普通文件无需额外审批；不得开放整个数据目录或其他会话目录。Eidos 私有数据与保密路径、Runtime、系统 Skill 和受管资源保护必须先经过高危人工审批才能放开。项目 Git、`.agents` 和项目 `.eidos` 的明确写入范围可以通过普通审批或有效 Run Grant 开放，默认拒写与核验保留。截断后的失败可能已改变文件，必须报告真实副作用；系统记录不确定结果，但不设置核验门、不阻塞后续操作，也不自动重试或回滚。
+Shell 必须每次受控执行、默认禁网、使用明确 cwd 和 timeout、有界输出、终止完整进程组并记录有效权限。默认 Workspace Seatbelt 不逐次审批。联网和附加路径必须走明确扩权和 Approval。裸 Shell 无沙盒执行必须先经过当前模式的审批，auto_review 可以判断普通操作；审批证据必须说明命令及其子进程会失去路径和网络保护，涉及 Eidos 核心保护范围时继续要求高危人工确认；受控文件 helper 的无沙盒写入仍需独立审批和逐目标核验。
 Shell 环境变量应参考 Codex 采用可配置的继承策略，支持 all、core、none。默认继承宿主机环境，不按 KEY、TOKEN、SECRET 等变量名一律排除。Eidos 控制面凭据和内部进程通信凭据必须通过明确的不可继承清单排除，用户配置不能重新注入这些内部凭据。环境变量继承与文件、网络权限分别控制。日志继续遵循本文件的凭据和环境变量脱敏要求。
 普通只读工具在连续调用片段满足 `parallel_safe` 时并行；片段之间的副作用顺序必须保持。
 写入、Shell、MCP 和外部副作用工具只在当前 Run 的提交/启动窗口独占；活动 Shell 不得持续占有门控。跨 Run 不共享此锁。

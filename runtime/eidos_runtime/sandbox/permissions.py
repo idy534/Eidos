@@ -189,13 +189,10 @@ def base_permission_profile_for_workspace(
     data_directory: Path | None,
 ) -> BasePermissionProfile:
     from eidos_runtime.resource_paths import managed_resource_directory
-    return BasePermissionProfile.for_workspace(
+    base = BasePermissionProfile.for_workspace(
         workspace_root=workspace_root,
         protected_paths=(data_directory,) if data_directory is not None else (),
         protected_write_paths=(
-            workspace_root / ".git",
-            workspace_root / ".agents",
-            workspace_root / ".eidos",
             Path(__file__).resolve().parents[1],
             Path(sys.prefix).resolve(),
             Path(sys.base_prefix).resolve(),
@@ -209,6 +206,41 @@ def base_permission_profile_for_workspace(
         approval_write_roots=(data_directory / "skills",) if data_directory is not None else (),
         runtime_roots=(_RUNTIME_RESOURCE_ROOT,),
     )
+    return with_project_metadata_paths(base, tuple(
+        str(workspace_root / name) for name in (".git", ".agents", ".eidos")
+    ))
+
+
+def with_project_metadata_paths(
+    base: BasePermissionProfile, paths: tuple[str, ...],
+) -> BasePermissionProfile:
+    """Keep metadata denied by default while allowing scoped ordinary approval.
+
+    Metadata must not turn the private data root or a Runtime root into an
+    ordinary exception, including when the user's HOME is the workspace.
+    """
+    candidates = tuple(str(Path(path).resolve(strict=False)) for path in paths)
+    core_writes = tuple(Path(path) for path in base.protected_write_paths
+                        if path not in base.approval_write_roots)
+    ordinary = []
+    for candidate in candidates:
+        path = Path(candidate)
+        if any(_paths_overlap(path, root) for root in core_writes):
+            continue
+        if any(_paths_overlap(path, Path(entry.path)) for entry in base.hard_confidentiality_denies):
+            continue
+        if any(
+            _paths_overlap(path, Path(entry.path)) and not any(
+                Path(root) != Path(entry.path) and Path(root).is_relative_to(entry.path)
+                and path.is_relative_to(root) for root in base.workspace_roots
+            ) for entry in base.permanent_denies
+        ):
+            continue
+        ordinary.append(candidate)
+    return base.model_copy(update={
+        "protected_write_paths": tuple(dict.fromkeys((*base.protected_write_paths, *candidates))),
+        "approval_write_roots": tuple(dict.fromkeys((*base.approval_write_roots, *ordinary))),
+    })
 
 
 class EffectivePermissionProfile(ClosedModel):

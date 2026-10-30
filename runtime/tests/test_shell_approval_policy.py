@@ -31,6 +31,7 @@ from eidos_runtime.sandbox.permissions import (
     FileSystemPermissionEntry,
     NetworkPermissions,
     SandboxPermissions,
+    base_permission_profile_for_workspace,
 )
 from eidos_runtime.tools.contracts import GitWriteAccess, NetworkAccess, RunShellInput
 
@@ -326,7 +327,7 @@ class ShellApprovalPolicyTests(unittest.TestCase):
         self.assertEqual(result.result["code"], "user_rejected")
         self.assertEqual(attempts, [])
 
-    def test_legacy_git_path_requires_human_confirmation(self) -> None:
+    def test_legacy_git_path_uses_ordinary_scoped_approval(self) -> None:
         git_dir = self.root / ".git"
         git_dir.mkdir()
         request = ShellOrchestrationRequest(
@@ -348,10 +349,7 @@ class ShellApprovalPolicyTests(unittest.TestCase):
         context = OrchestratorContext(
             **{
                 **self.context.__dict__,
-                "base_permissions": BasePermissionProfile.for_workspace(
-                    workspace_root=self.root,
-                    protected_write_paths=(git_dir,),
-                ),
+                "base_permissions": base_permission_profile_for_workspace(self.root, None),
             }
         )
 
@@ -367,7 +365,7 @@ class ShellApprovalPolicyTests(unittest.TestCase):
         )
 
         self.assertEqual(result.result["code"], "ok")
-        self.assertTrue(approvals[0].requires_human_confirmation)
+        self.assertFalse(approvals[0].requires_human_confirmation)
         self.assertEqual(result.attempt_count, 1)
         self.assertEqual(len(attempts), 1)
 

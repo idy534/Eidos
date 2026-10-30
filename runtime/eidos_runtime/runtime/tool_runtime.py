@@ -84,7 +84,10 @@ from eidos_runtime.runtime.shell_orchestration import (
     effective_shell_permissions,
     resolve_git_write_roots,
     verify_git_metadata_identities,
+    collect_shell_review_scripts,
+    ShellReviewScript,
 )
+from eidos_runtime.workspace.reader import capture_directory_identity
 from eidos_runtime.runtime.tool_orchestrator import (
     OrchestratorApprovalRequest,
     OrchestratorContext,
@@ -430,11 +433,10 @@ class FileChangeToolHandler:
                 "inode": executor.workspace.inode, "owner": executor.workspace.owner,
             },
         }
+        if executor.dangerous_write:
+            request["requiresHumanConfirmation"] = True
         if executor.dangerous_write or unsandboxed:
-            request.update({
-                "requiresHumanConfirmation": True,
-                "riskWarning": "此操作会修改受保护路径或在沙盒外写入。它可能改变 Eidos 数据、Runtime、系统 Skill 或 Git metadata。批准仅适用于本次文件变更。",
-            })
+            request["riskWarning"] = "此操作会修改受保护路径或在沙盒外写入。它可能改变 Eidos 数据、Runtime、系统 Skill 或 Git metadata。批准仅适用于本次文件变更。"
         approved_prepared = prepared.model_copy(update={
             "approval_description": {
                 **prepared.approval_description,
@@ -1012,12 +1014,20 @@ class ShellToolHandler:
                     })
             return diff_workspace_manifests(manifest_before, manifest_after)
 
+        review_scripts: tuple[ShellReviewScript, ...] | None = None
+        review_roots = (workspace, *workspace.additional_roots)
+
         def execute_shell_attempt(
             attempt: SandboxAttempt,
         ) -> tuple[dict[str, object], SandboxDenied | None]:
             nonlocal dependency_binding, dependency_environment, dependency_provenance
             nonlocal manifest_after, workspace_diff
             manifest_after = manifest_before
+            if review_scripts is not None and collect_shell_review_scripts(command, cwd.path, review_roots) != review_scripts:
+                return tool_error(
+                    call.name, "file_version_conflict",
+                    "A script changed after approval; review the current script before retrying.",
+                ), None
             try:
                 approved_cwd = runtime.implementation.prepare_shell(  # type: ignore[attr-defined]
                     cwd_value, cancel
@@ -1224,6 +1234,7 @@ class ShellToolHandler:
             )
 
         def approve(request: OrchestratorApprovalRequest) -> bool:
+            nonlocal review_scripts, review_roots
             summary = request.effective_permissions
             mode = (
                 "unsandboxed"
@@ -1274,10 +1285,37 @@ class ShellToolHandler:
                 ),
             }
             if request.requires_human_confirmation:
-                description.update({
-                    "requiresHumanConfirmation": True,
-                    "riskWarning": "此命令会开放受保护路径，或使用当前 macOS 用户的权限在沙盒外执行。沙盒外命令及其子进程可能读取、修改工作区外文件并访问网络。批准仅适用于本次命令。",
-                })
+                description["requiresHumanConfirmation"] = True
+            if request.requires_human_confirmation or mode == "unsandboxed":
+                description["riskWarning"] = "此命令会开放受保护路径，或使用当前 macOS 用户的权限在沙盒外执行。沙盒外命令及其子进程可能读取、修改工作区外文件并访问网络。批准仅适用于本次命令。"
+            review_evidence = {}
+            if self.dependencies.store.read_run(run_id).get("approvalMode") == "auto_review" and not request.requires_human_confirmation:
+                skill_roots = []
+                for root in active_skill_roots:
+                    try:
+                        skill_roots.append(capture_directory_identity(root))
+                    except WorkspacePathError:
+                        continue
+                review_roots = (workspace, *workspace.additional_roots, *skill_roots)
+                review_scripts = collect_shell_review_scripts(command, cwd.path, review_roots)
+                review_evidence = {
+                    "sandboxEnforced": mode != "unsandboxed",
+                    "protectedEidosPaths": {
+                        "privateData": [entry.path for entry in (
+                            *base_permissions.permanent_denies, *base_permissions.hard_confidentiality_denies,
+                        )],
+                        "writeProtected": [path for path in base_permissions.protected_write_paths
+                                           if path not in base_permissions.approval_write_roots],
+                        "workspaceRoots": list(base_permissions.workspace_roots),
+                        "ordinaryWriteApprovalRoots": list(base_permissions.approval_write_roots),
+                    },
+                    "reviewScriptEvidence": [{
+                        "path": script.path,
+                        "content": (self.dependencies.sensitive.redact_for_presentation(script.content).text
+                                    if script.content is not None else None),
+                        "truncated": script.truncated, "error": script.error,
+                    } for script in review_scripts],
+                }
             prepared = PreparedToolExecution(
                 approval_description=description,
                 transition_reason=(
@@ -1307,6 +1345,7 @@ class ShellToolHandler:
                     **description,
                     "approvalKey": request.approval_key,
                     "effectivePermissions": request.effective_permissions,
+                    **review_evidence,
                 },
                 attempt_ordinal=request.attempt_ordinal,
                 approval_kind=request.approval_kind,

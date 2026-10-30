@@ -6,6 +6,7 @@ from eidos_runtime.sandbox.permissions import (
     FileSystemPermissionEntry, NetworkPermissions, base_permission_profile_for_workspace,
     materialize_effective_profile,
     unsandboxed_execution_allowed,
+    with_project_metadata_paths,
 )
 from eidos_runtime.sandbox.seatbelt_policy import SeatbeltPolicyCompiler
 
@@ -110,7 +111,7 @@ def test_host_read_does_not_authorize_other_permissions(tmp_path, extra):
         base, None, requested, unsandboxed=extra == 'unsandboxed',
     )
     assert decision.disposition == 'ask'
-    assert decision.requires_human_confirmation == (extra == 'unsandboxed')
+    assert not decision.requires_human_confirmation
 
 
 def test_verified_git_metadata_write_requires_approval_then_stays_scoped(tmp_path):
@@ -136,7 +137,7 @@ def test_verified_git_metadata_write_requires_approval_then_stays_scoped(tmp_pat
     assert not effective.allows_file_write(runtime / 'state.json')
 
 
-def test_arbitrary_git_metadata_write_requires_human_confirmation(tmp_path):
+def test_arbitrary_git_metadata_write_uses_ordinary_approval(tmp_path):
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     outside_git = tmp_path / 'other' / '.git'
@@ -145,11 +146,95 @@ def test_arbitrary_git_metadata_write_requires_human_confirmation(tmp_path):
         path=str(outside_git), access=FileSystemAccessMode.WRITE,
     ),))
 
-    assert PermissionPolicyEvaluator().evaluate(
+    decision = PermissionPolicyEvaluator().evaluate(
         BasePermissionProfile.for_workspace(workspace_root=workspace),
         None,
         requested,
-    ).disposition == 'ask'
+    )
+    assert decision.disposition == 'ask'
+    assert not decision.requires_human_confirmation
+
+
+@pytest.mark.parametrize('name', ['.git', '.agents', '.eidos'])
+def test_project_metadata_uses_scoped_ordinary_approval_and_preserves_data(tmp_path, name):
+    workspace, data = tmp_path / 'workspace', tmp_path / 'data'
+    target = workspace / name
+    target.mkdir(parents=True)
+    data.mkdir()
+    state = data / 'state.sqlite'
+    state.write_text('private')
+    base = base_permission_profile_for_workspace(workspace, data)
+    requested = AdditionalPermissionProfile(fileSystem=(FileSystemPermissionEntry(
+        path=str(target), access=FileSystemAccessMode.WRITE,
+    ),))
+    policy = PermissionPolicyEvaluator()
+    decision = policy.evaluate(base, None, requested)
+    assert decision.disposition == 'ask'
+    assert not decision.requires_human_confirmation
+    assert policy.evaluate(base, requested, requested).disposition == 'allow'
+    assert not materialize_effective_profile(base).allows_file_write(target / 'config')
+    effective = materialize_effective_profile(base, requested, allow_protected=True)
+    assert effective.allows_file_write(target / 'config')
+    assert not effective.allows_file_write(state)
+    broad = AdditionalPermissionProfile(fileSystem=(FileSystemPermissionEntry(
+        path=str(tmp_path), access=FileSystemAccessMode.WRITE,
+    ),))
+    assert policy.evaluate(base, None, broad).requires_human_confirmation
+
+
+def test_unsandboxed_mode_alone_uses_ordinary_approval(tmp_path):
+    base = base_permission_profile_for_workspace(tmp_path, None)
+    decision = PermissionPolicyEvaluator().evaluate(base, None, None, unsandboxed=True)
+    assert decision.disposition == 'ask'
+    assert not decision.requires_human_confirmation
+
+
+def test_home_workspace_does_not_downgrade_the_eidos_data_directory(tmp_path):
+    data = tmp_path / '.eidos'
+    data.mkdir()
+    target = data / 'state.sqlite'
+    target.touch()
+    base = base_permission_profile_for_workspace(tmp_path, data)
+    assert str(data) not in base.approval_write_roots
+    requested = AdditionalPermissionProfile(fileSystem=(FileSystemPermissionEntry(
+        path=str(target), access=FileSystemAccessMode.WRITE, recursive=False,
+    ),))
+    assert PermissionPolicyEvaluator().evaluate(base, None, requested).requires_human_confirmation
+    assert not materialize_effective_profile(base).allows_file_write(target)
+
+
+def test_metadata_binding_cannot_downgrade_runtime_protection(tmp_path):
+    workspace, runtime = tmp_path / 'workspace', tmp_path / 'runtime'
+    workspace.mkdir()
+    runtime.mkdir()
+    base = BasePermissionProfile.for_workspace(workspace_root=workspace, protected_write_paths=(runtime,))
+    updated = with_project_metadata_paths(base, (str(runtime), str(tmp_path)))
+    assert updated.approval_write_roots == ()
+
+
+def test_run_snapshot_keeps_linked_git_metadata_on_the_ordinary_approval_path(tmp_path):
+    from eidos_runtime.model.config import default_profile_snapshot
+    from eidos_runtime.runtime.resolution import WorkspaceIdentitySnapshot, create_run_resolution_snapshot
+
+    workspace, git = tmp_path / 'workspace', tmp_path / 'repository' / '.git'
+    workspace.mkdir()
+    git.mkdir(parents=True)
+    metadata = workspace.stat()
+    snapshot = create_run_resolution_snapshot(
+        run_id='run', model_profile=default_profile_snapshot('deepseek-v4-flash'),
+        extension_snapshot={}, created_at=1, data_directory=tmp_path / 'data',
+        workspace_identity=WorkspaceIdentitySnapshot(
+            path=str(workspace), device=metadata.st_dev, inode=metadata.st_ino,
+            owner=metadata.st_uid, git_dir=str(git), git_common_dir=str(git),
+        ),
+    )
+    base = BasePermissionProfile.model_validate_json(snapshot.permission_profile_json)
+    request = AdditionalPermissionProfile(fileSystem=(FileSystemPermissionEntry(
+        path=str(git), access=FileSystemAccessMode.WRITE,
+    ),))
+    decision = PermissionPolicyEvaluator().evaluate(base, None, request)
+    assert decision.disposition == 'ask'
+    assert not decision.requires_human_confirmation
 
 
 def test_git_approval_cannot_override_an_overlapping_unapproved_protection(tmp_path):
@@ -215,9 +300,11 @@ def test_system_skill_requires_confirmation_even_with_workspace_identity(
         path=str(target.resolve()), access=FileSystemAccessMode.WRITE, recursive=False,
     ),))
 
-    assert PermissionPolicyEvaluator().evaluate(
+    decision = PermissionPolicyEvaluator().evaluate(
         base, None, requested, unsandboxed=unsandboxed,
-    ).disposition == 'ask'
+    )
+    assert decision.disposition == 'ask'
+    assert decision.requires_human_confirmation
     assert not materialize_effective_profile(base).allows_file_write(target.resolve())
     with pytest.raises(ValueError):
         materialize_effective_profile(base, requested)
@@ -238,7 +325,9 @@ def test_data_root_and_skill_container_require_human_confirmation(tmp_path, rela
         path=str(target.resolve()), access=FileSystemAccessMode.WRITE,
     ),))
 
-    assert PermissionPolicyEvaluator().evaluate(base, None, requested).disposition == 'ask'
+    decision = PermissionPolicyEvaluator().evaluate(base, None, requested)
+    assert decision.disposition == 'ask'
+    assert decision.requires_human_confirmation
     with pytest.raises(ValueError):
         materialize_effective_profile(base, requested)
 

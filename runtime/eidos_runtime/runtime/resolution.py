@@ -20,6 +20,7 @@ from eidos_runtime.sandbox.permissions import (
     BasePermissionProfile,
     base_permission_profile_for_workspace,
     materialize_effective_profile,
+    with_project_metadata_paths,
 )
 from eidos_runtime.sandbox.seatbelt_policy import BASE_POLICY_PATH
 
@@ -334,8 +335,8 @@ def create_run_resolution_snapshot(
     base_permissions = base_permissions.model_copy(update={
         "workspace_roots": (*base_permissions.workspace_roots, *extra_paths),
         "entries": (*base_permissions.entries, *(FileSystemPermissionEntry(path=path, access=FileSystemAccessMode.WRITE) for path in extra_paths)),
-        "protected_write_paths": tuple(dict.fromkeys((*base_permissions.protected_write_paths, *metadata))),
     })
+    base_permissions = with_project_metadata_paths(base_permissions, metadata)
     if approval_mode == "full_access":
         base_permissions = base_permissions.with_full_access()
     permission_json = canonical_json(
