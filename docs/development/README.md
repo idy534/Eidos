@@ -365,7 +365,9 @@ fi
 
 命令结束后，Runtime 会记录 Workspace manifest observation、diff、退出状态和 reconciliation 状态。Workspace-wide observation 不要求在 Shell 启动前完整扫描 Workspace。`unknown` observation 不等于 Runtime 已经证明了不确定副作用。Runtime 明确报告的 execution uncertainty 仍必须进入 reconciliation。
 
-PTY 和后台进程 follow-up：Agent Shell 支持同一 Run 内的管道 stdin 和分段等待，但不提供 PTY，也不跨 Run 或 Runtime 重启恢复进程。测试者应使用 Desktop Terminal 验证交互式 PTY。测试者还应验证 Agent Shell 会检测并清理 background child。
+Agent Shell 默认使用 PIPE，也支持通过 `run_shell(tty=true)` 创建 PTY。测试者应在 Agent Shell 中验证终端检测、无换行提示、中文输入和 Ctrl-C，并通过 `control_shell` 验证 PTY 尺寸调整、显式停止和 PIPE 输入关闭。程序处理 PTY Ctrl-C 后可以继续运行，测试者应使用 `terminate` 验证明确停止。测试者可在 [Agent Shell](../current/features/agent-shell.md) 中查看具体工具参数。
+
+Agent Shell 不跨 Run 或 Runtime 重启恢复进程。测试者还应验证 Run 取消和收尾会清理进程组、后台子进程及终端描述符。Desktop Terminal 使用独立的 PTY 路径，测试者需要单独验收该路径。
 
 新 Run 的 Shell 不再设置默认进程总期限。`run_shell` 首次等待默认 10 秒，范围 250 毫秒至 30 秒；模型随后使用 `write_stdin` 等待，默认 30 秒，范围 250 毫秒至 60 秒。等待窗口到期只返回 `shell_running` 和 `sessionId`，不会结束进程或触发 reconciliation。ToolSpec 的 600 秒 watchdog 只限制单次启动、审批重试或跟进调用，审批等待不计入预算。历史 3600 秒 ToolSpec 仍可读取，但新工具不会用它限制进程寿命。
 
