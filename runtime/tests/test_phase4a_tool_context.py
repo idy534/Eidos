@@ -42,7 +42,6 @@ from eidos_runtime.tools.contracts import (  # noqa: E402
     project_tool_result,
 )
 from eidos_runtime.tools.workspace import ToolExecutor  # noqa: E402
-from eidos_runtime.tools.search import tool_search_entry  # noqa: E402
 from eidos_runtime.tools.json_schema import (  # noqa: E402
     BoundedJsonSchema,
     JsonSchemaValidationError,
@@ -295,7 +294,6 @@ class Phase4ASkillContextTests(unittest.TestCase):
             entries = (
                 *executor.registry.entries,
                 *self.skills.tool_entries(self.snapshot),
-                tool_search_entry(()),
             )
             for entry in entries:
                 self.assertIsNotNone(entry.input_model, entry.spec.name)
@@ -355,8 +353,9 @@ class Phase4ASkillContextTests(unittest.TestCase):
                         "path": "x", "qualifiedId": "user:x",
                         "contentHash": "a" * 64,
                     },
-                    "tool_search": {
-                        "hits": [], "totalMatches": 0, "truncated": False,
+                    "control_shell": {
+                        "stdout": "", "stderr": "", "truncated": False,
+                        "termination": "exit", "workspaceChanged": False,
                     },
                 }
                 success = {

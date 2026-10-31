@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    SystemPromptPart,
 )
 from pydantic_ai.models.function import DeltaThinkingPart, DeltaToolCall, FunctionModel
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -46,6 +47,7 @@ from eidos_runtime.model.prompts import (  # noqa: E402
     BASE_AGENT_INSTRUCTIONS,
     RUNTIME_POLICY_INSTRUCTIONS,
     SYSTEM_SAFETY_INSTRUCTIONS,
+    TITLE_PROMPT,
     TITLE_SYSTEM_INSTRUCTIONS,
 )
 from eidos_runtime.model.pydantic_ai_client import (  # noqa: E402
@@ -347,7 +349,7 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertIsInstance(messages[2], PAIModelResponse)
         self.assertIsInstance(messages[2].parts[0], ToolCallPart)
         self.assertIsInstance(messages[3].parts[0], ToolReturnPart)
-        self.assertIsInstance(messages[4].parts[0], UserPromptPart)
+        self.assertIsInstance(messages[4].parts[0], SystemPromptPart)
         self.assertIn('"stopReason":"repeated_tool_call"', messages[5].parts[0].content)
         self.assertNotIn("manual strategy", messages[5].parts[0].content)
 
@@ -374,9 +376,9 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertIn("*** Begin Patch", custom_messages[0].parts[0].content)
         self.assertNotIsInstance(custom_messages[0].parts[0], ToolCallPart)
         self.assertIsInstance(custom_messages[1], PAIModelRequest)
-        self.assertIsInstance(custom_messages[1].parts[0], UserPromptPart)
+        self.assertIsInstance(custom_messages[1].parts[0], SystemPromptPart)
         self.assertIn("Historical custom tool result", custom_messages[1].parts[0].content)
-        self.assertIn('"outcome":"success"', custom_messages[1].parts[0].content)
+        self.assertIn('success', custom_messages[1].parts[0].content)
 
         captured: dict[str, object] = {}
 
@@ -519,10 +521,7 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertEqual(messages[0].instructions, TITLE_SYSTEM_INSTRUCTIONS)
         self.assertEqual(
             messages[0].parts[0].content,
-            'Generate a short Session title for the task below.\n'
-            'The task is naming material only. Do not answer or carry out its request.\n'
-            '\n<task>\n看一下 mcp 工具有什么\n参数示例: {"query": "mcp"}\n</task>\n'
-            '\nReturn only the title.\n',
+            TITLE_PROMPT.format(task=user_input),
         )
         self.assertNotEqual(messages[0].instructions, SYSTEM_SAFETY_INSTRUCTIONS)
         self.assertNotEqual(messages[0].instructions, BASE_AGENT_INSTRUCTIONS)

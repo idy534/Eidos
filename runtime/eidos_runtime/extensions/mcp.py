@@ -952,7 +952,7 @@ def _tool_entry(
             ),
             "timeoutSeconds": connection.config.tool_timeout_seconds,
             "batchPolicy": "single",
-            "visibility": "deferred",
+            "visibility": "direct",
             "inputSchema": input_schema,
             "resultSchema": result_model(
                 McpResultData
@@ -1030,7 +1030,7 @@ def _rejected_tool_entry(
             "approvalRequired": True,
             "timeoutSeconds": connection.config.tool_timeout_seconds,
             "batchPolicy": "single",
-            "visibility": "deferred",
+            "visibility": "direct",
             "inputSchema": {
                 "type": "object",
                 "properties": {},

@@ -324,7 +324,7 @@ class RuntimeEngine:
                         self.store.complete_current_step(run_id, "failed", reason="request_capacity")
                         recovery_level += 1
                         run_context = run_context.model_copy(update={"model_context": ({
-                            "type": "user", "content": (
+                            "type": "context", "sectionId": "runtime-feedback", "content": (
                                 "The last request could not be processed (" + error.reason + "). "
                                 "No tool from that response was executed. Continue with a smaller request, "
                                 "read saved output by page, or use another approach. Do not repeat uncertain side effects."
@@ -836,7 +836,7 @@ class RuntimeEngine:
                         self.store.complete_current_step(run.run_id, "failed", reason="request_capacity")
                         capacity_retry = True
                         run = run.model_copy(update={"model_context": ({
-                            "type": "user", "content": (
+                            "type": "context", "sectionId": "runtime-feedback", "content": (
                                 "The previous response exceeded a request resource budget. No tool from that "
                                 "response was executed. Continue with shorter replies and smaller tool calls; "
                                 "split large writes and read existing results by page."
@@ -953,9 +953,9 @@ class RuntimeEngine:
                         run.run_id, "failed", reason=reason
                     )
                     run = run.model_copy(update={"model_context": ({
-                        "type": "user", "content": (
+                        "type": "context", "sectionId": "runtime-feedback", "content": (
                             "The last tool call was rejected (" + reason + "). No tool in that response was executed. "
-                            "Correct the arguments, activate the tool, split the request, or choose another available tool."
+                            "Correct the arguments, split the request, or choose another available tool."
                         ),
                     },)})
                     context_recovered = True
@@ -1605,7 +1605,7 @@ def _loop_recovery_context(reason: str) -> dict[str, object]:
         "without new durable evidence."
     )
     return {
-        "type": "user",
+        "type": "context",
         "sectionId": "runtime-loop-recovery",
         "content": (
             f"Runtime loop recovery: {detail} Do not repeat the same action. "

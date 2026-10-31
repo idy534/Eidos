@@ -346,9 +346,6 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             )
             model = _StatusRecordingModel(store, run["id"], [
                 ModelResponse(tool_calls=(ModelToolCall(
-                    "search", "tool_search", {"query": "slow"}
-                ),)),
-                ModelResponse(tool_calls=(ModelToolCall(
                     "slow", "mcp__fixture__slow", {}
                 ),)),
                 ModelResponse(tool_calls=(ModelToolCall(
@@ -413,7 +410,7 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             self.assertEqual(calls, 1)
             store.close()
 
-    def test_tool_search_activates_mcp_for_next_step_and_external_call_is_approved(self) -> None:
+    def test_direct_mcp_external_call_is_approved(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-p3-vertical-") as directory:
             root = Path(directory)
             data = root / "data"
@@ -455,9 +452,6 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             )
             model = ScriptedModel([
                 ModelResponse(tool_calls=(ModelToolCall(
-                    "search", "tool_search", {"query": "echo"}
-                ),)),
-                ModelResponse(tool_calls=(ModelToolCall(
                     "echo", "mcp__fixture__echo", {"message": "hello"}
                 ),)),
                 ModelResponse(text="done"),
@@ -488,25 +482,25 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             second_names = {
                 value.name for value in model.tool_definitions_history[1]
             }
-            self.assertNotIn("mcp__fixture__echo", first_names)
+            self.assertIn("mcp__fixture__echo", first_names)
             self.assertIn("mcp__fixture__echo", second_names)
             self.assertEqual(store.read_run(run["id"])["status"], "succeeded")
-            self.assertEqual(store.activated_tools(run["id"]), ("mcp__fixture__echo",))
+            self.assertEqual(store.activated_tools(run["id"]), ())
             self.assertEqual(approvals[0]["kind"], "external_tool")
             self.assertEqual(approvals[0]["permissionProfile"], "workspace_read")
             rows = store.connection.execute(
                 "SELECT tool_name, provenance_json, result_json FROM tool_calls ORDER BY creation_seq"
             ).fetchall()
-            self.assertEqual(rows[1]["tool_name"], "mcp__fixture__echo")
-            self.assertEqual(json.loads(rows[1]["provenance_json"])["kind"], "mcp")
-            self.assertEqual(json.loads(rows[1]["result_json"])["data"]["text"], "hello")
+            self.assertEqual(rows[0]["tool_name"], "mcp__fixture__echo")
+            self.assertEqual(json.loads(rows[0]["provenance_json"])["kind"], "mcp")
+            self.assertEqual(json.loads(rows[0]["result_json"])["data"]["text"], "hello")
             store.close()
 
             restarted = SessionStore(data)
             restarted.initialize()
             self.assertEqual(restarted.read_run(run["id"])["status"], "succeeded")
             self.assertEqual(
-                restarted.activated_tools(run["id"]), ("mcp__fixture__echo",)
+                restarted.activated_tools(run["id"]), ()
             )
             persisted = restarted.connection.execute(
                 "SELECT provenance_json, result_json FROM tool_calls WHERE tool_name = ?",
@@ -627,9 +621,6 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             )
             model = ScriptedModel([
                 ModelResponse(tool_calls=(ModelToolCall(
-                    "search", "tool_search", {"query": "echo"}
-                ),)),
-                ModelResponse(tool_calls=(ModelToolCall(
                     "echo", "mcp__fixture__echo", {"message": "hello"}
                 ),)),
                 ModelResponse(text="done"),
@@ -662,9 +653,7 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
                 "mcp__fixture__echo",
                 {value.name for value in model.tool_definitions_history[1]},
             )
-            self.assertIn(
-                "mcp__fixture__echo", store.activated_tools(run["id"])
-            )
+            self.assertEqual(store.activated_tools(run["id"]), ())
             store.close()
 
     def test_each_model_step_persists_its_tools_and_tool_call_provenance(self) -> None:

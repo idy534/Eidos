@@ -613,6 +613,7 @@ class ToolRegistry:
         entries: tuple[ToolRegistryEntry, ...],
         *,
         quarantined: tuple[QuarantinedTool, ...] = (),
+        deferred_names: frozenset[str] = frozenset(),
     ) -> None:
         ordered = sorted(entries, key=lambda entry: entry.spec.name.encode("utf-8"))
         names: set[str] = set()
@@ -623,6 +624,12 @@ class ToolRegistry:
             names.add(entry.spec.name)
         self._entries = tuple(ordered)
         self._by_name = {entry.spec.name: entry for entry in ordered}
+        # Exposure is Run-specific. Keep the execution contract unchanged so
+        # pending calls still bind to their original, verified implementation.
+        self._deferred_names = frozenset(
+            entry.spec.name for entry in ordered
+            if entry.spec.visibility == "deferred" or entry.spec.name in deferred_names
+        )
         self.quarantined = quarantined
 
     @classmethod
@@ -661,12 +668,19 @@ class ToolRegistry:
     def get(self, name: str) -> ToolRegistryEntry | None:
         return self._by_name.get(name)
 
+    def is_deferred(self, name: str) -> bool:
+        return name in self._deferred_names
+
+    @property
+    def deferred_entries(self) -> tuple[ToolRegistryEntry, ...]:
+        return tuple(entry for entry in self._entries if self.is_deferred(entry.spec.name))
+
     def model_definitions(
         self, activated_names: tuple[str, ...] = ()
     ) -> tuple[ModelToolDefinitionLike, ...]:
         active = set(self._bounded_activated(activated_names))
         return tuple(entry.model_definition() for entry in self._entries if (
-            entry.spec.visibility == "direct" or entry.spec.name in active
+            not self.is_deferred(entry.spec.name) or entry.spec.name in active
         ))
 
     def snapshot(
@@ -674,12 +688,12 @@ class ToolRegistry:
     ) -> StepToolSnapshot:
         deferred = tuple(
             entry.spec.name for entry in self._entries
-            if entry.spec.visibility == "deferred"
+            if self.is_deferred(entry.spec.name)
         )
         activated = self._bounded_activated(activated_names)
         direct = tuple(
             entry.spec.name for entry in self._entries
-            if entry.spec.visibility == "direct"
+            if not self.is_deferred(entry.spec.name)
         )
         available = tuple(sorted(
             (*direct, *activated), key=lambda value: value.encode("utf-8")
@@ -719,7 +733,7 @@ class ToolRegistry:
     def _bounded_activated(self, activated_names: tuple[str, ...]) -> tuple[str, ...]:
         deferred = {
             entry.spec.name for entry in self._entries
-            if entry.spec.visibility == "deferred"
+            if self.is_deferred(entry.spec.name)
         }
         accepted: list[str] = []
         total = 0

@@ -448,6 +448,7 @@ class ToolContractTests(unittest.TestCase):
         ))
         self.assertIn("tty=true", description)
         self.assertIn("control_shell", description)
+        self.assertNotRegex(description, r"\bglob\b")
         for fragment in (
             "gitWriteAccess",
             "networkAccess",
@@ -457,8 +458,6 @@ class ToolContractTests(unittest.TestCase):
             "sandboxPermissions",
             "shell_running",
             "yieldTimeMs",
-            "pipefail",
-            "glob",
             ".git",
             "Seatbelt",
             "timeoutSeconds",
@@ -536,10 +535,10 @@ class ToolContractTests(unittest.TestCase):
             descriptions["read_file_range"],
             "Read an inclusive line range from a UTF-8 text file.",
         )
-        self.assertEqual(
-            descriptions["search_text"],
+        self.assertTrue(descriptions["search_text"].startswith(
             "Search text across workspace or active Skill files.",
-        )
+        ))
+        self.assertIn("includeGlobs", descriptions["search_text"])
         self.assertEqual(
             descriptions["search_text_wait"],
             "Wait for additional results from a running search_text session.",

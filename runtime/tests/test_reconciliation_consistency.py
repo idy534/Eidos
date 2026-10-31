@@ -1099,11 +1099,6 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             )
             model = _StatusRecordingModel(store, run["id"], [
                 ModelResponse(tool_calls=(ModelToolCall(
-                    "search",
-                    "tool_search",
-                    {"query": "slow"},
-                ),)),
-                ModelResponse(tool_calls=(ModelToolCall(
                     "slow",
                     "mcp__fixture__slow",
                     {},

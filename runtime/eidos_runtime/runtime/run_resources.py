@@ -4,7 +4,6 @@ from eidos_runtime.persistence.input_context import InputContextRepository
 from eidos_runtime.extensions.skills import SelectedSkillSet
 
 import hashlib
-import re
 from typing import TYPE_CHECKING
 
 from eidos_runtime.db.storage import SessionStore
@@ -45,7 +44,6 @@ from eidos_runtime.tools.collaboration import collaboration_entries
 from eidos_runtime.persistence.collaboration import CollaborationRepository
 from eidos_runtime.tools.read_tool_output import read_tool_output_entry
 from eidos_runtime.tools.declare_outputs import declare_outputs_entry
-from eidos_runtime.tools.search import tool_search_entry
 from eidos_runtime.tools.runtime_workspace import ToolExecutor
 from eidos_runtime.tools.view_image import ViewImageRootAuthority, view_image_entry
 
@@ -160,7 +158,6 @@ class RunResources:
                 events=self.events,
             )
             self._set_registry()
-            self._activate_mentions(self.user_input)
             self.retained_context = (
                 self.skills.render_catalog(self.skill_catalog_snapshot),
             )
@@ -192,7 +189,6 @@ class RunResources:
             if new_inputs:
                 added = "\n".join(new_inputs)
                 self.user_input = added
-                self._activate_mentions(added)
                 self._select_skills(
                     added,
                     turn_id=(
@@ -304,34 +300,8 @@ class RunResources:
                 if entry.spec.name not in {"request_permissions", "request_user_input", "write_plan"}
                 and (entry.provenance.source_id != "eidos.collaboration" or entry.spec.name == "send_message")
             ))
-        deferred = tuple(
-            entry for entry in base.entries if entry.spec.visibility == "deferred"
-        )
-        self.registry = ToolRegistry((*base.entries, tool_search_entry(deferred)))
+        self.registry = base
         self.dispatcher = ToolDispatcher(self.registry)
-
-    def _activate_mentions(self, user_input: str) -> None:
-        if self.registry is None:
-            return
-        mentioned_plugins = {
-            match.group(1)
-            for match in re.finditer(
-                r"@([a-z][a-z0-9_-]{0,63})(?::[A-Za-z0-9_-]{1,64})?",
-                user_input,
-            )
-        }
-        selections = InputContextRepository(self.store.database).for_run(self.run_id)
-        mentioned_plugins.update(value.selection_id for value in selections if value.reference.kind == "plugin")
-        mentioned_servers = {(value.plugin_id, value.selection_id) for value in selections if value.reference.kind == "mcp"}
-        mentioned_tools = tuple(
-            entry.spec.name
-            for entry in self.registry.entries
-            if entry.spec.visibility == "deferred"
-            and (entry.provenance.plugin_id in mentioned_plugins
-                 or (entry.provenance.plugin_id, entry.provenance.server_id) in mentioned_servers)
-        )
-        if mentioned_tools:
-            self.store.activate_tools(self.run_id, mentioned_tools)
 
     def _select_skills(self, user_input: str, *, turn_id: str) -> None:
         if self.skills is None or self.skill_catalog_snapshot is None:

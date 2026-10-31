@@ -208,15 +208,19 @@ _RUN_SHELL_DESCRIPTION = (
     "Set cwd to start in another directory. "
     "Return output or a sessionId for ongoing interaction. "
     "Use tty=true for commands that need a terminal; PIPE is the default. "
-    "Use write_stdin to read new output or send input, and control_shell to resize or stop the command."
+    "Use write_stdin to read new output or send input, and control_shell to resize or stop the command. "
+    "Read saved output with read_tool_output using outputCallId, not sessionId. "
+    "zsh/bash pipelines use pipefail; use && for dependent stages and check their results. "
+    "Install missing dependencies only in isolated workspace environments, never in Eidos, "
+    "its bundled runtime or a global interpreter. Keep TLS certificate verification enabled."
 )
 
 
 _BUILTIN_CONTRACTS = (
-    ("list_files", "List regular files under a workspace or active Skill directory.", "none", False, 5, "parallel", ListFilesInput, ListFilesResultData, "list_files"),
-    ("read_file", "Read a UTF-8 text file from the workspace or an active Skill root. For truncated results, continue with read_file_range.", "none", False, 5, "parallel", ReadFileInput, ReadFileResultData, "read_file"),
-    ("read_file_range", "Read an inclusive line range from a UTF-8 text file.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
-    ("search_text", "Search text across workspace or active Skill files.", "none", False, 35, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
+    ("list_files", "List regular files when the task requires locating a path. Use a known path directly with read_file. The scope is the workspace or an active Skill directory.", "none", False, 5, "parallel", ListFilesInput, ListFilesResultData, "list_files"),
+    ("read_file", "Read a UTF-8 text file when its content is needed. Call this directly for a known path. The file must be in the current permitted scope, including active Skill roots. For truncated results, continue with read_file_range. Read relevant current content before preparing changes.", "none", False, 5, "parallel", ReadFileInput, ReadFileResultData, "read_file"),
+    ("read_file_range", "Read an inclusive line range from a UTF-8 text file. Use this for known relevant lines or to continue a truncated read_file result.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
+    ("search_text", "Find relevant text across workspace or active Skill files. Use includeGlobs for filename filters. Read a known required file directly instead of searching for it again. Continue an ongoing search with search_text_wait using its returned session identifier.", "none", False, 35, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
     ("search_text_wait", "Wait for additional results from a running search_text session.", "none", False, 65, "single", SearchTextWaitInput, SearchTextResultData, "search_text"),
     ("apply_patch", _APPLY_PATCH_DESCRIPTION, "workspace", False, 120, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
     ("run_shell", _RUN_SHELL_DESCRIPTION, "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),

@@ -142,7 +142,7 @@ class ToolDispatcher:
                 available_names is not None
                 and isinstance(call, ModelToolCall)
                 and call.name not in available_names
-                and (entry is None or entry.spec.visibility != "deferred")
+                and (entry is None or not self._registry.is_deferred(call.name))
             ):
                 entry = None
             if isinstance(call, ModelToolCall) and isinstance(call.provider_call_id, str) and len(call.provider_call_id) > 256:

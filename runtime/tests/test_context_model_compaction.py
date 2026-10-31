@@ -83,6 +83,42 @@ def test_model_summary_is_grounded_and_keeps_runtime_facts_and_original_history(
     assert details.compaction.source_item_count == len(summary.source_item_ids)
 
 
+def test_report_task_keeps_material_constraints_and_grounded_summary(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    try:
+        session = store.create_session(str(workspace))
+        previous, _ = store.create_run(session["id"], "撰写中文报告。必须保留金额单位。不要发布。")
+        source = store.create_tool_item(previous["id"], 1, 0, "report-data", "read_file", "{}")
+        quote = "本季度收入为 120 万元人民币。"
+        result = json.dumps({"outcome": "success", "code": "ok", "summary": "Read report data",
+                             "data": {"path": "brief.txt", "content": quote}}, ensure_ascii=False)
+        store.complete_tool_item(source["id"], result, model_result_json=result)
+        store.fail_run(previous["id"], "fixture")
+        run, _ = store.create_run(session["id"], "继续撰写报告，不要发布。")
+        model = ScriptedModel([ModelResponse(tool_calls=(ModelToolCall("summary", "submit_context_summary", {
+            "notes": [{"kind": "fact", "text": quote,
+                       "evidence": [{"item_id": source["id"], "quote": quote}]}],
+        }),))])
+        model.profile_snapshot = store.read_model_profile(run["id"])
+
+        summary = ContextCompactor(store, model).compact(run["id"], "pre_turn")
+
+        payload = json.loads(model.contexts[0][0]["content"])
+        assert payload["currentTask"] == "继续撰写报告，不要发布。"
+        assert quote in next(item["body"] for item in payload["sources"] if item["itemId"] == source["id"])
+        assert [tool.name for tool in model.tool_definitions_history[0]] == ["submit_context_summary"]
+        assert "coding task" not in model.instructions_history[0]
+        assert any("必须保留金额单位" in value for value in summary.constraints)
+        assert summary.continuity_notes[0].evidence[0].quote == quote
+        assert quote in str(ContextBuilder(store).build(run["id"]).model_context)
+        assert store.read_item(source["id"])["toolCall"]["resultJson"] == result
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize("invalid", ["unknown_source", "bad_quote", "unknown_field"])
 def test_invalid_model_summary_falls_back_without_dropping_facts(history, invalid):
     store, _, run, user, _ = history

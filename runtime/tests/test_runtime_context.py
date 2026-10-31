@@ -888,7 +888,7 @@ class ContextPersistenceTests(unittest.TestCase):
         built = ContextBuilder(self.store).build(run["id"])
 
         state = next(item for item in built.model_context
-            if item.get("type") == "user" and "Runtime state" in item.get("content", ""))
+            if item.get("type") == "context" and "Runtime state" in item.get("content", ""))
         self.assertIn('"reconciliationRequired":true', state["content"])
         self.assertNotIn("recentToolErrorFingerprints", state["content"])
         self.assertNotIn("error-a", state["content"])
