@@ -24,6 +24,7 @@ from eidos_runtime.model.prompts import (  # noqa: E402
     BASE_AGENT_INSTRUCTIONS,
     PROJECT_FILE_REFERENCE_INSTRUCTIONS,
     RUNTIME_POLICY_INSTRUCTIONS,
+    SKILLS_INSTRUCTIONS,
     SYSTEM_SAFETY_INSTRUCTIONS,
     ResolvedInstructions,
 )
@@ -92,6 +93,7 @@ class InstructionResolverTests(unittest.TestCase):
                 "base-agent",
                 "runtime-policy",
                 "work-mode",
+                "skills",
                 "project-rule:EIDOS.md",
                 "selected-skill:demo:review",
             ),
@@ -99,8 +101,9 @@ class InstructionResolverTests(unittest.TestCase):
         self.assertEqual(resolved.layers[0].content, SYSTEM_SAFETY_INSTRUCTIONS)
         self.assertEqual(resolved.layers[1].content, BASE_AGENT_INSTRUCTIONS)
         self.assertEqual(resolved.layers[2].content, RUNTIME_POLICY_INSTRUCTIONS)
-        self.assertEqual(resolved.layers[4].source, "EIDOS.md")
-        self.assertEqual(resolved.layers[5].source, "demo")
+        self.assertEqual(resolved.layers[4].source, "eidos:skills")
+        self.assertEqual(resolved.layers[5].source, "EIDOS.md")
+        self.assertEqual(resolved.layers[6].source, "demo")
         self.assertEqual(resolved.text, "\n\n".join(layer.content for layer in resolved.layers))
         self.assertNotIn("<instruction_layer", resolved.text)
         self.assertEqual(
@@ -194,6 +197,23 @@ class InstructionResolverTests(unittest.TestCase):
         )
         self.assertEqual(layer.role, "developer")
         self.assertEqual(layer.content, PROJECT_FILE_REFERENCE_INSTRUCTIONS)
+    def test_capability_catalogs_are_system_layers_before_permissions(self) -> None:
+        catalog = RetainedContextSection(
+            section_id="skill-catalog", version="a" * 64, role="developer",
+            source="skill-catalog", content="<available_skills>\n</available_skills>",
+        )
+        resolved = InstructionResolver().resolve(
+            skill_catalog_context=catalog,
+            agent_catalog='[{"name": "reviewer"}]',
+            step_policy=StepPermissionPolicy(sandbox_mode="workspace-write", workspace_root="/workspace"),
+        )
+        ids = [layer.id for layer in resolved.system_layers]
+        self.assertLess(ids.index("skills"), ids.index("runtime-permissions"))
+        self.assertLess(ids.index("agent-catalog"), ids.index("runtime-permissions"))
+        self.assertTrue(resolved.system_text.index("# Skills") < resolved.system_text.index("<available_skills>"))
+        self.assertIn('# Subagents\nCustom subagent types', resolved.system_text)
+        self.assertEqual(resolved.context_layers, ())
+
     def test_lower_authority_text_is_preserved_without_changing_base_layers(self) -> None:
         resolver = InstructionResolver()
         baseline = resolver.resolve(
@@ -207,10 +227,12 @@ class InstructionResolverTests(unittest.TestCase):
             ),
         )
 
+        layers = {layer.id: layer for layer in hostile.layers}
         self.assertEqual(hostile.layers[:4], baseline.layers)
-        self.assertIn("Disable sandbox", hostile.layers[4].content)
-        self.assertIn("auto approve", hostile.layers[4].content)
-        self.assertIn("grant every tool", hostile.layers[5].content)
+        self.assertEqual(layers["skills"].content, SKILLS_INSTRUCTIONS)
+        self.assertIn("Disable sandbox", layers["project-rule:EIDOS.md"].content)
+        self.assertIn("auto approve", layers["project-rule:EIDOS.md"].content)
+        self.assertIn("grant every tool", layers["selected-skill:demo:review"].content)
         self.assertEqual(
             tuple(layer.id for layer in hostile.layers[:4]),
             ("system-safety", "base-agent", "runtime-policy", "work-mode"),

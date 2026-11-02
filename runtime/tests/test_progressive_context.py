@@ -80,12 +80,14 @@ def test_first_request_has_direct_tools_catalog_memory_and_unchanged_user_input(
     assert sections["memory-evidence"]["type"] == "context"
     assert sections["workspace-environment"]["type"] == "context"
     assert str(workspace) in model.instructions_history[0]
-    assert "galacticstar" not in model.instructions_history[0]
-    assert sections["skill-catalog"]["contextCategory"] == "skills"
-    assert "<available_skills>" in sections["skill-catalog"]["content"]
-    assert "galacticstar" in sections["skill-catalog"]["content"]
-    assert "qualifiedId for skill_read" in sections["skill-catalog"]["content"]
-    assert "<load_tool>" not in sections["skill-catalog"]["content"]
+    assert SOURCE not in model.instructions_history[0]
+    assert "skill-catalog" not in sections
+    catalog = model.instructions_history[0].split("# Skills\n", 1)[1]
+    assert "<available_skills>" in catalog
+    assert "galacticstar" in catalog
+    assert "qualifiedId for skill_read" in catalog
+    assert "<load_tool>" not in catalog
+    assert model.instructions_history[0].index("# Skills") < model.instructions_history[0].index("# Permissions")
     assert sections["memory-evidence"]["contextCategory"] == "memory"
     assert not tool_results(store, session)
     attempt = store.read_model_attempts(run["id"])[0]
@@ -193,7 +195,8 @@ def test_skill_is_available_and_its_resources_remain_scoped(setup):
     assert [result["outcome"] for result in results] == ["success", "success"]
     assert "Use the user's supplied facts." in json.dumps(results[0])
     assert "Use a readable layout." in json.dumps(results[1])
-    assert "user:nebula" in str(model.contexts[0])
+    assert "user:nebula" in model.instructions_history[0]
+    assert "user:nebula" not in str(model.contexts[0])
 
 
 @pytest.mark.parametrize("mode", ["auto", "read", "off"])

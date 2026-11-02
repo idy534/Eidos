@@ -32,6 +32,24 @@ def test_breakdown_keeps_memory_and_skills_out_of_system_and_conversation(item_t
     assert sum(sections.values()) == budget.estimated_input_tokens
 
 
+def test_breakdown_moves_system_catalog_layers_to_their_sections():
+    from eidos_runtime.context.budget import estimate_model_request_budget
+    from eidos_runtime.model.instructions import InstructionResolver
+
+    resolved = InstructionResolver().resolve(agent_catalog='[{"name": "reviewer"}]' * 40)
+    skills = resolved.layers[0].model_copy(update={"id": "skills", "content": "Skill entry " * 400})
+    layers = (*resolved.system_layers, skills)
+    text = "\n\n".join(layer.content for layer in layers)
+    params = dict(tool_definitions=(), context_window_tokens=100000, request_max_output_tokens=1000)
+    plain = estimate_model_request_budget((), instructions=text, **params)
+    split = estimate_model_request_budget((), instructions=text, instruction_layers=layers, **params)
+    sections = {section.name: section.tokens for section in split.sections}
+    assert {section.name for section in plain.sections} == {"instructions", "tools", "overhead"}
+    assert sections["skills"] > 600 and sections["tools"] > 200
+    assert sections["instructions"] < next(section.tokens for section in plain.sections if section.name == "instructions")
+    assert sum(sections.values()) == split.estimated_input_tokens == plain.estimated_input_tokens
+
+
 def test_breakdown_attributes_subagent_definitions_and_user_images_to_their_sections():
     from eidos_runtime.context.budget import estimate_model_request_budget
     params = dict(instructions="System", tool_definitions=(), context_window_tokens=100000, request_max_output_tokens=1000)

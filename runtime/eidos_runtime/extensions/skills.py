@@ -310,8 +310,7 @@ class SkillCatalog:
         self, snapshot: SkillCatalogSnapshot
     ) -> RetainedContextSection:
         lines = [
-            "Skill Catalog",
-            "Skills available in this turn. Each name is the qualifiedId for skill_read.",
+            "Available Skills for this turn. Each name is the qualifiedId for skill_read.",
             "<available_skills>",
         ]
         for entry in snapshot.entries:

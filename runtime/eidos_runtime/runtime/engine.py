@@ -1562,6 +1562,7 @@ def _protocol_repair_step(
     budget = estimate_model_request_budget(
         model_context,
         instructions=step.instructions.system_text,
+        instruction_layers=step.instructions.system_layers,
         tool_definitions=step.tool_definitions,
         context_window_tokens=step.model_profile.context_window_tokens,
         request_max_output_tokens=step.model_profile.max_output_tokens,

@@ -8,7 +8,7 @@ Eidos 使用 macOS 桌面通用助手身份。系统支持聊天、研究、文�
 | --- | --- | --- |
 | 系统提示词 | 系统提供身份、指令顺序、安全与权限原则、任务流程、工具和记忆的使用规则。Runtime 提供实际工作模式和权限状态。 | `model/prompts.py`、`model/instructions.py` |
 | 记忆 | 记忆模块提供项目情况、AGENTS.md 与路径约束、全局自定义要求、用户偏好和允许读取的长期记忆索引。 | `memory/context.py` 与各来源的持久快照 |
-| 技能 | 系统提供可用名称、描述、加载入口和本轮已加载的说明。 | 冻结的 Skill Catalog、所选 Skill 快照 |
+| 技能 | 系统提示词末尾的 `# Skills` 一节提供使用规则和可用 Skill 列表；本轮已加载的 Skill 说明放在 user 提醒块中。 | 冻结的 Skill Catalog、所选 Skill 快照 |
 | 工具 | 系统直接提供当前可用工具的原生定义。 | `tools/`、已启用的扩展 |
 | 会话与执行记录 | 系统保留真实用户输入、助手回复、工具调用和结果。 | SQLite 历史、输入引用与请求快照 |
 
@@ -40,7 +40,7 @@ Provider 没有通用的 memory 角色。逻辑 `context` Item 在 Pydantic AI �
 
 旧激活记录和快照字段保留读取兼容。历史 Step 中原本不可用的调用不会因新版直接展示而自动重放。未知、禁用和未授权工具不会进入目录。
 
-Skill 目录使用 `available_skills` 区域。目录开头说明每个名称就是 `skill_read` 的 `qualifiedId`；每项只包含唯一名称和 description。加载与资源读取规则只写在核心提示词的 `# Skills` 中。模型使用 Skill 时读取主说明，再按需要通过 `skill_read_resource` 读取相对文本资源。目录不注入全部正文或文件树。同一 Turn 的目录与所选内容继续使用冻结快照。
+Skill 目录和子 Agent 目录属于 Runtime 提供的能力清单，和工具定义同类，因此放在系统提示词中，不放在 user 提醒块里。`# Skills` 一节先写使用规则，再写 `available_skills` 列表；目录开头说明每个名称就是 `skill_read` 的 `qualifiedId`，每项只包含唯一名称和 description。没有可用目录但有已选 Skill 时，这一节只保留规则。主 Run 有自定义子 Agent 时，`# Subagents` 一节列出冻结的类型，子 Run 不显示这一节。两节都放在 `# Permissions` 之前，因为权限段会在 Run 内变化，目录在 Run 内保持不变。上下文面板仍把 `# Skills` 计入“技能”，把 `# Subagents` 计入“工具”。用户为本 Run 明确选择的子 Agent 仍作为 user 提醒块发送。模型使用 Skill 时读取主说明，再按需要通过 `skill_read_resource` 读取相对文本资源。目录不注入全部正文或文件树。同一 Turn 的目录与所选内容继续使用冻结快照。
 
 Skill 的加载、资源 Lease 和身份检查继续生效。工具直接可用不会开放所有 Skill 文件，也不会授予写权限。
 

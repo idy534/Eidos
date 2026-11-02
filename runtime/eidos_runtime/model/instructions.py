@@ -8,6 +8,7 @@ from eidos_runtime.domain.collaboration import AgentRole
 from eidos_runtime.domain.agents import AgentDefinition, definition_version
 from eidos_runtime.domain.personalization import PersonalizationPreferences
 from eidos_runtime.model.prompts import (
+    AGENT_CATALOG_INSTRUCTIONS,
     BASE_AGENT_INSTRUCTIONS,
     EXECUTION_MODE_INSTRUCTIONS,
     MEMORY_POLICY_INSTRUCTIONS,
@@ -16,6 +17,7 @@ from eidos_runtime.model.prompts import (
     PLAN_MODE_INSTRUCTIONS,
     PROJECT_FILE_REFERENCE_INSTRUCTIONS,
     RUNTIME_POLICY_INSTRUCTIONS,
+    SKILLS_INSTRUCTIONS,
     SYSTEM_SAFETY_INSTRUCTIONS,
     InstructionLayer,
     ResolvedInstructions,
@@ -141,6 +143,7 @@ class InstructionResolver:
         memory_access: MemoryAccess | None = None,
         agent_role: AgentRole | None = None,
         agent_definition: AgentDefinition | None = None,
+        agent_catalog: str | None = None,
         has_project: bool = False,
         personalization: PersonalizationPreferences | None = None,
     ) -> ResolvedInstructions:
@@ -226,14 +229,8 @@ class InstructionResolver:
                 "Return findings or a plan draft to the parent in Plan mode. "
                 "Your final answer is delivered automatically; do not duplicate it through send_message.",
             ))
-        if step_policy is not None:
-            layers.append(InstructionLayer.create(
-                id="runtime-permissions",
-                authority=RUNTIME_AUTHORITY,
-                role="developer",
-                source="eidos:runtime-permissions",
-                content=_build_runtime_permissions_content(step_policy),
-            ))
+        # Catalogs are Runtime capability lists, like tool definitions. They stay
+        # ahead of the permission section, which can change within a Run.
         if skill_catalog_context is not None:
             if (
                 skill_catalog_context.role != "developer"
@@ -242,12 +239,31 @@ class InstructionResolver:
                 or not skill_catalog_context.content
             ):
                 raise ValueError("skill catalog instruction section is invalid")
+        if skill_catalog_context is not None or any(section.content for section in selected_skill_context):
             layers.append(InstructionLayer.create(
-                id="skill-catalog",
+                id="skills",
                 authority=SKILL_CATALOG_AUTHORITY,
-                role="user",
-                source="skill-catalog",
-                content=skill_catalog_context.content,
+                role="developer",
+                source="skill-catalog" if skill_catalog_context is not None else "eidos:skills",
+                content=SKILLS_INSTRUCTIONS + (
+                    "\n" + skill_catalog_context.content if skill_catalog_context is not None else ""
+                ),
+            ))
+        if agent_catalog:
+            layers.append(InstructionLayer.create(
+                id="agent-catalog",
+                authority=RUNTIME_AUTHORITY,
+                role="developer",
+                source="eidos:agent-catalog",
+                content=AGENT_CATALOG_INSTRUCTIONS + "\n" + agent_catalog,
+            ))
+        if step_policy is not None:
+            layers.append(InstructionLayer.create(
+                id="runtime-permissions",
+                authority=RUNTIME_AUTHORITY,
+                role="developer",
+                source="eidos:runtime-permissions",
+                content=_build_runtime_permissions_content(step_policy),
             ))
         if agent_definition is not None:
             layers.append(InstructionLayer.create(

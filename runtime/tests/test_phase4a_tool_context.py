@@ -188,18 +188,10 @@ class Phase4ASkillContextTests(unittest.TestCase):
             selected_skill_context=selected_context,
         )
         rendered = json.dumps(built.model_context)
-        catalog_indexes = [
-            index for index, value in enumerate(built.model_context)
-            if value.get("sectionId") == "skill-catalog"
-        ]
-        first_user = next(
-            index for index, value in enumerate(built.model_context)
-            if value.get("type") == "user"
-        )
-        self.assertEqual(len(catalog_indexes), 1)
-        self.assertLess(catalog_indexes[0], first_user)
-        self.assertNotIn("Skill Catalog", built.instructions.system_text)
-        self.assertEqual(rendered.count("Skill Catalog"), 1)
+        system_text = built.instructions.system_text
+        self.assertEqual(system_text.count("<available_skills>"), 1)
+        self.assertLess(system_text.index("# Skills"), system_text.index("<available_skills>"))
+        self.assertNotIn("<available_skills>", rendered)
         self.assertNotIn("x" * 100_000, rendered)
         self.assertIn("Use the checklist.", rendered)
         self.assertNotIn("Use the checklist.", built.instructions.system_text)
@@ -228,21 +220,8 @@ class Phase4ASkillContextTests(unittest.TestCase):
             model.instructions_history,
             strict=True,
         ):
-            catalogs = [
-                index for index, item in enumerate(context)
-                if item.get("sectionId") == "skill-catalog"
-            ]
-            first_user = next(
-                index for index, item in enumerate(context)
-                if item.get("type") == "user"
-            )
-            self.assertEqual(len(catalogs), 1)
-            self.assertLess(catalogs[0], first_user)
-            self.assertEqual(
-                sum("Skill Catalog" in str(item.get("content", "")) for item in context),
-                1,
-            )
-            self.assertEqual(instructions.count("Skill Catalog"), 0)
+            self.assertNotIn("<available_skills>", json.dumps(context))
+            self.assertEqual(instructions.count("<available_skills>"), 1)
             self.assertIn("Use the checklist.", json.dumps(context))
             self.assertNotIn("Use the checklist.", instructions)
         second_tool_result = next(

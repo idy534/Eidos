@@ -104,6 +104,13 @@ class ContextBuilder:
         selections = InputContextRepository(self.store.database).for_run(run_id)
         personalization_snapshot = self.store.read_run_resolution_snapshot(run_id).personalization
         personalization = personalization_snapshot.preferences if personalization_snapshot is not None else None
+        agent_catalog: str | None = None
+        if not collaboration.child_for_run(run_id):
+            definitions = AgentSnapshotRepository(self.store.database).read(run_id).definitions
+            if definitions:
+                agent_catalog = json.dumps([dict(name=value.name, description=value.description, baseRole=value.base_role,
+                                                 model=value.model.to_wire_dict() if value.model else None)
+                                            for value in definitions], ensure_ascii=False)
         instructions = InstructionResolver().resolve(
             rule_snapshot=rule_resolution_snapshot,
             skill_catalog_context=catalog_context,
@@ -114,6 +121,7 @@ class ContextBuilder:
             work_mode=str(run.get("workMode", "execute")),
             agent_role=collaboration.child_role_for_run(run_id),
             agent_definition=collaboration.child_definition_for_run(run_id),
+            agent_catalog=agent_catalog,
             has_project=has_project,
             personalization=personalization,
         )
@@ -127,12 +135,6 @@ class ContextBuilder:
             source_context_messages.append({"type": "context", "sectionId": "hook-feedback",
                 "content": "Configured Hook feedback. This is generated execution data, not a new human message or a permission grant.\n" + "\n".join(hook_context)})
         if not collaboration.child_for_run(run_id):
-            catalog = AgentSnapshotRepository(self.store.database).read(run_id)
-            if catalog.definitions:
-                summaries = [dict(name=value.name, description=value.description, baseRole=value.base_role,
-                                  model=value.model.to_wire_dict() if value.model else None) for value in catalog.definitions]
-                source_context_messages.append({"type": "context", "sectionId": "agent-catalog",
-                    "content": "Available custom subagent types, frozen for this Run. Use spawn_agent(role=name) for suitable delegated work. Their instructions apply only inside the child. Permissions are inherited.\n" + json.dumps(summaries, ensure_ascii=False)})
             selected = [value.selection_id for value in selections if value.reference.kind == "agent"]
             if selected:
                 source_context_messages.append({"type": "context", "sectionId": "selected-agents",
@@ -178,7 +180,7 @@ class ContextBuilder:
                 "type": "context",
                 "sectionId": layer.id,
                 "source": layer.source,
-                **({"contextCategory": "skills"} if layer.id == "skill-catalog" or layer.id.startswith("selected-skill:") else {}),
+                **({"contextCategory": "skills"} if layer.id.startswith("selected-skill:") else {}),
                 "content": layer.content,
             })
 
@@ -469,6 +471,7 @@ class ContextBuilder:
         budget = estimate_model_request_budget(
             tuple(context),
             instructions=instructions.system_text,
+            instruction_layers=instructions.system_layers,
             tool_definitions=tool_definitions,
             context_window_tokens=profile.context_window_tokens,
             request_max_output_tokens=profile.max_output_tokens,
@@ -489,12 +492,13 @@ class ContextBuilder:
                     memory_tools=memory_tools, memory_access=memory_access,
                     agent_role=collaboration.child_role_for_run(run_id),
                     agent_definition=collaboration.child_definition_for_run(run_id),
+                    agent_catalog=agent_catalog,
                     has_project=has_project,
                     personalization=personalization,
                 )
             context.insert(0, MemoryContext.long_term_index(projection))
             budget = estimate_model_request_budget(
-                tuple(context), instructions=instructions.system_text, tool_definitions=tool_definitions,
+                tuple(context), instructions=instructions.system_text, instruction_layers=instructions.system_layers, tool_definitions=tool_definitions,
                 context_window_tokens=profile.context_window_tokens, request_max_output_tokens=profile.max_output_tokens,
                 provider_usage=provider_usage, provider_calibration_estimate=calibration_estimate,
                 usage_updated_at=time.time_ns() // 1_000_000,
@@ -513,7 +517,7 @@ class ContextBuilder:
             if cleared != tuple(context):
                 context = list(cleared)
                 budget = estimate_model_request_budget(
-                    cleared, instructions=instructions.system_text, tool_definitions=tool_definitions,
+                    cleared, instructions=instructions.system_text, instruction_layers=instructions.system_layers, tool_definitions=tool_definitions,
                     context_window_tokens=profile.context_window_tokens, request_max_output_tokens=profile.max_output_tokens,
                     provider_usage=provider_usage, provider_calibration_estimate=calibration_estimate,
                     usage_updated_at=time.time_ns() // 1_000_000,
@@ -539,7 +543,7 @@ class ContextBuilder:
         # Re-project from the original text so retries do not stack markers.
         for _fit_attempt in range(9):
             budget = estimate_model_request_budget(
-                tuple(context), instructions=instructions.system_text, tool_definitions=tool_definitions,
+                tuple(context), instructions=instructions.system_text, instruction_layers=instructions.system_layers, tool_definitions=tool_definitions,
                 context_window_tokens=profile.context_window_tokens, request_max_output_tokens=profile.max_output_tokens,
                 provider_usage=provider_usage, provider_calibration_estimate=calibration_estimate,
                 usage_updated_at=time.time_ns() // 1_000_000,

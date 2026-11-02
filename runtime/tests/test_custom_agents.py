@@ -151,6 +151,7 @@ def test_custom_child_runs_through_existing_engine(setup):
     )
     assert store.read_run(child.run_id)["status"] == "succeeded"
     assert "Only-child-special-context" in str(model.contexts)
+    assert "# Subagents" not in model.instructions_history[0]
     names = {tool.name for tool in model.tool_definitions_history[0]}
     assert not names & {"spawn_agent", "request_permissions", "request_user_input"}
 
@@ -586,6 +587,9 @@ def test_parent_model_calls_custom_types_through_the_normal_tool_pipeline(setup,
     RuntimeEngine(store, model, lambda _event: None, collaboration=app).run(
         parent["id"], threading.Event()
     )
+    subagents = model.instructions_history[0].split("# Subagents\n", 1)[1]
+    assert '"name": "luna-work"' in subagents.split("\n# ", 1)[0]
+    assert not any(item.get("sectionId") == "agent-catalog" for item in model.contexts[0])
     items = store.read_session_snapshot(session)["items"]
     call = next(
         item
