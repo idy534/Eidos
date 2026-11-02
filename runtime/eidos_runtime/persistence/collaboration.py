@@ -15,8 +15,8 @@ from eidos_runtime.db.repositories.runs import RunRepository
 from eidos_runtime.db.transitions import transition_run
 from eidos_runtime.domain.collaboration import (
     ACTIVE_STATUSES, MAX_AGENTS, MAX_AGENT_MESSAGES, MAX_AGENT_MESSAGE_BYTES,
-    AgentMessage, AgentRole, AgentSummary, AgentTextPage, AgentWait,
-    CollaborationRejected, CollaborationState, ReadAgentResult, SpawnAgent, WaitAgents,
+    AgentMessage, AgentRole, AgentSummary, AgentTextPage, AgentWait, AgentWaitOutcome,
+    CollaborationRejected, CollaborationState, ReadAgentResult, SpawnAgent, WaitAgents, WaitMode, WaitReason,
 )
 from eidos_runtime.model.client import ModelProfileSnapshot
 from eidos_runtime.domain.run import RunStatus as DomainRunStatus
@@ -359,47 +359,115 @@ class CollaborationRepository:
                 "SELECT 1 FROM agent_waits WHERE status='pending' LIMIT 1"
             ).fetchone() is not None
 
-    def wait(self, run_id: str, item_id: str | None, request: WaitAgents) -> bool:
+    def wait(self, run_id: str, item_id: str | None, request: WaitAgents) -> AgentWaitOutcome | None:
+        """Return the outcome now, or suspend the Run and return None."""
         with self.database.transaction() as connection:
             self._active(connection, run_id)
             saved = self.wait_record(run_id)
             if saved is not None and saved.item_id == item_id and saved.status == 'ready':
-                return False
-            state = self.state(run_id)
-            available = {agent.id for agent in state.agents}
-            targets = set(request.agent_ids) or available
-            if not targets <= available:
-                raise CollaborationRejected('agent_not_owned_by_run')
-            if not any(agent.id in targets and agent.status in ACTIVE_STATUSES for agent in state.agents):
-                return False
+                # The same ToolCall resumes after wake. Its reason still holds:
+                # children stay finished and messages and input stay unread
+                # until the next model Step.
+                return self._wait_outcome(connection, run_id, item_id, saved.agent_ids, request.mode, True, True)
+            targets = self._wait_targets(connection, run_id, request)
+            outcome = self._wait_outcome(connection, run_id, item_id, targets, request.mode, False, True)
+            if outcome is not None:
+                return outcome
             connection.execute('INSERT INTO agent_waits VALUES (?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET item_id=excluded.item_id,agent_ids_json=excluded.agent_ids_json,deadline_at=excluded.deadline_at,status=excluded.status',
-                (run_id, item_id, json.dumps(sorted(targets)), now_ms() + request.timeout_ms, 'pending'))
+                (run_id, item_id, json.dumps(targets), now_ms() + request.timeout_ms, 'pending'))
             transition_run(connection, run_id, frozenset({RunStatus.RUNNING}), RunStatus.WAITING_AGENTS, 'agents_waiting')
-            return True
+            return None
 
-    def inspect_wait(self, run_id: str, request: WaitAgents) -> tuple[CollaborationState, bool]:
+    def wait_targets(self, run_id: str, request: WaitAgents) -> list[str]:
+        with self.database.lock:
+            connection = self.database.connection()
+            self._active(connection, run_id)
+            return self._wait_targets(connection, run_id, request)
+
+    def inspect_wait(self, run_id: str, item_id: str | None, targets: list[str], mode: WaitMode,
+                     timed_out: bool, interruptible: bool) -> tuple[CollaborationState, AgentWaitOutcome | None]:
         """Inspect an owned dependency without suspending its resource owner."""
         with self.database.lock:
             connection = self.database.connection()
             self._active(connection, run_id)
-            state = self.state_in_connection(connection, run_id)
-            available = {agent.id for agent in state.agents}
-            targets = set(request.agent_ids) or available
-            if not targets <= available:
-                raise CollaborationRejected('agent_not_owned_by_run')
-            pending = any(agent.id in targets and agent.status in ACTIVE_STATUSES for agent in state.agents)
-            return state, pending
+            return (self.state_in_connection(connection, run_id),
+                    self._wait_outcome(connection, run_id, item_id, targets, mode, timed_out, interruptible))
 
     def wake(self) -> None:
         with self.database.transaction() as connection:
             rows = connection.execute("SELECT w.* FROM agent_waits w JOIN runs r ON r.id=w.run_id WHERE w.status='pending' AND r.status='waiting_agents' AND r.cancel_requested_at IS NULL LIMIT 256").fetchall()
             for row in rows:
-                targets = set(json.loads(row['agent_ids_json']))
-                pending = any(agent.id in targets and agent.status in ACTIVE_STATUSES for agent in self.state(row['run_id']).agents)
-                if pending and row['deadline_at'] > now_ms():
+                if self._wait_outcome(connection, row['run_id'], row['item_id'], json.loads(row['agent_ids_json']),
+                        self._saved_wait_mode(connection, row['item_id']), row['deadline_at'] <= now_ms(), True) is None:
                     continue
                 connection.execute("UPDATE agent_waits SET status='ready' WHERE run_id=?", (row['run_id'],))
                 transition_run(connection, row['run_id'], frozenset({RunStatus.WAITING_AGENTS}), RunStatus.QUEUED, 'agents_wait_completed')
+
+    @staticmethod
+    def _child_statuses(connection: sqlite3.Connection, run_id: str) -> dict[str, str]:
+        return {row['id']: row['status'] for row in connection.execute(
+            'SELECT d.id,r.status FROM agent_delegations d JOIN runs r ON r.id=d.child_run_id WHERE d.parent_run_id=? ORDER BY d.created_at,d.id LIMIT ?',
+            (run_id, MAX_AGENTS))}
+
+    def _wait_targets(self, connection: sqlite3.Connection, run_id: str, request: WaitAgents) -> list[str]:
+        """Keep only selected children that are still running; they decide any-mode."""
+        statuses = self._child_statuses(connection, run_id)
+        selected = set(request.agent_ids) or set(statuses)
+        if not selected <= set(statuses):
+            raise CollaborationRejected('agent_not_owned_by_run')
+        return sorted(agent_id for agent_id in selected if statuses[agent_id] in ACTIVE_STATUSES)
+
+    def _wait_outcome(self, connection: sqlite3.Connection, run_id: str, item_id: str | None, targets: list[str],
+                      mode: WaitMode, timed_out: bool, interruptible: bool) -> AgentWaitOutcome | None:
+        statuses = self._child_statuses(connection, run_id)
+        pending = [agent_id for agent_id in targets if statuses.get(agent_id) in ACTIVE_STATUSES]
+        reason: WaitReason
+        if not pending or (mode == 'any' and len(pending) < len(targets)):
+            reason = 'agents_finished'
+        elif interruptible and self._new_parent_message(connection, run_id, item_id):
+            reason = 'agent_message'
+        elif interruptible and connection.execute(
+                "SELECT 1 FROM input_mailbox WHERE run_id=? AND status='pending' LIMIT 1", (run_id,)).fetchone():
+            reason = 'user_input'
+        elif timed_out:
+            reason = 'timeout'
+        else:
+            return None
+        return AgentWaitOutcome(reason=reason, pending_agent_ids=pending)
+
+    @staticmethod
+    def _new_parent_message(connection: sqlite3.Connection, run_id: str, item_id: str | None) -> bool:
+        """Find an unread message the waiting model Step may not have seen.
+
+        Messages from before that Step were already in its context, possibly as
+        a truncated preview, so they must not end every later wait at once.
+        """
+        since = 0
+        if item_id is not None:
+            item = connection.execute(
+                'SELECT i.run_id,i.model_step_index,t.started_at FROM items i JOIN tool_calls t ON t.item_id=i.id WHERE i.id=?',
+                (item_id,)).fetchone()
+            if item is not None:
+                step = connection.execute(
+                    'SELECT created_at FROM steps WHERE run_id=? ORDER BY creation_seq LIMIT 1 OFFSET ?',
+                    (item['run_id'], item['model_step_index'] - 1),
+                ).fetchone() if item['model_step_index'] else None
+                since = step['created_at'] if step else item['started_at']
+        return connection.execute(
+            'SELECT 1 FROM agent_messages m JOIN runs r ON r.session_id=m.recipient_session_id '
+            'WHERE r.id=? AND m.parent_run_id=r.id AND m.created_at>=? '
+            'AND NOT EXISTS (SELECT 1 FROM agent_message_receipts a WHERE a.message_id=m.id) LIMIT 1',
+            (run_id, since)).fetchone() is not None
+
+    @staticmethod
+    def _saved_wait_mode(connection: sqlite3.Connection, item_id: str | None) -> WaitMode:
+        # agent_waits keeps targets and the deadline. The wait_agents ToolCall
+        # arguments remain the durable request; Runtime completion waits use all.
+        row = connection.execute('SELECT arguments_json FROM tool_calls WHERE item_id=?', (item_id,)).fetchone() if item_id else None
+        try:
+            return WaitAgents.model_validate_json(row['arguments_json']).mode if row else 'all'
+        except ValueError:
+            return 'all'
 
     def clear_wait(self, run_id: str) -> None:
         with self.database.transaction() as connection:

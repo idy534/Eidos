@@ -80,9 +80,21 @@ class AgentTextPage(EidosFrozenStrictModel):
         return self
 
 
+WaitMode = Literal["all", "any"]
+WaitReason = Literal["agents_finished", "agent_message", "user_input", "timeout"]
+
+
 class WaitAgents(EidosFrozenStrictModel):
-    agent_ids: list[str] = Field(default_factory=list, max_length=MAX_AGENTS, description="Wait until all selected agents finish. An empty list selects all children of this Run.")
+    agent_ids: list[str] = Field(default_factory=list, max_length=MAX_AGENTS, description="Children to wait for. An empty list selects all children of this Run.")
+    mode: WaitMode = Field(default="all", description="all returns when every selected running child has finished; any returns when the first of them finishes.")
     timeout_ms: int = Field(default=30000, ge=1000, le=300000)
+
+
+class AgentWaitOutcome(EidosFrozenStrictModel):
+    """Why a wait returned. Reasons are read from durable facts at return time."""
+
+    reason: WaitReason
+    pending_agent_ids: list[str] = Field(default_factory=list, max_length=MAX_AGENTS)
 
 
 class AgentSummary(EidosFrozenStrictModel):

@@ -94,10 +94,12 @@ class PlanningToolRuntime(AdapterToolRuntime):
                                     and agent.required_for_completion and agent.status.value in ACTIVE_STATUSES]
                         if not required:
                             break
-                        context.collaboration.wait(run_id, None, WaitAgents(agent_ids=required, timeout_ms=300000), cancel=cancel, keep_worker=True)
+                        context.collaboration.wait(run_id, None, WaitAgents(agent_ids=required, timeout_ms=300000),
+                            cancel=cancel, keep_worker=True, interruptible=False)
                     context.collaboration.stop_optional(run_id)
                     while context.collaboration.repository.child_runs(run_id):
-                        context.collaboration.wait(run_id, None, WaitAgents(timeout_ms=300000), cancel=cancel, keep_worker=True)
+                        context.collaboration.wait(run_id, None, WaitAgents(timeout_ms=300000),
+                            cancel=cancel, keep_worker=True, interruptible=False)
                 finally:
                     if callable(resume_deadline):
                         resume_deadline()

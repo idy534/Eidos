@@ -12,8 +12,8 @@ from eidos_runtime.application.agent_catalog import AgentCatalog
 from eidos_runtime.model.config import ModelConfigError
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.collaboration import (
-    CollaborationRejected, AgentMessageRequest, AgentSummary, AgentSuspended, CollaborationState,
-    SpawnAgent, WaitAgents,
+    CollaborationRejected, AgentMessageRequest, AgentSummary, AgentSuspended, AgentWaitOutcome,
+    CollaborationState, SpawnAgent, WaitAgents,
 )
 from eidos_runtime.persistence.collaboration import CollaborationRepository
 from eidos_runtime.runtime.contracts import RuntimeCancelled
@@ -98,7 +98,13 @@ class CollaborationApplication:
         return self.repository.state(run_id)
 
     def wait(self, run_id: str, item_id: str | None, request: WaitAgents, *,
-             cancel: Event | None = None, keep_worker: bool = False) -> CollaborationState:
+             cancel: Event | None = None, keep_worker: bool = False,
+             interruptible: bool = True) -> tuple[CollaborationState, AgentWaitOutcome]:
+        """Wait for children, or return early for a parent message or user input.
+
+        Internal loops that cannot consume messages or input pass
+        interruptible=False so they do not return to the same wait at once.
+        """
         if keep_worker:
             # A live Shell belongs to this Worker. Durable suspension would
             # close RunResources and kill it. Keep only its owner alive; never
@@ -106,19 +112,22 @@ class CollaborationApplication:
             if cancel is None:
                 raise ValueError('resource-owning wait requires cancellation')
             deadline = time.monotonic() + request.timeout_ms / 1000
+            targets = self.repository.wait_targets(run_id, request)
             logger.info("Agent wait retains live resources run_id=%s timeout_ms=%s", run_id, request.timeout_ms)
             while True:
                 if cancel.is_set():
                     logger.info("Resource-owning agent wait canceled run_id=%s", run_id)
                     raise RuntimeCancelled
-                state, pending = self.repository.inspect_wait(run_id, request)
                 remaining = deadline - time.monotonic()
-                if not pending or remaining <= 0:
-                    logger.info("Resource-owning agent wait finished run_id=%s reason=%s", run_id, "timeout" if pending else "children_finished")
-                    return state
+                state, outcome = self.repository.inspect_wait(
+                    run_id, item_id, targets, request.mode, remaining <= 0, interruptible)
+                if outcome is not None:
+                    logger.info("Resource-owning agent wait finished run_id=%s reason=%s", run_id, outcome.reason)
+                    return state, outcome
                 cancel.wait(min(0.1, remaining))
-        if self.repository.wait(run_id, item_id, request):
+        outcome = self.repository.wait(run_id, item_id, request)
+        if outcome is None:
             self.publish()
             self.schedule()
             raise AgentSuspended()
-        return self.repository.state(run_id)
+        return self.repository.state(run_id), outcome

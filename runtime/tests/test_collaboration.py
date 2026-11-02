@@ -506,6 +506,148 @@ def test_wait_wakes_after_child_completion_and_after_timeout(tmp_path: Path) -> 
         store.close()
 
 
+def _suspend(store: SessionStore, parent: dict[str, object], call_id: str, arguments: str, request: WaitAgents) -> str:
+    item = store.create_tool_item(str(parent["id"]), 1, 20, call_id, "wait_agents", arguments)
+    with pytest.raises(AgentSuspended):
+        CollaborationApplication(store, lambda: None, lambda _run_id: None, lambda: None).wait(
+            str(parent["id"]), str(item["id"]), request)
+    assert store.read_run(str(parent["id"]))["status"] == "waiting_agents"
+    return str(item["id"])
+
+
+def _resume(store: SessionStore, parent: dict[str, object], item_id: str, request: WaitAgents):
+    assert store.read_run(str(parent["id"]))["status"] == "queued"
+    with store.database.transaction() as connection:
+        connection.execute("UPDATE runs SET status='running' WHERE id=?", (parent["id"],))
+    return CollaborationApplication(store, lambda: None, lambda _run_id: None, lambda: None).wait(
+        str(parent["id"]), item_id, request)
+
+
+def test_wait_wakes_for_new_child_message_but_not_for_one_already_seen(tmp_path: Path) -> None:
+    store, _session, parent = _parent(tmp_path)
+    try:
+        repository, child, _spawn_item_id = _spawn(store, parent, 0)
+        assert store.claim_next_run_committed().value["id"] == child.run_id
+        repository.send(child.run_id, "seen-message", "parent", "an earlier blocker")
+        store.connection.execute("UPDATE agent_messages SET created_at=0 WHERE id='seen-message'")
+        store.connection.commit()
+        request = WaitAgents(agent_ids=[child.id], timeout_ms=300000)
+        item_id = _suspend(store, parent, "wait-message", "{}", request)
+
+        repository.wake()
+        assert store.read_run(str(parent["id"]))["status"] == "waiting_agents"
+
+        repository.send(child.run_id, "new-message", "parent", "which file owns this?")
+        repository.wake()
+        state, outcome = _resume(store, parent, item_id, request)
+        assert outcome.reason == "agent_message"
+        assert outcome.pending_agent_ids == [child.id]
+        assert state.agents[0].status == "running"
+    finally:
+        store.close()
+
+
+def test_any_mode_returns_after_first_child_and_reports_pending_children(tmp_path: Path) -> None:
+    store, _session, parent = _parent(tmp_path)
+    try:
+        repository, first, _item = _spawn(store, parent, 0)
+        _repository, second, _item = _spawn(store, parent, 1)
+        assert store.claim_next_run_committed().value["id"] == first.run_id
+        store.cancel_run(second.run_id)
+        _repository, third, _item = _spawn(store, parent, 2)
+        request = WaitAgents(mode="any", timeout_ms=300000)
+        item_id = _suspend(store, parent, "wait-any", json.dumps({"mode": "any", "timeoutMs": 300000}), request)
+        # A child that finished before the wait cannot end it.
+        assert repository.wait_record(str(parent["id"])).agent_ids == sorted([first.id, third.id])
+        repository.wake()
+        assert store.read_run(str(parent["id"]))["status"] == "waiting_agents"
+
+        store.fail_run(first.run_id, "finished")
+        repository.wake()
+        _state, outcome = _resume(store, parent, item_id, request)
+        assert outcome.reason == "agents_finished"
+        assert outcome.pending_agent_ids == [third.id]
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("call_id", ["wait-input", None])
+def test_user_input_ends_tool_and_completion_waits(tmp_path: Path, call_id: str | None) -> None:
+    store, _session, parent = _parent(tmp_path)
+    try:
+        repository, child, _item = _spawn(store, parent, 0)
+        request = WaitAgents(timeout_ms=300000)
+        app = CollaborationApplication(store, lambda: None, lambda _run_id: None, lambda: None)
+        if call_id is None:
+            with pytest.raises(AgentSuspended):
+                app.wait(str(parent["id"]), None, request)
+        else:
+            item_id = _suspend(store, parent, call_id, "{}", request)
+        store.connection.execute(
+            "INSERT INTO input_mailbox (id, run_id, content, status, created_at) VALUES ('steer', ?, 'stop and summarize', 'pending', 1)",
+            (parent["id"],))
+        store.connection.commit()
+        repository.wake()
+        assert store.read_run(str(parent["id"]))["status"] == "queued"
+        if call_id is not None:
+            _state, outcome = _resume(store, parent, item_id, request)
+            assert outcome.reason == "user_input" and outcome.pending_agent_ids == [child.id]
+            # Input that is already pending ends the next wait without suspending.
+            second = store.create_tool_item(str(parent["id"]), 1, 21, "wait-again", "wait_agents", "{}")
+            _state, outcome = app.wait(str(parent["id"]), str(second["id"]), request)
+            assert outcome.reason == "user_input"
+            assert store.read_run(str(parent["id"]))["status"] == "running"
+    finally:
+        store.close()
+
+
+def test_suspended_parent_resumes_its_wait_call_when_a_child_asks_a_question(tmp_path: Path) -> None:
+    store, _session, parent = _parent(tmp_path)
+    try:
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall("spawn", "spawn_agent", {
+                "taskName": "inspect", "message": "Inspect evidence", "role": "explorer"}),)),
+            ModelResponse(tool_calls=(ModelToolCall("wait", "wait_agents", {"timeoutMs": 300000}),)),
+            ModelResponse(text="Answered the child question."),
+        ])
+        app = CollaborationApplication(store, lambda: None, lambda _run: None, lambda: None)
+        engine = RuntimeEngine(store, model, lambda _event: None, collaboration=app)
+        engine.run(str(parent["id"]), threading.Event())
+        assert store.read_run(str(parent["id"]))["status"] == "waiting_agents"
+        child = app.repository.state(str(parent["id"])).agents[0]
+        assert store.claim_next_run_committed().value["id"] == child.run_id
+
+        app.repository.send(child.run_id, "child-question", "parent", "Which directory should I inspect?")
+        app.repository.wake()
+        assert store.claim_next_run_committed().value["id"] == parent["id"]
+        engine.run(str(parent["id"]), threading.Event())
+
+        resumed = json.loads(store.connection.execute(
+            "SELECT model_result_json FROM tool_calls WHERE tool_name='wait_agents'").fetchone()[0])
+        assert resumed["data"]["wait"] == {"reason": "agent_message", "pendingAgentIds": [child.id]}
+        assert "Which directory should I inspect?" in json.dumps(model.contexts[2], ensure_ascii=False)
+        # The delivered question does not end the completion wait; the child still runs.
+        assert store.read_run(str(parent["id"]))["status"] == "waiting_agents"
+        assert app.repository.wait_record(str(parent["id"])).item_id is None
+    finally:
+        store.close()
+
+
+def test_timed_out_wait_reports_timeout_and_running_children(tmp_path: Path) -> None:
+    store, _session, parent = _parent(tmp_path)
+    try:
+        repository, child, _item = _spawn(store, parent, 0)
+        request = WaitAgents(timeout_ms=1000)
+        item_id = _suspend(store, parent, "wait-timeout", "{}", request)
+        store.connection.execute("UPDATE agent_waits SET deadline_at=0 WHERE run_id=?", (parent["id"],))
+        store.connection.commit()
+        repository.wake()
+        _state, outcome = _resume(store, parent, item_id, request)
+        assert outcome.reason == "timeout" and outcome.pending_agent_ids == [child.id]
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize('role', ['default', 'explorer', 'worker'])
 def test_parent_cancel_stops_active_children_and_rejects_late_child_message(
     tmp_path: Path, role: AgentRole,
