@@ -78,3 +78,23 @@ def test_task_query_grounds_paths_symbols_and_tool_history(tmp_path: Path) -> No
     )
     assert "missing.py" not in query.mentioned_paths
     assert "invented.py" not in query.recently_modified_paths
+
+
+def test_plain_words_are_not_explicit_symbol_mentions(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "client.py").write_text(
+        "def retry():\n    pass\n\ndef model():\n    pass\n\ndef send_request():\n    pass\n",
+        encoding="utf-8",
+    )
+    inventory = RepositoryInventoryBuilder(root).build()
+    index = RepositoryIndexer(root).build(inventory)
+
+    query = RepositoryTaskQueryBuilder().build(
+        "retry the model call in send_request",
+        inventory=inventory,
+        index=index,
+        facts=ContextFacts(run_id="run-1", session_id="session-1", items=()),
+    )
+
+    assert query.mentioned_symbols == ("send_request",)
