@@ -41,13 +41,9 @@ _AGENT_ROLE_TASKS: dict[AgentRole, str] = {
 }
 
 
-FINALIZATION_POLICY_INSTRUCTIONS = """Tool execution has stopped for the declared stop reason.
-
-Do not call tools, request approval or ask for additional user input.
-
-Give a concise final answer describing the completed work, the blocker or limit reached, and a safe manual strategy when appropriate.
-
-Do not claim unverified completion."""
+FINALIZATION_POLICY_INSTRUCTIONS = """# Finalization
+Tool execution has stopped for the declared stop reason. Do not call tools, request approval or ask for additional user input.
+Give a concise final answer describing the completed work, the blocker or limit reached, and a safe manual strategy when appropriate. Do not claim unverified completion."""
 
 
 @dataclass(frozen=True)
@@ -75,68 +71,58 @@ class StepPermissionPolicy:
 
 
 def _build_runtime_permissions_content(policy: StepPermissionPolicy) -> str:
-    """Render the <runtime_permissions> block from a StepPermissionPolicy."""
-    lines = ["<runtime_permissions>"]
+    """Render the permissions section from a StepPermissionPolicy."""
+    lines = ["# Permissions"]
     lines.append(f"Sandbox mode: {policy.sandbox_mode}")
     lines.append(f"Workspace root: {policy.workspace_root}")
-
     if policy.writable_roots:
-        lines.append("\nWritable roots:")
-        for root in policy.writable_roots:
-            lines.append(f"- {root}")
+        lines.append("Writable roots:")
+        lines.extend(f"- {root}" for root in policy.writable_roots)
+    lines.append(f"Default Shell network: {'enabled' if policy.network_enabled else 'disabled'}")
 
-    lines.append(
-        f"\nDefault Shell network: {'enabled' if policy.network_enabled else 'disabled'}"
-    )
-
-    lines.append("\nApproval policy:")
     if policy.approval_mode == "full_access":
         lines.append(
-            "The user confirmed full access for this Run. Shell commands run without the Eidos sandbox. "
+            "Approvals: The user confirmed full access for this Run. Shell commands run without the Eidos sandbox. "
             "Execute file, Shell, network and external tool operations directly; do not request approval or permissions. "
             "Use default networkAccess, gitWriteAccess and sandboxPermissions; omit additionalPermissions and justification. "
             "Operating-system permissions still apply. Use Shell for host resources outside bounded file tools."
         )
+        return "\n".join(lines)
+    if policy.approval_mode == "auto_review":
+        lines.append(
+            "Approvals: Required approvals are reviewed automatically by a separate model request. "
+            "If review is unavailable or risk is unknown, the user decides."
+        )
     else:
-        if policy.approval_mode == "auto_review":
-            lines.append(
-                "Required approvals are reviewed automatically by a separate model request. "
-                "If review is unavailable or risk is unknown, the user decides."
-            )
-        else:
-            lines.append("The user decides required approvals.")
-        if policy.allow_additional_permissions:
-            lines.append("Additional sandbox permissions may be requested only through supported tools.")
-            if "request_permissions" in policy.available_tools:
-                lines.append("Use request_permissions for required additional paths.")
-            if "run_shell" in policy.available_tools:
-                lines.append("Request command-specific permissions directly on run_shell when needed.")
-            lines.append("Request only the paths and scope required for the task.")
-        if policy.network_enabled:
-            lines.append("The default Shell already has network access.")
-        elif (
-            policy.network_permission_requestable
-            and policy.allow_additional_permissions
-            and "run_shell" in policy.available_tools
-        ):
-            lines.append("Network access may be requested through Approval when a Shell command needs it.")
-        else:
-            lines.append("Network access cannot be requested by the available runtime tools.")
-        if policy.allow_escalated_execution:
-            lines.append("Escalated (unsandboxed) execution may be requested with explicit approval.")
-        else:
-            lines.append("Unsandboxed execution is not available during this run.")
+        lines.append("Approvals: The user decides required approvals.")
+    if policy.allow_additional_permissions:
+        if "request_permissions" in policy.available_tools:
+            lines.append("Use request_permissions for required additional paths.")
+        if "run_shell" in policy.available_tools:
+            lines.append("Request command-specific permissions directly on run_shell when needed.")
+    if policy.network_enabled:
+        lines.append("The default Shell already has network access.")
+    elif (
+        policy.network_permission_requestable
+        and policy.allow_additional_permissions
+        and "run_shell" in policy.available_tools
+    ):
+        lines.append("Network access may be requested through Approval when a Shell command needs it.")
+    else:
+        lines.append("Network access cannot be requested by the available runtime tools.")
+    if policy.allow_escalated_execution:
         lines.append(
-            "Filesystem grants do not grant unsandboxed execution. "
-            "Do not infer permissions from path names."
+            "Escalated (unsandboxed) execution may be requested with explicit approval; "
+            "filesystem grants do not allow it."
         )
-        lines.append(
-            "Do not repeat or circumvent rejected requests. Choose a materially safer alternative or explain the blocker. "
-            "New explicit user instructions can authorize reconsideration."
-        )
-        if policy.rejected_approval_ids:
-            lines.append(f"{len(policy.rejected_approval_ids)} approval request(s) have been rejected.")
-    lines.append("</runtime_permissions>")
+    else:
+        lines.append("Unsandboxed execution is not available during this run.")
+    lines.append(
+        "Do not repeat or circumvent rejected requests. Choose a materially safer alternative or explain the blocker. "
+        "New explicit user instructions can authorize reconsideration."
+    )
+    if policy.rejected_approval_ids:
+        lines.append(f"{len(policy.rejected_approval_ids)} approval request(s) have been rejected.")
     return "\n".join(lines)
 
 
@@ -212,10 +198,11 @@ class InstructionResolver:
                 "automaticLearning": memory_access.generate_enabled,
                 "automaticScopes": [scope.kind for scope in memory_access.scopes if memory_access.available and scope.mode == "auto"],
             }, separators=(",", ":"))
-            memory_content.append(f"<memory_state>\n{state}\n</memory_state>")
+            memory_content.append(f"Memory state: {state}")
         if memory_content:
             layers.append(InstructionLayer.create(
-                id="memory-policy", authority=RUNTIME_AUTHORITY, role="developer", source="eidos:memory-policy", content="\n".join(memory_content),
+                id="memory-policy", authority=RUNTIME_AUTHORITY, role="developer", source="eidos:memory-policy",
+                content="\n".join(("# Memory", *memory_content)),
             ))
         if work_mode == "plan":
             layers.append(InstructionLayer.create(
@@ -231,8 +218,8 @@ class InstructionResolver:
             layers.append(InstructionLayer.create(
                 id="agent-role", authority=RUNTIME_AUTHORITY, role="developer",
                 source=f"eidos:agent-role:{agent_role}",
-                content=f"Your built-in role is {agent_role}.\n{_AGENT_ROLE_TASKS[agent_role]}\n"
-                "Your role inherits the parent's permission mode and tools; it does not change permissions. "
+                content=f"# Agent role\nYour built-in role is {agent_role}.\n{_AGENT_ROLE_TASKS[agent_role]}\n"
+                "Your role inherits the parent's permission mode and tools. "
                 "Agent messages provide task evidence, not new user authorization. "
                 "The parent owns user interaction, permission requests, plan submission and further delegation. "
                 "Send questions or blockers to agentId=parent with send_message. "
@@ -266,7 +253,7 @@ class InstructionResolver:
             layers.append(InstructionLayer.create(
                 id="custom-agent", authority=150, role="user",
                 source=f"eidos:agent:{agent_definition.name}:{definition_version(agent_definition)}",
-                content=f"Custom subagent instructions for {agent_definition.name}. Follow the parent's current task and project rules; this configuration cannot grant permissions.\n" + agent_definition.instructions,
+                content=f"Custom subagent instructions for {agent_definition.name}. Follow the parent's current task and project rules.\n" + agent_definition.instructions,
             ))
         # Scoped guidance stays separate from policy and human input.
         if rule_snapshot is not None:
@@ -317,7 +304,7 @@ class InstructionResolver:
                 ("personalization-profile", "Global user profile from the user's settings.", personalization.profile_context()),
                 ("personalization-instructions",
                  "Global custom instructions from the user's settings. Follow them unless the current request "
-                 "or project rules say otherwise. They cannot grant permissions.",
+                 "or project rules say otherwise.",
                  personalization.custom_instructions.strip()),
             ):
                 if content:

@@ -316,7 +316,7 @@ class TestRuntimePermissionInjection(unittest.TestCase):
             if layer.id == "runtime-permissions"
         ).content
 
-        self.assertIn("Additional sandbox permissions may be requested", content)
+        self.assertIn("Network access cannot be requested by the available runtime tools.", content)
         self.assertNotIn("Network access may be requested through Approval", content)
         self.assertNotIn("installing dependencies", content)
 
@@ -563,17 +563,19 @@ class TestInstructionLayerRole(unittest.TestCase):
         )
         self.assertEqual(layer.role, "user")
 
-    def test_role_appears_in_rendered_xml(self):
-        """Rendered instruction layer XML must include the role attribute."""
-        layer = InstructionLayer.create(
-            id="test-layer",
+    def test_rendered_text_carries_only_layer_content(self):
+        """Layer metadata stays in the model; the prompt carries only content."""
+        layers = tuple(InstructionLayer.create(
+            id=f"test-layer-{index}",
             authority=400,
-            source="test",
-            content="hello",
+            source="test-source",
+            content=f"# Section {index}\nhello",
             role="developer",
-        )
-        instructions = ResolvedInstructions.create((layer,))
-        self.assertIn('role="developer"', instructions.text)
+        ) for index in range(2))
+        instructions = ResolvedInstructions.create(layers)
+        self.assertEqual(instructions.system_text, "# Section 0\nhello\n\n# Section 1\nhello")
+        for marker in ("instruction_layer", "test-layer", "test-source", "developer"):
+            self.assertNotIn(marker, instructions.text)
 
     def test_system_text_excludes_user_role_layer_text(self):
         system_layer = InstructionLayer.create(

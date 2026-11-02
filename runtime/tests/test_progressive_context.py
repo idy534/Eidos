@@ -84,7 +84,8 @@ def test_first_request_has_direct_tools_catalog_memory_and_unchanged_user_input(
     assert sections["skill-catalog"]["contextCategory"] == "skills"
     assert "<available_skills>" in sections["skill-catalog"]["content"]
     assert "galacticstar" in sections["skill-catalog"]["content"]
-    assert "<load_tool>skill_read</load_tool>" in sections["skill-catalog"]["content"]
+    assert "qualifiedId for skill_read" in sections["skill-catalog"]["content"]
+    assert "<load_tool>" not in sections["skill-catalog"]["content"]
     assert sections["memory-evidence"]["contextCategory"] == "memory"
     assert not tool_results(store, session)
     attempt = store.read_model_attempts(run["id"])[0]

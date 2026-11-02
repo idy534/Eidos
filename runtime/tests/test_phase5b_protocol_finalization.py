@@ -20,7 +20,7 @@ from eidos_runtime.model.client import (  # noqa: E402
 )
 from eidos_runtime.context.project_rules import ProjectRuleResolver  # noqa: E402
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
-from eidos_runtime.model.instructions import InstructionResolver  # noqa: E402
+from eidos_runtime.model.instructions import FINALIZATION_POLICY_INSTRUCTIONS, InstructionResolver  # noqa: E402
 from eidos_runtime.protocol.server import RuntimeServer  # noqa: E402
 from eidos_runtime.runtime.contracts import RuntimeCancelled  # noqa: E402
 from eidos_runtime.sandbox.sensitive import SensitiveScanner  # noqa: E402
@@ -446,9 +446,9 @@ class FinalizationPersistenceTests(unittest.TestCase):
         self.assertEqual(model.tool_definitions_history, [()])
         self.assertEqual(len(model.instructions_history), 1)
         final_instructions = model.instructions_history[0]
-        self.assertIn("system-safety", final_instructions)
-        self.assertIn("runtime-policy", final_instructions)
-        self.assertIn("finalization-policy", final_instructions)
+        self.assertTrue(final_instructions.startswith("You are Eidos"))
+        self.assertIn("# Tools", final_instructions)
+        self.assertTrue(final_instructions.endswith(FINALIZATION_POLICY_INSTRUCTIONS))
         self.assertIn("Do not call tools", final_instructions)
         user_layers = {
             item["sectionId"]: item["content"]
@@ -459,7 +459,6 @@ class FinalizationPersistenceTests(unittest.TestCase):
         self.assertIn("Preserve this project rule", user_layers["project-rule:EIDOS.md"])
         for layer in base.layers:
             if layer.role in {"system", "developer"}:
-                self.assertIn(layer.id, final_instructions)
                 self.assertIn(layer.content, final_instructions)
             else:
                 self.assertEqual(user_layers.get(layer.id), layer.content)

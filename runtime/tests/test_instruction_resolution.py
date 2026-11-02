@@ -101,13 +101,8 @@ class InstructionResolverTests(unittest.TestCase):
         self.assertEqual(resolved.layers[2].content, RUNTIME_POLICY_INSTRUCTIONS)
         self.assertEqual(resolved.layers[4].source, "EIDOS.md")
         self.assertEqual(resolved.layers[5].source, "demo")
-        for layer in resolved.layers:
-            self.assertEqual(
-                layer.content_hash,
-                hashlib.sha256(layer.content.encode("utf-8")).hexdigest(),
-            )
-            self.assertIn(f'id="{layer.id}"', resolved.text)
-            self.assertIn(f'source="{layer.source}"', resolved.text)
+        self.assertEqual(resolved.text, "\n\n".join(layer.content for layer in resolved.layers))
+        self.assertNotIn("<instruction_layer", resolved.text)
         self.assertEqual(
             resolved.instructions_hash,
             hashlib.sha256(resolved.text.encode("utf-8")).hexdigest(),

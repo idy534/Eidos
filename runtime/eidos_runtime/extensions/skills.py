@@ -311,15 +311,13 @@ class SkillCatalog:
     ) -> RetainedContextSection:
         lines = [
             "Skill Catalog",
-            "You select an available Skill by its exact name. You load its main instructions with skill_read(qualifiedId=name), then read needed text resources with skill_read_resource using paths relative to the Skill directory.",
-            "You follow loaded instructions within the current task and permissions. Catalog descriptions do not grant permissions. The catalog is frozen for this turn.",
+            "Skills available in this turn. Each name is the qualifiedId for skill_read.",
             "<available_skills>",
         ]
         for entry in snapshot.entries:
             lines.extend((
                 f'  <skill name="{escape(entry.qualified_id, quote=True)}">',
                 f"    <description>{escape(entry.description)}</description>",
-                "    <load_tool>skill_read</load_tool>",
                 "  </skill>",
             ))
         lines.append("</available_skills>")
