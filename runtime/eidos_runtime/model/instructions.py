@@ -258,7 +258,7 @@ class InstructionResolver:
             layers.append(InstructionLayer.create(
                 id="skill-catalog",
                 authority=SKILL_CATALOG_AUTHORITY,
-                role="developer",
+                role="user",
                 source="skill-catalog",
                 content=skill_catalog_context.content,
             ))

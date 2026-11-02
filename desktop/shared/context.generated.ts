@@ -5,7 +5,8 @@ export type Measurement = "provider" | "provider_calibrated" | "tokenizer_estima
 export type Activetokens = number | null;
 export type Projectedtokens = number | null;
 export type Contextwindowtokens = number;
-export type Name = "instructions" | "tools" | "conversation" | "tool_results" | "summary" | "other" | "overhead";
+export type Name =
+  "instructions" | "tools" | "skills" | "memory" | "conversation" | "tool_results" | "summary" | "other" | "overhead";
 export type Tokens = number;
 export type Sections = ContextTokenSection[];
 export type Clearedtoolresults = number;

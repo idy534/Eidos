@@ -177,7 +177,7 @@ def recovery_context(context: tuple[dict[str, object], ...], byte_limit: int, *,
             continuation=(f"Original item {item['sourceItemId']}: read_tool_output(callId='{item['sourceItemId']}', stream='context')." if item.get("sourceItemId") else "The complete original remains in the saved session; use read_tool_output stream='context' with its itemId."))
         result.append({"type": item.get("type", "user"), "content": text,
                        **({"sectionId": item["sectionId"]} if item.get("sectionId") else {}),
-                       **({"source": item["source"]} if item.get("source") else {}),
+                       **({key: item[key] for key in ("contextCategory", "memorySource", "scope", "source") if key in item}),
                        **({"sourceItemId": item["sourceItemId"]} if item.get("sourceItemId") else {}),
                        **({"memoryEpochs": item["memoryEpochs"]} if item.get("memoryEpochs") else {})})
     # Saved memory evidence must retain its private revocation guard even when

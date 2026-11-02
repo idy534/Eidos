@@ -80,9 +80,12 @@ def test_first_request_has_direct_tools_catalog_memory_and_unchanged_user_input(
     assert sections["memory-evidence"]["type"] == "context"
     assert sections["workspace-environment"]["type"] == "context"
     assert str(workspace) in model.instructions_history[0]
-    assert "galacticstar" in model.instructions_history[0]
-    assert "<available_skills>" in model.instructions_history[0]
-    assert "<load_tool>skill_read</load_tool>" in model.instructions_history[0]
+    assert "galacticstar" not in model.instructions_history[0]
+    assert sections["skill-catalog"]["contextCategory"] == "skills"
+    assert "<available_skills>" in sections["skill-catalog"]["content"]
+    assert "galacticstar" in sections["skill-catalog"]["content"]
+    assert "<load_tool>skill_read</load_tool>" in sections["skill-catalog"]["content"]
+    assert sections["memory-evidence"]["contextCategory"] == "memory"
     assert not tool_results(store, session)
     attempt = store.read_model_attempts(run["id"])[0]
     snapshot = store.context_snapshot_repository().read_for_model_attempt(attempt["id"])
@@ -101,7 +104,23 @@ def test_user_preferences_are_separate_source_context(setup):
     assert "Simplified Chinese" in sections["personalization-expression"]["content"]
     assert "Eddy" in sections["personalization-profile"]["content"]
     assert "Use metric units." in sections["personalization-instructions"]["content"]
-    assert all(value["type"] == "context" for key, value in sections.items() if str(key).startswith("personalization-"))
+    preferences = [value for key, value in sections.items() if str(key).startswith("personalization-")]
+    assert all(value["type"] == "context" and value["contextCategory"] == "memory" for value in preferences)
+    assert "Use metric units." not in model.instructions_history[0]
+
+
+def test_long_term_memory_off_keeps_explicit_global_defaults(setup):
+    store, session, _ = setup
+    PersonalizationRepository(store.database).save(PersonalizationPreferences(
+        custom_instructions="Use metric units."
+    ), 0)
+    store.database.memory.policy(MemoryPolicyRequest(session_id=session.id, scope="global", mode="off"))
+    _, model = execute(store, session, "Hello", [ModelResponse(text="Hello")])
+    sections = {item.get("sectionId"): item for item in model.contexts[0]}
+    assert "memory-evidence" not in sections
+    assert sections["personalization-instructions"]["contextCategory"] == "memory"
+    assert sections["personalization-instructions"]["memorySource"] == "global_customization"
+    assert "Use metric units." in sections["personalization-instructions"]["content"]
 
 
 def test_invalid_scheduling_timezone_does_not_block_ordinary_context(setup, monkeypatch):
@@ -173,7 +192,7 @@ def test_skill_is_available_and_its_resources_remain_scoped(setup):
     assert [result["outcome"] for result in results] == ["success", "success"]
     assert "Use the user's supplied facts." in json.dumps(results[0])
     assert "Use a readable layout." in json.dumps(results[1])
-    assert "user:nebula" in model.instructions_history[0]
+    assert "user:nebula" in str(model.contexts[0])
 
 
 @pytest.mark.parametrize("mode", ["auto", "read", "off"])

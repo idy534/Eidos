@@ -34,7 +34,7 @@ Python 的严格 Pydantic 模型生成 Desktop 类型和 JSON Schema。Main、Ru
 
 Runtime 在创建 Run 的同一事务中把配置固定到 `RunResolutionSnapshot.personalization`。排队任务也使用创建时的配置。后续保存只影响新建的任务；当前任务、后续模型步骤、恢复和传输重试继续使用原快照。子 Agent 继承父 Run 的快照。升级前创建的 Run 缺少此字段时保留原有默认行为。
 
-`ContextBuilder` 从持久快照构建表达偏好、用户背景和自定义指令。各部分使用有来源的 user context，不进入 system/developer 权限层。当前用户要求、项目规则、已选 Skill 和任务所需的结构化输出优先。自定义指令可以覆盖普通表达预设。记忆不能覆盖用户明确设置的偏好。用户背景按资料处理，模型只在任务相关时使用它。
+`ContextBuilder` 从持久快照构建表达偏好、用户背景和自定义指令。各部分由独立记忆模块投影，并保留设置来源和全局范围。系统把这些内容计入“记忆”，不合入系统提示词。Provider 适配器沿用低层 user context 传输，不把这些内容提升为 system/developer 规则。当前用户要求、项目规则、已选 Skill 和任务所需的结构化输出优先。自定义指令可以覆盖普通表达预设。记忆不能覆盖用户明确设置的偏好。用户背景按资料处理，模型只在任务相关时使用它。
 
 个性化不授予文件、Shell、网络或外部工具权限。Runtime 继续执行原有审批、Sandbox、身份、版本、取消和结果核验。最终化和兼容的 Step 创建路径也使用固定偏好。
 

@@ -6,7 +6,7 @@ const ucs2length = typeof ucs2lengthRuntime === "function" ? ucs2lengthRuntime :
 export const isContextDetails = validate66;
 const schema20 = {"additionalProperties":false,"properties":{"runId":{"title":"Runid","type":"string"},"measurement":{"enum":["provider","provider_calibrated","tokenizer_estimate","unavailable"],"title":"Measurement","type":"string"},"activeTokens":{"anyOf":[{"minimum":0,"type":"integer"},{"type":"null"}],"default":null,"title":"Activetokens"},"projectedTokens":{"anyOf":[{"minimum":0,"type":"integer"},{"type":"null"}],"default":null,"title":"Projectedtokens"},"contextWindowTokens":{"exclusiveMinimum":0,"title":"Contextwindowtokens","type":"integer"},"sections":{"default":[],"items":{"$ref":"#/$defs/ContextTokenSection"},"title":"Sections","type":"array"},"clearedToolResults":{"default":0,"minimum":0,"title":"Clearedtoolresults","type":"integer"},"calibrationSamples":{"default":0,"minimum":0,"title":"Calibrationsamples","type":"integer"},"lastEstimationErrorPercent":{"anyOf":[{"type":"number"},{"type":"null"}],"default":null,"title":"Lastestimationerrorpercent"},"compaction":{"anyOf":[{"$ref":"#/$defs/ContextCompactionRecord"},{"type":"null"}],"default":null},"manualPending":{"default":false,"title":"Manualpending","type":"boolean"},"planId":{"anyOf":[{"type":"string"},{"type":"null"}],"default":null,"title":"Planid"},"updatedAt":{"default":0,"maximum":9007199254740991,"minimum":-9007199254740991,"title":"Updatedat","type":"integer"}},"required":["runId","measurement","contextWindowTokens"],"title":"ContextDetails","type":"object"};
 const func1 = Object.prototype.hasOwnProperty;
-const schema21 = {"additionalProperties":false,"properties":{"name":{"enum":["instructions","tools","conversation","tool_results","summary","other","overhead"],"title":"Name","type":"string"},"tokens":{"minimum":0,"title":"Tokens","type":"integer"}},"required":["name","tokens"],"title":"ContextTokenSection","type":"object"};
+const schema21 = {"additionalProperties":false,"properties":{"name":{"enum":["instructions","tools","skills","memory","conversation","tool_results","summary","other","overhead"],"title":"Name","type":"string"},"tokens":{"minimum":0,"title":"Tokens","type":"integer"}},"required":["name","tokens"],"title":"ContextTokenSection","type":"object"};
 
 function validate54(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 let vErrors = null;
@@ -42,7 +42,7 @@ if(typeof data0 !== "string"){
 validate54.errors = [{instancePath:instancePath+"/name",schemaPath:"#/properties/name/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-if(!(((((((data0 === "instructions") || (data0 === "tools")) || (data0 === "conversation")) || (data0 === "tool_results")) || (data0 === "summary")) || (data0 === "other")) || (data0 === "overhead"))){
+if(!(((((((((data0 === "instructions") || (data0 === "tools")) || (data0 === "skills")) || (data0 === "memory")) || (data0 === "conversation")) || (data0 === "tool_results")) || (data0 === "summary")) || (data0 === "other")) || (data0 === "overhead"))){
 validate54.errors = [{instancePath:instancePath+"/name",schemaPath:"#/properties/name/enum",keyword:"enum",params:{allowedValues: schema21.properties.name.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }

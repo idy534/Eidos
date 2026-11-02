@@ -18,7 +18,6 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
-    SystemPromptPart,
 )
 from pydantic_ai.models.function import DeltaThinkingPart, DeltaToolCall, FunctionModel
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -349,7 +348,7 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertIsInstance(messages[2], PAIModelResponse)
         self.assertIsInstance(messages[2].parts[0], ToolCallPart)
         self.assertIsInstance(messages[3].parts[0], ToolReturnPart)
-        self.assertIsInstance(messages[4].parts[0], SystemPromptPart)
+        self.assertIsInstance(messages[4].parts[0], UserPromptPart)
         self.assertIn('"stopReason":"repeated_tool_call"', messages[5].parts[0].content)
         self.assertNotIn("manual strategy", messages[5].parts[0].content)
 
@@ -376,9 +375,9 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertIn("*** Begin Patch", custom_messages[0].parts[0].content)
         self.assertNotIsInstance(custom_messages[0].parts[0], ToolCallPart)
         self.assertIsInstance(custom_messages[1], PAIModelRequest)
-        self.assertIsInstance(custom_messages[1].parts[0], SystemPromptPart)
+        self.assertIsInstance(custom_messages[1].parts[0], UserPromptPart)
         self.assertIn("Historical custom tool result", custom_messages[1].parts[0].content)
-        self.assertIn('success', custom_messages[1].parts[0].content)
+        self.assertIn('"outcome":"success"', custom_messages[1].parts[0].content)
 
         captured: dict[str, object] = {}
 

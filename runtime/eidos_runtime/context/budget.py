@@ -16,6 +16,7 @@ from eidos_runtime.context.tokens import estimate_text_tokens
 from eidos_runtime.context.policy import CONTINUITY_SECTION_ID
 from eidos_runtime.model.replay import group_response_context
 from eidos_runtime.domain.context_management import ContextTokenSection
+from eidos_runtime.memory.context import memory_context_kind
 
 
 class ContextUsageSnapshot(EidosFrozenStrictModel):
@@ -175,7 +176,11 @@ def estimate_model_request_budget(
     }
     for item in group_response_context(model_context):
         kind = item.get("type")
-        name = ("tool_results" if kind == "tool_result" else
+        section_id = str(item.get("sectionId", ""))
+        category = item.get("contextCategory")
+        name = ("memory" if category == "memory" or memory_context_kind(section_id) is not None else
+                "skills" if category == "skills" or section_id == "skill-catalog" or section_id.startswith("selected-skill:") else
+                "tool_results" if kind == "tool_result" else
                 "tools" if item.get("sectionId") in {"agent-catalog", "selected-agents"} else
                 "summary" if (item.get("sectionId") == CONTINUITY_SECTION_ID
                               or str(item.get("content", "")).startswith("Compact summary:")) else

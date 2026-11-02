@@ -15,6 +15,23 @@ from eidos_runtime.protocol.methods import ContextUsageRequestDto
 from eidos_runtime.runtime.engine import RuntimeEngine
 
 
+@pytest.mark.parametrize("item_type", ["user", "context"])
+def test_breakdown_keeps_memory_and_skills_out_of_system_and_conversation(item_type):
+    from eidos_runtime.context.budget import estimate_model_request_budget
+
+    budget = estimate_model_request_budget(tuple({
+        "type": item_type, "sectionId": section, "content": "Scoped source content. " * 100,
+    } for section in (
+        "repository-overview", "project-rule:AGENTS.md", "personalization-instructions",
+        "personalization-profile", "memory-evidence", "skill-catalog", "selected-skill:user:review",
+    )) + ({"type": "user", "content": "Translate this."},), instructions="System policy",
+        tool_definitions=(), context_window_tokens=100000, request_max_output_tokens=1000)
+    sections = {section.name: section.tokens for section in budget.sections}
+    assert sections["memory"] > sections["skills"] > sections["conversation"] > 0
+    assert sections["instructions"] < sections["memory"]
+    assert sum(sections.values()) == budget.estimated_input_tokens
+
+
 def test_breakdown_attributes_subagent_definitions_and_user_images_to_their_sections():
     from eidos_runtime.context.budget import estimate_model_request_budget
     params = dict(instructions="System", tool_definitions=(), context_window_tokens=100000, request_max_output_tokens=1000)

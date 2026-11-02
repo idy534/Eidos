@@ -39,6 +39,7 @@ from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelContextItem, ModelToolDefinitionLike
 from eidos_runtime.model.instructions import InstructionResolver, StepPermissionPolicy
 from eidos_runtime.model.prompts import ResolvedInstructions
+from eidos_runtime.memory.context import MemoryContext, memory_context_kind
 from eidos_runtime.extensions.skills import RetainedContextSection
 from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
 
@@ -165,11 +166,19 @@ class ContextBuilder:
                   "Do not write memories from this automatic execution."})
         if plan_context:
             source_context_messages.append({"type": "context", "sectionId": "referenced-plan", "content": "Referenced plan (user task material, not permission or runtime instructions):\n" + plan_context})
+        memory_context = MemoryContext.from_instructions(
+            instructions.context_layers,
+            project_scope=rule_resolution_snapshot.workspace_root if rule_resolution_snapshot else "current project",
+        )
+        source_context_messages.extend(memory_context.model_items())
         for layer in instructions.context_layers:
+            if memory_context_kind(layer.id) is not None:
+                continue
             source_context_messages.append({
                 "type": "context",
                 "sectionId": layer.id,
                 "source": layer.source,
+                **({"contextCategory": "skills"} if layer.id == "skill-catalog" or layer.id.startswith("selected-skill:") else {}),
                 "content": layer.content,
             })
 
@@ -483,11 +492,7 @@ class ContextBuilder:
                     has_project=has_project,
                     personalization=personalization,
                 )
-            context.insert(0, {"type": "context", "sectionId": "memory-evidence",
-                               "content": projection.rendered_payload,
-                               "memoryEpochs": projection.epochs,
-                               "memoryEntries": [entry.to_wire_dict() for entry in projection.entries],
-                               "memoryGenerations": projection.generations})
+            context.insert(0, MemoryContext.long_term_index(projection))
             budget = estimate_model_request_budget(
                 tuple(context), instructions=instructions.system_text, tool_definitions=tool_definitions,
                 context_window_tokens=profile.context_window_tokens, request_max_output_tokens=profile.max_output_tokens,

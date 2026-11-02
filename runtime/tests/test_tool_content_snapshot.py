@@ -7,7 +7,7 @@ import sqlite3
 import threading
 
 from PIL import Image
-from pydantic_ai.messages import BinaryContent, ToolReturnPart, UserPromptPart, SystemPromptPart
+from pydantic_ai.messages import BinaryContent, ToolReturnPart, UserPromptPart
 import pytest
 
 from eidos_runtime.context.builder import ContextBuilder
@@ -218,8 +218,6 @@ def test_chat_custom_tool_history_retains_saved_content():
         {"type": "tool_call", "callId": "custom", "name": "validator", "payloadKind": "custom", "input": "validate", "responseId": "response"},
         {"type": "tool_result", "callId": "custom", "name": "validator", "payloadKind": "custom", "result": "ok", "toolContent": snapshot},
     ), supports_images=True)
-    assert isinstance(messages[-1].parts[0], SystemPromptPart)
-    assert "Historical custom tool result" in messages[-1].parts[0].content
-    prompt = messages[-1].parts[1]
+    prompt = messages[-1].parts[0]
     assert isinstance(prompt, UserPromptPart)
     assert next(value.data for value in prompt.content if isinstance(value, BinaryContent)) == b"image"

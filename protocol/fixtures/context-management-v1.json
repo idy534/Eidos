@@ -7,7 +7,7 @@
     "activeTokens": 12000,
     "projectedTokens": 11800,
     "contextWindowTokens": 128000,
-    "sections": [{"name": "tool_results", "tokens": 8000}, {"name": "conversation", "tokens": 4000}],
+    "sections": [{"name": "tool_results", "tokens": 6000}, {"name": "conversation", "tokens": 3000}, {"name": "memory", "tokens": 2000}, {"name": "skills", "tokens": 1000}],
     "planId": "plan_current",
     "updatedAt": 1700000000000,
     "clearedToolResults": 3,

@@ -7,7 +7,9 @@ import { Button } from "./Button.js";
 const SECTION_CONFIG: Record<string, { label: string; color: string }> = {
   instructions: { label: "系统提示词", color: "#5260f8" },
   tools: { label: "工具及子智能体", color: "#05b072" },
-  conversation: { label: "对话消息", color: "#f59e0b" },
+  skills: { label: "技能", color: "#64748b" },
+  memory: { label: "记忆", color: "#f59e0b" },
+  conversation: { label: "对话消息", color: "#3b82f6" },
   tool_results: { label: "工具结果", color: "#8b5cf6" },
   summary: { label: "历史摘要", color: "#ec4899" },
   overhead: { label: "协议预留", color: "#06b6d4" },
@@ -17,6 +19,8 @@ const SECTION_CONFIG: Record<string, { label: string; color: string }> = {
 const SECTION_ORDER: readonly string[] = [
   "instructions",
   "tools",
+  "skills",
+  "memory",
   "conversation",
   "tool_results",
   "summary",
