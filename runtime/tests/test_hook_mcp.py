@@ -166,7 +166,7 @@ def test_permission_request_decides_ordinary_mcp_approval_without_hook_recursion
 
 @pytest.mark.platform
 @pytest.mark.skipif(sys.platform != "darwin", reason="Seatbelt requires macOS")
-def test_permission_hook_cannot_approve_dangerous_unsandboxed_shell(tmp_path):
+def test_permission_hook_cannot_approve_dangerous_shell_permission(tmp_path):
     store, _, _, run, workspace = _fixture(tmp_path, {"PermissionRequest": _command()},
         "import json\nprint(json.dumps({'hookSpecificOutput':{'decision':{'behavior':'allow'}}}))", mode="manual")
     approvals = []
@@ -175,9 +175,11 @@ def test_permission_hook_cannot_approve_dangerous_unsandboxed_shell(tmp_path):
             approvals.append(request)
             return ApprovalDecision("reject", "Keep the sandbox")
 
+        # Unsandboxed execution alone is an ordinary approval; writing Eidos data is dangerous.
         model = ScriptedModel([ModelResponse(tool_calls=(ModelToolCall("shell", "run_shell", {
-            "command": "touch must-not-exist", "sandboxPermissions": "require_escalated",
-            "justification": "This fixture requests execution outside the sandbox"}),)), ModelResponse(text="declined")])
+            "command": "touch must-not-exist", "sandboxPermissions": "with_additional_permissions",
+            "additionalPermissions": {"fileSystem": [{"path": str(tmp_path / "data"), "access": "write"}]},
+            "justification": "This fixture requests write access to Eidos data"}),)), ModelResponse(text="declined")])
         RuntimeEngine(store, model, lambda _: None, shell_available=True, request_approval=reject).run(run["id"], threading.Event())
         assert len(approvals) == 1
         assert not (workspace / "must-not-exist").exists()

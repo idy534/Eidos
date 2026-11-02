@@ -152,9 +152,19 @@ def test_anthropic_skill_fixture_installs_complete_tree_and_preserves_assets(
                 diff="fixture",
                 executable_paths=files.executable_paths,
             )
+            # The fixture names match bundled system Skills, which block user installs.
             result = _commit_skill_tree(
                 skills, creation, threading.Event(), "skill_install"
             )
+            assert result["code"] == "skill_already_exists"
+            empty_system = root / "bundled-system"
+            empty_system.mkdir(mode=0o700)
+            with patch(
+                "eidos_runtime.extensions.skills.BUNDLED_SYSTEM_SKILLS", empty_system
+            ):
+                result = _commit_skill_tree(
+                    skills, creation, threading.Event(), "skill_install"
+                )
             assert result["code"] == "ok"
 
             installed = data / "skills" / skill_name
