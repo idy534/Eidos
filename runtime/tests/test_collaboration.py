@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 import sys
@@ -189,6 +190,12 @@ def test_child_role_instructions_are_built_from_persisted_role(tmp_path: Path, r
         assert layer.role == 'developer'
         assert f'Your built-in role is {role}.' in layer.content
         assert 'send_message' in layer.content
+        assert "text outside <system-reminder> blocks is the parent agent's assignment" in layer.content
+        assignment = str(store.read_run(child.run_id)['userInput'])
+        assert assignment.startswith('Delegated task from the parent agent. Carry out this assignment;')
+        assert 'task material' not in assignment
+        # Desktop strips this first line before showing the child task.
+        assert re.match(r'^Delegated task from the parent agent\.[^\n]*\n\n', assignment)
         assert repository.child_role_for_run(child.run_id) == role
     finally:
         store.close()

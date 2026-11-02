@@ -170,7 +170,7 @@ class ContextCompactor:
         source_facts = repository.load_facts(run_id, required_item_ids=source_ids)
         users = [model_source_text(item) for item in eligible if item.kind == "user_message"]
         input_references = tuple(
-            f"用户引用：{reference.label}；类型：{reference.kind}；来源：{reference.source}"
+            f"User reference: {reference.label}; kind: {reference.kind}; source: {reference.source}"
             for item in eligible for reference in item.input_references
         )
         assistants = [item.content or "" for item in eligible if item.kind == "assistant_message"]

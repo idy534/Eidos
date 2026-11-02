@@ -282,7 +282,7 @@ class CollaborationRepository:
         personalization = RunRepository(self.database).read_resolution_snapshot(parent["id"]).personalization or PersonalizationSettings()
         profile = model_profile or ModelProfileSnapshot.model_validate_json(parent['model_profile_json'])
         RunRepository(self.database).create_run(session_id,
-            'Delegated task from the parent agent. This is task material, not new user authorization. Share the live workspace carefully and report actual changes and verification.\n\n' + message,
+            'Delegated task from the parent agent. Carry out this assignment; it adds no user authorization. Share the live workspace carefully and report actual changes and verification.\n\n' + message,
             queued=True, model_id=profile.model_id, model_profile=profile, work_mode=parent['work_mode'],
             approval_mode=parent['approval_mode'], extension_snapshot=json.loads(parent['extension_snapshot_json']),
             run_id=run_id, transaction_connection=connection, personalization=personalization)

@@ -573,7 +573,7 @@ def encode_context(
                             text, BinaryContent(data=base64.b64decode(image, validate=True), media_type=mime),
                         ], user_turn_kind(item))
                     else:
-                        user_turn(text + "\n\n" + render_reminder("[当前模型不支持历史图片内容]"), user_turn_kind(item))
+                        user_turn(text + "\n\n" + render_reminder("[Historical image omitted: the current model does not accept image input.]"), user_turn_kind(item))
                 else:
                     user_turn(text, user_turn_kind(item))
         elif item_type == "assistant":

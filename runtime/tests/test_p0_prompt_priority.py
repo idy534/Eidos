@@ -7,6 +7,7 @@ Tests for three P0 fixes:
 """
 from __future__ import annotations
 
+import inspect
 import tempfile
 import unittest
 from pathlib import Path
@@ -209,7 +210,6 @@ class TestRuntimePermissionInjection(unittest.TestCase):
             network_enabled=False,
             allow_additional_permissions=True,
             allow_escalated_execution=False,
-            rejected_approval_ids=(),
             available_tools=("read_file", "write_file"),
         )
         defaults.update(kw)
@@ -356,14 +356,29 @@ class TestRuntimePermissionInjection(unittest.TestCase):
         self.assertNotIn("my_tool", layer.content)
         self.assertNotIn("another_tool", layer.content)
 
-    def test_rejected_approvals_reflected_in_layer(self):
-        policy = self._policy(rejected_approval_ids=("approval-1", "approval-2"))
-        layer = next(
-            layer
-            for layer in self._resolve_with_policy(policy).layers
-            if layer.id == "runtime-permissions"
-        )
-        self.assertIn("2", layer.content)
+    def test_later_run_grants_are_described_outside_full_access(self):
+        for mode in ("manual", "auto_review", "full_access"):
+            with self.subTest(mode=mode):
+                text = self._resolve_with_policy(self._policy(approval_mode=mode)).system_text
+                self.assertEqual(
+                    "Permissions approved later in this Run are reported in tool results" in text,
+                    mode != "full_access",
+                )
+
+    def test_run_grants_do_not_change_step_permissions(self):
+        # Approving a Run grant must not rewrite the system prompt: the change
+        # would invalidate the provider prefix cache for the whole history.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            policy = _build_step_policy(
+                BasePermissionProfile.for_workspace(workspace_root=root).model_dump_json(by_alias=True),
+                '{"sandboxType":"macos_seatbelt"}',
+                str(root),
+                ("read_file", "run_shell", "request_permissions"),
+            )
+        self.assertNotIn("granted_permissions", inspect.signature(_build_step_policy).parameters)
+        self.assertFalse(policy.network_enabled)
+        self.assertTrue(policy.writable_roots)
 
     def test_escalated_execution_availability(self):
         allowed = self._policy(allow_escalated_execution=True)

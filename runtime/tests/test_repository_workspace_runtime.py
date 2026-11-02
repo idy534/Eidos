@@ -816,14 +816,25 @@ def test_first_model_request_contains_repository_overview_and_retrieval_evidence
         assert overview["contextCategory"] == "memory"
         assert overview["memorySource"] == "project"
         assert overview["scope"] == str(root)
-        repository_text = "\n".join(
-            str(item.get("content", ""))
-            for item in model.contexts[0]
+        assert "gitHead" not in overview["content"]
+        evidence_indexes = [
+            index for index, item in enumerate(model.contexts[0])
             if item.get("sectionId") == "repository-evidence"
-        )
+        ]
+        assert len(evidence_indexes) == 1
+        repository_text = str(model.contexts[0][evidence_indexes[0]]["content"])
+        assert repository_text.startswith("Repository evidence retrieved for the current request")
         assert "auth.py" in repository_text
         assert "authenticate_user" in repository_text
         assert "auth_test.py" in repository_text
+        # Evidence for this Run sits right before its request, after the
+        # history-stable overview, so later Runs keep the earlier prefix.
+        user_index = next(
+            index for index, item in enumerate(model.contexts[0])
+            if item.get("type") == "user" and item.get("sourceItemId") == _item["id"]
+        )
+        overview_index = model.contexts[0].index(overview)
+        assert overview_index < evidence_indexes[0] == user_index - 1
         attempts = store.read_model_attempts(run["id"])
         assert len(attempts) == 1
         frozen = store.context_snapshot_repository().read_for_model_attempt(

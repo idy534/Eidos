@@ -104,7 +104,6 @@ from eidos_runtime.sandbox.sensitive import (
 )
 from eidos_runtime.sandbox.permissions import (
     BasePermissionProfile,
-    AdditionalPermissionProfile,
     materialize_effective_profile,
 )
 from eidos_runtime.model.instructions import StepPermissionPolicy
@@ -555,7 +554,6 @@ class RuntimeEngine:
                 run.resolution_snapshot.sandbox_policy_json,
                 run.resolution_snapshot.workspace_identity.path,
                 snapshot.available_names,
-                self.store.run_permission_grants(run.run_id),
             )
             agent_baseline = self.collaboration.repository.state(run.run_id) if self.collaboration else None
             def build_current_context() -> ContextBuild:
@@ -1624,9 +1622,13 @@ def _build_step_policy(
     sandbox_policy_json: str,
     workspace_root: str,
     available_tools: tuple[str, ...],
-    granted_permissions: AdditionalPermissionProfile | None = None,
 ) -> StepPermissionPolicy:
-    """Project persisted permissions and the current tool set into prompt context."""
+    """Project the Run's base permissions and the current tool set into prompt context.
+
+    Run grants stay out of the prompt: approving one would otherwise rewrite the
+    system prompt and invalidate the provider's prefix cache for the whole
+    history. The approving tool result already reports each grant.
+    """
     import json
 
     effective = None
@@ -1634,7 +1636,7 @@ def _build_step_policy(
         base_permissions = BasePermissionProfile.model_validate_json(
             permission_profile_json
         )
-        effective = materialize_effective_profile(base_permissions, granted_permissions, allow_protected=True)
+        effective = materialize_effective_profile(base_permissions, allow_protected=True)
         network_enabled = effective.network_enabled
         writable_roots = tuple(
             entry.resolved_path
@@ -1684,6 +1686,5 @@ def _build_step_policy(
         allow_additional_permissions=allow_additional_permissions,
         network_permission_requestable=network_permission_requestable,
         allow_escalated_execution=allow_escalated,
-        rejected_approval_ids=(),
         available_tools=available_tools,
     )
