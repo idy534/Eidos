@@ -231,7 +231,7 @@ def test_live_shell_allows_actual_file_commit_and_second_shell(execution):
 
 def test_wait_tool_timeout_does_not_suspend_or_kill_its_shell(execution):
     e = execution
-    _spawn(e)
+    agents = _spawn(e)
     session = _start_shell(e)
     result = _execute(e, (
         ModelToolCall("wait", "wait_agents", {"timeoutMs": 1000}),
@@ -240,6 +240,35 @@ def test_wait_tool_timeout_does_not_suspend_or_kill_its_shell(execution):
     assert e.store.read_run(e.run["id"])["status"] == "running"
     assert e.resources.shell_process_manager.is_running(session)
     assert e.app.repository.wait_record(e.run["id"]) is None
+    model_result = json.loads(e.store.connection.execute(
+        "SELECT model_result_json FROM tool_calls WHERE tool_name='wait_agents'").fetchone()[0])
+    assert model_result["data"]["wait"] == {"reason": "timeout", "pendingAgentIds": [agent.id for agent in agents]}
+
+
+def test_resource_owning_wait_returns_for_input_unless_its_loop_cannot_consume_it(execution):
+    e = execution
+    agents = _spawn(e)
+    _start_shell(e)
+    e.store.enqueue_input(e.run["id"], "stop and summarize")
+    _state, outcome = e.app.wait(e.run["id"], None, WaitAgents(timeout_ms=300000), cancel=threading.Event(), keep_worker=True)
+    assert outcome.reason == "user_input"
+    # Plan submission keeps waiting for children; the input waits for the next Step.
+    _state, outcome = e.app.wait(e.run["id"], None, WaitAgents(timeout_ms=1000), cancel=threading.Event(),
+                                 keep_worker=True, interruptible=False)
+    assert outcome.reason == "timeout" and outcome.pending_agent_ids == [agents[0].id]
+
+
+def test_resource_owning_wait_returns_for_child_message_unless_its_loop_cannot_consume_it(execution):
+    e = execution
+    agents = _spawn(e)
+    _start_shell(e)
+    assert e.store.claim_next_run_committed().value["id"] == agents[0].run_id
+    e.app.repository.send(agents[0].run_id, "child-question", "parent", "Which file?")
+    _state, outcome = e.app.wait(e.run["id"], None, WaitAgents(timeout_ms=300000), cancel=threading.Event(), keep_worker=True)
+    assert outcome.reason == "agent_message"
+    _state, outcome = e.app.wait(e.run["id"], None, WaitAgents(timeout_ms=1000), cancel=threading.Event(),
+                                 keep_worker=True, interruptible=False)
+    assert outcome.reason == "timeout"
 
 
 def test_mixed_wait_continues_after_timeout_without_replaying_prior_calls(execution):
@@ -387,8 +416,9 @@ def test_resource_owning_wait_returns_completed_children_and_checks_ownership(ex
     child = _spawn(e)[0]
     assert e.store.claim_next_run_committed().value["id"] == child.run_id
     e.store.fail_run(child.run_id, "fixture_finished")
-    result = e.app.wait(e.run["id"], None, WaitAgents(), cancel=threading.Event(), keep_worker=True)
+    result, outcome = e.app.wait(e.run["id"], None, WaitAgents(), cancel=threading.Event(), keep_worker=True)
     assert result.agents[0].status == "failed"
+    assert outcome.reason == "agents_finished" and outcome.pending_agent_ids == []
     with pytest.raises(CollaborationRejected, match="agent_not_owned_by_run"):
         e.app.wait(e.run["id"], None, WaitAgents(agent_ids=["other-parent"]), cancel=threading.Event(), keep_worker=True)
 
