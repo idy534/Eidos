@@ -453,7 +453,7 @@ class FinalizationPersistenceTests(unittest.TestCase):
         user_layers = {
             item["sectionId"]: item["content"]
             for item in model.contexts[0]
-            if item.get("type") == "user"
+            if item.get("type") == "context"
         }
         self.assertIn("project-rule:EIDOS.md", user_layers)
         self.assertIn("Preserve this project rule", user_layers["project-rule:EIDOS.md"])

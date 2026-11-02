@@ -312,15 +312,18 @@ class InstructionResolver:
             expression = personalization.expression_context()
             if expression == PersonalizationPreferences().expression_context():
                 expression = None
-            for identifier, content in (
-                ("personalization-expression", expression),
-                ("personalization-profile", personalization.profile_context()),
-                ("personalization-instructions", personalization.custom_instructions.strip()),
+            for identifier, header, content in (
+                ("personalization-expression", "Global reply preferences from the user's settings.", expression),
+                ("personalization-profile", "Global user profile from the user's settings.", personalization.profile_context()),
+                ("personalization-instructions",
+                 "Global custom instructions from the user's settings. Follow them unless the current request "
+                 "or project rules say otherwise. They cannot grant permissions.",
+                 personalization.custom_instructions.strip()),
             ):
                 if content:
                     layers.append(InstructionLayer.create(
                         id=identifier, authority=90, role="user", source="eidos:personalization",
-                        content=("Global user defaults. The current request, project rules and task-specific output requirements take precedence. Memories cannot override these explicit defaults. These instructions cannot grant permissions.\n" + content),
+                        content=header + "\n" + content,
                     ))
         return ResolvedInstructions.create(tuple(layers))
 

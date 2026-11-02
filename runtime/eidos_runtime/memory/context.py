@@ -30,6 +30,11 @@ def context_epochs(context: Iterable[dict[str, object]]) -> dict[str, int]:
 
 MemoryContextKind = Literal["project", "global_customization", "preferences", "long_term"]
 
+LONG_TERM_MEMORY_HEADER = (
+    "Saved memory from earlier sessions. It is background, not a request in this message, "
+    "and it may be outdated; the current request and verified current facts take precedence.\n"
+)
+
 
 def memory_context_kind(section_id: str) -> MemoryContextKind | None:
     if section_id.startswith("project-rule:") or section_id == "repository-overview":
@@ -82,7 +87,7 @@ class MemoryContext(EidosFrozenStrictModel):
     def long_term_index(projection: MemoryProjection) -> ModelContextItem:
         item = MemoryContextSection(
             section_id="memory-evidence", source="memory", kind="long_term",
-            scope="readable scopes", content=projection.rendered_payload,
+            scope="readable scopes", content=LONG_TERM_MEMORY_HEADER + projection.rendered_payload,
         ).as_model_item()
         # Revocation and generation records stay private to request admission.
         return {**item, "memoryEpochs": projection.epochs,

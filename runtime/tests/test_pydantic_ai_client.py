@@ -349,8 +349,12 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertIsInstance(messages[2].parts[0], ToolCallPart)
         self.assertIsInstance(messages[3].parts[0], ToolReturnPart)
         self.assertIsInstance(messages[4].parts[0], UserPromptPart)
-        self.assertIn('"stopReason":"repeated_tool_call"', messages[5].parts[0].content)
-        self.assertNotIn("manual strategy", messages[5].parts[0].content)
+        self.assertEqual(len(messages), 5)
+        feedback = messages[4].parts[0].content
+        self.assertTrue(feedback.startswith("<system-reminder>\nYour previous response was invalid"))
+        self.assertIn('"stopReason":"repeated_tool_call"', feedback)
+        self.assertEqual(feedback.count("<system-reminder>"), 2)
+        self.assertNotIn("manual strategy", feedback)
 
         custom_context = (
             {
