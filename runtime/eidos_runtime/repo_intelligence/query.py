@@ -10,6 +10,7 @@ from eidos_runtime.repo_intelligence.inventory import RepositoryInventory
 from eidos_runtime.repo_intelligence.retrieval import (
     MAX_QUERY_BYTES,
     RepositoryRetrievalQuery,
+    looks_like_code,
 )
 
 
@@ -40,7 +41,10 @@ class RepositoryTaskQueryBuilder:
             ),
             key=str.encode,
         ))
-        task_identifiers = set(_IDENTIFIER.findall(text))
+        # Plain words such as "model" or "retry" name many unrelated symbols.
+        # Only identifier-shaped words count as explicit symbol mentions;
+        # retrieval still finds plain words through lexical and fuzzy search.
+        task_identifiers = {value for value in _IDENTIFIER.findall(text) if looks_like_code(value)}
         symbols = {symbol.name for symbol in index.symbols}
         mentioned_symbols = tuple(sorted(task_identifiers & symbols))
         recent_items = facts.items[-64:]

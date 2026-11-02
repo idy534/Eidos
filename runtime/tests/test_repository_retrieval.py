@@ -140,3 +140,108 @@ def test_retrieval_does_not_materialize_the_full_fts_generation(
 
     assert result.results[0].path == "main.py"
     database.close()
+
+
+def _retriever(tmp_path: Path, files: dict[str, str]):
+    root = tmp_path / "repo"
+    for relative, text in files.items():
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    inventory = RepositoryInventoryBuilder(root).build()
+    index = RepositoryIndexer(root).build(inventory)
+    database = RepositoryDatabase(tmp_path / "data")
+    database.initialize()
+    repository = RepositoryIntelligenceRepository(database)
+    repository.commit_complete(
+        inventory, index, RepositoryMapBuilder(root).build(inventory),
+        RepositoryWorkspaceIdentity.from_root(root),
+    )
+    return RepositoryRetriever(inventory, index, repository), database
+
+
+def test_small_talk_without_repository_vocabulary_retrieves_nothing(tmp_path: Path) -> None:
+    retriever, database = _retriever(tmp_path, {
+        "greet.py": "def history():\n    return 'hi'\n\ndef hint():\n    return 'hello there'\n",
+    })
+    try:
+        for text in ("hi", "hello there", "继续", "帮我翻译一下"):
+            assert retriever.retrieve(RepositoryRetrievalQuery(text=text)).results == (), text
+        # A request that names repository vocabulary still searches.
+        assert retriever.retrieve(RepositoryRetrievalQuery(text="where is history defined")).results
+    finally:
+        database.close()
+
+
+def test_bm25_strength_rewards_better_matches() -> None:
+    from eidos_runtime.repo_intelligence.retrieval import _bm25_strength
+
+    # FTS5 bm25() is more negative for better matches.
+    assert _bm25_strength(-6.0) > _bm25_strength(-0.2) > 0
+
+
+def test_evidence_is_bounded_windowed_and_deduplicated(tmp_path: Path) -> None:
+    from eidos_runtime.repo_intelligence.retrieval import MAX_EVIDENCE_ITEM_BYTES
+
+    # Stay under the indexer's per-file chunk cap so every method has a chunk.
+    filler = "".join(
+        f"    def method_{index}(self):\n        \"\"\"{'Explains the behavior of this method. ' * 3}\"\"\"\n        return {index}\n\n"
+        for index in range(100)
+    )
+    helper = "def shared_helper_function():\n    return 'shared'\n"
+    retriever, database = _retriever(tmp_path, {
+        "big.py": "class LargeHolder:\n" + filler + "    def needle_target(self):\n        return 'needle'\n",
+        "copy_a/helper.py": helper,
+        "copy_b/helper.py": helper,
+    })
+    try:
+        needle = retriever.retrieve(RepositoryRetrievalQuery(text="needle_target", mentioned_symbols=("needle_target",)))
+        texts = [evidence for result in needle.results for evidence in result.evidence]
+        assert texts and all(len(evidence.text.encode("utf-8")) <= MAX_EVIDENCE_ITEM_BYTES for evidence in texts)
+        # The class chunk overlaps the selected method, so it is not repeated.
+        assert sum("needle_target" in evidence.text for evidence in texts) == 1
+        assert texts[0].text.startswith("def needle_target")
+
+        holder = retriever.retrieve(RepositoryRetrievalQuery(text="LargeHolder needle_target"))
+        window = next(evidence for result in holder.results for evidence in result.evidence if evidence.path == "big.py")
+        assert len(window.text.encode("utf-8")) <= MAX_EVIDENCE_ITEM_BYTES
+
+        shared = retriever.retrieve(RepositoryRetrievalQuery(text="shared_helper_function"))
+        bodies = [evidence.text for result in shared.results for evidence in result.evidence if "return 'shared'" in evidence.text]
+        assert len(bodies) == 1
+    finally:
+        database.close()
+
+
+def test_large_definition_window_centers_on_the_requested_name(tmp_path: Path) -> None:
+    from eidos_runtime.repo_intelligence.retrieval import MAX_EVIDENCE_ITEM_BYTES
+
+    lines = [f"    value_{index} = {index}\n" for index in range(1500)]
+    lines[1200] = "    marker_symbol_xyz = 'found'\n"
+    retriever, database = _retriever(tmp_path, {"long.py": "def long_function():\n" + "".join(lines)})
+    try:
+        result = retriever.retrieve(RepositoryRetrievalQuery(text="long_function marker_symbol_xyz"))
+        evidence = next(evidence for item in result.results for evidence in item.evidence if evidence.kind != "file")
+        assert "marker_symbol_xyz" in evidence.text
+        assert len(evidence.text.encode("utf-8")) <= MAX_EVIDENCE_ITEM_BYTES
+        assert evidence.start_line > 0
+        assert evidence.end_line - evidence.start_line + 1 == len(evidence.text.splitlines())
+        assert evidence.text.splitlines()[1201 - evidence.start_line].strip().startswith("marker_symbol_xyz")
+    finally:
+        database.close()
+
+
+def test_symbol_hits_show_definitions_and_typos_match_identifiers(tmp_path: Path) -> None:
+    retriever, database = _retriever(tmp_path, {
+        "auth.py": "def authenticate_user(token):\n    return token\n",
+    })
+    try:
+        exact = retriever.retrieve(RepositoryRetrievalQuery(
+            text="authenticate_user", mentioned_symbols=("authenticate_user",),
+        ))
+        assert exact.results[0].evidence[0].text.startswith("def authenticate_user(token):")
+        typo = retriever.retrieve(RepositoryRetrievalQuery(text="fix authentcate_user"))
+        assert any(result.score_breakdown.fuzzy_symbol > 0 and result.path == "auth.py" for result in typo.results)
+        assert RepositoryRetrievalQuery(text="x").max_evidence_bytes == 24 * 1024
+    finally:
+        database.close()
