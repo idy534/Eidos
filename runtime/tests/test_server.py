@@ -121,7 +121,7 @@ class RuntimeProtocolTests(unittest.TestCase):
                         },
                     })
 
-                discover.assert_called_once_with()
+                discover.assert_called_once_with(store=server.store)
                 self.assertIs(server.supervisor.runtime_dependency_catalog, catalog)
             finally:
                 server.close()

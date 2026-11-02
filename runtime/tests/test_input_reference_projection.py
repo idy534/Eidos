@@ -120,7 +120,8 @@ def test_saved_history_is_projected_after_restart_without_using_other_messages_r
     reopened.initialize()
     try:
         built = ContextBuilder(reopened).build(current["id"])
-        messages = {item.get("sourceItemId"): item.get("content") for item in built.model_context}
+        messages = {item.get("sourceItemId"): item.get("content") for item in built.model_context
+                    if "sectionId" not in item}
         assert messages[user["id"]] == "请参考@github。"
         assert messages[current_user["id"]] == raw
         assert reopened.read_item(user["id"])["content"] == raw
