@@ -36,7 +36,7 @@ class ContextCompactionActivity(EidosFrozenStrictModel):
 
 
 class ContextTokenSection(EidosFrozenStrictModel):
-    name: Literal["instructions", "tools", "conversation", "tool_results", "summary", "other", "overhead"]
+    name: Literal["instructions", "tools", "skills", "memory", "conversation", "tool_results", "summary", "other", "overhead"]
     tokens: int = Field(ge=0)
 
 

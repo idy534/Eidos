@@ -16,6 +16,8 @@ from eidos_runtime.context.tokens import estimate_text_tokens
 from eidos_runtime.context.policy import CONTINUITY_SECTION_ID
 from eidos_runtime.model.replay import group_response_context
 from eidos_runtime.domain.context_management import ContextTokenSection
+from eidos_runtime.memory.context import memory_context_kind
+from eidos_runtime.model.prompts import InstructionLayer
 
 
 class ContextUsageSnapshot(EidosFrozenStrictModel):
@@ -132,11 +134,16 @@ def estimate_model_request_budget(
     tool_definitions: tuple[ModelToolDefinitionLike, ...],
     context_window_tokens: int,
     request_max_output_tokens: int,
+    instruction_layers: tuple[InstructionLayer, ...] = (),
     provider_usage: ModelUsage | None = None,
     provider_calibration_estimate: int | None = None,
     usage_updated_at: int = 0,
 ) -> ContextBudget:
-    """Estimate the exact structured request used by ContextBuilder/Sampling."""
+    """Estimate the exact structured request used by ContextBuilder/Sampling.
+
+    ``instruction_layers`` are the layers rendered into ``instructions``; they
+    only move catalog shares out of the instructions section.
+    """
 
     budget = estimate_context_budget(
         {
@@ -173,9 +180,19 @@ def estimate_model_request_budget(
         "instructions": estimate_text_tokens(instructions),
         "tools": estimate_text_tokens(json.dumps([tool.model_dump(mode="json") for tool in tool_definitions], ensure_ascii=False)),
     }
+    for layer in instruction_layers:
+        name = _SYSTEM_LAYER_SECTIONS.get(layer.id)
+        if name is not None:
+            share = min(weights["instructions"], estimate_text_tokens(layer.content))
+            weights["instructions"] -= share
+            weights[name] = weights.get(name, 0) + share
     for item in group_response_context(model_context):
         kind = item.get("type")
-        name = ("tool_results" if kind == "tool_result" else
+        section_id = str(item.get("sectionId", ""))
+        category = item.get("contextCategory")
+        name = ("memory" if category == "memory" or memory_context_kind(section_id) is not None else
+                "skills" if category == "skills" or section_id == "skill-catalog" or section_id.startswith("selected-skill:") else
+                "tool_results" if kind == "tool_result" else
                 "tools" if item.get("sectionId") in {"agent-catalog", "selected-agents"} else
                 "summary" if (item.get("sectionId") == CONTINUITY_SECTION_ID
                               or str(item.get("content", "")).startswith("Compact summary:")) else
@@ -187,6 +204,9 @@ def estimate_model_request_budget(
     sections = [ContextTokenSection(name=name, tokens=value * budget.payload_estimate_tokens // total) for name, value in weights.items()]
     sections.append(ContextTokenSection(name="overhead", tokens=budget.estimated_input_tokens - sum(value.tokens for value in sections)))
     return budget.model_copy(update={"sections": tuple(sections)})
+
+
+_SYSTEM_LAYER_SECTIONS = {"skills": "skills", "agent-catalog": "tools"}
 
 
 def _text_budget_item(item: ModelContextItem) -> ModelContextItem:

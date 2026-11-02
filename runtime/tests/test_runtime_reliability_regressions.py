@@ -12,6 +12,7 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.model.client import ModelResponse, ScriptedModel  # noqa: E402
+from eidos_runtime.model.prompts import PROJECT_FILE_REFERENCE_INSTRUCTIONS  # noqa: E402
 from eidos_runtime.persistence.worktrees import ProjectWorktreeRepository  # noqa: E402
 from eidos_runtime.runtime.events import RuntimeEvents  # noqa: E402
 from eidos_runtime.runtime.finalizer import RunFinalizer  # noqa: E402
@@ -159,7 +160,7 @@ class RuntimeReliabilityRegressionTests(unittest.TestCase):
 
                 self.assertIsNone(outcome.failure_reason)
                 self.assertEqual(
-                    "Project file references" in model.instructions_history[0],
+                    PROJECT_FILE_REFERENCE_INSTRUCTIONS in model.instructions_history[0],
                     has_project,
                 )
 

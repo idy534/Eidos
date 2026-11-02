@@ -116,6 +116,12 @@ def declare_outputs_entry(workspace: WorkspaceIdentity) -> ToolRegistryEntry:
             "name": "declare_outputs",
             "description": (
                 "Register existing workspace files as final user deliverables. "
+                "Declare only standalone files the user expects to receive. "
+                "Project source, configuration and ordinary documentation edits are not deliverables "
+                "unless explicitly requested. Exclude dependencies, caches and intermediate files. "
+                "When uncertain, do not declare. Call after the final file exists and before the "
+                "final reply; declare it again after revision. Report declaration failures. "
+                "Links do not replace declaration. "
                 "The tool verifies file existence and metadata but does not create, modify, "
                 "or validate file contents. Re-declaring a file updates its declaration. "
                 "The operation is atomic: if any file fails verification, no files are declared."

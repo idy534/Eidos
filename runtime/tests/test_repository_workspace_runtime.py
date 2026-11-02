@@ -808,10 +808,14 @@ def test_first_model_request_contains_repository_overview_and_retrieval_evidence
         sections = {
             item.get("sectionId"): str(item.get("content", ""))
             for item in model.contexts[0]
-            if item.get("type") == "user"
+            if item.get("type") == "context"
         }
         assert "repository-overview" in sections
         assert "pytest" in sections["repository-overview"]
+        overview = next(item for item in model.contexts[0] if item.get("sectionId") == "repository-overview")
+        assert overview["contextCategory"] == "memory"
+        assert overview["memorySource"] == "project"
+        assert overview["scope"] == str(root)
         repository_text = "\n".join(
             str(item.get("content", ""))
             for item in model.contexts[0]

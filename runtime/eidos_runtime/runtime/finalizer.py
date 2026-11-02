@@ -160,7 +160,7 @@ class RunFinalizer:
             hit_fault("finalization_model_failure")
             section_ids = {item.get("sectionId") for item in context}
             missing_user_layers: tuple[ModelContextItem, ...] = tuple(
-                {"type": "user", "sectionId": layer.id, "content": layer.content}
+                {"type": "context", "sectionId": layer.id, "source": layer.source, "content": layer.content}
                 for layer in resolved.user_context_layers if layer.id not in section_ids
             )
             base_context = (*missing_user_layers, *context, {

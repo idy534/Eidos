@@ -419,9 +419,6 @@ def test_remote_tool_uses_the_run_snapshot_and_durable_execution(catalog, tmp_pa
     snapshot = SkillCatalog(plugins).extension_snapshot()
     run, _ = plugins.store.create_run(session["id"], "Read the issue", extension_snapshot=snapshot)
     model = ScriptedModel([
-        ModelResponse(tool_calls=(ModelToolCall("find", "tool_search", {
-            "query": "mcp__demo__read_issue", "limit": 1,
-        }),)),
         ModelResponse(tool_calls=(ModelToolCall("read", "mcp__demo__read_issue", {}),)),
         ModelResponse(text="Done."),
     ])

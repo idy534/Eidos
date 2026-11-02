@@ -329,7 +329,7 @@ def test_child_resources_inherit_workspace_shell_and_extension_tools(
         external = ToolRegistryEntry(
             ToolSpec(name="mcp__fixture__lookup", description="Look up configured evidence",
                      sideEffect="external", approvalRequired=True, timeoutSeconds=5,
-                     visibility="deferred", inputSchema={"type": "object", "properties": {}, "additionalProperties": False},
+                     visibility="direct", inputSchema={"type": "object", "properties": {}, "additionalProperties": False},
                      resultSchema={"type": "object", "properties": {}, "additionalProperties": False}),
             ToolProvenance(kind="mcp", sourceId="fixture", sourceVersion="1", contentHash="a" * 64, pluginId="fixture", serverId="fixture"),
             Mock(),
@@ -348,9 +348,11 @@ def test_child_resources_inherit_workspace_shell_and_extension_tools(
             start.assert_called_once()
 
         assert child.role == role
-        assert {"read_file", "list_files", "search_text", "view_image", "skill_read", "tool_search",
+        assert {"read_file", "list_files", "search_text", "view_image", "skill_read",
                 "send_message", "run_shell", "write_stdin", "read_tool_output", "apply_patch", "declare_outputs", "mcp__fixture__lookup"} <= names
-        assert "mcp__fixture__lookup" in snapshot.deferred_names
+        assert "mcp__fixture__lookup" in snapshot.available_names
+        assert snapshot.deferred_names == ()
+        assert "tool_search" not in names
         assert not names & {"request_permissions", "request_user_input", "spawn_agent", "followup_task", "wait_agents", "list_agents", "stop_agent"}
     finally:
         store.close()

@@ -254,8 +254,7 @@ class ToolOrchestratorTests(unittest.TestCase):
         self.assertTrue(result.escalated)
         self.assertEqual(runtime.attempts[0].sandbox, SandboxType.NONE)
 
-    def test_hard_confidentiality_deny_requires_human_confirmation_for_unsandboxed_execution(self) -> None:
-        runtime = _Runtime([({"outcome": "success", "code": "ok"}, None)])
+    def test_human_confirmation_follows_hard_confidentiality_targets_not_unsandboxed_mode(self) -> None:
         context = OrchestratorContext(
             **{
                 **self.context.__dict__,
@@ -265,18 +264,30 @@ class ToolOrchestratorTests(unittest.TestCase):
                 ),
             }
         )
+        (self.root / "secret").mkdir()
+        secret_read = AdditionalPermissionProfile(fileSystem=(FileSystemPermissionEntry(
+            path=str((self.root / "secret").resolve()), access=FileSystemAccessMode.READ,
+        ),))
 
-        approvals = []
-        result = ToolOrchestrator().run(
-            runtime,
-            _Request(permissions=SandboxPermissions.REQUIRE_ESCALATED),
-            context,
-            approve=lambda request: approvals.append(request) or True,
+        cases = (
+            (_Request(permissions=SandboxPermissions.REQUIRE_ESCALATED), False),
+            (_Request(permissions=SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS, additional=secret_read), True),
         )
+        for request, human in cases:
+            with self.subTest(human=human):
+                runtime = _Runtime([({"outcome": "success", "code": "ok"}, None)])
+                approvals = []
+                result = ToolOrchestrator().run(
+                    runtime,
+                    request,
+                    context,
+                    approve=lambda request: approvals.append(request) or True,
+                )
 
-        self.assertEqual(result.result["code"], "ok")
-        self.assertTrue(approvals[0].requires_human_confirmation)
-        self.assertEqual(len(runtime.attempts), 1)
+                self.assertEqual(result.result["code"], "ok")
+                self.assertEqual(len(approvals), 1)
+                self.assertEqual(approvals[0].requires_human_confirmation, human)
+                self.assertEqual(len(runtime.attempts), 1)
 
     def test_hard_confidentiality_deny_blocks_retry_after_denial(self) -> None:
         denied = SandboxDenied(

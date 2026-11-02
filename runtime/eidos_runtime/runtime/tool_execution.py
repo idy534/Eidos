@@ -568,8 +568,8 @@ class ToolExecutionController:
                         call.name,
                         "tool_not_activated",
                         f"Tool {call.name} is not activated. No tool was executed. "
-                        f'Call tool_search with query="{call.name}" to activate it, '
-                        "then retry the tool in a subsequent step after receiving the search result.",
+                        "This historical call was outside its original step tool set. "
+                        "Use the tools advertised for a new step; do not replay this call.",
                     ),
                     "completed",
                 )

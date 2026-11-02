@@ -121,7 +121,7 @@ def fit_agent_evidence(state: AgentEvidenceState, byte_budget: int) -> dict[str,
             state = state.model_copy(update={'messages': state.messages[:-1], 'omitted_messages': state.omitted_messages + 1})
         else:
             break
-    return {'type': 'user', 'sectionId': 'agent-evidence',
+    return {'type': 'context', 'sectionId': 'agent-evidence',
         'content': _PREFIX + state.model_dump_json(by_alias=True),
         'agentMessageIds': [message.id for message in state.messages if not message.content_truncated]}
 

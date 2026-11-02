@@ -42,7 +42,6 @@ from eidos_runtime.tools.contracts import (  # noqa: E402
     project_tool_result,
 )
 from eidos_runtime.tools.workspace import ToolExecutor  # noqa: E402
-from eidos_runtime.tools.search import tool_search_entry  # noqa: E402
 from eidos_runtime.tools.json_schema import (  # noqa: E402
     BoundedJsonSchema,
     JsonSchemaValidationError,
@@ -189,13 +188,10 @@ class Phase4ASkillContextTests(unittest.TestCase):
             selected_skill_context=selected_context,
         )
         rendered = json.dumps(built.model_context)
-        catalog_indexes = [
-            index for index, value in enumerate(built.model_context)
-            if value.get("sectionId") == "skill-catalog"
-        ]
-        self.assertEqual(catalog_indexes, [])
-        self.assertIn("Skill Catalog", built.instructions.system_text)
-        self.assertEqual(rendered.count("Skill Catalog"), 0)
+        system_text = built.instructions.system_text
+        self.assertEqual(system_text.count("<available_skills>"), 1)
+        self.assertLess(system_text.index("# Skills"), system_text.index("<available_skills>"))
+        self.assertNotIn("<available_skills>", rendered)
         self.assertNotIn("x" * 100_000, rendered)
         self.assertIn("Use the checklist.", rendered)
         self.assertNotIn("Use the checklist.", built.instructions.system_text)
@@ -224,16 +220,8 @@ class Phase4ASkillContextTests(unittest.TestCase):
             model.instructions_history,
             strict=True,
         ):
-            catalogs = [
-                index for index, item in enumerate(context)
-                if item.get("sectionId") == "skill-catalog"
-            ]
-            self.assertEqual(catalogs, [])
-            self.assertEqual(
-                sum("Skill Catalog" in str(item.get("content", "")) for item in context),
-                0,
-            )
-            self.assertEqual(instructions.count("Skill Catalog"), 1)
+            self.assertNotIn("<available_skills>", json.dumps(context))
+            self.assertEqual(instructions.count("<available_skills>"), 1)
             self.assertIn("Use the checklist.", json.dumps(context))
             self.assertNotIn("Use the checklist.", instructions)
         second_tool_result = next(
@@ -295,7 +283,6 @@ class Phase4ASkillContextTests(unittest.TestCase):
             entries = (
                 *executor.registry.entries,
                 *self.skills.tool_entries(self.snapshot),
-                tool_search_entry(()),
             )
             for entry in entries:
                 self.assertIsNotNone(entry.input_model, entry.spec.name)
@@ -355,8 +342,9 @@ class Phase4ASkillContextTests(unittest.TestCase):
                         "path": "x", "qualifiedId": "user:x",
                         "contentHash": "a" * 64,
                     },
-                    "tool_search": {
-                        "hits": [], "totalMatches": 0, "truncated": False,
+                    "control_shell": {
+                        "stdout": "", "stderr": "", "truncated": False,
+                        "termination": "exit", "workspaceChanged": False,
                     },
                 }
                 success = {

@@ -18,8 +18,7 @@ from eidos_runtime.tools.registry import (  # noqa: E402
     ToolSpec,
 )
 from eidos_runtime.model.client import ModelToolDefinition  # noqa: E402
-from eidos_runtime.tools.search import tool_search_entry  # noqa: E402
-from eidos_runtime.tools.contracts import RunShellInput, RunShellResultData, ToolSearchInput  # noqa: E402
+from eidos_runtime.tools.contracts import RunShellInput, RunShellResultData  # noqa: E402
 from eidos_runtime.tools.workspace import TOOL_SPECS  # noqa: E402
 
 
@@ -196,61 +195,21 @@ class ToolRegistryTests(unittest.TestCase):
                 self.assertFalse(result.valid)
                 self.assertEqual(result.path, "command")
 
-    def test_search_keeps_100_deferred_tools_out_until_next_snapshot(self) -> None:
-        candidates = tuple(
-            ToolRegistryEntry(
-                memory_entry(f"external_{index:03d}").spec.model_copy(
-                    update={
-                        "description": f"Capability number {index}",
-                        "visibility": "deferred",
-                    }
-                ),
-                memory_entry(f"external_{index:03d}").provenance,
-                MemoryAdapter(),
-            )
-            for index in range(120)
-        )
-        search = tool_search_entry(candidates)
-        registry = ToolRegistry((*candidates, search))
+    def test_all_configured_direct_tools_are_present_without_activation_limit(self) -> None:
+        candidates = tuple(memory_entry(f"external_{index:03d}") for index in range(120))
+        registry = ToolRegistry.build(builtin_entries=(), external_entries=candidates)
         dispatcher = ToolDispatcher(registry)
         first = dispatcher.snapshot()
-
-        validated = dispatcher.validate(
-            ModelResponse(tool_calls=(ModelToolCall(
-                "search", "tool_search", {"query": "number 117"}
-            ),)),
-            first.available_names,
-        )
-        search_entry = registry.get("tool_search")
-        assert search_entry is not None and search_entry.runtime is not None
-        cancel = threading.Event()
-        prepared = search_entry.runtime.prepare(
-            None, validated.tool_calls[0].arguments, cancel
-        )
-        raw = search_entry.runtime.execute(None, prepared, cancel)
-        activated = search_entry.runtime.verify(
-            None, prepared, raw, cancel
-        ).activated_tool_names
-        second = dispatcher.snapshot(activated)
-
-        self.assertEqual(first.available_names, ("tool_search",))
-        self.assertEqual(activated[0], "external_117")
-        self.assertIn("external_117", second.available_names)
-        hidden = dispatcher.validate(
-            ModelResponse(tool_calls=(ModelToolCall(
-                "hidden", "external_118", {"value": "x"}
-            ),)),
-            first.available_names,
-        )
-        self.assertIsNone(hidden.error_code)
-        plan = dispatcher.plan(hidden.tool_calls[0], activation_required=True)
-        self.assertTrue(plan.activation_required)
-        self.assertEqual(plan.side_effect, "none")
-        self.assertNotIn("external_118", first.available_names)
-        self.assertFalse(dispatcher.is_parallel_read_call(hidden.tool_calls[0], first.available_names))
-        self.assertFalse(dispatcher.is_parallel_read_batch(
-            (hidden.tool_calls[0], hidden.tool_calls[0]), first.available_names,
-        ))
+        self.assertEqual(len(first.available_names), 120)
+        self.assertEqual(first.deferred_names, ())
+        self.assertEqual(first.activated_names, ())
+        self.assertEqual(len(dispatcher.model_definitions()), 120)
+        self.assertEqual(dispatcher.snapshot(("external_117",)).available_names, first.available_names)
+        result = dispatcher.validate(ModelResponse(tool_calls=(
+            ModelToolCall("direct", "external_118", {"value": "x"}),
+        )), first.available_names)
+        self.assertIsNone(result.error_code)
+        self.assertFalse(dispatcher.plan(result.tool_calls[0]).activation_required)
 
     def test_undeclared_direct_and_unknown_tools_still_fail_validation(self) -> None:
         dispatcher = ToolDispatcher(ToolRegistry((memory_entry(),)))
@@ -276,30 +235,6 @@ class ToolRegistryTests(unittest.TestCase):
             with self.subTest(calls=calls):
                 self.assertIsNotNone(dispatcher.validate(ModelResponse(tool_calls=calls), ()).error_code)
 
-    def test_tool_search_description_routes_deferred_tools_without_semantic_claims(
-        self,
-    ) -> None:
-        search = tool_search_entry(())
-
-        self.assertEqual(
-            search.spec.description,
-            "Search deferred tools by name, description, or source metadata "
-            "and make matching tools available for subsequent calls. "
-            "Use this when the required tool is not currently available.",
-        )
-        self.assertNotIn("semantic", search.spec.description.lower())
-        self.assertNotIn("BM25", search.spec.description)
-        properties = ToolSearchInput.model_json_schema(by_alias=True)["properties"]
-        self.assertEqual(
-            properties["query"]["description"],
-            "Tool name, capability keywords, description text, "
-            "or source metadata to search for.",
-        )
-        self.assertEqual(
-            properties["limit"]["description"],
-            "Maximum number of matching tools to return. Defaults to 10.",
-        )
-        self.assertEqual(set(properties), {"query", "limit"})
     def test_memory_adapter_dispatches_without_a_runtime_name_branch(self) -> None:
         dispatcher = ToolDispatcher(ToolRegistry((memory_entry(),)))
         call = ModelToolCall("call-1", "memory_echo", {"value": "hello"})

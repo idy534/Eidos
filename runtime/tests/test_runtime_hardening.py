@@ -782,7 +782,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertEqual(completed["status"], "succeeded")
         self.assertEqual(self.store.compaction_count(run["id"]), 2)
 
-    def test_steer_refreshes_skill_context_and_deferred_tools_next_step(self) -> None:
+    def test_steer_refreshes_skill_context_while_tools_remain_direct(self) -> None:
         plugin_root = Path(self.temporary.name) / "plugin"
         skill_root = plugin_root / "skills" / "review"
         skill_root.mkdir(parents=True)
@@ -839,7 +839,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         second_tools = {
             value.name for value in model.tool_definitions_history[1]
         }
-        self.assertNotIn("mcp__fixture__demo_deferred", first_tools)
+        self.assertIn("mcp__fixture__demo_deferred", first_tools)
         self.assertIn("mcp__fixture__demo_deferred", second_tools)
         self.assertNotIn("Use review checklist.", json.dumps(model.contexts[0]))
         self.assertIn("Use review checklist.", json.dumps(model.contexts[1]))
@@ -946,7 +946,7 @@ def _deferred_tool() -> ToolRegistryEntry:
             "approvalRequired": False,
             "timeoutSeconds": 5,
             "batchPolicy": "parallel",
-            "visibility": "deferred",
+            "visibility": "direct",
             "inputSchema": schema,
             "resultSchema": schema,
         }),

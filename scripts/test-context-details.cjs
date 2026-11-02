@@ -44,6 +44,8 @@ app.whenReady().then(async () => {
       assert.equal(layout.overflow, false);
       assert.equal(layout.focused, true);
       layouts.push(layout);
+      assert.equal(await evaluate("[...document.querySelectorAll('.context-section-name')].some(node=>node.textContent==='记忆')"), true);
+      assert.equal(await evaluate("[...document.querySelectorAll('.context-section-name')].some(node=>node.textContent==='技能')"), true);
       await evaluate("window.contextSetScenario('overflow')");
       await wait("document.querySelector('.context-hero-percent')?.textContent==='181.4%'");
       assert.equal(await evaluate("document.querySelector('.composer-context-usage').getAttribute('aria-label')"), "上下文 181.4% · 181.4K / 100K");

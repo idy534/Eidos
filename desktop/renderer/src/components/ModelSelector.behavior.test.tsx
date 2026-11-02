@@ -174,6 +174,9 @@ describe("ModelSelector", () => {
 
   it("cancels transition animation immediately when interrupted by pointerDown", () => {
     let rafCallback: FrameRequestCallback | undefined;
+    // A frozen clock keeps release velocity at zero, so slow runners cannot shift the target.
+    const now = 1_000;
+    vi.spyOn(performance, "now").mockReturnValue(now);
     const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
       rafCallback = cb;
@@ -199,7 +202,7 @@ describe("ModelSelector", () => {
 
     // Step partially
     act(() => {
-      rafCallback!(performance.now() + 100);
+      rafCallback!(now + 100);
     });
     const midVal = Number((slider as HTMLInputElement).value);
     expect(midVal).toBeLessThan(1.4);

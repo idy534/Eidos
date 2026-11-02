@@ -56,3 +56,28 @@ it("keeps the manual action available after a request failure", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("系统未能安排压缩");
   expect(screen.getByRole("button", { name: "压缩上下文" })).toBeEnabled();
 });
+
+it("shows memory and skills as separate context categories", async () => {
+  render(<ContextIndicator usage={usage} runId="run-1" details={{ ...details, sections: [
+    { name: "instructions", tokens: 3000 }, { name: "memory", tokens: 5000 },
+    { name: "skills", tokens: 2000 }, { name: "conversation", tokens: 2000 },
+  ] }} />);
+  fireEvent.click(screen.getByRole("button", { name: "查看上下文详情" }));
+  expect(await screen.findByText("记忆")).toBeInTheDocument();
+  expect(screen.getByText("技能")).toBeInTheDocument();
+  expect(screen.getByText("系统提示词")).toBeInTheDocument();
+  const memory = screen.getByTitle(/记忆: 5K/);
+  expect(memory).toHaveStyle({ backgroundColor: "#f59e0b" });
+});
+
+it("keeps the detail panel readable while context statistics are loading", async () => {
+  Object.defineProperty(window, "eidosRuntime", { configurable: true, value: {
+    readContextDetails: vi.fn(() => new Promise(() => {})),
+  } });
+  render(<ContextIndicator usage={usage} runId="run-1" />);
+  fireEvent.click(screen.getByRole("button", { name: "查看上下文详情" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("系统正在读取统计");
+  expect(screen.queryByRole("button", { name: "压缩上下文" })).toBeNull();
+  fireEvent.keyDown(document, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});

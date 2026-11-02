@@ -289,11 +289,11 @@ def test_scheduler_pauses_expired_once_without_catchup(automation):
     assert app.repository.read(task.id).revision == saved.revision
 
 
-def test_deferred_single_tool_and_mode_effect(automation):
+def test_direct_single_tool_and_mode_effect(automation):
     _store, _session, app, _ = automation
     entry = automation_entry(app)
     registry = ToolRegistry((entry,))
-    assert registry.model_definitions() == ()
+    assert len(registry.model_definitions()) == 1
     assert len(registry.model_definitions(("automation",))) == 1
     dispatcher = ToolDispatcher(registry)
     assert dispatcher.plan(ModelToolCall("read", "automation", {"mode": "view"})).side_effect == "none"
@@ -341,12 +341,11 @@ def test_registered_protocol_and_shutdown_service(tmp_path):
         server.close()
 
 
-def test_real_loop_search_then_create_and_query(automation):
+def test_real_loop_direct_create_and_query(automation):
     store, session, app, _ = automation
     from eidos_runtime.runtime.loop import RuntimeEngine
     run, _ = store.create_run(session, "每十分钟检查状态，新建会话")
     responses = [
-        ModelResponse(tool_calls=(ModelToolCall("find", "tool_search", {"query": "automation", "limit": 1}),)),
         ModelResponse(tool_calls=(ModelToolCall("create", "automation", {"mode": "create", "kind": "cron", "name": "状态检查", "prompt": "检查状态",
             "schedule": {"expression": "*/10 * * * *", "timezone": "Asia/Shanghai"}}),)),
         ModelResponse(tool_calls=(ModelToolCall("view", "automation", {"mode": "view"}),)),
@@ -528,10 +527,10 @@ def test_late_cancel_preserves_saved_task_receipt(automation):
         def hit(self, point):
             if point == "tool_late_result":
                 self.calls += 1
-                if self.calls == 2:
+                if self.calls == 1:
                     cancel.set()
     run, _ = store.create_run(session, "创建定时任务")
-    responses = [ModelResponse(tool_calls=(ModelToolCall("search", "tool_search", {"query": "automation", "limit": 1}),)),
+    responses = [
         ModelResponse(tool_calls=(ModelToolCall("create", "automation", {"mode": "create", "kind": "cron", "name": "检查", "prompt": "检查", "schedule": {"expression": "*/10 * * * *"}}),))]
     with injected_faults(LateCancel()):
         RuntimeEngine(store, ScriptedModel(responses), lambda _message: None).run(run["id"], cancel)

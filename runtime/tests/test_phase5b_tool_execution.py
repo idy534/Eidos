@@ -228,7 +228,8 @@ class ToolExecutionControllerTests(unittest.TestCase):
             cancel=threading.Event(), deadline=None,
         )
         self.assertEqual(outcome.result["code"], "tool_not_activated")
-        self.assertIn('query="read_file"', outcome.result["summary"])
+        self.assertIn("historical call", outcome.result["summary"])
+        self.assertNotIn("tool_search", outcome.result["summary"])
         self.assertEqual(handler.calls, 0)
         self.assertFalse(outcome.result["sideEffectsMayExist"])
         self.assertFalse(outcome.result["reconciliationRequired"])

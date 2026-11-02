@@ -16,6 +16,7 @@ from eidos_runtime.memory.contracts import (
     MemoryPolicyRequest,
     MemoryReadRequest,
 )
+from eidos_runtime.memory.context import LONG_TERM_MEMORY_HEADER, MemoryContext
 from eidos_runtime.memory.repository import MemoryRejected
 from eidos_runtime.memory.repository import GLOBAL_SCOPE_ID
 
@@ -175,6 +176,9 @@ def test_context_budget_keeps_project_index_first_and_exposes_more_note_routes(
     assert "project.md" in projection.rendered_payload
     assert "memory_search" in projection.rendered_payload
     assert projection.token_estimate <= 400
+    item = MemoryContext.long_term_index(projection)
+    assert item["content"] == LONG_TERM_MEMORY_HEADER + projection.rendered_payload
+    assert "may be outdated" in item["content"]
 
 
 def test_cancel_before_publication_leaves_no_fact(store):

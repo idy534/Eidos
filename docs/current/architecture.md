@@ -1,5 +1,15 @@
 # Eidos 当前架构
 
+## 任务理解与提示词边界（2026-10-31）
+
+主 Agent 使用通用助手身份。system-safety 层定义指令来源、优先级、材料用途与真实边界。base-agent 层按任务、行动、证据和沟通组织通用原则。runtime-policy 层负责工具发现、依赖顺序与失败恢复。核心文本不列举任务类型、历史故障或示例。独立审批模型继续只评估具体操作。
+
+模型根据当前请求与相关对话确定目标、材料、范围和完成条件。后续消息默认补充当前任务，用户改变或取消目标时才调整目标。模型在信息足够时直接回答，在需要证据或行动时使用工具。资源可用性不单独构成任务。材料可以用于处理；用户明确采用的流程可以在授权范围内执行，材料不能自行获得指令或授权效力。
+
+工具契约承担 Shell、文件交付、定时任务和工具激活的参数与操作要求。权限层只依据实际状态说明模式、范围和可申请权限。记忆、模式、子 Agent 与项目文件引用继续按原有条件加载。压缩提示词使用通用任务身份，标题调用保持独立。具体职责与维护规则见[系统提示词](features/system-prompts.md)。
+
+本次没有增加任务名称路由、意图分类器、模板框架或指令层。ContextBuilder、InstructionResolver、消息角色、请求快照、权限和执行链保持兼容。当前发送方式仍把非 user 指令层合成一个 instructions 字符串；XML 属性不等于独立的 Provider 消息角色。Runtime 重新载入后，新构建的请求使用新文本，历史快照保留原文。结构与集成测试不能替代真实模型行为验证。上一版的失败记录仍见[已知限制](limitations.md#任务材料识别与提示词候选版本2026-10-31)。
+
 ## 后端代码精简（2026-10-29）
 
 Runtime 已移除无人调用的私有函数、存储入口和 `context` 包重导出。存储测试与离线评测直接使用现有 committed 入口；生产调度和流式输出继续使用原来的事务、Event 与 Outbox。
@@ -248,7 +258,7 @@ CLAUDE.md
 
 每层只选择一个候选。Resolver 使用共享的 32 KiB UTF-8 byte budget。Resolver 记录 shadowed candidate、读取或预算 warning、原始 content hash、实际包含字节数、directory level、Workspace root 和 effective cwd。Run 使用 immutable rule snapshot，Step Resolution 保存 resolved instruction hash 和 effective cwd。
 
-`InstructionResolver` 按 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 形成分层 instructions。 个性化设置在 Run 创建时固定到 `RunResolutionSnapshot`，并以较低权限的 user context 参与每次上下文构建。用户背景和全局指令不会更改执行权限。详见[个性化说明](features/personalization.md)。Skill Catalog 属于 developer capability context。真正加载的第三方 `SKILL.md` 属于较低权限的 user context。Project Rules 和 Selected Skill 保留来源与 hash。 模型可见的 Skill 目录只保留唯一调用名称、说明和入口路径；完整身份、版本与 hash 留在 Runtime 的冻结快照中。skill_read 继续使用现有参数读取该名称对应的 Skill。它们不具备修改 Runtime Permission、Approval 或 Sandbox 的权限。 通用 Runtime 提示不包含具体审批模式的扩权流程。当前权限层按 manual、auto_review、full_access 分别生成；完全访问层不混入沙盒扩权、嵌套沙盒或自动审查指引。可用工具由当前 Tool Schema 暴露，权限文本不重复整份名称列表。
+`InstructionResolver` 按 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 形成分层 instructions。 项目情况、项目规则、全局自定义要求、用户偏好和长期记忆由 `memory/context.py` 统一投影为独立记忆上下文。个性化设置在 Run 创建时固定到 `RunResolutionSnapshot`。统计单独返回 `memory` 与 `skills` 分类，这些内容不合入 `system_text`。各来源继续保留原有存储、范围和隐私检查。用户背景和全局指令不会更改执行权限。详见[个性化说明](features/personalization.md)。Skill Catalog 与已加载的第三方 `SKILL.md` 属于独立技能上下文，Provider 适配器沿用较低权限的 user context 传输。Project Rules 和 Selected Skill 保留来源与 hash。 模型可见的 Skill 目录只保留唯一调用名称、说明和入口路径；完整身份、版本与 hash 留在 Runtime 的冻结快照中。skill_read 继续使用现有参数读取该名称对应的 Skill。它们不具备修改 Runtime Permission、Approval 或 Sandbox 的权限。 通用 Runtime 提示不包含具体审批模式的扩权流程。当前权限层按 manual、auto_review、full_access 分别生成；完全访问层不混入沙盒扩权、嵌套沙盒或自动审查指引。可用工具由当前 Tool Schema 暴露，权限文本不重复整份名称列表。
 
 Context Budget 使用 `projected_input_tokens` 判断下一次模型请求是否适合当前窗口。圆环、详情和兼容的 Context Usage RPC 使用同一份当前 ContextPlan 元数据。Runtime 只接受与这个 Plan 绑定的已完成 ModelAttempt 的 Provider `input_tokens`，否则系统显示当前投影估算。Provider 数值不是累计消费；分母来自 Run 的冻结 ModelProfile，用户调小窗口后，系统不使用 Catalog 上限替代它。系统保留超过 100% 的真实比例，只把圆环绘图限制在一圈内。
 
@@ -376,7 +386,7 @@ Shell 参数通过 Pydantic `AliasChoices` 兼容 Codex 拼写。`run_shell` 接
 
 已声明 Tool 的载荷类型正确但参数契约校验失败时，Runtime 会在 Prepare 前生成并提交 `invalid_arguments` Tool Error。该 ToolCall 仍然进入 SQLite、Event 和下一次 Model Context，但不会触发 Approval、Durable Intent 或 Tool Runtime。载荷类型错误、当前目录中不存在的 Tool、重复或无效 Call ID 等协议错误仍然进入 protocol repair。
 
-当前目录中存在但尚未进入 Step 激活集合的 deferred Tool 返回普通 `tool_not_activated` Tool Error。结果明确说明没有执行工具，并要求模型使用工具完整名称调用 `tool_search`，收到搜索结果后在后续 Step 重试。结果复用既有校验、投影、SQLite/Event 提交和下一轮 Context 路径，不计入协议修复次数，也不单独结束 Run。该分支不执行 Tool Runtime、不调用 cleanup、不触发 Approval 或 Durable Intent，也不建立 reconciliation。未激活调用不会进入并行读取批次。Step 的工具可用集合仍固定；同一批次先搜索也不能立即执行新激活工具。未知、禁用或未授权而未进入目录的工具不被描述为“激活后可用”。等价重复仍由既有 LoopGuard 收敛。
+当前 Run 的可用内置工具与已启用 MCP 工具从首轮直接提供。系统不再注册工具搜索入口，也不按有无项目延后工具展示。Step 仍固定可用集合、工具契约和绑定。旧激活记录与快照继续可读，旧 Step 中原本未提供的调用仍不能执行；对应兼容错误不会要求调用已移除的工具。未知、禁用或未授权工具仍由校验拒绝。参数、审批、Durable Intent、取消和结果核验保持原样。
 
 `list_files`、`read_file`、`read_file_range` 和 `search_text` 的 Contract 只校验参数类型、大小和明显非法语法。ToolExecutor 的只读 Path Authority 再把相对路径绑定到 Workspace，把 canonical absolute path 绑定到 Workspace 或当前 Run 的 active Skill root。结果投影也遵循这个 authority：Workspace 结果保持 Workspace-relative，active Skill 结果返回 canonical absolute path，目录结果保留末尾 `/`，因此只读 Tool 结果可以直接 round-trip 到下一次只读 Tool。active Skill root 只读。未授权的 absolute path 返回普通 Tool Error，不进入 Tool 参数契约错误或协议修复。写入 Tool 使用 Workspace-relative 路径；`run_shell.cwd` 还接受 Workspace 内的 canonical absolute path，并在 shell launch boundary 归一化为 Workspace-relative 路径。active Skill root 和 Workspace 外路径不能成为 Shell cwd。
 
@@ -504,7 +514,7 @@ v1 mapless generation 仍然不能恢复为 active Snapshot。Persistence 会单
 
 `RetrievalSnapshot` 是 immutable content-addressed artifact。SQLite 只保存一份 Retrieval JSON。`run_repository_retrievals` 保存 Run 对 artifact 的使用关系。ContextPlan 继续保存 attempt lineage，但 artifact identity 不承担 Run ownership。两个 Run 可以共享同一个 Retrieval Snapshot ID，并分别解析自己的 evidence lineage。
 
-`ContextBuilder` 是默认在线 Run 的唯一模型输入投影器。它把 Project Rules、Skills、SQLite history、verified compact summary、Repository overview 和 Retrieval evidence 放入一个结构化 `ModelContextItem` 序列。Provider 按最长公共前缀命中缓存。`workspace-environment` 位于历史之前，所以它只投影 Run 内不变的 Workspace 路径和 platform。Run 级 `workspaceVersion` 继续由 Runtime 保存，但不进入模型输入。只读结果去重使用投影历史内的 Workspace 变更计数分隔状态；该计数不进入模型提示，也不引用 Run 级版本号。这样单次 Workspace 写入不会仅因版本计数变化而使其后的整段历史失去缓存。Compaction、协议修复、权限变化和动态 Skill 仍可能改变请求前缀，不能把完整模型输入视为只追加序列。每个 ModelAttempt 在 Sampling 前持久化完整的 `ContextSnapshot`。Snapshot 原样保存 model context、resolved instructions、tool definitions、Model/Rule metadata 和可空 Repository lineage。Sampling 只读取已绑定的 Snapshot。可重试的 transport failure 会先完成旧 Attempt，再创建独立 Attempt 并复用同一个 Snapshot。敏感扫描尚未释放的文本不代表可见进度；已经发布的 Assistant Item 会参与 retry safety 判断。已有文本或 ToolCall 进度不会自动重放。协议修复会建立新的 ModelAttempt 和新的 Snapshot。已声明 Tool 的参数校验错误会通过持久化的 `invalid_arguments` Tool Result 进入下一次 Model Context。该结果只保留有界的错误码和摘要，不携带原始参数。真正的协议错误仍然使用 protocol repair context。
+`ContextBuilder` 是默认在线 Run 的唯一模型输入投影器。它把 Project Rules、Skills、SQLite history、verified compact summary、Repository overview 和 Retrieval evidence 放入一个结构化 `ModelContextItem` 序列。Provider 按最长公共前缀命中缓存。`workspace-environment` 使用独立来源上下文，提供 Workspace 路径、平台、宿主 Shell、当前本地日期和时区。Run 级 `workspaceVersion` 继续由 Runtime 保存，但不进入模型输入。只读结果去重使用投影历史内的 Workspace 变更计数分隔状态；该计数不进入模型提示，也不引用 Run 级版本号。这样单次 Workspace 写入不会仅因版本计数变化而使其后的整段历史失去缓存。Compaction、协议修复、权限变化和动态 Skill 仍可能改变请求前缀，不能把完整模型输入视为只追加序列。每个 ModelAttempt 在 Sampling 前持久化完整的 `ContextSnapshot`。Snapshot 原样保存 model context、resolved instructions、tool definitions、Model/Rule metadata 和可空 Repository lineage。Sampling 只读取已绑定的 Snapshot。可重试的 transport failure 会先完成旧 Attempt，再创建独立 Attempt 并复用同一个 Snapshot。敏感扫描尚未释放的文本不代表可见进度；已经发布的 Assistant Item 会参与 retry safety 判断。已有文本或 ToolCall 进度不会自动重放。协议修复会建立新的 ModelAttempt 和新的 Snapshot。已声明 Tool 的参数校验错误会通过持久化的 `invalid_arguments` Tool Result 进入下一次 Model Context。该结果只保留有界的错误码和摘要，不携带原始参数。真正的协议错误仍然使用 protocol repair context。
 
 Workspace Explorer 复用 `RepositoryWatchController`。Watcher 事件只产生 `workspace/changed` 缓存失效通知。Renderer 根据相对路径刷新已加载的父目录。Watcher 不提供路径安全事实，也不修改 Run snapshot。
 
@@ -580,7 +590,7 @@ Project
 ```
 
 新的 `project/create` 接收可选的 `name` 和必需的 `workspaceRoot`。Runtime 先通过 Project resolution boundary 校验并 canonicalize 用户选择的目录，再保存 Project 元数据。名称缺省时，Runtime 使用 canonical Workspace 的文件夹名。这个调用不创建 Session。新的 `session/create` 接收 `workspaceRoot`、`executionMode`、可选的 `baseRef` 和显式的 `includeLocalChanges`。Runtime 先通过 Project resolution boundary 校验并 canonicalize 用户选择的目录，再检测可选 Git capability。`executionMode = local` 时，Runtime 创建 `worktree_id = NULL` 的 Local Session，不创建 Git side effect，也不创建 Worktree lifecycle intent。`executionMode = worktree` 时，Runtime 要求 Git capability，通过 `GitBackend` 将 `baseRef` 解析为 immutable `base_commit`，确定 `project_id`、`worktree_id`、`worktree_root` 和 `branch = NULL`，写入 durable lifecycle intent，然后通过唯一的 hardened Git CLI `worktree add --detach` 创建 Worktree。Runtime 只复制 ignored 且命中 source `.worktreeinclude` 的文件、自动复制 ignored 的 `EIDOS.override.md` 和 `AGENTS.override.md`，以及可选的 Git patch bytes。没有 Git 时，Worktree 请求返回 typed `WORKTREE_REQUIRES_GIT`。没有显式 `baseRef` 时，Runtime 使用当前 branch；repository 处于 detached HEAD 时使用 `HEAD`。Local Run 使用 `Project.workspace_root`，Worktree Run 使用 Worktree root。
-`workspaceRoot` 省略或为 null 时，Runtime 创建 projectless Session。默认工作空间是 `~/Eidos/YYYY-MM-DD/可读名称`，与 `EIDOS_DATA_DIR` 分离。Desktop 首次提交通过 `workspaceNameHint` 传递首行短文本；Runtime 统一清理名称并限制 UTF-8 字节长度。名称缺省时使用“新会话”，重名时使用 `-2`、`-3`，目录创建采用排他 mkdir。日期使用首次创建请求的本地日期，后续标题变化不移动目录。开发和测试可以通过 `EIDOS_PROJECTLESS_ROOT` 指定独立根目录。该 Session 不创建 Project、Worktree 或 Repository workspace，固定为 Local execution。Run 使用普通 Workspace permission profile，写权限只作用于当前工作空间。RunResources 仍创建文件工具、Shell、Skill、MCP 和 Plugin 资源。projectless Run 不注入 Project Rules、Repository Context 或 workspace-environment。Desktop 保留输出内容和文件预览，但 Workspace Dock 不展示 Files、Terminal 或 Review；Browser 仍可用。
+`workspaceRoot` 省略或为 null 时，Runtime 创建 projectless Session。默认工作空间是 `~/Eidos/YYYY-MM-DD/可读名称`，与 `EIDOS_DATA_DIR` 分离。Desktop 首次提交通过 `workspaceNameHint` 传递首行短文本；Runtime 统一清理名称并限制 UTF-8 字节长度。名称缺省时使用“新会话”，重名时使用 `-2`、`-3`，目录创建采用排他 mkdir。日期使用首次创建请求的本地日期，后续标题变化不移动目录。开发和测试可以通过 `EIDOS_PROJECTLESS_ROOT` 指定独立根目录。该 Session 不创建 Project、Worktree 或 Repository workspace，固定为 Local execution。Run 使用普通 Workspace permission profile，写权限只作用于当前工作空间。RunResources 仍创建文件工具、Shell、Skill、MCP 和 Plugin 资源。projectless Run 不注入 Project Rules 或 Repository Context，但仍提供自身工作目录和环境信息。Desktop 保留输出内容和文件预览，但 Workspace Dock 不展示 Files、Terminal 或 Review；Browser 仍可用。
 
 Schema v23 的 `projectless_workspace_creations` 保存新工作空间的操作 ID、目录分配和身份。重复请求复用首次路径；已保存身份的创建可以在重启后继续。目录已经存在但没有已提交身份时，Runtime 不接管该目录，而是分配下一个后缀。Session、创建完成状态和 `session.created` Event/Outbox 在同一事务提交。失败清理只删除已核验且仍为空的本次目录。子 Agent 继续借用父 Session 的工作空间。
 
@@ -906,7 +916,7 @@ Markdown 的组件映射不再依赖整个 ArtifactActions 上下文对象。链
 
 文件引用按来源路径和内容区分。用户可以分别引用不同目录下的同名文件，包括 `SKILL.md`。`input/prepare` 默认拒绝 Eidos 数据目录中的路径；已有 Session 的当前工作区位于数据目录内时，系统只允许引用该工作区中的路径，数据目录本身不能作为例外。该保护也覆盖数据目录内的 Skill 文件。界面将 `WORKSPACE_SENSITIVE_PATH` 显示为路径受保护，并提示用户将需要引用的普通文档复制到当前工作区后重新选择。
 
-Context Builder 从用户消息关联的持久引用读取内容，并标记来源、SHA256 和资料边界。图片通过现有 Pydantic AI `BinaryContent` 进入支持图片的 Provider。Context 预算排除 base64 字符串的文本计数，并加入按尺寸估算的图片开销。压缩事实保留引用来源和 ID。Skill 使用现有 Catalog、Activation、Resource 流程；MCP 和 Plugin 选择激活现有 deferred tools，不安装扩展、不绕过授权，也不在运行中替换快照。
+Context Builder 从用户消息关联的持久引用读取内容，并标记来源、SHA256 和资料边界。图片通过现有 Pydantic AI `BinaryContent` 进入支持图片的 Provider。Context 预算排除 base64 字符串的文本计数，并加入按尺寸估算的图片开销。压缩事实保留引用来源和 ID。Skill 使用现有 Catalog、Activation、Resource 流程；MCP 和 Plugin 选择保留用户选择的来源；已启用且可用的工具直接提供。选择不会安装扩展、绕过授权或在运行中替换快照。
 
 Python 的输入 DTO 通过 `node scripts/generate-input-contracts.mjs` 生成 `desktop/shared/input-context.generated.ts`。生成器使用现有 Python 环境和已锁定的 `json-schema-to-typescript`，没有引入生产依赖。Main 与 RuntimeClient 继续执行边界校验。
 
@@ -945,7 +955,7 @@ Renderer 的计划状态按 Session 隔离，切换会话时不展示旧问题�
 
 Runtime 保留三个内置角色，并支持用户 TOML 定义的自定义类型。省略 `role` 时，Runtime 使用 `default` 处理通用任务。`explorer` 专注具体的代码调查、调用链、命令统计和证据整理。`worker` 负责分配范围内的实现和验证，并保留其他 Agent 的修改。角色记录来自 SQLite；ContextBuilder 根据该记录注入独立的 developer 指令层，续派时保持原角色。自定义定义由 `AgentCatalog` 解析。`model.provider_id` 与 `model.config_id` 成对校验，省略模型设置时仍继承父模型。`instructions` 以来源明确的用户配置层进入子任务，不改变 Runtime 权限。
 
-三个角色共用普通文件、Shell、Skill、图片、只读记忆、产物声明和已启用扩展工具的执行链。MCP 按父 Run 固定扩展快照启动，延迟工具仍通过 `tool_search` 发现。三个角色继承父 Run 的审批模式和权限；`explorer` 是任务分工，不提供强制只读保证。所有操作仍受自身权限快照、审批、Seatbelt、Durable Intent 和结果核验约束，`full_access` 继续使用既有例外。子任务只暴露父消息通道 `send_message`，不暴露委派工具、`request_permissions` 或 `request_user_input`；父任务负责用户交互和直接扩权。子 Session 不能通过普通 `run/start` 独立启动，也不能拥有 Checkpoint。内部子会话不进入普通 Session 列表。父会话删除只清理其事实，不删除借用的目录。
+三个角色共用普通文件、Shell、Skill、图片、只读记忆、产物声明和已启用扩展工具的执行链。MCP 按父 Run 固定扩展快照启动，可用工具直接进入对应角色的工具集合。三个角色继承父 Run 的审批模式和权限；`explorer` 是任务分工，不提供强制只读保证。所有操作仍受自身权限快照、审批、Seatbelt、Durable Intent 和结果核验约束，`full_access` 继续使用既有例外。子任务只暴露父消息通道 `send_message`，不暴露委派工具、`request_permissions` 或 `request_user_input`；父任务负责用户交互和直接扩权。子 Session 不能通过普通 `run/start` 独立启动，也不能拥有 Checkpoint。内部子会话不进入普通 Session 列表。父会话删除只清理其事实，不删除借用的目录。
 
 Schema v29 增加 `run_agent_catalogs`，它关联父 Run 与现有 Blob 存储中的冻结目录。`agent_delegations` 增加实际定义和原始创建请求，角色 CHECK 改为有界名称；名称仍由严格 DTO 和固定目录校验。子任务创建与定义关联在同一事务提交。续派更新当前任务，但创建重放继续比较独立的原请求。v28 升级保留原有数据、索引、触发器，并在提交前检查外键；新库和离线恢复接入同一版本链。
 
