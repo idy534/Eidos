@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import json
 import os
 from pathlib import Path
 import stat
@@ -28,6 +27,7 @@ from eidos_runtime.extensions.skills import (  # noqa: E402
     SkillReadError,
     _write_tree,
 )
+from eidos_runtime.model.prompts import SKILLS_INSTRUCTIONS  # noqa: E402
 
 
 def _office_fixture(root_file: str, *, padding: int = 0) -> bytes:
@@ -69,16 +69,20 @@ class SkillPackageTests(unittest.TestCase):
         prompt = catalog.content.lower()
 
         self.assertEqual(catalog.role, "developer")
-        for phrase in ("read", "skill_read", "relative", "untrusted"):
-            self.assertIn(phrase, prompt)
+        self.assertIn("skill_read", prompt)
         self.assertNotIn("full body must not be in catalog", prompt)
-        entries = [json.loads(line) for line in catalog.content.splitlines() if line.startswith("{")]
-        entry = next(value for value in entries if value["name"] == "user:review")
-        self.assertEqual(set(entry), {"name", "description", "path"})
-        self.assertEqual(entry["path"], str((skill / "SKILL.md").resolve()))
-        self.assertIn("FULL BODY", self.skills.read_skill(snapshot, entry["name"])["content"])
-        for field in ("qualifiedId", "sourceHash", "contentHash", "sourceVersion", '"source"'):
+        self.assertIn(
+            '  <skill name="user:review">\n'
+            "    <description>Review files.</description>\n"
+            "  </skill>",
+            catalog.content,
+        )
+        self.assertIn("FULL BODY", self.skills.read_skill(snapshot, "user:review")["content"])
+        for field in ("sourceHash", "contentHash", "sourceVersion", '"source"', "SKILL.md"):
             self.assertNotIn(field, catalog.content)
+        # Progressive disclosure rules live in the system prompt, not the catalog.
+        for phrase in ("skill_read", "skill_read_resource", "relative"):
+            self.assertIn(phrase, SKILLS_INSTRUCTIONS)
 
     def test_binary_package_resources_are_bounded_and_not_scanned_as_utf8(self) -> None:
         skill = self.data / "skills" / "anthropic-files"

@@ -524,19 +524,23 @@ class ToolContractTests(unittest.TestCase):
         descriptions = {spec.name: spec.description for spec in TOOL_SPECS}
         self.assertEqual(
             descriptions["list_files"],
-            "List regular files under a workspace or active Skill directory.",
+            "List regular files when the task requires locating a path. Use a known path "
+            "directly with read_file. The scope is the workspace or an active Skill directory.",
         )
         self.assertEqual(
             descriptions["read_file"],
-            "Read a UTF-8 text file from the workspace or an active Skill root. "
-            "For truncated results, continue with read_file_range.",
+            "Read a UTF-8 text file when its content is needed. Call this directly for a known path. "
+            "The file must be in the current permitted scope, including active Skill roots. "
+            "For truncated results, continue with read_file_range. "
+            "Read relevant current content before preparing changes.",
         )
         self.assertEqual(
             descriptions["read_file_range"],
-            "Read an inclusive line range from a UTF-8 text file.",
+            "Read an inclusive line range from a UTF-8 text file. "
+            "Use this for known relevant lines or to continue a truncated read_file result.",
         )
         self.assertTrue(descriptions["search_text"].startswith(
-            "Search text across workspace or active Skill files.",
+            "Find relevant text across workspace or active Skill files.",
         ))
         self.assertIn("includeGlobs", descriptions["search_text"])
         self.assertEqual(
