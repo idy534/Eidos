@@ -137,6 +137,14 @@ class ModelContractTests(unittest.TestCase):
         self.assertNotRegex(BASE_AGENT_INSTRUCTIONS, r"[\u4e00-\u9fff]")
         self.assertNotIn("task material", SKILLS_INSTRUCTIONS)
 
+    def test_core_prompt_requires_visible_progress_and_steering_acknowledgement(self) -> None:
+        # Reasoning models otherwise keep every update in reasoning, which the feed does not show.
+        self.assertIn("Before the first tool call of a task, write one short sentence", BASE_AGENT_INSTRUCTIONS)
+        self.assertIn("confirm a finding, change direction or hit a blocker", BASE_AGENT_INSTRUCTIONS)
+        self.assertIn("When a user message arrives while you are still working", BASE_AGENT_INSTRUCTIONS)
+        self.assertIn("the user cannot see your reasoning", BASE_AGENT_INSTRUCTIONS)
+        self.assertNotIn("For substantial work", BASE_AGENT_INSTRUCTIONS)
+
     def test_custom_instructions_rank_between_project_rules_and_selected_skills(self) -> None:
         from eidos_runtime.domain.personalization import PersonalizationPreferences
         from eidos_runtime.model.instructions import (
