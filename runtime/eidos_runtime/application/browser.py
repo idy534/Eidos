@@ -9,7 +9,7 @@ import threading
 
 from eidos_runtime.infrastructure.browser_host import BrowserHost, BrowserUnavailable
 from eidos_runtime.infrastructure.browser_runtime import BROWSER_PACK_ID
-from eidos_runtime.infrastructure.managed_resources import ManagedResourceManager
+from eidos_runtime.infrastructure.managed_resources import ManagedResourceManager, ResourceError
 from eidos_runtime.models.browser import (
     BrowserClearResponse,
     BrowserCloseResponse,
@@ -121,7 +121,8 @@ class BrowserApplication:
         manager = self.resources()
         if manager is None:
             return "unavailable"
-        progress = next((pack for pack in manager.status().packs if pack.id == BROWSER_PACK_ID), None)
-        if progress is None:
+        try:
+            progress = manager.pack_status(BROWSER_PACK_ID)
+        except ResourceError:
             return "unavailable"
         return _RESOURCE_PHASES.get(progress.phase, "missing")

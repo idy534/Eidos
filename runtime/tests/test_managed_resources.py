@@ -71,6 +71,23 @@ def resources(tmp_path):
     return manager, calls, payload
 
 
+def test_pack_status_checks_only_the_requested_pack(resources, monkeypatch):
+    manager, _, _ = resources
+    checked = []
+    original = manager.is_ready
+
+    def is_ready(pack_id):
+        checked.append(pack_id)
+        return original(pack_id)
+
+    monkeypatch.setattr(manager, "is_ready", is_ready)
+    assert manager.pack_status("document-python").phase == "missing"
+    assert checked == ["document-python"]
+    with pytest.raises(ResourceError):
+        manager.pack_status("browser")
+    assert [pack.phase for pack in manager.status().packs] == ["missing"]
+
+
 def test_clean_install_is_verified_and_reused_after_restart(resources):
     manager, calls, _ = resources
     cancel = threading.Event()

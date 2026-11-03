@@ -555,23 +555,36 @@ class _McpToolsAdapter:
 
 
 class _BrowserTaskAdapter:
-    """Chrome start and stop can take seconds; reply from a managed task."""
+    """Reply from a managed task so the single request loop never waits on Chrome.
 
-    def __init__(self, server: "RuntimeServer", action: Callable[[BrowserApplication], BaseModel]) -> None:
+    Chrome start and stop take seconds, and status waits for the host lock
+    that a starting Chrome holds and rechecks the browser resource files.
+    """
+
+    def __init__(
+        self,
+        server: "RuntimeServer",
+        action: Callable[[BrowserApplication, BaseModel], BaseModel],
+        *,
+        inline_when_draining: bool = False,
+    ) -> None:
         self._server = server
         self._action = action
+        self._inline_when_draining = inline_when_draining
 
-    def __call__(self, request_id: str, _request: BaseModel) -> DeferredMethodResult:
+    def __call__(self, request_id: str, request: BaseModel) -> BaseModel | DeferredMethodResult:
         application = self._server._browser_application()
 
         def run(_cancel: threading.Event) -> None:
             try:
-                self._server.send(response(request_id, self._action(application).to_wire_dict(exclude_none=True)))
+                self._server.send(response(request_id, self._action(application, request).to_wire_dict(exclude_none=True)))
             except Exception:
                 logger.warning("Browser operation failed")
                 self._server.send(business_error(request_id, "INTERNAL_ERROR"))
 
         if not self._server.supervisor.start_managed_task("browser-operation", run):
+            if self._inline_when_draining:
+                return self._action(application, request)
             raise ApplicationError("RUNTIME_DRAINING")
         return DeferredMethodResult()
 
@@ -1651,18 +1664,18 @@ class RuntimeServer:
             allowed_during_reconfiguration=False, error_mapper=_application_error_mapping,
         ))
         for name, request_type, response_type, handler in (
-            ("browser/status", BrowserStatusRequest, BrowserStatus, _ApplicationMethodAdapter(
-                lambda _id, request: self._browser_application().status(request), BrowserStatus)),
+            ("browser/status", BrowserStatusRequest, BrowserStatus, _BrowserTaskAdapter(
+                self, lambda application, request: application.status(request), inline_when_draining=True)),
             ("browser/setTarget", BrowserTargetRequest, BrowserTargetResponse, _ApplicationMethodAdapter(
                 lambda _id, request: self._browser_application().set_target(request), BrowserTargetResponse)),
             ("browser/revokeGrant", BrowserGrantRevokeRequest, BrowserGrantRevokeResponse, _ApplicationMethodAdapter(
                 lambda _id, request: self._browser_application().revoke(request), BrowserGrantRevokeResponse)),
             ("browser/close", BrowserCloseRequest, BrowserCloseResponse,
-             _BrowserTaskAdapter(self, lambda application: application.close())),
+             _BrowserTaskAdapter(self, lambda application, _request: application.close())),
             ("browser/open", BrowserOpenRequest, BrowserOpenResponse,
-             _BrowserTaskAdapter(self, lambda application: application.open())),
+             _BrowserTaskAdapter(self, lambda application, _request: application.open())),
             ("browser/clearProfile", BrowserClearRequest, BrowserClearResponse,
-             _BrowserTaskAdapter(self, lambda application: application.clear_profile())),
+             _BrowserTaskAdapter(self, lambda application, _request: application.clear_profile())),
         ):
             registry.register(MethodRegistration(
                 name=name, request_type=request_type, response_type=response_type, handler=handler,

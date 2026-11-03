@@ -71,7 +71,7 @@ Model → ToolCallRuntime → ExternalToolHandler（浏览器授权）
 
 - SQLite v48 新增 `session_browser_grants`（每个 Session 和 profile 最多一条有效授权；保留来源审批与撤销原因）和 `browser_settings`（目标浏览器）。启动、旧布局升级和备份恢复都会执行 v47→v48 迁移，失败时回滚。删除 Session 时，系统在删除审批前删除其授权记录。
 - 新增 Event：`browser.grant_changed`（投影为 `browser/grantChanged`）和 `browser.settings_changed`（不投影）。
-- 新增方法：`browser/status`、`browser/revokeGrant`、`browser/setTarget`、`browser/open`、`browser/close`、`browser/clearProfile`。后三个方法由受管任务回复，不阻塞 JSON-RPC 输入循环。DTO 由 `scripts/generate-browser-contracts.mjs` 从 Pydantic 生成，两端共用 `protocol/fixtures/browser-v1.json`。
+- 新增方法：`browser/status`、`browser/revokeGrant`、`browser/setTarget`、`browser/open`、`browser/close`、`browser/clearProfile`。`browser/status` 与后三个方法由受管任务回复，不阻塞 JSON-RPC 输入循环：Chrome 启动期间状态查询需要等待浏览器宿主锁，资源状态只核验 browser 资源包，不再核验全部资源包。Runtime 进入 draining 时 `browser/status` 在输入循环内直接回复。DTO 由 `scripts/generate-browser-contracts.mjs` 从 Pydantic 生成，两端共用 `protocol/fixtures/browser-v1.json`。
 - 审批新增 `browser_access` 类型。外部工具审批和 MCP 列表接受 `browser` 权限配置；手动 MCP 仍只能选择 `connector` 或 `workspace_read`。
 
 ## 限制
