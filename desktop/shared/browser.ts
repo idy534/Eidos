@@ -1,7 +1,8 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { browserSchema } from "./browser-schema.generated.js";
 import type {
-  BrowserCloseResponse, BrowserGrantRevokeRequest, BrowserGrantRevokeResponse, BrowserStatus, BrowserStatusRequest,
+  BrowserClearResponse, BrowserCloseResponse, BrowserGrantRevokeRequest, BrowserGrantRevokeResponse,
+  BrowserOpenResponse, BrowserStatus, BrowserStatusRequest,
 } from "./browser.generated.js";
 export type * from "./browser.generated.js";
 
@@ -12,3 +13,5 @@ export const isBrowserStatus = compile<BrowserStatus>("BrowserStatus");
 export const isBrowserGrantRevokeRequest = compile<BrowserGrantRevokeRequest>("BrowserGrantRevokeRequest");
 export const isBrowserGrantRevokeResponse = compile<BrowserGrantRevokeResponse>("BrowserGrantRevokeResponse");
 export const isBrowserCloseResponse = compile<BrowserCloseResponse>("BrowserCloseResponse");
+export const isBrowserOpenResponse = compile<BrowserOpenResponse>("BrowserOpenResponse");
+export const isBrowserClearResponse = compile<BrowserClearResponse>("BrowserClearResponse");

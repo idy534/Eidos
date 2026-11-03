@@ -11,6 +11,11 @@ export type Granted = boolean;
 export type Sessionid1 = string;
 export type Revoked = boolean;
 export type Closed = boolean;
+export type Opened = boolean;
+export type Errorcode = string | null;
+export type Cleared = boolean;
+export type Revokedgrants = number;
+export type Errorcode1 = string | null;
 
 export interface BrowserContract {
   statusRequest: BrowserStatusRequest;
@@ -19,6 +24,10 @@ export interface BrowserContract {
   revokeResponse: BrowserGrantRevokeResponse;
   closeRequest: BrowserCloseRequest;
   closeResponse: BrowserCloseResponse;
+  openRequest: BrowserOpenRequest;
+  openResponse: BrowserOpenResponse;
+  clearRequest: BrowserClearRequest;
+  clearResponse: BrowserClearResponse;
 }
 export interface BrowserStatusRequest {
   sessionId?: Sessionid;
@@ -41,4 +50,15 @@ export interface BrowserGrantRevokeResponse {
 export interface BrowserCloseRequest {}
 export interface BrowserCloseResponse {
   closed: Closed;
+}
+export interface BrowserOpenRequest {}
+export interface BrowserOpenResponse {
+  opened: Opened;
+  errorCode?: Errorcode;
+}
+export interface BrowserClearRequest {}
+export interface BrowserClearResponse {
+  cleared: Cleared;
+  revokedGrants: Revokedgrants;
+  errorCode?: Errorcode1;
 }

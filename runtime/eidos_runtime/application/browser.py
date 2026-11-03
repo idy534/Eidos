@@ -5,11 +5,15 @@ from collections.abc import Callable
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.browser_plugin import BROWSER_PLUGIN_ID
-from eidos_runtime.infrastructure.browser_host import BrowserHost
+import threading
+
+from eidos_runtime.infrastructure.browser_host import BrowserHost, BrowserUnavailable
 from eidos_runtime.infrastructure.browser_runtime import BROWSER_PACK_ID
 from eidos_runtime.infrastructure.managed_resources import ManagedResourceManager
 from eidos_runtime.models.browser import (
+    BrowserClearResponse,
     BrowserCloseResponse,
+    BrowserOpenResponse,
     BrowserGrantRevokeRequest,
     BrowserGrantRevokeResponse,
     BrowserStatus,
@@ -65,6 +69,33 @@ class BrowserApplication:
             return BrowserCloseResponse(closed=False)
         host.close_browser()
         return BrowserCloseResponse(closed=True)
+
+    def open(self) -> BrowserOpenResponse:
+        """Start the Eidos Chrome for the user to sign in; no Agent is connected."""
+
+        host = self.host()
+        if host is None:
+            return BrowserOpenResponse(opened=False, error_code="browser_unavailable")
+        try:
+            host.ensure(threading.Event())
+        except BrowserUnavailable as error:
+            return BrowserOpenResponse(opened=False, error_code=error.code)
+        return BrowserOpenResponse(opened=True)
+
+    def clear_profile(self) -> BrowserClearResponse:
+        """Sign out of every site by deleting the profile, then revoke all grants."""
+
+        host = self.host()
+        if host is None:
+            return BrowserClearResponse(cleared=False, revoked_grants=0, error_code="browser_unavailable")
+        try:
+            cleared = host.clear_profile()
+        except BrowserUnavailable as error:
+            return BrowserClearResponse(cleared=False, revoked_grants=0, error_code=error.code)
+        mutation = self.grants.revoke_all("profile_cleared")
+        if mutation.events:
+            self.events.publish(mutation)
+        return BrowserClearResponse(cleared=cleared, revoked_grants=mutation.value)
 
     def _resource_phase(self) -> str:
         manager = self.resources()

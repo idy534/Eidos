@@ -83,3 +83,42 @@ describe("Built-in browser plugin row", () => {
     expect(await screen.findByText("未找到 Google Chrome，请先安装 · 正在准备资源")).toBeInTheDocument();
   });
 });
+
+describe("Built-in browser sign-in and data", () => {
+  const plugin = { id: "eidos-browser", name: "eidos-browser", description: "Browser tools", version: "1.0.0", installed: true };
+
+  it("opens the Eidos browser for sign-in and clears its data only after confirmation", async () => {
+    const openBrowserAgent = vi.fn().mockResolvedValue({ opened: true });
+    const clearBrowserAgentProfile = vi.fn().mockResolvedValue({ cleared: true, revokedGrants: 2 });
+    const onShowToast = vi.fn();
+    api({
+      builtinPlugins: vi.fn().mockResolvedValue({ plugins: [plugin] }),
+      readBrowserAgentStatus: vi.fn().mockResolvedValue({ ...status, running: false }),
+      openBrowserAgent, clearBrowserAgentProfile,
+    });
+    render(<BuiltinPlugins onInstall={vi.fn()} onShowToast={onShowToast} />);
+    await userEvent.click(await screen.findByRole("button", { name: "打开浏览器登录" }));
+    expect(openBrowserAgent).toHaveBeenCalledOnce();
+    expect(await screen.findByRole("button", { name: "关闭浏览器" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "清除浏览器数据" }));
+    const confirm = screen.getByRole("alertdialog", { name: "清除浏览器数据" });
+    expect(confirm).toHaveTextContent("无法撤回");
+    expect(clearBrowserAgentProfile).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "清除" }));
+    expect(clearBrowserAgentProfile).toHaveBeenCalledOnce();
+    await waitFor(() => expect(onShowToast).toHaveBeenLastCalledWith(expect.stringContaining("已清除"), "success"));
+  });
+
+  it("explains why the browser could not open", async () => {
+    const onShowToast = vi.fn();
+    api({
+      builtinPlugins: vi.fn().mockResolvedValue({ plugins: [plugin] }),
+      readBrowserAgentStatus: vi.fn().mockResolvedValue({ ...status, running: false }),
+      openBrowserAgent: vi.fn().mockResolvedValue({ opened: false, errorCode: "browser_profile_in_use" }),
+    });
+    render(<BuiltinPlugins onInstall={vi.fn()} onShowToast={onShowToast} />);
+    await userEvent.click(await screen.findByRole("button", { name: "打开浏览器登录" }));
+    await waitFor(() => expect(onShowToast).toHaveBeenCalledWith(expect.stringContaining("另一个 Chrome 窗口"), "error"));
+  });
+});

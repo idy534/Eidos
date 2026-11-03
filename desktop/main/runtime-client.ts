@@ -33,9 +33,9 @@ import readline from "node:readline";
 
 import { isMcpToolsResponse, type McpToolsRequest, type McpToolsResponse } from "../shared/mcp-details.js";
 import {
-  isBrowserCloseResponse, isBrowserGrantRevokeResponse, isBrowserStatus,
-  type BrowserCloseResponse, type BrowserGrantRevokeRequest, type BrowserGrantRevokeResponse,
-  type BrowserStatus, type BrowserStatusRequest,
+  isBrowserClearResponse, isBrowserCloseResponse, isBrowserGrantRevokeResponse, isBrowserOpenResponse, isBrowserStatus,
+  type BrowserClearResponse, type BrowserCloseResponse, type BrowserGrantRevokeRequest, type BrowserGrantRevokeResponse,
+  type BrowserOpenResponse, type BrowserStatus, type BrowserStatusRequest,
 } from "../shared/browser.js";
 import { isBuiltinPluginsResponse, isMcpConnectionState, isRemoteMcpInfo, type BuiltinPluginRequest, type BuiltinPluginsResponse, type McpConnectionRequest, type McpConnectionState } from "../shared/mcp-connections.js";
 
@@ -1250,6 +1250,14 @@ export class RuntimeClient {
 
   closeSharedBrowser(): Promise<BrowserCloseResponse> {
     return this.validatedRequest("browser/close", {}, isBrowserCloseResponse);
+  }
+
+  openSharedBrowser(): Promise<BrowserOpenResponse> {
+    return this.validatedRequest("browser/open", {}, isBrowserOpenResponse);
+  }
+
+  clearSharedBrowserProfile(): Promise<BrowserClearResponse> {
+    return this.validatedRequest("browser/clearProfile", {}, isBrowserClearResponse);
   }
 
   setMcpEnabled(

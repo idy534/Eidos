@@ -170,3 +170,31 @@ def test_shared_browser_fixture_matches_closed_contracts():
         BrowserStatus.model_validate({**fixture["status"], "endpoint": "http://127.0.0.1:9222"})
     with pytest.raises(ValidationError):
         BrowserStatus.model_validate({**fixture["status"], "resource": "downloading"})
+
+
+def test_clearing_the_profile_revokes_every_session_grant(store, workspace):
+    from eidos_runtime.application.browser import BrowserApplication
+
+    class Host:
+        cleared = 0
+
+        def clear_profile(self):
+            self.cleared += 1
+            return True
+
+    class Events:
+        published = []
+
+        def publish(self, mutation):
+            self.published.append(mutation)
+
+    repository = BrowserGrantRepository(store.database)
+    sessions = [store.create_session(str(workspace)) for _ in range(2)]
+    for session in sessions:
+        _grant(repository, session["id"])
+    host, events = Host(), Events()
+    application = BrowserApplication(store, events, lambda: host, lambda: None)
+    response = application.clear_profile()
+    assert response.cleared is True and response.revoked_grants == 2
+    assert host.cleared == 1 and len(events.published[0].events) == 2
+    assert all(repository.active(session["id"]) is None for session in sessions)

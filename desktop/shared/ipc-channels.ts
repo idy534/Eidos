@@ -171,6 +171,8 @@ export const IPC = {
   BROWSER_AGENT_STATUS: "browser-agent:status",
   BROWSER_AGENT_REVOKE: "browser-agent:revoke",
   BROWSER_AGENT_CLOSE: "browser-agent:close",
+  BROWSER_AGENT_OPEN: "browser-agent:open",
+  BROWSER_AGENT_CLEAR: "browser-agent:clear",
   MCP_CONNECTION: "mcp:connection",
   MCP_LOGIN_OPEN: "mcp:login-open",
   MCP_SET_ENABLED: "mcp:set-enabled",

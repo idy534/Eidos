@@ -362,6 +362,8 @@ export interface EidosRuntimeAPI {
   readBrowserAgentStatus(request: import("./browser.js").BrowserStatusRequest): Promise<import("./browser.js").BrowserStatus>;
   revokeBrowserAgentGrant(request: import("./browser.js").BrowserGrantRevokeRequest): Promise<import("./browser.js").BrowserGrantRevokeResponse>;
   closeBrowserAgent(): Promise<import("./browser.js").BrowserCloseResponse>;
+  openBrowserAgent(): Promise<import("./browser.js").BrowserOpenResponse>;
+  clearBrowserAgentProfile(): Promise<import("./browser.js").BrowserClearResponse>;
   setMcpEnabled(pluginId: string, serverId: string, enabled: boolean): Promise<McpServerRecord>;
   createMcpServer(input: McpCreateInput): Promise<McpServerRecord>;
   updateMcpServer(input: McpUpdateInput): Promise<McpServerRecord>;

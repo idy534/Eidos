@@ -36,3 +36,22 @@ class BrowserCloseRequest(EidosFrozenStrictModel):
 
 class BrowserCloseResponse(EidosFrozenStrictModel):
     closed: bool
+
+
+class BrowserOpenRequest(EidosFrozenStrictModel):
+    pass
+
+
+class BrowserOpenResponse(EidosFrozenStrictModel):
+    opened: bool
+    error_code: str | None = Field(default=None, max_length=64)
+
+
+class BrowserClearRequest(EidosFrozenStrictModel):
+    pass
+
+
+class BrowserClearResponse(EidosFrozenStrictModel):
+    cleared: bool
+    revoked_grants: int = Field(ge=0)
+    error_code: str | None = Field(default=None, max_length=64)

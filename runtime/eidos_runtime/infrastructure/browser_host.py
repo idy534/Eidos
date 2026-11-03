@@ -15,6 +15,7 @@ import logging
 import os
 from pathlib import Path
 import plistlib
+import shutil
 import signal
 import socket
 import stat
@@ -254,6 +255,25 @@ class BrowserHost:
     def close_browser(self) -> None:
         with self._lock:
             self._stop()
+
+    def clear_profile(self) -> bool:
+        """Close Chrome and delete the Eidos profile; signed-in sites are lost."""
+
+        with self._lock:
+            if self._closed:
+                raise BrowserUnavailable("browser_unavailable")
+            if self._profile_lock_pid() is not None and not self._running():
+                raise BrowserUnavailable("browser_profile_in_use")
+            self._stop()
+            self._remove_state()
+            try:
+                metadata = self.profile.lstat()
+            except FileNotFoundError:
+                return False
+            if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+                raise BrowserUnavailable("browser_profile_invalid")
+            shutil.rmtree(self.profile)
+            return True
 
     def shutdown(self) -> None:
         with self._lock:

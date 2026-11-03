@@ -80,9 +80,11 @@ void test("browser status, revoke and close round-trip through the real Runtime"
     assert.equal(status.granted, false);
     assert.deepEqual(await client.revokeBrowserGrant({ sessionId: "missing-session" }), { revoked: false });
     assert.deepEqual(await client.closeSharedBrowser(), { closed: false });
-    await client.shutdown();
-    await client.waitForExit();
+    // Nothing was ever opened, so clearing reports no profile and no grants.
+    assert.deepEqual(await client.clearSharedBrowserProfile(), { cleared: false, revokedGrants: 0 });
   } finally {
+    await client.shutdown().catch(() => undefined);
+    await client.waitForExit().catch(() => undefined);
     await rm(temp, { recursive: true, force: true });
   }
 });

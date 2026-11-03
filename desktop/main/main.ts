@@ -1589,6 +1589,8 @@ ipcMain.handle(IPC.BROWSER_AGENT_REVOKE, (_event, request: unknown) => {
   return clientOrThrow().revokeBrowserGrant(request);
 });
 ipcMain.handle(IPC.BROWSER_AGENT_CLOSE, () => clientOrThrow().closeSharedBrowser());
+ipcMain.handle(IPC.BROWSER_AGENT_OPEN, () => clientOrThrow().openSharedBrowser());
+ipcMain.handle(IPC.BROWSER_AGENT_CLEAR, () => clientOrThrow().clearSharedBrowserProfile());
 ipcMain.handle(IPC.EXTENSION_READ, () => clientOrThrow().readExtensions());
 ipcMain.handle(IPC.EXTENSION_READ_EVENTS, (_event, afterEventId: unknown) => {
   if (typeof afterEventId !== "number") throw new Error("Extension Event 参数无效。");

@@ -1064,3 +1064,14 @@
   .custom-model-check small { flex-basis: 100%; }
   .model-dialog-fields .custom-model-check { flex-wrap: wrap; }
 }
+.builtin-plugin-status { color: var(--muted); font-size: 0.8125rem; }
+.builtin-plugin-confirm {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.builtin-plugin-confirm p { margin: 0; }
+.builtin-plugin-confirm-actions { display: flex; justify-content: flex-end; gap: 0.5rem; flex-wrap: wrap; }

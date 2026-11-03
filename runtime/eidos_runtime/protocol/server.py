@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, BinaryIO, TextIO
+from typing import Any, BinaryIO, Callable, TextIO
 
 from pydantic import BaseModel, ValidationError
 from eidos_runtime.models.mcp_details import McpToolsRequest, McpToolsResponse
@@ -20,6 +20,10 @@ from eidos_runtime.extensions.mcp_details import McpDetails
 from eidos_runtime.models.mcp_connections import BuiltinPluginRequest, BuiltinPluginsResponse, McpConnectionRequest, McpConnectionState
 from eidos_runtime.application.browser import BrowserApplication
 from eidos_runtime.models.browser import (
+    BrowserClearRequest,
+    BrowserClearResponse,
+    BrowserOpenRequest,
+    BrowserOpenResponse,
     BrowserCloseRequest,
     BrowserCloseResponse,
     BrowserGrantRevokeRequest,
@@ -544,6 +548,28 @@ class _McpToolsAdapter:
                 self._server.send(business_error(request_id, "MCP_DISCOVERY_FAILED"))
 
         if not self._server.supervisor.start_managed_task("mcp-tools", run):
+            raise ApplicationError("RUNTIME_DRAINING")
+        return DeferredMethodResult()
+
+
+class _BrowserTaskAdapter:
+    """Chrome start and stop can take seconds; reply from a managed task."""
+
+    def __init__(self, server: "RuntimeServer", action: Callable[[BrowserApplication], BaseModel]) -> None:
+        self._server = server
+        self._action = action
+
+    def __call__(self, request_id: str, _request: BaseModel) -> DeferredMethodResult:
+        application = self._server._browser_application()
+
+        def run(_cancel: threading.Event) -> None:
+            try:
+                self._server.send(response(request_id, self._action(application).to_wire_dict(exclude_none=True)))
+            except Exception:
+                logger.warning("Browser operation failed")
+                self._server.send(business_error(request_id, "INTERNAL_ERROR"))
+
+        if not self._server.supervisor.start_managed_task("browser-operation", run):
             raise ApplicationError("RUNTIME_DRAINING")
         return DeferredMethodResult()
 
@@ -1623,16 +1649,19 @@ class RuntimeServer:
             allowed_during_reconfiguration=False, error_mapper=_application_error_mapping,
         ))
         for name, request_type, response_type, handler in (
-            ("browser/status", BrowserStatusRequest, BrowserStatus,
-             lambda _id, request: self._browser_application().status(request)),
-            ("browser/revokeGrant", BrowserGrantRevokeRequest, BrowserGrantRevokeResponse,
-             lambda _id, request: self._browser_application().revoke(request)),
+            ("browser/status", BrowserStatusRequest, BrowserStatus, _ApplicationMethodAdapter(
+                lambda _id, request: self._browser_application().status(request), BrowserStatus)),
+            ("browser/revokeGrant", BrowserGrantRevokeRequest, BrowserGrantRevokeResponse, _ApplicationMethodAdapter(
+                lambda _id, request: self._browser_application().revoke(request), BrowserGrantRevokeResponse)),
             ("browser/close", BrowserCloseRequest, BrowserCloseResponse,
-             lambda _id, _request: self._browser_application().close()),
+             _BrowserTaskAdapter(self, lambda application: application.close())),
+            ("browser/open", BrowserOpenRequest, BrowserOpenResponse,
+             _BrowserTaskAdapter(self, lambda application: application.open())),
+            ("browser/clearProfile", BrowserClearRequest, BrowserClearResponse,
+             _BrowserTaskAdapter(self, lambda application: application.clear_profile())),
         ):
             registry.register(MethodRegistration(
-                name=name, request_type=request_type, response_type=response_type,
-                handler=_ApplicationMethodAdapter(handler, response_type),
+                name=name, request_type=request_type, response_type=response_type, handler=handler,
                 allowed_when_draining=name == "browser/status", allowed_during_reconfiguration=True,
                 error_mapper=_application_error_mapping,
             ))

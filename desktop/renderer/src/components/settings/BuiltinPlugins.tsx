@@ -8,6 +8,11 @@ import type { BrowserStatus } from "../../../../shared/browser.js";
 import { GlobeIcon } from "../MenuIcons.js";
 
 const BROWSER_PLUGIN_ID = "eidos-browser";
+const BROWSER_ERRORS: Record<string, string> = {
+  browser_unavailable: "未找到 Google Chrome，请先安装 Google Chrome。",
+  browser_profile_in_use: "Eidos 浏览器的数据正被另一个 Chrome 窗口使用，请先关闭该窗口。",
+  browser_start_failed: "浏览器未能启动，请稍后重试。",
+};
 
 function BrowserStatusLine({ status }: { status: BrowserStatus | undefined }) {
   if (!status) return null;
@@ -28,6 +33,7 @@ export function BuiltinPlugins({ onInstall, onShowToast, catalogRevision }: {
   const [busy, setBusy] = useState(false);
   const [browser, setBrowser] = useState<BrowserStatus>();
   const [closing, setClosing] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const onShowToastRef = useRef(onShowToast);
   onShowToastRef.current = onShowToast;
 
@@ -59,6 +65,41 @@ export function BuiltinPlugins({ onInstall, onShowToast, catalogRevision }: {
       onShowToast("已关闭 Eidos 浏览器。所有会话的网页都已关闭，登录状态保留。", "success");
     } catch {
       onShowToast("关闭浏览器失败，请稍后重试。", "error");
+    } finally {
+      setClosing(false);
+    }
+  }
+
+  async function openBrowser() {
+    setClosing(true);
+    try {
+      const result = await window.eidosRuntime.openBrowserAgent();
+      if (result.opened) {
+        setBrowser((current) => current && { ...current, running: true });
+        onShowToast("已打开 Eidos 浏览器。登录需要的网站后，Agent 可以在授权后使用这些账号。", "success");
+      } else {
+        onShowToast(BROWSER_ERRORS[result.errorCode ?? ""] ?? "浏览器未能打开，请稍后重试。", "error");
+      }
+    } catch {
+      onShowToast("浏览器未能打开，请稍后重试。", "error");
+    } finally {
+      setClosing(false);
+    }
+  }
+
+  async function clearProfile() {
+    setConfirmClear(false);
+    setClosing(true);
+    try {
+      const result = await window.eidosRuntime.clearBrowserAgentProfile();
+      if (result.errorCode) {
+        onShowToast(BROWSER_ERRORS[result.errorCode] ?? "清除浏览器数据失败，请稍后重试。", "error");
+      } else {
+        setBrowser((current) => current && { ...current, running: false });
+        onShowToast("已清除 Eidos 浏览器的登录状态和网站数据，所有会话的浏览器授权已撤销。", "success");
+      }
+    } catch {
+      onShowToast("清除浏览器数据失败，请稍后重试。", "error");
     } finally {
       setClosing(false);
     }
@@ -105,15 +146,33 @@ export function BuiltinPlugins({ onInstall, onShowToast, catalogRevision }: {
               >
                 {plugin.updateAvailable ? "更新" : plugin.installed ? "已安装" : "安装"}
               </Button>
-              {plugin.id === BROWSER_PLUGIN_ID && browser?.running && (
-                <Button variant="ghost" size="small" loading={closing} disabled={closing} onClick={() => void closeBrowser()}>
-                  关闭浏览器
+              {plugin.id === BROWSER_PLUGIN_ID && plugin.installed && browser?.chromeInstalled && (
+                browser.running
+                  ? <Button variant="ghost" size="small" loading={closing} disabled={closing} onClick={() => void closeBrowser()}>
+                    关闭浏览器
+                  </Button>
+                  : <Button variant="ghost" size="small" loading={closing} disabled={closing} onClick={() => void openBrowser()}>
+                    打开浏览器登录
+                  </Button>
+              )}
+              {plugin.id === BROWSER_PLUGIN_ID && plugin.installed && (
+                <Button variant="ghost" size="small" disabled={closing} onClick={() => setConfirmClear(true)}>
+                  清除浏览器数据
                 </Button>
               )}
             </>}
           />
         );
       })}
+      {confirmClear && (
+        <div className="builtin-plugin-confirm" role="alertdialog" aria-label="清除浏览器数据">
+          <p>将关闭 Eidos 浏览器并删除其中的登录状态、Cookie 和网站数据，所有会话的浏览器授权也会撤销。此操作无法撤回。</p>
+          <div className="builtin-plugin-confirm-actions">
+            <Button variant="ghost" size="small" onClick={() => setConfirmClear(false)}>取消</Button>
+            <Button variant="danger" size="small" onClick={() => void clearProfile()}>清除</Button>
+          </div>
+        </div>
+      )}
     </SettingSection>
   );
 }

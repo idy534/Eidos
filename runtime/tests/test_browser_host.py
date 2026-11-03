@@ -279,3 +279,30 @@ def test_chrome_without_download_denial_is_stopped(host):
         browser.ensure(threading.Event())
     assert raised.value.code == "browser_start_failed"
     assert launched[0].returncode is not None and signals
+
+
+def test_clear_profile_stops_chrome_and_removes_only_the_profile(host, tmp_path):
+    browser, launched, _, _ = host
+    browser.ensure(threading.Event())
+    (browser.profile / "Default").mkdir()
+    (browser.profile / "Default" / "Cookies").write_text("cookie")
+    sibling = browser.profile.parent / "keep.txt"
+    sibling.write_text("keep")
+    assert browser.clear_profile() is True
+    assert launched[0].returncode is not None
+    assert not browser.profile.exists()
+    assert sibling.read_text() == "keep"
+    assert browser.clear_profile() is False
+
+
+def test_clear_profile_refuses_a_symlinked_profile(host, tmp_path):
+    browser, _, _, _ = host
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    (target / "important").write_text("data")
+    browser.profile.parent.mkdir(parents=True)
+    os.symlink(target, browser.profile)
+    with pytest.raises(BrowserUnavailable) as raised:
+        browser.clear_profile()
+    assert raised.value.code == "browser_profile_invalid"
+    assert (target / "important").read_text() == "data"
