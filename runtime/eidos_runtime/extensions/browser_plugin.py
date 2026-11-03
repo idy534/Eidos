@@ -1,10 +1,11 @@
 """Identify the bundled Eidos browser plugin by its exact shipped content."""
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+import threading
 
 from eidos_runtime.infrastructure.browser_runtime import BrowserRuntime
 
@@ -48,3 +49,5 @@ class BrowserLaunch:
 
     runtime: BrowserRuntime
     variables: Mapping[str, str]
+    # Starts or confirms the shared Chrome before a browser tool executes.
+    ensure_browser: Callable[[threading.Event], str] | None = None

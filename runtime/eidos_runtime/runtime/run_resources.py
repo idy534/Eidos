@@ -7,6 +7,9 @@ import hashlib
 from typing import TYPE_CHECKING
 
 from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.extensions.browser_plugin import BrowserLaunch
+from eidos_runtime.infrastructure.browser_host import BrowserHost, BrowserUnavailable
+from eidos_runtime.infrastructure.browser_runtime import BrowserRuntimeUnavailable, resolve_browser_runtime
 from eidos_runtime.extensions.mcp import McpManager
 from eidos_runtime.extensions.plugins import PluginCatalog
 from eidos_runtime.extensions.skill_dependencies import (
@@ -74,7 +77,9 @@ class RunResources:
         runtime_dependency_catalog: RuntimeDependencyCatalog | None = None,
         events: RuntimeEvents | None = None,
         collaboration: CollaborationApplication | None = None,
+        browser_host: BrowserHost | None = None,
     ) -> None:
+        self.browser_host = browser_host
         self.collaboration = collaboration
         self.child_role = CollaborationRepository(store.database).child_role_for_run(run_id)
         self.is_child = self.child_role is not None
@@ -138,6 +143,7 @@ class RunResources:
                 async_kernel=self.async_kernel,
                 sandbox=self.mcp_sandbox and not self.tool_executor.full_access,
                 resource_registry=self.resources,
+                browser_launch=self._browser_launch,
             )
             self._external_entries = self.mcp.start()
             self.skill_catalog_snapshot = self.skills.catalog_snapshot(
@@ -221,6 +227,29 @@ class RunResources:
 
     def __exit__(self, *_error: object) -> None:
         self.close()
+
+    def _browser_launch(self) -> BrowserLaunch:
+        """Resolve verified Playwright MCP inputs and the shared Chrome endpoint."""
+        from eidos_runtime.infrastructure.managed_resource_catalog import ManagedResourceCatalog
+
+        host = self.browser_host
+        if host is None:
+            raise BrowserRuntimeUnavailable("browser_runtime_unavailable")
+        catalog = self.runtime_dependency_catalog
+        manager = catalog.resources if isinstance(catalog, ManagedResourceCatalog) else None
+        runtime = resolve_browser_runtime(manager)
+        try:
+            endpoint = host.endpoint()
+        except BrowserUnavailable as error:
+            raise BrowserRuntimeUnavailable(error.code) from None
+        return BrowserLaunch(
+            runtime=runtime,
+            variables={
+                "BROWSER_CDP_ENDPOINT": endpoint,
+                "BROWSER_IMAGE_RESPONSES": "allow" if self.supports_images else "omit",
+            },
+            ensure_browser=host.ensure,
+        )
 
     def _set_registry(
         self, external_entries: tuple[ToolRegistryEntry, ...] | None = None

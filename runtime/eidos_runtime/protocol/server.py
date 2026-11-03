@@ -114,6 +114,7 @@ from eidos_runtime.model.pydantic_ai_client import (
 )
 from eidos_runtime.application.memory import MEMORY_METHODS, MemoryApplication
 from eidos_runtime.db.maintenance import StorageMaintenance
+from eidos_runtime.infrastructure.browser_host import BrowserHost
 from eidos_runtime.telemetry.tracing import startup_phase
 from eidos_runtime.telemetry.logging import configure_stderr_logging
 from eidos_runtime.model.gateway import ModelGateway
@@ -775,6 +776,7 @@ class RuntimeServer:
         self.model = model
         self.model_gateway: ModelGateway | None = None
         self.storage_maintenance: StorageMaintenance | None = None
+        self.browser_host: BrowserHost | None = None
         self.channel_service: ChannelService | None = None
         self.automation_scheduler: AutomationScheduler | None = None
         self._frozen_model_configs: dict[str, ModelConfig] = {}
@@ -2076,6 +2078,13 @@ class RuntimeServer:
                     self._idle_maintenance,
                 )
                 self.supervisor.start_managed_task("storage-maintenance", self.storage_maintenance.run, persistent=True)
+                data_directory = self.store.data_directory
+                if data_directory is not None:
+                    # One Chrome per profile is shared by every Session; the
+                    # persistent task closes it when idle and at shutdown.
+                    self.browser_host = BrowserHost(data_directory / "browser" / "profiles" / "default")
+                    self.supervisor.bind_browser_host(self.browser_host)
+                    self.supervisor.start_managed_task("browser-host", self.browser_host.run, persistent=True)
         except (
             StorageError,
             ModelConfigError,
@@ -2127,7 +2136,22 @@ class RuntimeServer:
                 self.supervisor.events.deliver_pending()
         logger.info("Runtime initialized duration_ms=%.3f", (time.perf_counter() - startup_started) * 1000)
         self.managed_resources.warmup()
+        self._warm_browser_resources()
         self.supervisor.schedule_next()
+
+    def _warm_browser_resources(self) -> None:
+        """Prepare the browser pack in the background once the plugin is enabled."""
+        from eidos_runtime.extensions.browser_plugin import BROWSER_PLUGIN_ID
+        from eidos_runtime.infrastructure.browser_runtime import BROWSER_PACK_ID
+
+        manager = self.managed_resources.manager
+        if self.plugins is None or manager is None:
+            return
+        record = self.plugins.store.plugin_record(BROWSER_PLUGIN_ID)
+        if record is None or record.get("status") != "installed" or not record.get("enabled"):
+            return
+        if any(pack.id == BROWSER_PACK_ID for pack in manager.index.packs):
+            self.managed_resources.retry(ResourceRetryRequest(pack_id=BROWSER_PACK_ID))
 
     def _idle_maintenance(self, cancel: threading.Event) -> None:
         if self.store.maintain_repository_cache(cancel):
