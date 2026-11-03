@@ -166,7 +166,7 @@ export function modelFailurePresentation(
       chips, tone: "warning",
     };
   }
-  if (["provider_unavailable", "provider_timeout", "rate_limited", "model_stream_interrupted"].includes(reason)) {
+  if (["provider_unavailable", "provider_timeout", "rate_limited", "model_stream_interrupted", "stream_interrupted"].includes(reason)) {
     const cause = retry?.cause ?? causeFromReason(reason, status);
     return {
       title: retried > 0 ? `多次重试后仍无法完成请求 · ${causeNames[cause]}` : `${causeNames[cause]}，请求没有完成`,
@@ -179,7 +179,7 @@ export function modelFailurePresentation(
 
 function causeFromReason(reason: string, status: number | undefined): ModelRetryCause {
   if (reason === "rate_limited") return "rate_limited";
-  if (reason === "model_stream_interrupted") return "stream_interrupted";
+  if (reason === "model_stream_interrupted" || reason === "stream_interrupted") return "stream_interrupted";
   if (reason === "provider_timeout" || status === 408 || status === 504) return "timeout";
   if (status !== undefined) return "service_unavailable";
   return "connection_failed";

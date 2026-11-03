@@ -1103,5 +1103,53 @@ async def _one_chunk(_messages, _info):
     yield "done"
 
 
+class InStreamErrorMappingTests(unittest.TestCase):
+    """An error object after HTTP 200 has no status; it is a provider failure, not a rejected request."""
+
+    def test_stream_failing_after_text_surfaces_as_a_retryable_provider_failure(self) -> None:
+        async def stream(_messages, _info):
+            yield "partial"
+            raise ModelAPIError("fixture", "upstream timeout")
+
+        client = PydanticAIModelClientTests("client").client(stream)
+        with self.assertRaises(ModelRequestError) as raised:
+            client.complete(({"type": "user", "content": "hi"},), threading.Event(), lambda _: None, instructions=TEST_INSTRUCTIONS)
+        failure = raised.exception.failure
+        self.assertEqual((failure.code, failure.reason, failure.retryable), ("provider_unavailable", "stream_interrupted", True))
+
+    def test_unclassified_in_stream_error_is_retryable_and_never_an_invalid_request(self) -> None:
+        for message in ("upstream timeout", "model overloaded, try again", "An error occurred during streaming"):
+            with self.subTest(message=message):
+                failure = map_model_error(ModelAPIError("fixture", message))
+                self.assertEqual((failure.code, failure.reason, failure.retryable), ("provider_unavailable", "stream_interrupted", True))
+                self.assertIsNone(failure.status_code)
+                self.assertNotIn(message, failure.model_dump_json())
+
+    def test_in_stream_error_that_names_a_limit_keeps_its_specific_meaning(self) -> None:
+        rate = map_model_error(ModelAPIError("fixture", "Rate limit reached for requests"))
+        self.assertEqual((rate.code, rate.retryable), ("rate_limited", True))
+        quota = map_model_error(ModelAPIError("fixture", "You exceeded your current quota: insufficient_quota"))
+        self.assertEqual((quota.code, quota.reason, quota.retryable), ("invalid_request", "insufficient_quota", False))
+        context = map_model_error(ModelAPIError("fixture", "maximum context length is 128000 tokens"))
+        self.assertEqual((context.code, context.retryable), ("context_exceeded", False))
+
+    def test_http_rejection_and_malformed_response_stay_non_retryable(self) -> None:
+        rejected = map_model_error(ModelHTTPError(400, "fixture", {"error": {"message": "bad parameter"}}))
+        self.assertEqual((rejected.code, rejected.retryable), ("invalid_request", False))
+        malformed = map_model_error(UnexpectedModelBehavior("Invalid response from openai chat completions endpoint"))
+        self.assertEqual((malformed.code, malformed.retryable), ("protocol_error", False))
+
+    def test_log_carries_fixed_diagnostics_but_not_the_provider_message(self) -> None:
+        secret = "sk-live-0123456789abcdef private prompt text"
+        with self.assertLogs("eidos_runtime.model.pydantic_ai_client", level="WARNING") as captured:
+            map_model_error(ModelAPIError("fixture", f"upstream failed: {secret}"))
+        output = "\n".join(captured.output)
+        self.assertIn("exception_type=ModelAPIError", output)
+        self.assertIn("mapped_code=provider_unavailable", output)
+        self.assertIn("mapped_reason=stream_interrupted", output)
+        self.assertIn("message_chars=", output)
+        self.assertNotIn(secret, output)
+
+
 if __name__ == "__main__":
     unittest.main()

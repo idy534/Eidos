@@ -158,7 +158,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - ContextCompactor 使用 deterministic bounded extraction 保存任务目标、约束、动作、证据、修改、失败尝试、决定、待处理 Approval、未解决问题和下一步。
 - 摘要按窗口使用 512～4,096 个参考 Tokens，正文最多 24 KiB。摘要不再把 Assistant 的计划直接记为已完成动作，也不会裁掉明确约束和运行控制事实来强行满足预算。系统核对实际摘要来源，并在提交时拒绝已经请求取消的 Run。
 - Compaction Summary metadata 与主体一起持久化。原始历史不会被摘要替换。
-- 默认在线 Run 会在每个 ModelAttempt Sampling 前持久化并绑定精确 ContextSnapshot。该 Snapshot 原样保存结构化消息、resolved instructions 和 tools。协议修复使用新 Snapshot，Provider transport retry 复用原 Snapshot。可重试的 transport failure 即使已显示文字，也会先结束当前 Attempt 与失败草稿，再创建独立 Attempt、新草稿并复用同一 Snapshot。首次请求加最多 5 次重试共用持久预算，首次临时失败后默认最多恢复 180 秒。系统不拼接旧草稿，不执行残缺工具调用，也不重新执行已有工具操作。明确余额、配额、认证与参数错误不重试。预算耗尽后记录失败，不重新进入容量恢复。重试进行中，界面显示重试阶段、原因和倒计时，详见[当前架构](architecture.md#模型重试过程显示)。
+- 默认在线 Run 会在每个 ModelAttempt Sampling 前持久化并绑定精确 ContextSnapshot。该 Snapshot 原样保存结构化消息、resolved instructions 和 tools。协议修复使用新 Snapshot，Provider transport retry 复用原 Snapshot。可重试的 transport failure 即使已显示文字，也会先结束当前 Attempt 与失败草稿，再创建独立 Attempt、新草稿并复用同一 Snapshot。首次请求加最多 5 次重试共用持久预算，首次临时失败后默认最多恢复 180 秒。系统不拼接旧草稿，不执行残缺工具调用，也不重新执行已有工具操作。明确余额、配额、认证与参数错误不重试。HTTP 200 之后在流里出现的错误对象没有状态码，按提供商侧的临时失败（`stream_interrupted`）重试；其内容明确指向上下文、余额或限流时保留对应的具体含义。日志只记录异常类型链、消息长度和命中的固定原因，不写入提供商消息原文。预算耗尽后记录失败，不重新进入容量恢复。重试进行中，界面显示重试阶段、原因和倒计时，详见[当前架构](architecture.md#模型重试过程显示)。
 
 ## Project Rules
 

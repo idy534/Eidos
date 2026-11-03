@@ -1004,17 +1004,55 @@ def map_model_error(error: BaseException) -> ModelRequestFailure:
                 code="provider_unavailable",
                 retryable=True,
             )
-        return ModelRequestFailure(
-            code=(
-                "protocol_error"
-                if isinstance(error, UnexpectedModelBehavior)
-                else "invalid_request"
-            ),
-            retryable=False,
-        )
+        if isinstance(error, ModelAPIError):
+            return _in_stream_api_failure(error)
+        return ModelRequestFailure(code="protocol_error", retryable=False)
     if isinstance(error, IncompleteToolCall):
         return ModelRequestFailure(code="protocol_error", retryable=False)
     return ModelRequestFailure(code="protocol_error", retryable=False)
+
+
+_STREAM_QUOTA_MARKERS = (
+    "insufficient_quota", "insufficient quota", "insufficient_balance",
+    "insufficient balance", "quota_exceeded", "quota exceeded", "quota_exhausted",
+)
+_STREAM_RATE_LIMIT_MARKERS = ("rate limit", "rate_limit", "too many requests")
+
+
+def _in_stream_api_failure(error: ModelAPIError) -> ModelRequestFailure:
+    """Map an error object that arrived after HTTP 200, so there is no status code.
+
+    A gateway can forward an upstream timeout, overload or rate limit this way. That
+    is a provider-side failure, not a rejected request, so it stays retryable unless
+    the message clearly names a context or quota limit. The message itself is never
+    copied into the failure or the log; only the matched fixed reason is.
+    """
+    text = str(getattr(error, "message", error)).lower()
+    if _looks_like_context_error(text):
+        failure = ModelRequestFailure(code="context_exceeded", retryable=False)
+    elif any(marker in text for marker in _STREAM_QUOTA_MARKERS):
+        failure = ModelRequestFailure(code="invalid_request", retryable=False, reason="insufficient_quota")
+    elif any(marker in text for marker in _STREAM_RATE_LIMIT_MARKERS):
+        failure = ModelRequestFailure(code="rate_limited", retryable=True)
+    else:
+        failure = ModelRequestFailure(code="provider_unavailable", retryable=True, reason="stream_interrupted")
+    _LOGGER.warning(
+        "Provider stream error after HTTP 200 exception_type=%s cause_chain=%s "
+        "message_chars=%s mapped_code=%s mapped_reason=%s",
+        type(error).__name__, _exception_chain(error), len(text), failure.code, failure.reason,
+    )
+    return failure
+
+
+def _exception_chain(error: BaseException) -> str:
+    names: list[str] = []
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen and len(names) < 6:
+        seen.add(id(current))
+        names.append(type(current).__name__)
+        current = current.__cause__ or current.__context__
+    return ">".join(names)
 
 
 def _log_provider_request_rejection(

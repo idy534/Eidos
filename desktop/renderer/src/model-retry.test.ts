@@ -8,6 +8,7 @@ import {
   modelRetryPhase,
   totalModelRetries,
 } from "./model-retry.js";
+import { terminalRunPresentation } from "./run-presentation.js";
 
 const activity = (overrides: Partial<ModelRetryActivity> = {}): ModelRetryActivity => ({
   requestGroupId: "group", runId: "run", eventId: 5, startedAt: 1_000, updatedAt: 1_000,
@@ -62,4 +63,13 @@ test("explains provider failures with an action only when the user can change so
   assert.match(exhausted.body, /已自动重试 5 次/);
   assert.deepEqual(exhausted.chips, ["provider_unavailable", "HTTP 503"]);
   assert.doesNotMatch(failed("provider_unavailable")!.body, /已自动重试/);
+});
+
+test("treats an in-stream provider failure as an interrupted reply, not a rejected request", () => {
+  const presentation = modelFailurePresentation({
+    status: "failed", termination: { stage: "model", reason: "stream_interrupted" },
+  })!;
+  assert.match(presentation.title, /回复在接收过程中中断/);
+  assert.doesNotMatch(presentation.title + presentation.body, /拒绝了请求参数/);
+  assert.equal(terminalRunPresentation({ status: "failed", termination: { stage: "model", reason: "stream_interrupted" } })!.label, "模型回复在接收过程中中断");
 });
