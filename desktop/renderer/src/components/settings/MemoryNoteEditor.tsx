@@ -177,6 +177,11 @@ export function MemoryNoteEditor({
 
   const index = path === "MEMORY.md";
   const current = !read || read.revision === read.currentRevision;
+  const subtitle = index
+    ? "模型先读取这份索引，再按需打开笔记。"
+    : read?.document?.archived
+      ? "这份笔记已归档，后续对话不会自动使用。你可以恢复它或彻底删除。"
+      : null;
 
   return (
     <section
@@ -199,13 +204,7 @@ export function MemoryNoteEditor({
               </span>
             ) : null}
           </div>
-          <p>
-            {index
-              ? "模型先读取这份索引，再按需打开笔记。"
-              : read?.document?.archived
-              ? "这份笔记已归档，后续对话不会自动使用。你可以恢复它或彻底删除。"
-              : "笔记会保留适用条件，并在后续对话中使用。"}
-          </p>
+          {subtitle && <p>{subtitle}</p>}
         </div>
 
         {editing ? (
