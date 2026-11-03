@@ -99,6 +99,8 @@ def test_v46_backup_restore_pins_existing_worktree_gitdir_identity(tmp_path):
         connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_uid")
         connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_inode")
         connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_dev")
+        connection.execute("DROP TABLE session_browser_grants")
+        connection.execute("DROP TABLE browser_settings")
         connection.execute("PRAGMA user_version=46")
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     legacy_state = state_path.read_bytes()
@@ -124,7 +126,7 @@ def test_v46_backup_restore_pins_existing_worktree_gitdir_identity(tmp_path):
         restored.close()
 
 
-@pytest.mark.parametrize("schema_version", [40, 41, 42, 43, 44, 45, 46, SCHEMA_VERSION])
+@pytest.mark.parametrize("schema_version", [40, 41, 42, 43, 44, 45, 46, 47, SCHEMA_VERSION])
 def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(
     tmp_path, schema_version, downgrade_project_workspaces_schema
 ):
@@ -153,6 +155,9 @@ def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(
         state = tmp_path / "legacy.sqlite"
         state.write_bytes(entries["state.sqlite"])
         with sqlite3.connect(state) as connection:
+            if schema_version < 48:
+                connection.execute("DROP TABLE IF EXISTS session_browser_grants")
+                connection.execute("DROP TABLE IF EXISTS browser_settings")
             if schema_version < 45:
                 downgrade_project_workspaces_schema(connection)
             elif schema_version == 45:

@@ -101,18 +101,22 @@ class ManagedResourceManager:
             )
 
     def status(self) -> ResourceStatus:
-        rows = []
-        for pack in self.index.packs:
-            with self._condition:
-                progress = self._progress.get(pack.id)
-            if progress is None:
-                ready = self.is_ready(pack.id)
-                progress = ResourceProgress(
-                    id=pack.id, title=pack.title, version=pack.version,
-                    phase="ready" if ready else "missing", total_bytes=pack.archive_bytes,
-                )
-            rows.append(progress)
-        return ResourceStatus(available=True, directory=str(self.root), packs=tuple(rows))
+        return ResourceStatus(
+            available=True, directory=str(self.root),
+            packs=tuple(self.pack_status(pack.id) for pack in self.index.packs),
+        )
+
+    def pack_status(self, pack_id: str) -> ResourceProgress:
+        """Report one pack; readiness rechecks that pack's files, not every pack."""
+        pack = self.pack(pack_id)
+        with self._condition:
+            progress = self._progress.get(pack.id)
+        if progress is not None:
+            return progress
+        return ResourceProgress(
+            id=pack.id, title=pack.title, version=pack.version,
+            phase="ready" if self.is_ready(pack.id) else "missing", total_bytes=pack.archive_bytes,
+        )
 
     def verified_catalog(self, pack_id: str) -> RuntimeDependencyCatalog:
         pack = self.pack(pack_id)

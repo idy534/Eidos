@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Item, Run } from "../contracts.js";
 import { ArtifactProvider } from "./ArtifactContext.js";
 import { ExecutionFeed } from "./ExecutionFeed.js";
+import { expandDetails } from "../../test/expand-details.js";
 
 const baseRun: Run = {
   id: "run-shell-feed",
@@ -340,10 +341,11 @@ describe("ExecutionFeed chat typography scope", () => {
 });
 
 describe("ExecutionFeed shell output", () => {
-  it("updates from cumulative live output to a completed result without duplicating it", () => {
+  it("updates from cumulative live output to a completed result without duplicating it", async () => {
     const activeItem = shellItem();
     const { container, rerender } = renderFeed(activeItem);
 
+    await expandDetails(container);
     expect(screen.getByText("first line")).toBeInTheDocument();
     expect(screen.getByText("运行中")).toBeInTheDocument();
 
@@ -381,7 +383,7 @@ describe("ExecutionFeed shell output", () => {
     expect(screen.getByText("✓ 成功")).toBeInTheDocument();
   });
 
-  it("renders capsule exit code badge next to 失败 and hides shell_exit_nonzero on command failure", () => {
+  it("renders capsule exit code badge next to 失败 and hides shell_exit_nonzero on command failure", async () => {
     const failedItem = shellItem({
       status: "failed",
       completedAt: 2_000,
@@ -410,6 +412,7 @@ describe("ExecutionFeed shell output", () => {
       />,
     );
 
+    await expandDetails(container);
     expect(screen.queryByText(/shell_exit_nonzero/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Command did not succeed/)).not.toBeInTheDocument();
     const pill = container.querySelector(".shell-exit-code-pill");
@@ -435,6 +438,7 @@ describe("ExecutionFeed shell output", () => {
     });
 
     const { container } = renderFeed(item);
+    await expandDetails(container);
     const copyButton = container.querySelector(".shell-copy-button") as HTMLButtonElement | null;
     expect(copyButton).toBeInTheDocument();
     expect(copyButton?.title).toBe("复制命令");
@@ -799,7 +803,7 @@ describe("ExecutionFeed plan and clarification rendering", () => {
     };
   }
 
-  it.each(["completed", "failed", "canceled"] as const)("shows clarification errors with %s item status without inventing a skipped answer", (status) => {
+  it.each(["completed", "failed", "canceled"] as const)("shows clarification errors with %s item status without inventing a skipped answer", async (status) => {
     const item = toolCallItem("request_user_input", {status}, {
       status: status === "completed" ? "completed" : status,
       argumentsJson: JSON.stringify({questions: [{id: "q", question: "Constraints?", type: "text"}]}),
@@ -807,6 +811,7 @@ describe("ExecutionFeed plan and clarification rendering", () => {
     });
     render(<ExecutionFeed items={[item]} runs={[baseRun]} approvals={[]}
     />);
+    await expandDetails();
     expect(screen.queryByText(/已询问/)).toBeNull();
     expect(screen.queryByText("已跳过")).toBeNull();
     expect(screen.getByText("No question was submitted")).toBeInTheDocument();
@@ -838,7 +843,7 @@ describe("ExecutionFeed plan and clarification rendering", () => {
     expect(screen.getByText("正在等待你的回答")).toBeInTheDocument();
   });
 
-  it("renders completed request_user_input as collapsible summary with questions and answers", () => {
+  it("renders completed request_user_input as collapsible summary with questions and answers", async () => {
     const item = toolCallItem(
       "request_user_input",
       { status: "completed", completedAt: 2_000 },
@@ -883,6 +888,7 @@ describe("ExecutionFeed plan and clarification rendering", () => {
       />,
     );
 
+    await expandDetails();
     expect(screen.getByText("已询问 1 个问题")).toBeInTheDocument();
     expect(screen.getByText("选择范围？")).toBeInTheDocument();
     expect(screen.getByText("前端；补充说明")).toBeInTheDocument();
@@ -908,7 +914,7 @@ describe("ExecutionFeed plan and clarification rendering", () => {
     expect(screen.getByText("正在制定计划…")).toBeInTheDocument();
   });
 
-  it.each(["failed", "canceled", "declined", "completed"] as const)("shows an unsuccessful write_plan with %s item status as a tool result", (status) => {
+  it.each(["failed", "canceled", "declined", "completed"] as const)("shows an unsuccessful write_plan with %s item status as a tool result", async (status) => {
     const item = toolCallItem("write_plan", {status}, {
       status: status === "declined" ? "failed" : status,
       argumentsJson: JSON.stringify({title: "Rejected plan"}),
@@ -916,6 +922,7 @@ describe("ExecutionFeed plan and clarification rendering", () => {
     });
     render(<ExecutionFeed items={[item]} runs={[baseRun]} approvals={[]}
     />);
+    await expandDetails();
     expect(screen.queryByText("查看计划 →")).toBeNull();
     expect(screen.getByText("plan_not_found")).toBeInTheDocument();
   });
@@ -950,7 +957,7 @@ describe("ExecutionFeed plan and clarification rendering", () => {
     expect(onOpenPlan).toHaveBeenCalledTimes(1);
   });
 
-  it("renders write_plan in the response area outside process group, even when other tools exist", () => {
+  it("renders write_plan in the response area outside process group, even when other tools exist", async () => {
     const readFileItem = toolCallItem(
       "read_file",
       { id: "read-1", ordinal: 1, status: "completed", completedAt: 1_500 },
@@ -987,6 +994,7 @@ describe("ExecutionFeed plan and clarification rendering", () => {
       />,
     );
 
+    await expandDetails(container, "details.process-group");
     // Process group should contain read_file
     const processGroup = container.querySelector("details.process-group");
     expect(processGroup).not.toBeNull();
@@ -1004,7 +1012,7 @@ describe("ExecutionFeed plan and clarification rendering", () => {
     expect(planCard?.textContent).toContain("从结果中读取的计划标题");
   });
 
-  it("renders subagent tool as direct button and calls onOpenSubagent on click", () => {
+  it("renders subagent tool as direct button and calls onOpenSubagent on click", async () => {
     const onOpenSubagent = vi.fn();
     const spawnItem: Item = {
       id: "spawn-item",
@@ -1038,6 +1046,7 @@ describe("ExecutionFeed plan and clarification rendering", () => {
       />,
     );
 
+    await expandDetails(container, "details.process-group");
     const btn = container.querySelector("button.tool-file-link");
     expect(btn).not.toBeNull();
     expect(btn?.textContent).toBe("reviewer");
@@ -1048,7 +1057,7 @@ describe("ExecutionFeed plan and clarification rendering", () => {
     expect(onOpenSubagent).toHaveBeenCalledWith({ id: "child-42", taskName: "reviewer" });
   });
 
-  it("shows error summary in title attribute on hover when subagent tool fails", () => {
+  it("shows error summary in title attribute on hover when subagent tool fails", async () => {
     const errorItem: Item = {
       id: "spawn-err",
       sessionId: baseRun.sessionId,
@@ -1081,6 +1090,7 @@ describe("ExecutionFeed plan and clarification rendering", () => {
       />,
     );
 
+    await expandDetails(container, "details.process-group");
     const toolRow = container.querySelector(".tool-item--read-done");
     expect(toolRow).not.toBeNull();
     expect(toolRow?.getAttribute("title")).toBe("Resource quota exceeded");
@@ -1230,7 +1240,7 @@ describe("ExecutionFeed view_image tool rendering and lightbox", () => {
       const { container } = render(<ArtifactProvider value={{ sessionId: baseRun.sessionId, executionRoot: "/workspace", openFile: vi.fn(), openBrowser: vi.fn() }}>
         <ExecutionFeed items={[imageItem]} runs={[baseRun]} approvals={[]} />
       </ArtifactProvider>);
-      const details = container.querySelector("details")!;
+      const details = container.querySelector<HTMLDetailsElement>("details.tool-item")!;
       details.open = true;
       fireEvent(details, new Event("toggle"));
       if (status === "completed") expect(await screen.findByText("暂无预览")).toBeInTheDocument();
@@ -1314,6 +1324,7 @@ describe("ExecutionFeed view_image tool rendering and lightbox", () => {
         </ArtifactProvider>,
       );
 
+      await expandDetails(document.body, "details.process-group");
       // Summary label should show completed status and filename
       expect(screen.getByText("已查看图像 · flowchart.png")).toBeInTheDocument();
 
@@ -1423,6 +1434,7 @@ describe("ExecutionFeed view_image tool rendering and lightbox", () => {
         </ArtifactProvider>,
       );
 
+      await expandDetails(document.body, "details.process-group");
       const details = screen.getByText("已查看图像 · corrupted.png").closest("details");
       details!.open = true;
       fireEvent(details!, new Event("toggle"));
@@ -1439,7 +1451,7 @@ describe("ExecutionFeed view_image tool rendering and lightbox", () => {
 });
 
 describe("ExecutionFeed memory tools static rendering", () => {
-  it("renders memory tools without details/summary and without expanding", () => {
+  it("renders memory tools as static rows inside a tool group", async () => {
     const memoryItems: Item[] = [
       {
         id: "mem-search-1",
@@ -1493,7 +1505,10 @@ describe("ExecutionFeed memory tools static rendering", () => {
       />,
     );
 
-    const searchRow = screen.getByText('正在搜索记忆 "2026-10-13|最近|latest|rollout"');
+    // Adjacent tool calls fold into one group that shows the live action.
+    await expandDetails(document.body, "details.tool-group");
+    const searchRow = screen.getAllByText('正在搜索记忆 "2026-10-13|最近|latest|rollout"')
+      .find((element) => element.closest(".tool-item--read-done"))!;
     const readRow = screen.getByText("已读取记忆");
 
     expect(searchRow).toBeInTheDocument();
@@ -1983,5 +1998,111 @@ describe("ExecutionFeed user message collapsing", () => {
     } finally {
       scrollHeightSpy.mockRestore();
     }
+  });
+});
+
+describe("Browser tool rows", () => {
+  function browserItem(toolName: string, args: object, status: Item["status"] = "completed", text = "- Page URL: https://shop.example.com/cart\n") {
+    return shellItem({ kind: "tool_call", status, toolCall: {
+      ...shellItem().toolCall!, toolName: `mcp__browser__${toolName}`, status: status === "in_progress" ? "running" : "completed",
+      argumentsJson: JSON.stringify(args),
+      provenance: { kind: "mcp", sourceId: "eidos-browser:browser", sourceVersion: "1.0.0", contentHash: "hash" },
+      resultJson: status === "in_progress" ? undefined : JSON.stringify({ outcome: "success", code: "ok", summary: "MCP tool completed", data: { text, isError: false } }),
+    } });
+  }
+
+  it("names the action, element and page host instead of the raw MCP tool", () => {
+    renderFeed(browserItem("browser_click", { target: "e12", element: "登录按钮" }));
+    expect(screen.getByText("点击 · 登录按钮 · shop.example.com")).toBeInTheDocument();
+    expect(screen.queryByText("MCP tool completed")).not.toBeInTheDocument();
+    expect(screen.queryByText(/mcp__browser__/)).not.toBeInTheDocument();
+  });
+
+  it("shows navigation targets, uploads and running state", () => {
+    const { rerender } = renderFeed(browserItem("browser_navigate", { url: "https://docs.example.org/start" }));
+    expect(screen.getByText("打开网页 · docs.example.org")).toBeInTheDocument();
+    rerender(<ExecutionFeed items={[browserItem("browser_file_upload", { paths: ["/workspace/report.pdf"] })]} runs={[baseRun]} approvals={[]} />);
+    expect(screen.getByText("上传文件 · report.pdf · shop.example.com")).toBeInTheDocument();
+    rerender(<ExecutionFeed items={[browserItem("browser_snapshot", {}, "in_progress")]} runs={[baseRun]} approvals={[]} />);
+    expect(screen.getByText("正在读取页面")).toBeInTheDocument();
+  });
+});
+
+describe("ExecutionFeed collapsed bodies", () => {
+  const finishedRun: Run = { ...baseRun, status: "succeeded", completedAt: 2_000, updatedAt: 2_000 };
+  const message = (id: string, ordinal: number, kind: Item["kind"], content: string): Item => ({
+    id, ordinal, kind, content, sessionId: baseRun.sessionId, runId: baseRun.id,
+    status: "completed", createdAt: 1_000,
+  });
+  const finishedItems = () => [
+    message("user", 0, "user_message", "检查一下"),
+    message("progress", 1, "assistant_message", "我正在检查目录。"),
+    shellItem({ ordinal: 2, status: "completed", completedAt: 1_500 }),
+    message("answer", 3, "assistant_message", "检查完成。"),
+  ];
+
+  it("mounts a finished Run's process and tool bodies only after they are opened", async () => {
+    const { container } = render(<ExecutionFeed items={finishedItems()} runs={[finishedRun]} approvals={[]} />);
+
+    const group = container.querySelector<HTMLDetailsElement>("details.process-group")!;
+    expect(group.open).toBe(false);
+    expect(group.querySelector(".process-content")).toBeNull();
+    expect(container.querySelector(".shell-result")).toBeNull();
+    expect(screen.getByText("检查完成。")).toBeInTheDocument();
+
+    await expandDetails(container, "details.process-group");
+    expect(screen.getByText("我正在检查目录。")).toBeInTheDocument();
+    expect(container.querySelector(".shell-result")).toBeNull();
+
+    await expandDetails(container);
+    expect(container.querySelector(".shell-output")?.textContent).toBe("first line\n");
+
+    // Closing keeps the body mounted so its state survives reopening.
+    fireEvent.click(group.querySelector(":scope > summary")!);
+    await waitFor(() => expect(group.open).toBe(false));
+    expect(group.querySelector(".process-content")).not.toBeNull();
+  });
+
+  it("opens a collapsed process group that holds the search target in the same render", () => {
+    const { container } = render(
+      <ExecutionFeed
+        items={finishedItems()}
+        runs={[finishedRun]}
+        approvals={[]}
+        searchTarget={{ itemId: "progress", query: "目录", occurrence: 0, revision: 1 }}
+      />,
+    );
+
+    const group = container.querySelector<HTMLDetailsElement>("details.process-group")!;
+    expect(group.open).toBe(true);
+    expect(container.querySelector("#item-progress")).toHaveTextContent("我正在检查目录。");
+  });
+
+  it("keeps a tool group collapsed until opened, but opens it for a pending approval", async () => {
+    const items = [
+      shellItem({ id: "g1", ordinal: 1, status: "completed", toolCall: { ...shellItem().toolCall!, id: "g1-tool", itemId: "g1", status: "completed", argumentsJson: JSON.stringify({ command: "git status" }) } }),
+      shellItem({ id: "g2", ordinal: 2, status: "completed", toolCall: { ...shellItem().toolCall!, id: "g2-tool", itemId: "g2", status: "completed", argumentsJson: JSON.stringify({ command: "git diff" }) } }),
+    ];
+    const { container, unmount } = render(<ExecutionFeed items={items} runs={[baseRun]} approvals={[]} />);
+    const group = container.querySelector<HTMLDetailsElement>("details.tool-group")!;
+    expect(group.open).toBe(false);
+    expect(container.querySelector(".tool-group-list")).toBeNull();
+    expect(group.querySelector(":scope > summary")).toHaveTextContent("运行 2 条命令");
+    await expandDetails(container, "details.tool-group");
+    expect(container.querySelector(".tool-group-list")).toHaveTextContent("git diff");
+    unmount();
+
+    const pending = render(
+      <ExecutionFeed
+        items={items}
+        runs={[baseRun]}
+        approvals={[{
+          id: "approval-1", sessionId: baseRun.sessionId, runId: baseRun.id, itemId: "g2", toolCallId: "g2-tool",
+          summary: "git diff", kind: "command_execution",
+        } as never]}
+      />,
+    );
+    expect(pending.container.querySelector<HTMLDetailsElement>("details.tool-group")!.open).toBe(true);
+    expect(pending.container).toHaveTextContent("需要批准");
   });
 });

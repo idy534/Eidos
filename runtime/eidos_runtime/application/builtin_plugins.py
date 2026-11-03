@@ -10,7 +10,7 @@ from eidos_runtime.models.mcp_connections import BuiltinPlugin, BuiltinPluginReq
 
 def builtin_plugins(plugins: PluginCatalog, request: BuiltinPluginRequest) -> BuiltinPluginsResponse:
     resources = Path(__file__).resolve().parents[1] / "resources" / "plugins"
-    packages = [(resources / name, _read_source(resources / name)) for name in ("github",)]
+    packages = [(resources / name, _read_source(resources / name)) for name in ("github", "browser")]
     entries = [(root, files, read_package(files).manifest) for root, files in packages]
     if request.action == "install":
         source = next((root for root, _files, manifest in entries if manifest.id == request.plugin_id), None)

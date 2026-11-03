@@ -2,7 +2,7 @@ import type { ProjectDto as GeneratedProject, ProjectRootDto } from "./project-w
 import type { CustomModelSettings } from "./custom-models.js";
 import type { HookActivity, PluginCompatibility, PluginHookReview } from "./hooks.js";
 import type { PluginPresentation } from "./plugins.js";
-import type { ContextCompactionActivity } from "./context.generated.js";
+import type { ContextCompactionActivity, ModelRetryActivity } from "./context.generated.js";
 import type { SessionForkSource, InheritedHistoryEntry } from "./session-fork.generated.js";
 import type { ModelId } from "./constants.js";
 import type { RunTermination } from "./run-termination.generated.js";
@@ -390,6 +390,7 @@ export interface Item {
 
 export interface SessionSnapshot {
   contextCompactions?: ContextCompactionActivity[];
+  modelRetries?: ModelRetryActivity[];
   inheritedHistory?: InheritedHistoryEntry[];
   session: Session;
   runs: Run[];
@@ -564,14 +565,31 @@ export interface CommandApprovalRequest extends ApprovalRequestBase {
   attemptOrdinal?: 0 | 1;
 }
 
+/** `browser` is reserved for the bundled browser plugin; manual servers cannot choose it. */
+export type McpPermissionProfile = "connector" | "workspace_read" | "browser";
+
 export interface ExternalToolApprovalRequest extends ApprovalRequestBase {
   kind: "external_tool";
   toolName: string;
   arguments: Record<string, unknown>;
   provenance: ToolProvenance;
-  permissionProfile: "connector" | "workspace_read";
+  permissionProfile: McpPermissionProfile;
   timeoutSeconds: number;
   envNames: string[];
+}
+
+/** Lets the whole Session operate the shared Eidos Chrome until the user revokes it. */
+export interface BrowserAccessApprovalRequest extends ApprovalRequestBase {
+  kind: "browser_access";
+  toolName: string;
+  arguments: Record<string, unknown>;
+  grantScope: "session";
+  /** "default" is the Eidos Chrome profile; "user" is the user's everyday Chrome. */
+  profile: "default" | "user";
+  access: "interact";
+  provenance: ToolProvenance;
+  permissionProfile: McpPermissionProfile;
+  timeoutSeconds: number;
 }
 
 export interface NetworkApprovalRequest extends ApprovalRequestBase {
@@ -597,6 +615,7 @@ export type ApprovalRequest =
   | FileApprovalRequest
   | CommandApprovalRequest
   | ExternalToolApprovalRequest
+  | BrowserAccessApprovalRequest
   | NetworkApprovalRequest
   | PermissionApprovalRequest;
 
@@ -663,7 +682,7 @@ export interface McpServerRecord {
   cwd?: string | undefined;
   argv: string[];
   envNames: string[];
-  permissionProfile: "connector" | "workspace_read";
+  permissionProfile: McpPermissionProfile;
   startupTimeoutSeconds: number;
   toolTimeoutSeconds: number;
   declaredEnabled: boolean;
@@ -706,7 +725,9 @@ export interface ExtensionSnapshot {
 export type RuntimeNotification =
   | { method: "memory/changed"; params: import("./memory.generated.js").MemoryChangedNotice }
   | { method: "context/compactionUpdated"; params: { sessionId: string; activity: ContextCompactionActivity } }
+  | { method: "model/retryUpdated"; params: { sessionId: string; activity: ModelRetryActivity } }
   | { method: "automation/changed"; params: { id: string } }
+  | { method: "browser/grantChanged"; params: { sessionId: string; active: boolean } }
   | { method: "sidebar/pinsChanged"; params: { eventId: number } }
   | { method: "run/queueChanged"; params: import("./queued-runs.js").QueuedRunChangeResponse }
   | { method: "workspace/changed"; params: { sessionId: string; paths: string[]; workspaceRoot?: string } }

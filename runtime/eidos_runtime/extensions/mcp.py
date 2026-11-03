@@ -17,6 +17,9 @@ import threading
 import time
 from typing import Callable, cast
 
+import base64
+import binascii
+
 import anyio
 import httpx2
 from mcp import ClientSession as SdkClientSession, StdioServerParameters
@@ -24,11 +27,20 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp import types as mcp_types
 
+from eidos_runtime.extensions.browser_plugin import (
+    BROWSER_PERMISSION_PROFILE,
+    BrowserLaunch,
+    is_bundled_browser_server,
+)
+from eidos_runtime.domain.browser import BrowserToolClass, browser_tool_class
 from eidos_runtime.extensions.contracts import McpServerConfigV1
+from eidos_runtime.infrastructure.browser_runtime import BrowserRuntimeUnavailable
 from eidos_runtime.extensions.plugin_mcp import resolve_package_mcp
 from eidos_runtime.extensions.plugins import MANUAL_MCP_PLUGIN_ID, PluginCatalog, PluginImportError
 from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
-from eidos_runtime.tools.registry import ExternalToolRuntime, ToolProvenance, ToolRegistryEntry, ToolSpec
+from eidos_runtime.domain.tool_content import ToolBinaryContent, ToolContentSnapshot
+from eidos_runtime.tools.registry import ExternalToolRuntime, ToolProvenance, ToolRegistryEntry, ToolSpec, VerifiedToolOutput
+from eidos_runtime.tools.view_image import ViewImageError, detect_image_mime
 from eidos_runtime.tools.contracts import McpResultData, result_model
 from eidos_runtime.tools.json_schema import (
     BoundedJsonSchema,
@@ -57,8 +69,17 @@ MAX_LIST_PAGES = 32
 MAX_TOOLS = 512
 MAX_SCHEMA_BYTES = 256 * 1024
 MAX_RESULT_BYTES = 256 * 1024
+MAX_RESULT_IMAGES = 8
+MCP_IMAGE_MIMES = frozenset({"image/png", "image/jpeg"})
+# Verified images travel beside the canonical result and never enter its data.
+MODEL_CONTENT_KEY = "_modelContent"
 SANDBOX_EXECUTABLE = "/usr/bin/sandbox-exec"
 SANDBOX_DIR = Path(__file__).resolve().parents[1] / "sandbox"
+SANDBOX_PROFILES = {
+    "connector": "mcp_connector.sbpl",
+    "workspace_read": "mcp_workspace_read.sbpl",
+    BROWSER_PERMISSION_PROFILE: "mcp_browser.sbpl",
+}
 LAUNCHER = Path(__file__).with_name("mcp_launcher.py")
 
 # The SDK includes the polluted stdout line in parser exception logs. Eidos maps
@@ -113,8 +134,10 @@ class McpConnection:
         resource_registry: ResourceRegistry | None = None,
         remote_client: Callable[[], httpx2.AsyncClient] | None = None,
         remote_check: Callable[[], None] | None = None,
+        browser_launch: BrowserLaunch | None = None,
     ) -> None:
         self.plugin_root = plugin_root
+        self.browser_launch = browser_launch
         self.workspace_root = workspace_root
         self.additional_workspace_roots = additional_workspace_roots
         self.workspace_check = workspace_check
@@ -522,6 +545,19 @@ class McpConnection:
         except OSError:
             raise McpUnavailable("mcp_temporary_directory_unavailable") from None
         config = resolve_package_mcp(self.config, str(self.plugin_root), str(runtime_python_executable()))
+        browser = self.config.permission_profile == BROWSER_PERMISSION_PROFILE
+        if browser:
+            if self.browser_launch is None:
+                raise McpUnavailable("browser_runtime_unavailable")
+            output = self.runtime_root / "tmp" / "browser-output"
+            config = _expand_launch_variables(config, {
+                **self.browser_launch.variables,
+                "RUNTIME_NODE": str(self.browser_launch.runtime.node),
+                "BROWSER_MCP_ENTRY": str(self.browser_launch.runtime.entry),
+                "BROWSER_OUTPUT_DIR": str(output),
+            })
+            if any("${" in value for value in (config.executable, *config.argv)):
+                raise McpUnavailable("mcp_settings_unsupported")
         executable = config.executable
         if executable in {"python", "python3"}:
             executable = str(runtime_python_executable())
@@ -539,6 +575,8 @@ class McpConnection:
         }
         Path(environment["HOME"]).mkdir(mode=0o700)
         Path(environment["TMPDIR"]).mkdir(mode=0o700)
+        if browser:
+            (Path(environment["TMPDIR"]) / "browser-output").mkdir(mode=0o700)
         inherited = sanitize_shell_environment(os.environ)
         for name in self.config.env_names:
             value = inherited.get(name)
@@ -555,11 +593,7 @@ class McpConnection:
         if self.sandbox:
             if sys.platform != "darwin" or not Path(SANDBOX_EXECUTABLE).is_file():
                 raise McpUnavailable("mcp_sandbox_unavailable")
-            profile = SANDBOX_DIR / (
-                "mcp_connector.sbpl"
-                if self.config.permission_profile == "connector"
-                else "mcp_workspace_read.sbpl"
-            )
+            profile = SANDBOX_DIR / SANDBOX_PROFILES[self.config.permission_profile]
             if self.config.permission_profile != "connector" and self.additional_workspace_roots:
                 import json
                 extra = "\n".join(
@@ -577,6 +611,13 @@ class McpConnection:
                 f"-DSANDBOX_HOME={environment['HOME']}",
                 f"-DSANDBOX_TMP={environment['TMPDIR']}",
                 *python_runtime_policy_arguments(),
+                *(
+                    (
+                        f"-DNODE_RUNTIME_ROOT={self.browser_launch.runtime.read_roots[0]}",
+                        f"-DBROWSER_RUNTIME_ROOT={self.browser_launch.runtime.read_roots[1]}",
+                    )
+                    if browser and self.browser_launch is not None else ()
+                ),
                 "--", executable, *arguments,
             ]
             executable = SANDBOX_EXECUTABLE
@@ -589,7 +630,9 @@ class McpConnection:
             command=executable,
             args=arguments,
             env=environment,
-            cwd=self.plugin_root,
+            # Playwright MCP limits upload paths to its cwd root. The browser
+            # profile already allows read-only Workspace access.
+            cwd=self.workspace_root if browser else self.plugin_root,
             encoding="utf-8",
             encoding_error_handler="strict",
         )
@@ -620,11 +663,12 @@ class McpToolAdapter:
 
     def execute(
         self, arguments: dict[str, object], cancel: threading.Event
-    ) -> dict[str, object]:
+    ) -> dict[str, object] | VerifiedToolOutput:
         result = dict(self.connection.call(self.remote_name, arguments, cancel))
         result["toolName"] = self.local_name
+        content = result.pop(MODEL_CONTENT_KEY, None)
         if self.output_validator is None or result.get("outcome") != "success":
-            return result
+            return _with_content(result, content)
         data = result.get("data")
         structured = (
             data.get("structuredContent") if isinstance(data, dict) else None
@@ -643,7 +687,15 @@ class McpToolAdapter:
                 "sideEffectsMayExist": True,
                 "reconciliationRequired": result.get("reconciliationRequired") is True,
             }
-        return result
+        return _with_content(result, content)
+
+
+def _with_content(
+    result: dict[str, object], content: object,
+) -> dict[str, object] | VerifiedToolOutput:
+    if isinstance(content, ToolContentSnapshot) and result.get("outcome") == "success":
+        return VerifiedToolOutput(result, model_content=content)
+    return result
 
 
 class _RejectedMcpAdapter:
@@ -665,8 +717,10 @@ class McpManager:
         async_kernel: RuntimeAsyncKernel | None = None,
         sandbox: bool = True,
         resource_registry: ResourceRegistry | None = None,
+        browser_launch: Callable[[], BrowserLaunch] | None = None,
     ) -> None:
         self.plugins = plugins
+        self.browser_launch = browser_launch
         self.snapshot = snapshot
         self.workspace_root = workspace_root
         self.additional_workspace_roots = additional_workspace_roots
@@ -720,6 +774,22 @@ class McpManager:
                     server, consented=True, error_code="mcp_connection_lost"
                 )
                 continue
+            browser_launch = None
+            if config.permission_profile == BROWSER_PERMISSION_PROFILE:
+                if not is_bundled_browser_server(plugin_id, str(server["pluginHash"]), config.id):
+                    self.plugins.store.set_mcp_server_state(
+                        server, consented=True, error_code="mcp_permission_profile_unsupported"
+                    )
+                    continue
+                try:
+                    if self.browser_launch is None:
+                        raise BrowserRuntimeUnavailable("browser_runtime_unavailable")
+                    browser_launch = self.browser_launch()
+                except BrowserRuntimeUnavailable as error:
+                    self.plugins.store.set_mcp_server_state(
+                        server, consented=True, error_code=error.code
+                    )
+                    continue
             connection = None
             try:
                 connection = McpConnection(
@@ -737,6 +807,7 @@ class McpManager:
                     resource_registry=self.resources,
                     remote_client=(lambda config=config, plugin_id=plugin_id: self.plugins.connections.http_client(plugin_id, config)) if config.transport == "streamable-http" else None,
                     remote_check=self.plugins.connections.checker(plugin_id, config.id) if config.transport == "streamable-http" else None,
+                    browser_launch=browser_launch,
                 )
                 tools = connection.start()
             except McpUnavailable as error:
@@ -886,12 +957,26 @@ async def _call_tool(
             )
         return _call_failure(command, "mcp_connection_lost")
     texts: list[str] = []
+    images: list[ToolBinaryContent] = []
     for content in result.content:
-        if not isinstance(content, mcp_types.TextContent):
+        if isinstance(content, mcp_types.TextContent):
+            texts.append(content.text)
+            continue
+        if not isinstance(content, mcp_types.ImageContent) or content.mime_type not in MCP_IMAGE_MIMES:
             return _result(
                 "error", "mcp_content_unsupported", {}, side_effects_may_exist=True
             )
-        texts.append(content.text)
+        if len(images) >= MAX_RESULT_IMAGES:
+            return _result(
+                "error", "mcp_result_too_large", {}, side_effects_may_exist=True
+            )
+        try:
+            image = _verified_image(content)
+        except ValueError as error:
+            return _result(
+                "error", str(error), {}, side_effects_may_exist=True
+            )
+        images.append(image)
     text = "\n".join(texts)
     structured = result.structured_content
     if structured is not None:
@@ -911,6 +996,21 @@ async def _call_tool(
         return _result(
             "error", "mcp_result_too_large", {}, side_effects_may_exist=True
         )
+    if images:
+        try:
+            snapshot = ToolContentSnapshot(items=tuple(images))
+        except ValueError:
+            return _result(
+                "error", "mcp_result_too_large", {}, side_effects_may_exist=True
+            )
+        value = _result(
+            "error" if result.is_error else "success",
+            "mcp_tool_error" if result.is_error else "ok",
+            data,
+            side_effects_may_exist=True,
+        )
+        value[MODEL_CONTENT_KEY] = snapshot
+        return value
     return _result(
         "error" if result.is_error else "success",
         "mcp_tool_error" if result.is_error else "ok",
@@ -923,6 +1023,8 @@ def _tool_entry(
     connection: McpConnection,
     tool: mcp_types.Tool,
     server: dict[str, object],
+    *,
+    approval_required: bool | None = None,
 ) -> ToolRegistryEntry:
     input_schema = _normalize_mcp_schema(tool.input_schema)
     input_validator = BoundedJsonSchema(input_schema)
@@ -947,8 +1049,11 @@ def _tool_entry(
             "sideEffect": "external",
             # Discovery only includes servers the user has reviewed and enabled.
             # Their explicit read-only hint does not change the process sandbox.
+            # Eidos classifies the bundled browser tools itself; an upstream
+            # annotation can neither add nor remove approval for them.
             "approvalRequired": (
-                tool.annotations is None or tool.annotations.read_only_hint is not True
+                approval_required if approval_required is not None
+                else tool.annotations is None or tool.annotations.read_only_hint is not True
             ),
             "timeoutSeconds": connection.config.tool_timeout_seconds,
             "batchPolicy": "single",
@@ -1002,9 +1107,18 @@ def _valid_tool_entries(
     server: dict[str, object],
 ) -> list[ToolRegistryEntry]:
     entries: list[ToolRegistryEntry] = []
+    browser = connection.browser_launch is not None
     for tool in tools:
+        tool_class = browser_tool_class(tool.name) if browser else None
+        if browser and tool_class is None:
+            # Unlisted browser tools are blocked, not registered as rejected.
+            continue
         try:
-            entries.append(_tool_entry(connection, tool, server))
+            entries.append(
+                _tool_entry(connection, tool, server) if tool_class is None else _tool_entry(
+                    connection, tool, server, approval_required=tool_class is not BrowserToolClass.READ,
+                )
+            )
         except (TypeError, ValueError):
             entries.append(_rejected_tool_entry(connection, tool, server))
     return entries
@@ -1089,6 +1203,36 @@ def _result(
         "sideEffectsMayExist": side_effects_may_exist,
         "reconciliationRequired": False,
     }
+
+
+def _expand_launch_variables(
+    config: McpServerConfigV1, values: dict[str, str],
+) -> McpServerConfigV1:
+    def expand(value: str) -> str:
+        for name, replacement in values.items():
+            value = value.replace("${" + name + "}", replacement)
+        return value
+    return config.model_copy(update={
+        "executable": expand(config.executable), "argv": [expand(value) for value in config.argv],
+    })
+
+
+def _verified_image(content: mcp_types.ImageContent) -> ToolBinaryContent:
+    """Decode one bounded image and require its bytes to match the declared type."""
+
+    try:
+        data = base64.b64decode(content.data, validate=True)
+    except (ValueError, binascii.Error):
+        raise ValueError("mcp_image_invalid") from None
+    try:
+        mime = detect_image_mime(data)
+    except ViewImageError as error:
+        raise ValueError(
+            "mcp_result_too_large" if error.code == "image_too_large" else "mcp_image_invalid"
+        ) from None
+    if mime != content.mime_type:
+        raise ValueError("mcp_image_invalid")
+    return ToolBinaryContent.from_bytes(data, mime)
 
 
 def _uncertain(code: str) -> dict[str, object]:

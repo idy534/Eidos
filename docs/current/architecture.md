@@ -74,7 +74,7 @@ Renderer 是展示边界。Renderer 不能直接访问 Node 系统能力，也�
 
 聊天排版沿用 `ExecutionFeed → MarkdownContent → react-markdown / CodeBlock`。ExecutionFeed 只给用户正文、过程文字和最终回答添加 `.eidos-chat-prose`；MarkdownContent 的可选 `className` 让其他复用方保持原样式。正文字体定义为 `--font-prose` token 并与侧栏项目名、Session 名共享；CSS 只覆盖正文字体、行距、字重和 Markdown 间距，字号、主题颜色、背景和容器布局继续沿用原规则。用户正文仍按原始换行显示；代码块仍保留空白和横向滚动。Renderer 没有增加字体文件、依赖、协议字段或持久化数据。
 
-`ExecutionFeed → useFeedScroll` 分开保存底部跟随意图和实际底部位置。原生 `ResizeObserver` 同时观察 `.feed-content` 和 Feed 视口，覆盖处理过程与工具的展开动画、延迟图片、代码渲染和视口高度变化。内容更新与尺寸变化共用一个合并到下一帧的滚动入口。跟随开启时，Feed 关闭浏览器滚动锚定；用户浏览历史时，Feed 恢复浏览器锚定，并停止自动到底。向上滚轮、触摸、键盘和滚动条操作可以中断跟随。用户手动回到底部或点击“滚动到最新内容”后恢复跟随。折叠引起的滚动范围收缩不改变用户暂停跟随的选择。“滚动到最新内容”使用同一滚动入口，不再启动独立的平滑滚动。空列表首次出现内容时会挂载观察器，卸载时会断开观察器并取消待执行帧。该状态只用于 Renderer 交互，不增加协议或持久化字段。
+`ExecutionFeed → useFeedScroll` 分开保存底部跟随意图和实际底部位置。原生 `ResizeObserver` 同时观察 `.feed-content` 和 Feed 视口，覆盖处理过程与工具的展开动画、延迟图片、代码渲染和视口高度变化。内容更新与尺寸变化共用一个合并到下一帧的滚动入口。跟随开启时，Feed 关闭浏览器滚动锚定；用户浏览历史时，Feed 恢复浏览器锚定，并停止自动到底。向上滚轮、触摸、键盘和滚动条操作可以中断跟随。用户手动回到底部或点击“滚动到最新内容”后恢复跟随。折叠引起的滚动范围收缩不改变用户暂停跟随的选择。已结束 Run 的处理过程组和折叠的工具、Shell 正文在用户首次展开前不挂载，切换 Session 时不再渲染全部 Diff 与输出；展开后正文保持挂载以保留分页状态。会话内搜索命中折叠组内的条目时，该组在同一次渲染中展开。处理过程内相邻的工具调用由 `groupProcessEntries` 在展示层聚合为 `ToolGroup`，沿用同一套懒挂载；待审批的工具与搜索命中同样强制展开所在工具组。“滚动到最新内容”使用同一滚动入口，不再启动独立的平滑滚动。空列表首次出现内容时会挂载观察器，卸载时会断开观察器并取消待执行帧。该状态只用于 Renderer 交互，不增加协议或持久化字段。
 
 长会话导航通过 `ExecutionFeed → ConversationRunRail` 在 Renderer 内部实现。会话有效用户 Run 达到 4 条且侧边空间充足时在左侧展示垂直导航轨道。每个非队列、未废弃的 Run 映射为一条静止宽度 6px 的短横线，悬浮激活时应用透镜动画（中心 26px，前后 3 条按比例放大到 20/14/10px）并弹出 320px 宽的浮动预览卡（展示主提问与最终回答摘要）；支持点击平滑滚动、连续拖拽 scrub 即时定位与 roving tabIndex 键盘导航。轨道通过 CSS 容器查询 `@container feed-shell (max-width: 53.99rem)` 与 ResizeObserver 判定可用侧边留白并在过窄时自动隐藏，避免遮挡正文与代码。未挂载的历史分页在用户点击或拖拽落点时按需拉取补齐，不修改 Agent Loop、RPC 协议与持久化结构。
 
@@ -294,6 +294,15 @@ Token 计量优先使用 Provider 返回的实际 Usage。该值只代表对应�
 
 压缩的处理过程记录复用同一批 SQLite Event/Outbox。`ContextCompactionActivity` 是显示投影，不进入模型 Item 历史。`context/compactionUpdated` 发送开始和结果；Engine 在提交开始事件后、请求摘要模型前交付 Outbox，让 Desktop 能及时显示正在压缩。`session/read.contextCompactions` 从当前历史页对应的事件重建记录，并以原始开始时间排序。Renderer 按 Run 和 request ID 合并，使用 event ID 拒绝迟到状态，终态不会被重复开始通知覆盖。压缩行与既有工具行共用样式，但没有交互或详情区。系统没有新增数据库表或后台 Worker。
 
+### 模型重试过程显示
+
+模型请求的 Provider 重试在界面中显示为 Run 过程里的一行阶段，不再只在 Run 终止后给出一句失败提示。`model_attempts` 仍是唯一重试权威；`ModelRetryActivity` 只是显示投影，不决定是否重试。Runtime 在提交 Attempt 状态的同一事务里写入 `model.retry_changed` Event：失败 Attempt 被判定可重试时记录 `waiting`（含 `nextRetryAt`、`deadlineAt`、`retryAfterApplied`），下一次 Attempt 开始时记录 `requesting`，重试后的 Attempt 结束时记录 `recovered`，预算或恢复窗口耗尽时记录 `failed`。首次请求成功、第一次失败即不可重试（认证、参数、额度）时不产生该事件。`cause` 由稳定错误码与 HTTP 状态归类为 `connection_failed`、`timeout`、`service_unavailable`、`rate_limited`、`stream_interrupted`。Engine 在开始重试 Attempt 后立即交付 Outbox。
+
+`model/retryUpdated` 通知携带整条 Activity；`session/read.modelRetries` 从当前历史页的事件重建每个请求组的最新状态。Renderer 按 Run 和请求组合并，使用 event ID 拒绝迟到状态，倒计时由 `nextRetryAt` 在本地计算。Run 已结束而 Activity 仍是 `waiting` 或 `requesting` 时，界面按 Run 状态显示为已取消或已失败。协议修复、空回复修复和上下文压缩不属于这类事件。没有新增数据库表、Schema 版本或后台 Worker。
+
+Run 因 Provider 错误结束时，`ModelFailureNotice` 取代单行红字：认证、参数、额度、内容限制和耗尽重试各有标题、原因和芯片，认证、参数、额度与耗尽重试提供“打开模型设置”。其他失败仍使用原来的单行提示。
+
+
 `context/details` 返回计量来源、参考分项、近期请求误差样本及最近压缩记录。分项按参考词表构成分配当前总量，并明确标为估算，不冒充 Provider 的分项实测。`context/compact` 把手动请求写入既有 SQLite Event/Outbox，同 Session 的重复待处理请求会去重。Engine 在下一次安全采样前处理；终态 Run 的请求由同 Session 下一 Run 处理。请求不创建额外 Run 或 Worker。开始与结束记录包含触发原因、策略、回退原因、前后完整投影预算、耗时和摘要模型 Usage。成功摘要与成功结果在同一个事务内提交；摘要已提交、后续统计未完成时，系统仍显示成功，后预算可以为空。Runtime 中断后，未提交摘要不会重放。Desktop 会把终态 Run 的未提交记录显示为中断，并允许重新请求。以上信息复用 Event JSON，不增加 DB Schema 或第二套状态机。
 
 Compactor 只向验证层提供摘要覆盖的 ToolCall 与工作区变更来源，并按完整响应保留近期记录。摘要的 completed_actions 只记录已成功的工具结果；Assistant 的决定自述明确标记为报告，普通将来计划不会成为已完成事项。不确定工具副作用使用原始 Item/ToolCall 的短引用，系统从持久来源重建这些引用，不反复复制旧错误正文。明确的用户历史报告不会仅因模型没有选择它而被删除。摘要预算随输入窗口调整到 512～4,096 个参考 Tokens，并受 24 KiB 正文上限约束。裁剪优先保留新事实，不通过删除明确约束、未解决问题、待审批或不确定副作用来强行满足预算。关键事实放不下时，系统保留上一份摘要。持久化事务再次检查取消请求，迟到摘要不能在取消后提交。软压缩失败日志只包含 Run ID 和受控原因。
@@ -396,7 +405,7 @@ Shell 参数通过 Pydantic `AliasChoices` 兼容 Codex 拼写。`run_shell` 接
 
 文件编辑资源预算由 `file_limits.py` 汇集；独立提交 helper 持有单文件上限。Function 校验按工具选择参数预算，避免普通工具的 64 KiB 参数上限限制 Patch。两条 Patch 路径都验证 8 MiB 原文预算；Function 包装预算允许 JSON 转义增长。Prepare、写前版本复检、受控 helper 和写后校验统一支持 16 MiB 文件。Prepare 对旧内容、新内容和操作开销累计计费，预算为 64 MiB；完整 Diff 和 canonical result 各自有 64 MiB 预算。`apply_patch` 不执行敏感内容扫描。Runtime 没有增加自动重试、自动拆文件或自动改写 Patch 的机制。
 
-`skill_create` 的参数预算也由 `file_limits.py` 汇集。Skill 的单文件预算为 4 MiB，完整目录预算为 8 MiB，文件数量预算为 512（包含 `SKILL.md`）。Function 参数预算为 `6 × 8 MiB + 1 MiB`，用于容纳最坏情况的 JSON 转义和有界的路径、metadata 开销；这个预算不扩大实际写入内容的上限。`SkillCreateInput` 与执行 Adapter 共用 `skill_manifest.skill_document` 生成正文，字段校验按最终生成文件计费。目录加载、文本资源读取、分页 offset 和敏感内容扫描使用同一单文件预算。内置创建工具的 `sourceVersion` 更新为 2，新输入 Schema 参与原有 Contract Hash。ToolResult、公开 RPC Envelope 和 SQLite Schema 保持不变；旧工具调用不会被转换或重放。
+`skill_create` 的参数预算也由 `file_limits.py` 汇集。创建路径保留单文件 4 MiB、完整目录 8 MiB、最多 512 个文件（包含 `SKILL.md`）的预算。安装与目录加载使用完整 Skill tree 的存储预算：单文件 4 MiB、完整目录 64 MiB、最多 20,000 个文件。`skill_create` 的 Function 参数预算为 `6 × 8 MiB + 1 MiB`，用于容纳最坏情况的 JSON 转义和有界的路径、metadata 开销；这个预算不扩大实际写入内容的上限。`SkillCreateInput` 与执行 Adapter 共用 `skill_manifest.skill_document` 生成正文，字段校验按最终生成文件计费。目录加载、文本资源读取、分页 offset 和敏感内容扫描使用同一单文件预算。内置创建工具的 `sourceVersion` 更新为 2，新输入 Schema 参与原有 Contract Hash。ToolResult、公开 RPC Envelope 和 SQLite Schema 保持不变；旧工具调用不会被转换或重放。
 
 大文本的持久事实和 UI 消息分别处理。`protocol/tool_text.py` 为超过 64 KiB 的 Diff、结果生成内容哈希和字节数，通知及 Session 快照只携带引用和摘要。完整 Diff 继续存放在 `tool_calls.approval_diff`，完整 UI 结果继续存放在 `ui_result_json`；Runtime 内部的原始 Item 不受显示投影影响。审批指纹仍覆盖原始 Diff、路径、版本和权限，审批记录以 Diff 引用避免重复存储大文本，路径和指纹仍保留。Desktop 通过 typed preload IPC、Main RuntimeClient、`toolCall/readText` 和 SessionApplication 读取每页最多 16,384 个 Unicode 字符。Repository 从同一 Session 的 ToolCall 读取文本并核对 SHA-256，拒绝过期引用和越界偏移。接口不执行文件工具，不改变审批，也不引入新表或第二份业务状态。当前分页每次读取并校验整段有界文本；性能优化留待测量，不提前增加缓存或持久索引。
 
@@ -456,7 +465,7 @@ Shell 输出在 Renderer 中使用成熟的 ANSI stripping 实现转为纯文本
 
 `run_shell` 的模型结果投影对 stdout 和 stderr 各保留首尾，每条流最多 16 KiB，整个 JSON 最多 48 KiB。原始 `truncated` 和 `omittedBytes` 保持为原始 Shell 事实，不会被模型投影覆盖。模型投影使用独立的 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 字段，其中 omitted bytes 只计算模型省略的 stdout/stderr UTF-8 字节。
 
-`read_tool_output` 是只读 Shell 输出分页工具。它使用前一次 `run_shell` 的 provider tool call ID，默认读取 stdout，也可读取 stderr。当前 Run 的活动 Shell 通过其 ShellProcessManager 读取累计快照，不移动等待游标；同 Session 的历史 Run 读取持久终态结果。跨 Run 活动结果、跨 Session、缺失和歧义 ID 拒绝。`offsetBytes`、`maxBytes`（4 字节至 16 KiB）和 `fromEnd` 控制分页；返回 UTF-8 对齐的实际 `startByte`、`endByte` 和 `nextOffset`。该工具不重新执行 Shell、不清除 reconciliation，也不能恢复原始输出上限已丢失的字节。
+`read_tool_output` 是只读 Shell 输出分页工具。它使用前一次 `run_shell` 的 provider tool call ID，默认读取 stdout，也可读取 stderr。当前 Run 的活动 Shell 通过其 ShellProcessManager 读取累计快照，不移动等待游标；同 Session 的历史 Run 读取持久终态结果。跨 Run 活动结果、跨 Session、缺失和歧义 ID 拒绝。`offsetBytes`、`maxBytes`（4 字节至 16 KiB）和 `fromEnd` 控制分页；转义后正文超过 32 KiB 时 Adapter 缩小范围重读，最少 4 KiB；返回 UTF-8 对齐的实际 `startByte`、`endByte` 和 `nextOffset`。该工具不重新执行 Shell、不清除 reconciliation，也不能恢复原始输出上限已丢失的字节。
 
 ### 沙盒环境设置
 
@@ -540,13 +549,13 @@ Session 展示快照与执行快照使用不同的读取入口。`session/read` 
 
 `state.sqlite` 是可变业务状态的唯一权威。它保存 Session、Run、Item、ToolCall、Approval、Tool Attempt、Execution Segment、Step、Model Attempt、Durable Intent、Event、Outbox、Async Operation、Extension Snapshot、Context lineage、Compaction 和 Checkpoint。业务状态变化与 Event/Outbox 仍在同一个 `state.sqlite` transaction 中提交。
 
-Runtime 按职责使用多个独立存储。`repository.sqlite` 保存可重建的 Inventory、Index、Symbol、Reference、Chunk 和 FTS5 数据。它只保留每个 Workspace identity 的最新候选与最新完整 generation，并使用 incremental auto-vacuum 回收删除页。`thread_history.sqlite` 只索引按 Session 分段的 append-only Event JSONL。Runtime 先 fsync JSONL，再提交文件 offset；启动时会截断未提交尾部并继续投影。`logs.sqlite` 只索引本地日志 JSONL，当前使用独立 schema v2。Runtime 会把使用 `content_sha256` 的旧 v1 表迁移为 `chain_sha256`，也会接纳已经使用 `chain_sha256` 的 v1 表。日志按 8 MiB 分段，默认总量约 128 MiB，Runtime 优先删除最旧的 sealed segment。v40 删除旧 `memories.sqlite` 和 MemoryStore 接口，并清空旧记忆内容。记忆系统以 `state.sqlite` 为业务权威，正文使用 UUID 命名的私有 Markdown 文件，逻辑笔记路径由数据库映射。前台 Run 即时更新主题笔记，`MEMORY.md` 是派生索引；后台只做存储清理。来源、版本、隐私撤销与快照引用见 [docs/current/features/memory.md](features/memory.md)。
+Runtime 按职责使用多个独立存储。`repository.sqlite` 保存可重建的 Inventory、Index、Symbol、Reference、Chunk 和 FTS5 数据。它只保留每个 Workspace identity 的最新候选与最新完整 generation，并使用 incremental auto-vacuum 回收删除页；后台索引线程持有写锁时，前台 `read_status` 通过短生命周期的只读 WAL 连接读取已提交状态，避免 `session/read` 激活工作区时阻塞主线程。`thread_history.sqlite` 只索引按 Session 分段的 append-only Event JSONL。Runtime 按流批量追加并先 fsync JSONL，再提交文件 offset；启动时、投影失败后以及空投影时最多每 60 秒核验一次：截断未提交尾部、清理孤立或已删除会话的 JSONL。增量事件投递不重复扫描全量会话文件；空投影本身不代表空闲，因为并发投递可能已经投影了这些事件。`logs.sqlite` 只索引本地日志 JSONL，当前使用独立 schema v2。Runtime 会把使用 `content_sha256` 的旧 v1 表迁移为 `chain_sha256`，也会接纳已经使用 `chain_sha256` 的 v1 表。日志按 8 MiB 分段，默认总量约 128 MiB，Runtime 优先删除最旧的 sealed segment。v40 删除旧 `memories.sqlite` 和 MemoryStore 接口，并清空旧记忆内容。记忆系统以 `state.sqlite` 为业务权威，正文使用 UUID 命名的私有 Markdown 文件，逻辑笔记路径由数据库映射。前台 Run 即时更新主题笔记，`MEMORY.md` 是派生索引；后台只做存储清理。来源、版本、隐私撤销与快照引用见 [docs/current/features/memory.md](features/memory.md)。
 
 ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。新写入的 ContextSnapshot 使用 `context-snapshot-v2` 清单，StepResolutionSnapshot 使用 `step-resolution-v2` 清单。两者复用同一组 `context-item` 和 `context-tools`。消息块引用已有的 `tool-result-content`，不再内嵌图片或文件内容；输入图片单独按内容哈希共享。Step 清单只保存一次消息引用，读取时 Runtime 重建 `context_payload_json` 与 `final_request_json`，再验证原有快照哈希与请求关系。旧版完整快照和旧消息块仍可读取，SQLite Schema 和公开协议不变。Blob 存储不再施加统一的 32 MiB 容量上限。各输入与工具保留自身预算；Blob 读取按记录中的实际大小分块，并继续核验 owner、mode、路径、压缩数据、JSON 和 checksum。相同内容再次保存时，Runtime 验证并复用已有 Blob，不重复压缩。Blob GC 在删除前递归解析两类清单及消息块的媒体引用；引用损坏或扫描取消时不会根据不完整引用集合执行删除。Session 删除后，Runtime 会删除对应 history，并回收不再引用的 Blob。JSONL、Memory 和 Repository 数据都不能改变 `state.sqlite` 中的业务状态。
 
 本地 JSONL 日志保存脱敏后的异常消息和调用位置，包括显式 cause 与未抑制的 context。普通消息最多 16 KiB，异常消息最多 4 KiB，调用栈最多 16 KiB；每个异常最多记录 32 个调用位置，异常链最多记录 8 层。日志不保存局部变量和源码行。日志字段使用现有凭据扫描并补充私钥正文、Authorization 与密钥赋值脱敏；诊断生成失败时只保存固定占位信息。该信息不进入 Session 正文，也不参与业务状态和恢复判断。
 
-当前 `SCHEMA_VERSION` 是 44。v43→v44 新增全局个性化设置表，并保留已有数据。v42→v43 保留已有笔记、历史版本、模式和撤销记录，新增归档状态并调整聊天来源触发器。v41→v42 删除会话级临时记忆字段和接口，保留笔记与原来源撤销状态，并让原临时会话按所属范围的模式工作。v40→v41 保留现有笔记，在事务中修复历史自动版本的来源撤销触发器，并补充撤销旧版遗漏的上下文。v39→v40 在事务中重置记忆表，撤销旧记忆上下文，并保留聊天、执行记录及其他配置；文件清理由可重试的启动标记完成。v25→v26 增加 `session_forks`、`session_history_entries`、`session_history_resources` 和 Worktree 生命周期请求校验值。迁移使用事务，旧 Session 没有继承历史。v16→v17 在事务内新增记忆作用域、版本、证据、任务、预算及隐私撤销表和索引。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
+当前 `SCHEMA_VERSION` 是 49。v48→v49 为 `events`、`context_plans`、`context_snapshots` 和 `model_attempts` 补充会话快照、事件游标、上下文压缩记录与上下文详情查询索引，消除大事件表上的全表扫描。v47→v48 新增会话级浏览器授权与目标配置表。v44→v47 保存多目录项目绑定、Session `project_id` 与根快照，以及 Worktree 私有 gitdir 身份。v43→v44 新增全局个性化设置表，并保留已有数据。v42→v43 保留已有笔记、历史版本、模式和撤销记录，新增归档状态并调整聊天来源触发器。v41→v42 删除会话级临时记忆字段和接口，保留笔记与原来源撤销状态，并让原临时会话按所属范围的模式工作。v40→v41 保留现有笔记，在事务中修复历史自动版本的来源撤销触发器，并补充撤销旧版遗漏的上下文。v39→v40 在事务中重置记忆表，撤销旧记忆上下文，并保留聊天、执行记录及其他配置；文件清理由可重试的启动标记完成。v25→v26 增加 `session_forks`、`session_history_entries`、`session_history_resources` 和 Worktree 生命周期请求校验值。迁移使用事务，旧 Session 没有继承历史。v16→v17 在事务内新增记忆作用域、版本、证据、任务、预算及隐私撤销表和索引。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
 
 Outbox 投递失败不会删除事实。Runtime 重启会从 `state.sqlite`、Outbox、Long Task 和 Resource 状态恢复或记录实际中断与未知结果。其他数据库和文件不参与跨库业务 transaction。
 
@@ -704,6 +713,8 @@ Skill MCP dependency 不是 Skill 安装器。RunResources 会收集 active Skil
 
 `SkillCatalog` 管理 bundled system skills、用户和 Plugin Skill。Turn 开始时，Catalog Snapshot 和 SelectedSkillSet 固化 qualified ID、source、version、source kind、content hash、canonical `file:` locator 和 implicit policy。`SkillAccess` 只从该可信 snapshot locator 激活 canonical root。模型不能通过传入任意 absolute path 扩大 Shell 权限。显式选择、成功的 `skill_read` 和已知 `scripts/` Shell invocation 都会沿 RunResources → ToolCallRuntime → Shell → Seatbelt 使用同一份 Run-scoped activation state。
 
+内置浏览器插件运行固定版本的 Playwright MCP，使用 `browser` Seatbelt 配置，并通过本机 CDP 连接由 Runtime 级 `BrowserHost` 管理的共用 Chrome。浏览器工具的分类、Session 授权（SQLite v48 `session_browser_grants`）和上传审批位于 `ExternalToolHandler`，仍沿用 Durable Intent 和结果核验。MCP 结果中的 PNG/JPEG 图片会经过校验，并作为模型内容传递。详见[浏览器操作](features/browser.md)。
+
 MCP 使用官方 Python MCP SDK 的 stdio 和 Streamable HTTP transport。手动编辑器配置本地进程，远程服务由插件包声明。`McpConnections` 用例维护独立的账号生命周期，SQLite v38 保存连接状态和凭据引用，受保护文件保存令牌。标准 OAuth 的发现、注册和 PKCE 交给 MCP SDK，令牌请求和刷新交给 Authlib。Runtime 启动恢复中断登录，Run/Hook 的目录视图不执行恢复。多个视图在同一 AnyIO 内核上共用账号版本的短期刷新锁，工具执行不持有该锁。临时回环 HTTP 只接收 OAuth 授权码，本地控制面仍为 stdio JSON-RPC。
 
 MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。两种 transport 共用统一 Tool Registry、MCP provenance、Approval、Durable Intent、timeout、结果校验和未知结果记录。远程请求前核对配置、账号版本、启用状态和 consent，凭据不进入运行快照或模型上下文。本地进程继续使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。远程服务只连接明确配置的地址，不获得本地文件能力。内置 GitHub 通过受管包安装入口进入同一链路。安装、账号连接和工具调用权限分别管理，详见 [docs/current/features/plugins.md](features/plugins.md)。
@@ -853,7 +864,7 @@ Adapter 的成功和失败出口都通过现有 `canonical_tool_result` 封装�
 
 ### 回答流式输出
 
-普通采样和 RunFinalizer 复用 `ModelRunner → StreamingSensitiveScanner → AssistantStreamWriter → SQLite Event/Outbox → item/delta → Main → typed IPC → Renderer`。Writer 立即刷新扫描器释放的安全文本块，并把大文本拆成有界片段。Writer 保留未闭合的尖括号尾部，并阻止已识别的 Provider 控制标记；完整响应校验仍由原有 Runtime 链路负责。正常完成复用当前 Item，不再把整个回答重复写入。校验失败或断流会结束当前草稿；取消和重启沿用已有 Item 终态与恢复规则。Context Repository 排除 in-progress 和 incomplete Assistant Item。
+普通采样和 RunFinalizer 复用 `ModelRunner → StreamingSensitiveScanner → AssistantStreamWriter → SQLite Event/Outbox → item/delta → Main → typed IPC → Renderer`。Writer 立即发布首段安全文本，之后按 100 ms 或 4 KiB 批量刷新，每批合并为一个 `item.delta` 事件，避免每行都触发 state 提交、历史 fsync 和通知；批内尾段由下一段文本、完整响应、断流或中止时刷新。Writer 把大文本拆成有界片段。Writer 保留未闭合的尖括号尾部，并阻止已识别的 Provider 控制标记；完整响应校验仍由原有 Runtime 链路负责。正常完成复用当前 Item，不再把整个回答重复写入。校验失败或断流会结束当前草稿；取消和重启沿用已有 Item 终态与恢复规则。Context Repository 排除 in-progress 和 incomplete Assistant Item。
 
 新 delta 的 `offset` 在追加内容的同一 SQLite 事务内计算，单位为 UTF-16 code unit，与 JavaScript 字符串长度一致。该字段只扩展 Event payload 和 Notification，不增加 DB 列或第二套状态。Renderer 对已有 Item 的 started 重投不再覆盖本地内容，并拒绝重复或有缺口的 offset。Run 结束时的持久快照刷新负责最终内容校正。旧 Event 不带 offset，继续兼容读取。旧 Desktop 的严格通知校验不接受新增字段，所以 Desktop 与 Runtime 必须一起更新。
 

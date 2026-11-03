@@ -19,7 +19,9 @@ from eidos_runtime.runtime.shell_process_manager import ShellProcessManager  # n
 from eidos_runtime.sandbox.shell import ShellLaunchSpec  # noqa: E402
 from eidos_runtime.tools.contracts import project_tool_result  # noqa: E402
 from eidos_runtime.tools.read_tool_output import (  # noqa: E402
+    READ_TOOL_OUTPUT_MODEL_CONTENT_JSON_BYTES,
     READ_TOOL_OUTPUT_MODEL_PAGE_BYTES,
+    READ_TOOL_OUTPUT_SAFE_PAGE_BYTES,
     ReadToolOutputInput,
     read_tool_output_entry,
 )
@@ -326,9 +328,13 @@ class ReadToolOutputTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "success")
         data = result["data"]
         self.assertLessEqual(
-            len(data["content"].encode("utf-8")),
-            READ_TOOL_OUTPUT_MODEL_PAGE_BYTES,
+            len(json.dumps(data["content"], ensure_ascii=False).encode("utf-8")),
+            READ_TOOL_OUTPUT_MODEL_CONTENT_JSON_BYTES,
         )
+        self.assertGreaterEqual(
+            len(data["content"].encode("utf-8")), READ_TOOL_OUTPUT_SAFE_PAGE_BYTES
+        )
+        self.assertEqual(data["endByte"], len(data["content"].encode("utf-8")))
         self.assertTrue(data["hasMoreAfter"])
         canonical = canonical_tool_result("read_tool_output", result)
         projection = project_tool_result("read_tool_output", canonical)
@@ -341,6 +347,23 @@ class ReadToolOutputTests(unittest.TestCase):
             len(json.dumps(model, ensure_ascii=False, separators=(",", ":")).encode()),
             48 * 1024,
         )
+
+    def test_plain_text_reads_full_requested_page(self) -> None:
+        self._shell_item("plain-call", stdout="line of output\n" * 4_000)
+        entry = read_tool_output_entry(self.store, self.run["id"])
+
+        result = entry.adapter.execute(
+            {"callId": "plain-call", "stream": "stdout", "maxBytes": 16 * 1024},
+            threading.Event(),
+        )
+
+        self.assertEqual(result["outcome"], "success")
+        data = result["data"]
+        self.assertEqual(data["endByte"], READ_TOOL_OUTPUT_MODEL_PAGE_BYTES)
+        canonical = canonical_tool_result("read_tool_output", result)
+        model = project_tool_result("read_tool_output", canonical).model_result
+        self.assertEqual(model["data"]["content"], data["content"])
+        self.assertNotIn("truncated", model["data"])
 
     def test_close_and_reopen_keeps_persisted_output_readable(self) -> None:
         self._shell_item("reopen-call", stdout="persisted")

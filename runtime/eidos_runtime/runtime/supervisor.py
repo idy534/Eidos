@@ -47,6 +47,7 @@ from eidos_runtime.runtime.hook_lifecycle import HookLifecycle
 from eidos_runtime.sandbox.sensitive import default_scanner
 from eidos_runtime.runtime.long_task import RestartVerifier, ResumeVerifier
 from eidos_runtime.runtime.runtime_dependencies import RuntimeDependencyCatalog
+from eidos_runtime.infrastructure.browser_host import BrowserHost
 from eidos_runtime.domain.long_task import (
     LongTaskProgress,
     LongTaskStatus,
@@ -164,6 +165,7 @@ class RunSupervisor:
         self._async_kernel_frozen = False
         self.repository_runtime = repository_runtime
         self._runtime_dependency_catalog = runtime_dependency_catalog
+        self._browser_host: BrowserHost | None = None
         from eidos_runtime.application.collaboration import CollaborationApplication
 
         self.collaboration = CollaborationApplication(store, self.schedule_next, self.cancel_agent, self.events.deliver_pending)
@@ -224,6 +226,18 @@ class RunSupervisor:
     def runtime_dependency_catalog(self) -> RuntimeDependencyCatalog | None:
         with self.lock:
             return self._runtime_dependency_catalog
+
+    def bind_browser_host(self, host: BrowserHost) -> None:
+        """Bind the process-owned Chrome host; its managed task owns shutdown."""
+        with self.lock:
+            if self._browser_host is not None and self._browser_host is not host:
+                raise RuntimeError("browser host is already bound")
+            self._browser_host = host
+
+    @property
+    def browser_host(self) -> BrowserHost | None:
+        with self.lock:
+            return self._browser_host
 
     def prepare_next(self) -> WorkerStart | None:
         if (
@@ -990,6 +1004,7 @@ class RunSupervisor:
                 engine_kwargs["runtime_dependency_catalog"] = (
                     self._runtime_dependency_catalog
                 )
+                engine_kwargs["browser_host"] = self._browser_host
                 engine_kwargs["hook_lifecycle"] = self.hooks
             engine = self.engine_factory(
                 self.store,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Project, Session, SessionGitStatus } from "../contracts.js";
 import type { ProjectSessionGroup, RuntimePresentation } from "../session-state.js";
@@ -95,7 +95,7 @@ type ContextMenuState =
       element?: HTMLElement | null;
     };
 
-export function SessionSidebar({
+export const SessionSidebar = memo(function SessionSidebar({
   collapsed = false,
   sessions, projects: catalogProjects, selectedId, disabled, readCompletedSessions,
   pins = [], pinningDisabled = false, pendingPinTargets, onSetPinned,
@@ -103,11 +103,20 @@ export function SessionSidebar({
   onCreate, onCreateInProject, onSelect, onRename, onDelete, onDeleteProject, onEditProject, onCreateInProjectById, onShowInFinder, onOpenSettings,
   navigationSlot, onOpenAutomations, onOpenAutomation, onSearch,
 }: Props) {
-  const visibleSessions = sessions.filter(
-    (session) => session.taskStatus !== "new" || Boolean(session.title?.trim()) || Boolean(session.forkedFrom),
+  const visibleSessions = useMemo(
+    () => sessions.filter(
+      (session) => session.taskStatus !== "new" || Boolean(session.title?.trim()) || Boolean(session.forkedFrom),
+    ),
+    [sessions],
   );
-  const projects = groupSessionsByProject(visibleSessions, catalogProjects);
-  const sidebar = projectSidebarGroups(projects, pins);
+  const projects = useMemo(
+    () => groupSessionsByProject(visibleSessions, catalogProjects),
+    [visibleSessions, catalogProjects],
+  );
+  const sidebar = useMemo(
+    () => projectSidebarGroups(projects, pins),
+    [projects, pins],
+  );
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(loadCollapsedProjects);
   const prevSelectedIdRef = useRef<string | undefined>(selectedId);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | undefined>(undefined);
@@ -811,7 +820,7 @@ export function SessionSidebar({
       />
     </aside>
   );
-}
+});
 
 export const DEFAULT_VISIBLE_SESSION_COUNT = 6;
 

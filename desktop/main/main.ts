@@ -26,6 +26,7 @@ import * as nodePty from "node-pty";
 
 import { RuntimeClient } from "./runtime-client.js";
 import { isMcpToolsRequest } from "../shared/mcp-details.js";
+import { isBrowserGrantRevokeRequest, isBrowserStatusRequest, isBrowserTargetRequest } from "../shared/browser.js";
 import { isBuiltinPluginRequest, isMcpConnectionRequest } from "../shared/mcp-connections.js";
 import { isAutomationRequest, isAutomationHistoryRequest, isAutomationRunNowRequest } from "../shared/automation.js";
 import { resolveRuntimePaths } from "./runtime-paths.js";
@@ -1578,6 +1579,21 @@ ipcMain.handle(IPC.MCP_LIST, () => clientOrThrow().listMcpServers());
 ipcMain.handle(IPC.MCP_TOOLS, (_event, request: unknown) => {
   if (!isMcpToolsRequest(request)) throw new Error("INVALID_PARAMS");
   return clientOrThrow().readMcpTools(request);
+});
+ipcMain.handle(IPC.BROWSER_AGENT_STATUS, (_event, request: unknown) => {
+  if (!isBrowserStatusRequest(request)) throw new Error("INVALID_PARAMS");
+  return clientOrThrow().readBrowserStatus(request);
+});
+ipcMain.handle(IPC.BROWSER_AGENT_REVOKE, (_event, request: unknown) => {
+  if (!isBrowserGrantRevokeRequest(request)) throw new Error("INVALID_PARAMS");
+  return clientOrThrow().revokeBrowserGrant(request);
+});
+ipcMain.handle(IPC.BROWSER_AGENT_CLOSE, () => clientOrThrow().closeSharedBrowser());
+ipcMain.handle(IPC.BROWSER_AGENT_OPEN, () => clientOrThrow().openSharedBrowser());
+ipcMain.handle(IPC.BROWSER_AGENT_CLEAR, () => clientOrThrow().clearSharedBrowserProfile());
+ipcMain.handle(IPC.BROWSER_AGENT_TARGET, (_event, request: unknown) => {
+  if (!isBrowserTargetRequest(request)) throw new Error("INVALID_PARAMS");
+  return clientOrThrow().setBrowserTarget(request);
 });
 ipcMain.handle(IPC.EXTENSION_READ, () => clientOrThrow().readExtensions());
 ipcMain.handle(IPC.EXTENSION_READ_EVENTS, (_event, afterEventId: unknown) => {

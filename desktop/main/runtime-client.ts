@@ -32,6 +32,13 @@ import readline from "node:readline";
 
 
 import { isMcpToolsResponse, type McpToolsRequest, type McpToolsResponse } from "../shared/mcp-details.js";
+import {
+  isBrowserClearResponse, isBrowserCloseResponse, isBrowserGrantRevokeResponse, isBrowserOpenResponse, isBrowserStatus,
+  isBrowserTargetResponse,
+  type BrowserClearResponse, type BrowserCloseResponse, type BrowserGrantRevokeRequest, type BrowserGrantRevokeResponse,
+  type BrowserOpenResponse, type BrowserStatus, type BrowserStatusRequest, type BrowserTargetRequest,
+  type BrowserTargetResponse,
+} from "../shared/browser.js";
 import { isBuiltinPluginsResponse, isMcpConnectionState, isRemoteMcpInfo, type BuiltinPluginRequest, type BuiltinPluginsResponse, type McpConnectionRequest, type McpConnectionState } from "../shared/mcp-connections.js";
 
 const MAX_MESSAGE_BYTES = 1024 * 1024;
@@ -214,6 +221,7 @@ import type {
   EventListResult,
   Item,
   McpListResult,
+  McpPermissionProfile,
   McpServerRecord,
   McpCreateInput,
   McpUpdateInput,
@@ -1234,6 +1242,30 @@ export class RuntimeClient {
     return this.validatedRequest("mcp/tools", { ...request }, isMcpToolsResponse);
   }
 
+  readBrowserStatus(request: BrowserStatusRequest): Promise<BrowserStatus> {
+    return this.validatedRequest("browser/status", { ...request }, isBrowserStatus);
+  }
+
+  revokeBrowserGrant(request: BrowserGrantRevokeRequest): Promise<BrowserGrantRevokeResponse> {
+    return this.validatedRequest("browser/revokeGrant", { ...request }, isBrowserGrantRevokeResponse);
+  }
+
+  closeSharedBrowser(): Promise<BrowserCloseResponse> {
+    return this.validatedRequest("browser/close", {}, isBrowserCloseResponse);
+  }
+
+  openSharedBrowser(): Promise<BrowserOpenResponse> {
+    return this.validatedRequest("browser/open", {}, isBrowserOpenResponse);
+  }
+
+  clearSharedBrowserProfile(): Promise<BrowserClearResponse> {
+    return this.validatedRequest("browser/clearProfile", {}, isBrowserClearResponse);
+  }
+
+  setBrowserTarget(request: BrowserTargetRequest): Promise<BrowserTargetResponse> {
+    return this.validatedRequest("browser/setTarget", { ...request }, isBrowserTargetResponse);
+  }
+
   setMcpEnabled(
     pluginId: string, serverId: string, enabled: boolean,
     operationId = randomUUID(),
@@ -1533,6 +1565,10 @@ function isNotification(value: unknown): value is RuntimeNotification {
   if (value.method === "automation/changed") {
     return typeof value.params.id === "string";
   }
+  if (value.method === "browser/grantChanged") {
+    return hasOnlyKeys(params, ["sessionId", "active"])
+      && typeof params.sessionId === "string" && typeof params.active === "boolean";
+  }
   if (value.method === "run/queueChanged") {
     return isQueuedRunChangeResponse(params);
   }
@@ -1601,6 +1637,11 @@ function isNotification(value: unknown): value is RuntimeNotification {
     return hasOnlyKeys(params, ["sessionId", "activity"])
       && typeof params.sessionId === "string"
       && isContextCompactionActivity(params.activity);
+  }
+  if (value.method === "model/retryUpdated") {
+    return hasOnlyKeys(params, ["sessionId", "activity"])
+      && typeof params.sessionId === "string"
+      && isModelRetryActivity(params.activity);
   }
   if (value.method === "item/started" || value.method === "item/completed" || value.method === "item/updated") {
     const item = params.item;
@@ -2137,11 +2178,13 @@ function isSessionSnapshot(value: unknown): value is SessionSnapshot {
     isRecord(value)
     && hasOnlyKeys(value, [
       "session", "runs", "items", "stepResolutions",
-      "previousItemId", "throughEventId", "inheritedHistory", "contextCompactions",
+      "previousItemId", "throughEventId", "inheritedHistory", "contextCompactions", "modelRetries",
     ])
     && isSession(value.session)
     && (value.contextCompactions === undefined || Array.isArray(value.contextCompactions)
       && value.contextCompactions.every(isContextCompactionActivity))
+    && (value.modelRetries === undefined || Array.isArray(value.modelRetries)
+      && value.modelRetries.every(isModelRetryActivity))
     && (value.inheritedHistory === undefined || Array.isArray(value.inheritedHistory) && value.inheritedHistory.every((entry) => isInheritedHistoryEntry(entry)))
     && Array.isArray(value.runs)
     && value.runs.every(isRun)
@@ -2631,6 +2674,8 @@ function isSkillListResult(value: unknown): value is { skills: SkillMetadata[] }
     && Array.isArray(value.skills) && value.skills.every(isSkillMetadata);
 }
 
+const MCP_PERMISSION_PROFILES: readonly string[] = ["connector", "workspace_read", "browser"];
+
 function isMcpServerRecord(value: unknown): value is McpServerRecord {
   return (
     isRecord(value)
@@ -2649,7 +2694,7 @@ function isMcpServerRecord(value: unknown): value is McpServerRecord {
     && (value.cwd === undefined || typeof value.cwd === "string")
     && Array.isArray(value.argv) && value.argv.every((item) => typeof item === "string")
     && Array.isArray(value.envNames) && value.envNames.every((item) => typeof item === "string")
-    && ["connector", "workspace_read"].includes(String(value.permissionProfile))
+    && MCP_PERMISSION_PROFILES.includes(String(value.permissionProfile))
     && isPositiveInteger(value.startupTimeoutSeconds)
     && isPositiveInteger(value.toolTimeoutSeconds)
     && typeof value.declaredEnabled === "boolean"
@@ -2777,7 +2822,7 @@ function approvalRequestFrom(
       typeof params.toolName !== "string"
       || !isRecord(params.arguments)
       || provenance === undefined
-      || !["connector", "workspace_read"].includes(String(params.permissionProfile))
+      || !MCP_PERMISSION_PROFILES.includes(String(params.permissionProfile))
       || !isPositiveInteger(params.timeoutSeconds)
       || !Array.isArray(params.envNames)
       || !params.envNames.every((name) => typeof name === "string")
@@ -2798,9 +2843,44 @@ function approvalRequestFrom(
       toolName: params.toolName as string,
       arguments: params.arguments as Record<string, unknown>,
       provenance,
-      permissionProfile: params.permissionProfile as "connector" | "workspace_read",
+      permissionProfile: params.permissionProfile as McpPermissionProfile,
       timeoutSeconds: params.timeoutSeconds as number,
       envNames: [...(params.envNames as string[])],
+    };
+  }
+  if (params.kind === "browser_access") {
+    const provenance = projectApprovalToolProvenance(params.provenance);
+    if (
+      typeof params.toolName !== "string"
+      || !isRecord(params.arguments)
+      || provenance === undefined
+      || params.grantScope !== "session"
+      || (params.profile !== "default" && params.profile !== "user")
+      || params.access !== "interact"
+      || params.permissionProfile !== "browser"
+      || !isPositiveInteger(params.timeoutSeconds)
+    ) {
+      return undefined;
+    }
+    return {
+      id: message.id,
+      sessionId: params.sessionId as string,
+      runId: params.runId as string,
+      itemId: params.itemId as string,
+      toolCallId: params.toolCallId as string,
+      kind: "browser_access",
+      reviewFallback,
+      requiresHumanConfirmation,
+      riskWarning,
+      summary: params.summary as string,
+      toolName: params.toolName as string,
+      arguments: params.arguments as Record<string, unknown>,
+      grantScope: "session",
+      profile: params.profile,
+      access: "interact",
+      provenance,
+      permissionProfile: "browser",
+      timeoutSeconds: params.timeoutSeconds as number,
     };
   }
   if (params.kind === "permission_request") {
@@ -2915,6 +2995,6 @@ function approvalRequestFrom(
   }
   return undefined;
 }
-import { isContextDetails, isContextCompactionRecord, isContextCompactionActivity } from "../shared/context-management.js";
+import { isContextDetails, isContextCompactionRecord, isContextCompactionActivity, isModelRetryActivity } from "../shared/context-management.js";
 import type { ContextDetails, ContextCompactionRecord } from "../shared/context-management.js";
 import { isResourceStatus, isResourceRetryResponse, type ResourceStatus, type ResourceRetryRequest, type ResourceRetryResponse } from "../shared/managed-resources.js";

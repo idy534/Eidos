@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ContextCompactionActivity } from "../../../shared/context.generated.js";
 import type { Item, Run } from "../contracts.js";
 import { ExecutionFeed } from "./ExecutionFeed.js";
+import { expandDetails } from "../../test/expand-details.js";
 
 const run: Run = { id: "run", sessionId: "session", modelId: "fixture", status: "running", modelStepCount: 2, createdAt: 1, updatedAt: 4 };
 const activity: ContextCompactionActivity = {
@@ -54,9 +55,10 @@ describe("context compaction in the process timeline", () => {
     ["failed", "running", "上下文压缩已跳过", "no_compactable_history"],
     ["canceled", "canceled", "上下文压缩已取消", undefined],
     ["running", "interrupted", "上下文压缩已中断", undefined],
-  ] as const)("shows %s activity in a %s Run truthfully", (status, runStatus, label, reason) => {
+  ] as const)("shows %s activity in a %s Run truthfully", async (status, runStatus, label, reason) => {
     const { container } = render(<ExecutionFeed {...props} runs={[{ ...run, status: runStatus }]}
       contextCompactions={[{ ...activity, status, ...(reason ? { reason } : {}) }]} />);
+    await expandDetails(container, "details.process-group");
     expect(screen.getByText(label)).toBeInTheDocument();
     expect(container.querySelector(".context-compaction details")).toBeNull();
   });

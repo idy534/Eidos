@@ -94,7 +94,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 
 ## Model
 
-- 普通采样和无工具收尾调用会把敏感扫描已释放的文本写入同一个 `in_progress` Assistant Item，并通过 SQLite Event/Outbox 和 JSON-RPC `item/delta` 更新界面。完整响应校验成功后，Runtime 才确认该 Item。失败草稿使用现有 incomplete 状态，并从模型上下文排除。
+- 普通采样和无工具收尾调用会把敏感扫描已释放的文本写入同一个 `in_progress` Assistant Item，并通过 SQLite Event/Outbox 和 JSON-RPC `item/delta` 更新界面；首段文本立即显示，之后按 100 ms 或 4 KiB 批量更新。完整响应校验成功后，Runtime 才确认该 Item。失败草稿使用现有 incomplete 状态，并从模型上下文排除。
 - 新 `item/delta` Event 包含 UTF-16 文本偏移 `offset`。Renderer 只在本地内容长度与偏移一致时追加，避免重复投递和已含增量的快照造成重复文字。旧 Event 没有 offset 时仍按原协议读取。Run 结束后，现有 Session 快照刷新负责校正缺失内容。Desktop 和 Runtime 应一起更新。
 
 - `models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。内置 Catalog 提供 DeepSeek、MiniMax、Kimi 和火山引擎 Agent Plan 的十一个推荐模型预设模板，不再强制全等校验。已有模型配置缺少思考档位时，`model/list` 会回退到对应 Catalog 档位，不会改写 `models.json`；已有非空档位仍优先。
@@ -158,7 +158,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - ContextCompactor 使用 deterministic bounded extraction 保存任务目标、约束、动作、证据、修改、失败尝试、决定、待处理 Approval、未解决问题和下一步。
 - 摘要按窗口使用 512～4,096 个参考 Tokens，正文最多 24 KiB。摘要不再把 Assistant 的计划直接记为已完成动作，也不会裁掉明确约束和运行控制事实来强行满足预算。系统核对实际摘要来源，并在提交时拒绝已经请求取消的 Run。
 - Compaction Summary metadata 与主体一起持久化。原始历史不会被摘要替换。
-- 默认在线 Run 会在每个 ModelAttempt Sampling 前持久化并绑定精确 ContextSnapshot。该 Snapshot 原样保存结构化消息、resolved instructions 和 tools。协议修复使用新 Snapshot，Provider transport retry 复用原 Snapshot。可重试的 transport failure 即使已显示文字，也会先结束当前 Attempt 与失败草稿，再创建独立 Attempt、新草稿并复用同一 Snapshot。首次请求加最多 5 次重试共用持久预算，首次临时失败后默认最多恢复 180 秒。系统不拼接旧草稿，不执行残缺工具调用，也不重新执行已有工具操作。明确余额、配额、认证与参数错误不重试。预算耗尽后记录失败，不重新进入容量恢复。
+- 默认在线 Run 会在每个 ModelAttempt Sampling 前持久化并绑定精确 ContextSnapshot。该 Snapshot 原样保存结构化消息、resolved instructions 和 tools。协议修复使用新 Snapshot，Provider transport retry 复用原 Snapshot。可重试的 transport failure 即使已显示文字，也会先结束当前 Attempt 与失败草稿，再创建独立 Attempt、新草稿并复用同一 Snapshot。首次请求加最多 5 次重试共用持久预算，首次临时失败后默认最多恢复 180 秒。系统不拼接旧草稿，不执行残缺工具调用，也不重新执行已有工具操作。明确余额、配额、认证与参数错误不重试。HTTP 200 之后在流里出现的错误对象没有状态码，按提供商侧的临时失败（`stream_interrupted`）重试；其内容明确指向上下文、余额或限流时保留对应的具体含义。日志只记录异常类型链、消息长度和命中的固定原因，不写入提供商消息原文。预算耗尽后记录失败，不重新进入容量恢复。重试进行中，界面显示重试阶段、原因和倒计时，详见[当前架构](architecture.md#模型重试过程显示)。
 
 ## Project Rules
 
@@ -250,7 +250,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
 - 模型调用当前目录中存在但尚未激活的延迟 Tool 时，Runtime 返回 `tool_not_activated`，提示使用工具完整名称搜索激活，并在收到搜索结果后的下一 Step 重试。该调用不会执行工具、申请审批、创建 Durable Intent 或建立结果未知状态，也不会消耗协议修复次数或单独终止 Run。未知、禁用和未授权工具继续按原有检查拒绝。重复调用仍受现有 LoopGuard 限制。
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
-- `skill_create` 使用独立的参数预算，不再受普通工具的 64 KiB JSON 参数上限限制。创建、目录加载和文本资源读取共用单文件 4 MiB、整棵 Skill 8 MiB、最多 512 个文件的存储边界；512 个文件包含自动生成的 `SKILL.md`。Runtime 将 YAML、标题和正文一起计入 `SKILL.md` 大小，将文件路径、metadata 和 JSON 转义计入独立参数预算。工具可以一次提交完整文本资源，无需为了旧的 64 KiB 上限省略文件。`skill_read` 与 `skill_read_resource` 每页仍最多返回 24,000 UTF-8 bytes，offset 可以覆盖整个 4 MiB 文件。审批、Durable Intent、取消、路径保护和 Run 固定目录快照保持原有语义。
+- `skill_create` 使用独立的参数预算，不再受普通工具的 64 KiB JSON 参数上限限制。创建路径保留单文件 4 MiB、整棵 Skill 8 MiB、最多 512 个文件的边界；512 个文件包含自动生成的 `SKILL.md`。安装与目录加载允许更大的完整 Skill tree：单文件 4 MiB、整棵 64 MiB、最多 20,000 个文件。`skill_install` 的整次工具超时为 300 秒。Runtime 将 YAML、标题和正文一起计入 `SKILL.md` 大小，将文件路径、metadata 和 JSON 转义计入独立参数预算。工具可以一次提交完整文本资源，无需为了旧的 64 KiB 上限省略文件。`skill_read` 与 `skill_read_resource` 每页仍最多返回 24,000 UTF-8 bytes，offset 可以覆盖整个 4 MiB 文件。审批、Durable Intent、取消、路径保护和 Run 固定目录快照保持原有语义。
 - ToolCallRuntime 和 ToolExecutionController 会按工具类型执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。普通读取和 Shell 聚合输出不因可识别敏感内容阻断；展示层只做 best-effort 脱敏。
 - Runtime 可以在共同的工具结果提交边界保存已取得的文字和二进制内容。`view_image` 已使用该边界保存读取时的 PNG/JPEG；后续请求与重启恢复从保存的内容组装，源文件删除或替换不会触发重新读取或源文件 Hash 比对。内容快照没有新增 Hash 字段。公共 ToolResult 与 UI 契约保持不变，模型内容引用只进入内部持久投影。
 - 确定的 Tool Error 会持久化为 ToolResult，并回到模型循环。敏感或超大的结果在 projection 重建为错误时，会保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。Runtime 不会自动重放有副作用的 Tool。未知结果不会阻止成功终态。
@@ -275,11 +275,12 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 普通 `run_shell` 命令使用 resolved shell 的 `-c`。Snapshot 捕获失败时使用 sanitized parent environment，并记录有界的稳定 warning。Snapshot 不恢复 aliases、functions 或其他 shell state。
 - Runtime 分开管理 Shell 进程寿命和工具等待窗口。模型收到 `shell_running` 后，可以用 `write_stdin` 的空 `chars` 继续等待和读取新输出，也可以发送输入，或使用 `control_shell` 明确停止命令。PTY 的 Ctrl-C 允许程序处理后继续运行。Runtime 持续读取 stdout/stderr，并把做过 best-effort 展示脱敏的片段追加到原命令 Item；聚合结果保留原始 stdout/stderr。内部会保存每次跟进 ToolCall；Desktop 不显示正常的 `write_stdin` 和 `control_shell` 跟进卡片。跟进失败会显示中文错误提示。
 - Shell stdout 和 stderr 使用 UTF-8 增量解码。Runtime 按片段到达顺序将展示脱敏后的内容累积到 Item content，实时预览合计最多 256 KiB。Desktop 在预览不足时使用终态结果中保留的首尾；其他情况继续保留片段顺序。
+- Desktop 处理过程中相邻的两个及以上工具调用会折叠为一个工具组，默认只显示一行摘要，例如“读取 4 个文件 · 搜索 3 次 · 运行 6 条命令”，含失败时附“N 失败”标记。组内有进行中的工具时，摘要显示该工具的实时动作并带转圈图标。展开后以紧凑行列出各工具，超过 8 项时限高滚动；每行仍按原样展开详情。待审批的工具和会话内搜索命中的条目会让所在工具组自动展开。工具组只是展示层聚合，不改变 Run、Item 和 ToolCall 的持久事实；单个孤立的工具调用和助手叙述文字保持原样，叙述文字会把工具组分开。
 - Desktop Shell Feed 默认折叠 Shell Item。用户展开后，Feed 将 Shell 输出按纯文本展示，并移除 ANSI 和 OSC 控制序列，不激活终端格式或链接。旧 Item 缺少或没有 `content` 时，Feed 回退到结果中的 stdout 和 stderr。待审批、已批准和已拒绝的 Shell 历史都使用这个 Shell Item，审批状态单独显示。
 - Feed 先按完整 Item 顺序区分过程消息和回复，再隐藏正常的 Shell 跟进卡片。隐藏 `write_stdin` 不会把它前面的进度文字变成最终回复。Run 仍在执行时，回复不显示最终操作栏；Run 进入终态后，只有最后一个消息段中的最后一条回复显示该操作栏。跟进失败仍显示中文错误提示。
 - Shell Result 存在 `attemptCount`、`sandboxed` 或 `escalated` 时，Execution Feed 会展示这些已有执行和权限事实，包括扩权重试信息。
-- `run_shell` 的模型结果投影对 stdout 和 stderr 各保留首尾，每条流最多 16 KiB，整个 JSON 最多 48 KiB。原始 `truncated` 和 `omittedBytes` 事实不会被模型投影覆盖。模型投影另用 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 标记模型省略的 stdout/stderr UTF-8 字节和继续读取方式。
-- `read_tool_output` 是只读工具。它要求前一次 `run_shell` 的 provider tool call ID，默认读取 stdout，也可以读取 stderr。当前 Run 的活动 Shell 可读取非消费式累计快照；当前 Session 的历史 Run 可读取已持久化的终态结果。跨 Run 的活动 Shell、跨 Session、缺失或歧义 ID 会拒绝。调用方可以用 `offsetBytes`、`maxBytes`（请求范围 4 字节至 16 KiB）或 `fromEnd` 分页读取。结果返回 UTF-8 边界对齐的实际 `startByte`、`endByte` 和 `nextOffset`，单页可能小于请求值，调用方必须按 `nextOffset` 继续。活动输出会返回 `outputRevision`，后续分页应传回该值；快照变化时返回 `output_snapshot_changed`。该工具不会移动 `write_stdin` 的增量游标、重新执行 Shell 或清除 reconciliation；Shell 原始输出上限已经丢失的字节无法恢复。
+- `run_shell` 的模型结果投影对 stdout 和 stderr 各保留首尾，每条流最多 32 KiB，首尾约按 1:3 分配，尾部更多；Shell 结果整个 JSON 最多 64 KiB，其他工具仍为 48 KiB。两条流同时很长时，系统按比例收缩较长的一条。原始 `truncated` 和 `omittedBytes` 事实不会被模型投影覆盖。模型投影另用 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 标记模型省略的 stdout/stderr UTF-8 字节和继续读取方式。
+- `read_tool_output` 是只读工具。它要求前一次 `run_shell` 的 provider tool call ID，默认读取 stdout，也可以读取 stderr。当前 Run 的活动 Shell 可读取非消费式累计快照；当前 Session 的历史 Run 可读取已持久化的终态结果。跨 Run 的活动 Shell、跨 Session、缺失或歧义 ID 会拒绝。调用方可以用 `offsetBytes`、`maxBytes`（请求范围 4 字节至 16 KiB）或 `fromEnd` 分页读取。普通文本按请求值返回整页；如果正文经 JSON 转义后超过 32 KiB（例如大量控制字符），Runtime 会缩小读取范围重新读取，最少 4 KiB，使模型投影不再截断已返回的页。结果返回 UTF-8 边界对齐的实际 `startByte`、`endByte` 和 `nextOffset`，单页可能小于请求值，调用方必须按 `nextOffset` 继续。活动输出会返回 `outputRevision`，后续分页应传回该值；快照变化时返回 `output_snapshot_changed`。该工具不会移动 `write_stdin` 的增量游标、重新执行 Shell 或清除 reconciliation；Shell 原始输出上限已经丢失的字节无法恢复。
 - 模型仍可使用 `write_stdin` 分段等待、读取增量输出和发送输入。存在未确认副作用时，新的非空输入无法证明其影响与旧操作隔离，仍保守阻断；空输入和 Ctrl-C 保持可用。不同 Shell ID 不足以证明文件和外部影响不冲突。
 - Shell effective environment 使用真实 `HOME`、snapshot 的 Host `PATH`、真实 `TMPDIR`、`USER`、`LOGNAME`、`LANG` 和 `LC_*`。Bundled `rg` 目录只追加在 `PATH` 末尾并去重。Provider 会在启动 login shell 前移除继承的 `EIDOS_*` 和 packaged Runtime Python control environment。用户 profile 随后声明的普通开发环境仍会进入 snapshot。Runtime 不会强制设置 `LC_ALL`。
 - `run_shell` 不从 `models.json` 注入 API Key，也不强制禁用用户 Git 配置。`HardenedGitRunner` 仍使用独立的 Git 执行路径。
@@ -468,6 +469,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `workspace/readAsset` 每次最多读取 192 KiB，总文件上限是 32 MiB。文本资源必须完整通过敏感扫描，文本上限是 2 MiB。Main 通过短期 `eidos-preview` 授权地址提供资源，Runtime 在每次读取时重新核验 Workspace 和文件版本。
 - Review 提供“最近一轮”范围，严格按 `runId` 过滤持久化 ToolCall 文件补丁，空轮保持空，不回退到全量；“整个任务”展示本 Session 全部 Run 的补丁历史。长任务可以分页加载更早记录。文件工具在 Prepare 后提交 `item.updated` Event，并通过 Outbox 推送 `item/updated`。界面不会把准备中的补丁标记为已写入。
 - 最近一轮反馈包含 Run、ToolCall、文件、行位置和已有 Base SHA。
+- Agent 可以通过内置浏览器插件操作 Google Chrome：打开网页、读取快照、点击、输入、填写表单、切换标签页、截图，以及在每次批准后上传 Workspace 文件。所有 Session 共用 Eidos 专用 Chrome profile；用户也可以选择自己日常使用的 Chrome。页面操作按 Session 授权，下载被拒绝。详见[浏览器操作](features/browser.md)。
 - Browser 使用 Electron `WebContentsView`，支持本地 HTML、HTTP/HTTPS 页面和开发服务。网页面板提供新标签页空状态、地址输入、刷新和隔离网页预览。地址栏使用 `tldts` 识别域名、IP 和本地地址，支持完整 HTTP/HTTPS 地址和常见无协议地址；输入框保持左对齐并可在已打开页面后继续编辑，其他输入会转换为 Google 搜索。刷新只在按钮图标上播放一次逆时针半圈动画，不额外显示加载文字。一个 Workspace 可以同时打开多个独立 Browser Tab。网页面板不提供标注或开发终端按钮；开发终端仍由独立工作区工具提供，Projectless 仍不提供手动 Terminal。
 - 本地 HTML 资源仅来自当前 Workspace，页面不能访问 Eidos preload、Node 或其他文件协议。Browser 使用临时隔离分区，拒绝权限申请、新窗口和下载。窗口关闭、Session 删除、Handoff 和 Worktree Restore 会清理对应网页和预览授权。
 

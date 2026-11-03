@@ -21,6 +21,7 @@ from typing import TypeVar
 from pydantic import Field, ValidationError, model_validator
 
 from eidos_runtime.db.database import Database, Repository
+from eidos_runtime.db.errors import StorageError
 from eidos_runtime.db.layout import prune_repository_generations
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 from eidos_runtime.persistence.conversion import RowReader, RowValues
@@ -312,37 +313,77 @@ class RepositoryIntelligenceRepository(Repository):
             max_index_generation=int(row[1]),
         )
 
+    def _read_status_rows(
+        self,
+        connection: sqlite3.Connection,
+        workspace_identity: RepositoryWorkspaceIdentity,
+    ) -> tuple[sqlite3.Row | None, sqlite3.Row | None]:
+        parameters = _identity_parameters(workspace_identity)
+        complete_row = connection.execute(
+            """
+            SELECT * FROM repository_snapshots
+            WHERE repository_id = ?
+              AND workspace_root = ?
+              AND workspace_dev = ?
+              AND workspace_inode = ?
+              AND workspace_uid = ?
+              AND complete = 1
+              AND repository_map_json IS NOT NULL
+            ORDER BY creation_seq DESC LIMIT 1
+            """,
+            parameters,
+        ).fetchone()
+        latest_row = connection.execute(
+            """
+            SELECT * FROM repository_snapshots
+            WHERE repository_id = ?
+              AND workspace_root = ?
+              AND workspace_dev = ?
+              AND workspace_inode = ?
+              AND workspace_uid = ?
+            ORDER BY creation_seq DESC LIMIT 1
+            """,
+            parameters,
+        ).fetchone()
+        return complete_row, latest_row
+
     def read_status(
         self, workspace_identity: RepositoryWorkspaceIdentity
     ) -> RepositoryIndexStatus:
-        with self.lock:
-            connection = self._connection()
-            complete_row = connection.execute(
-                """
-                SELECT * FROM repository_snapshots
-                WHERE repository_id = ?
-                  AND workspace_root = ?
-                  AND workspace_dev = ?
-                  AND workspace_inode = ?
-                  AND workspace_uid = ?
-                  AND complete = 1
-                  AND repository_map_json IS NOT NULL
-                ORDER BY creation_seq DESC LIMIT 1
-                """,
-                _identity_parameters(workspace_identity),
-            ).fetchone()
-            latest_row = connection.execute(
-                """
-                SELECT * FROM repository_snapshots
-                WHERE repository_id = ?
-                  AND workspace_root = ?
-                  AND workspace_dev = ?
-                  AND workspace_inode = ?
-                  AND workspace_uid = ?
-                ORDER BY creation_seq DESC LIMIT 1
-                """,
-                _identity_parameters(workspace_identity),
-            ).fetchone()
+        complete_row: sqlite3.Row | None = None
+        latest_row: sqlite3.Row | None = None
+        if self.lock.acquire(blocking=False):
+            try:
+                complete_row, latest_row = self._read_status_rows(
+                    self._connection(), workspace_identity
+                )
+            finally:
+                self.lock.release()
+        else:
+            if getattr(self.database, "_unavailable", False):
+                raise StorageError("repository_cache_unavailable")
+            path = getattr(self.database, "path", None)
+            read_from_wal = False
+            if isinstance(path, Path) and path.is_file() and not path.is_symlink():
+                reader: sqlite3.Connection | None = None
+                try:
+                    reader = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
+                    reader.row_factory = sqlite3.Row
+                    reader.execute("PRAGMA busy_timeout = 1000")
+                    complete_row, latest_row = self._read_status_rows(
+                        reader, workspace_identity
+                    )
+                    read_from_wal = True
+                except sqlite3.Error:
+                    read_from_wal = False
+                finally:
+                    if reader is not None:
+                        reader.close()
+            if not read_from_wal:
+                with self.lock:
+                    complete_row, latest_row = self._read_status_rows(
+                        self._connection(), workspace_identity
+                    )
         if complete_row is None:
             return RepositoryIndexStatus(
                 repository_id=workspace_identity.repository_id,

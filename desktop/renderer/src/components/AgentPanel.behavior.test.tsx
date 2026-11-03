@@ -3,6 +3,8 @@ import path from "node:path";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { expandDetails } from "../../test/expand-details.js";
+
 import type { CollaborationState } from "../../../shared/collaboration.generated.js";
 import type { EidosRuntimeAPI, Item, Run, RuntimeNotification, SessionSnapshot } from "../contracts.js";
 import {
@@ -314,8 +316,10 @@ describe("AgentWorkspacePanel", () => {
         onApprove={() => undefined} onReject={() => undefined} />,
     );
 
-    expect(await screen.findByText("Earlier answer")).toBeInTheDocument();
-    expect(screen.getByText("Earlier follow-up")).toBeInTheDocument();
+    expect(await screen.findByText("Earlier follow-up")).toBeInTheDocument();
+    await waitFor(() => expect(api.readSession).toHaveBeenCalledTimes(2));
+    await expandDetails(container, "details.process-group");
+    expect(screen.getByText("Earlier answer")).toBeInTheDocument();
     expect(screen.getByText("Newest answer")).toBeInTheDocument();
     expect(screen.getByText("Latest follow-up")).toBeInTheDocument();
     expect(screen.getByText("上下文已自动压缩")).toBeInTheDocument();
@@ -893,6 +897,41 @@ describe("AgentWorkspacePanel", () => {
     expect(rolePill).toHaveAttribute("title", "模式：worker · 模型：公司网关 / 公司推理模型");
     const modelSpan = container.querySelector(".agent-role-pill__model");
     expect(modelSpan).toHaveTextContent("公司网关 / 公司推理模型");
+  });
+
+  it("ignores item/delta notifications in useAgentState", async () => {
+    vi.useFakeTimers();
+    try {
+      let listener: ((notification: RuntimeNotification) => void) | undefined;
+      const readAgents = vi.fn().mockResolvedValue({ parentRunId: "parent-run", agents: [], messages: [] });
+      const api: Partial<EidosRuntimeAPI> = {
+        readAgents,
+        onNotification: vi.fn((callback: (notification: RuntimeNotification) => void) => {
+          listener = callback;
+          return () => {};
+        }),
+      };
+      (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
+
+      function Probe() {
+        useAgentState("parent-session", true);
+        return null;
+      }
+      render(<Probe />);
+      await act(async () => { await Promise.resolve(); });
+      expect(readAgents).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        listener?.({
+          method: "item/delta",
+          params: { sessionId: "child-session", runId: "child-run", itemId: "item-1", delta: "chunk" },
+        });
+        vi.advanceTimersByTime(500);
+      });
+      expect(readAgents).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

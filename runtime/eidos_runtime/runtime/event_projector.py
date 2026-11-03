@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from eidos_runtime.protocol.tool_text import project_tool_text
 from eidos_runtime.domain.context_management import ContextCompactionActivity, ContextCompactionRecord
+from eidos_runtime.domain.model_retry import ModelRetryActivity
 
 
 class EventProjector:
@@ -30,18 +31,35 @@ class EventProjector:
                 compaction_notifications = (self._notification("context/compactionUpdated", {
                     "sessionId": event["sessionId"], "activity": activity.to_wire_dict(),
                 }),)
+        if (
+            event_type == "model.retry_changed"
+            and isinstance(payload, dict)
+            and isinstance(event.get("sessionId"), str)
+            and isinstance(event.get("runId"), str)
+        ):
+            activity = ModelRetryActivity.model_validate({
+                **payload, "runId": event["runId"], "eventId": event["eventId"],
+                "updatedAt": event["occurredAt"],
+            })
+            return (self._notification("model/retryUpdated", {
+                "sessionId": event["sessionId"], "activity": activity.to_wire_dict(exclude_none=True),
+            }),)
         if event_type == "run.queue_changed" and isinstance(payload, dict):
             return (self._notification("run/queueChanged", payload),)
         if event_type == "memory.changed" and isinstance(payload, dict):
             from eidos_runtime.memory.contracts import MemoryChangedNotice
             notice = MemoryChangedNotice(scope_id=payload["scopeId"], generation=payload["generation"])
             return (self._notification("memory/changed", notice.to_wire_dict()),)
-        if event_type in {"channel.changed", "web_search.settings_changed", "shell_environment.settings_changed", "personalization.settings_changed"}:
+        if event_type in {"channel.changed", "web_search.settings_changed", "shell_environment.settings_changed", "personalization.settings_changed", "browser.settings_changed"}:
             return ()
         if event_type == "project.updated" and isinstance(payload, dict):
             return (self._notification("project/updated", {"id": payload["id"]}),)
         if event_type == "automation.changed" and isinstance(payload, dict) and isinstance(payload.get("id"), str):
             return (self._notification("automation/changed", {"id": payload["id"]}),)
+        if event_type == "browser.grant_changed" and isinstance(payload, dict):
+            return (self._notification("browser/grantChanged", {
+                "sessionId": payload["sessionId"], "active": payload["active"] is True,
+            }),)
         if event_type == "sidebar.pins_changed" and isinstance(event.get("eventId"), int):
             return (self._notification("sidebar/pinsChanged", {
                 "eventId": event["eventId"],

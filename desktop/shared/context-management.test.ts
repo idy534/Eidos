@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { isContextDetails, isContextCompactionRecord, isContextCompactionActivity } from "./context-management.js";
+import { isContextDetails, isContextCompactionRecord, isContextCompactionActivity, isModelRetryActivity } from "./context-management.js";
 
 test("Python and TypeScript share the closed context management fixture", () => {
   const fixture = JSON.parse(readFileSync(path.resolve("protocol/fixtures/context-management-v1.json"), "utf8"));
@@ -14,4 +14,9 @@ test("Python and TypeScript share the closed context management fixture", () => 
   assert.equal(isContextDetails({ ...fixture.details, rawHistory: "forbidden" }), false);
   assert.equal(isContextCompactionRecord({ ...fixture.compaction, inputTokens: -1 }), false);
   assert.equal(isContextDetails({ ...fixture.details, measurement: "exact_tokenizer" }), false);
+  assert.equal(isModelRetryActivity(fixture.modelRetry), true);
+  assert.equal(isModelRetryActivity({ ...fixture.modelRetry, rawError: "forbidden" }), false);
+  assert.equal(isModelRetryActivity({ ...fixture.modelRetry, cause: "unknown_cause" }), false);
+  assert.equal(isModelRetryActivity({ ...fixture.modelRetry, status: "canceled" }), false);
+  assert.equal(isModelRetryActivity({ ...fixture.modelRetry, httpStatus: 99 }), false);
 });

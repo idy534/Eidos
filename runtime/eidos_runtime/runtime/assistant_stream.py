@@ -42,7 +42,8 @@ class AssistantStreamWriter:
         self._sequence = 0
         self._pending: list[str] = []
         self._pending_bytes = 0
-        self._last_flush = monotonic()
+        # None publishes the first visible text at once; later text is batched.
+        self._last_flush: float | None = None
         self._text_tail = ""
         self._control_rejected = False
 
@@ -69,9 +70,11 @@ class AssistantStreamWriter:
         self._text_tail = text[boundary:]
         for start in range(0, boundary, 1024):
             self.write(text[start:min(start + 1024, boundary)])
-        # The scanner already batches complete lines. Flush now so a paused
-        # provider cannot leave the last safe line waiting for another callback.
-        self.flush()
+        # write() flushes once the batch window or size is reached. Flushing
+        # every scanner line instead turned each line into a state commit,
+        # history fsync and notification, which starved other Sessions. Text
+        # held inside the window is flushed by the next line, finish_stream(),
+        # complete() or abort().
 
     def finish_stream(self) -> None:
         """Release the remaining text only after complete-response validation."""
@@ -98,11 +101,11 @@ class AssistantStreamWriter:
             )
             self.item = mutation.value
             self.events.publish(mutation, item=self.item)
-        self._sequence += 1
         self._pending.append(delta)
         self._pending_bytes += len(delta.encode("utf-8"))
         if (
-            self._pending_bytes >= DELTA_BATCH_BYTES
+            self._last_flush is None
+            or self._pending_bytes >= DELTA_BATCH_BYTES
             or self.monotonic() - self._last_flush >= DELTA_BATCH_SECONDS
         ):
             self.flush()
@@ -110,10 +113,13 @@ class AssistantStreamWriter:
     def flush(self) -> None:
         if self.item is None or not self._pending:
             return
+        # One batch is one delta event, so held lines cost one outbox row and
+        # one notification instead of one per line.
+        self._sequence += 1
         mutation = self.store.append_item_deltas_committed(
             str(self.item["id"]),
-            tuple(self._pending),
-            self._sequence - len(self._pending) + 1,
+            ("".join(self._pending),),
+            self._sequence,
         )
         self.item = mutation.value
         self.events.publish(mutation, item=self.item)

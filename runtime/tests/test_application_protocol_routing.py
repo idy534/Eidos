@@ -35,6 +35,7 @@ def test_business_method_registry_has_no_legacy_server_handler_adapter(tmp_path)
         "_DeferredSessionForkAdapter",
         "_CustomProviderAdapter",
         "_McpToolsAdapter",
+        "_BrowserTaskAdapter",
     }
     assert all(registration.error_mapper is not None for registration in server.method_registry)
     assert not {
@@ -135,3 +136,39 @@ def test_runtime_server_close_stops_repository_watchers(tmp_path) -> None:
     assert active.closed is True
     assert active.watcher_thread is not None
     assert active.watcher_thread.is_alive() is False
+
+
+def test_browser_status_replies_off_the_request_loop(tmp_path: Path) -> None:
+    """A starting Chrome holds the host lock; status must not stall other RPCs."""
+
+    import threading
+    from unittest.mock import patch
+
+    from eidos_runtime.application.browser import BrowserApplication
+    from eidos_runtime.models.browser import BrowserStatus
+
+    output = StringIO()
+    server = RuntimeServer(output, data_directory=tmp_path / "data")
+    try:
+        server.handle({"jsonrpc": "2.0", "id": "client-init", "method": "initialize",
+            "params": {"client": {"name": "test", "version": "1"}, "protocolVersion": 1}})
+        entered, release = threading.Event(), threading.Event()
+
+        def status(_application, _request):
+            entered.set()
+            assert release.wait(5)
+            return BrowserStatus(
+                chrome_installed=False, running=False, plugin_installed=False,
+                plugin_enabled=False, resource="unavailable",
+            )
+
+        with patch.object(BrowserApplication, "status", status):
+            server.handle({"jsonrpc": "2.0", "id": "client-browser", "method": "browser/status", "params": {}})
+            assert entered.wait(2)
+            server.handle({"jsonrpc": "2.0", "id": "client-health", "method": "runtime/health", "params": {}})
+            assert _response(output, "client-health")["result"]
+            release.set()
+            assert server.supervisor.wait_managed_tasks(3)
+        assert _response(output, "client-browser")["result"]["resource"] == "unavailable"
+    finally:
+        server.close()

@@ -12,9 +12,9 @@ from eidos_runtime.extensions.skill_manifest import skill_document
 from eidos_runtime.extensions.skills import SkillCatalog, SkillReadError
 from eidos_runtime.file_limits import (
     MAX_SKILL_ARGUMENT_BYTES,
+    MAX_SKILL_CREATE_FILES,
+    MAX_SKILL_CREATE_TOTAL_BYTES,
     MAX_SKILL_FILE_BYTES,
-    MAX_SKILL_FILES,
-    MAX_SKILL_TOTAL_BYTES,
     function_argument_limit,
 )
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
@@ -49,14 +49,17 @@ def test_complete_tree_budget_includes_json_escaping_and_generated_document(tmp_
         arguments["instructions"] = "\x01" * (MAX_SKILL_FILE_BYTES - overhead - 1)
         arguments["files"] = [{"path": "references/all.txt", "content": "\x01" * MAX_SKILL_FILE_BYTES}]
         encoded = json.dumps(arguments, ensure_ascii=False, separators=(",", ":")).encode()
-        assert len(encoded) > MAX_SKILL_TOTAL_BYTES
+        assert len(encoded) > MAX_SKILL_CREATE_TOTAL_BYTES
         assert len(encoded) < MAX_SKILL_ARGUMENT_BYTES
         validation = create_entry(store).validate_arguments(arguments)
         assert validation.valid, validation
         parsed = SkillCreateInput.model_validate_json(json.dumps(arguments))
         document = skill_document(parsed.name, parsed.description, parsed.instructions)
         assert len(document) == MAX_SKILL_FILE_BYTES
-        assert len(document) + len(parsed.files[0].content.encode()) == MAX_SKILL_TOTAL_BYTES
+        assert (
+            len(document) + len(parsed.files[0].content.encode())
+            == MAX_SKILL_CREATE_TOTAL_BYTES
+        )
         arguments["instructions"] += "x"
         with pytest.raises(ValidationError, match="skill_instructions_too_large"):
             SkillCreateInput.model_validate_json(json.dumps(arguments))
@@ -68,7 +71,7 @@ def test_complete_tree_budget_includes_json_escaping_and_generated_document(tmp_
 
 def test_tree_size_and_file_count_match_catalog_boundaries():
     resources = [{"path": f"references/{index}.txt", "content": "text"}
-                 for index in range(MAX_SKILL_FILES - 1)]
+                 for index in range(MAX_SKILL_CREATE_FILES - 1)]
     SkillCreateInput.model_validate_json(json.dumps(create_arguments(files=resources)))
     with pytest.raises(ValidationError):
         SkillCreateInput.model_validate_json(json.dumps(create_arguments(

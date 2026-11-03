@@ -1,0 +1,18 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "eidos-browser",
+  "version": "1.0.0",
+  "description": "让 Agent 在 Eidos 专用的 Chrome 中打开网页、读取页面、点击、输入和截图。",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "浏览器",
+        "developerName": "Eidos",
+        "websiteURL": "https://github.com/microsoft/playwright-mcp",
+        "composerIcon": "./icon.png",
+        "logo": "./icon.png"
+      },
+      "onboardingSkill": "./skills/browser/SKILL.md"
+    }
+  }
+}

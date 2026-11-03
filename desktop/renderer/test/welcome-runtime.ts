@@ -11,6 +11,9 @@ export function createWelcomeRuntime() {
   };
   const api: Partial<EidosRuntimeAPI> = {
     onNotification: () => () => {},
+    readBrowserAgentStatus: async () => ({
+      chromeInstalled: true, running: false, pluginInstalled: false, pluginEnabled: false, resource: "unavailable" as const, granted: false,
+    }),
     onApprovalRequest: () => () => {},
     onShortcut: () => () => {},
     listProjects: async () => ({ items: [] }),

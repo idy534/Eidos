@@ -858,13 +858,50 @@ class RuntimeHardeningTests(unittest.TestCase):
         )
 
         writer.stream("🙂")
+        writer.flush()
         writer.stream("x")
+        writer.flush()
 
         deltas = [
             event for event in notifications if event["method"] == "item/delta"
         ]
         self.assertEqual([event["params"]["offset"] for event in deltas], [0, 2])
         self.assertEqual(writer.item["content"], "🙂x")
+
+    def test_streamed_lines_batch_inside_the_flush_window(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "stream batch")
+        step = self.store.increment_model_step(run["id"])
+        notifications: list[dict[str, object]] = []
+        now = [100.0]
+        writer = AssistantStreamWriter(
+            self.store,
+            RuntimeEvents(notifications.append),
+            run["id"],
+            step,
+            monotonic=lambda: now[0],
+        )
+
+        # The first line flushes immediately so the reply appears without delay.
+        writer.stream("first\n")
+        for index in range(20):
+            now[0] += 0.001
+            writer.stream(f"line {index}\n")
+        deltas = [event for event in notifications if event["method"] == "item/delta"]
+        self.assertEqual(len(deltas), 1)
+
+        now[0] += 0.2
+        writer.stream("after window\n")
+        deltas = [event for event in notifications if event["method"] == "item/delta"]
+        self.assertEqual(len(deltas), 2)
+        self.assertEqual(
+            writer.item["content"],
+            "first\n" + "".join(f"line {index}\n" for index in range(20)) + "after window\n",
+        )
+
+        now[0] += 0.001
+        writer.stream("held tail\n")
+        writer.finish_stream()
+        self.assertTrue(str(writer.item["content"]).endswith("held tail\n"))
 
     def _finalizing_run(self, user_input: str) -> dict[str, object]:
         run, _ = self.store.create_run(self.session["id"], user_input)

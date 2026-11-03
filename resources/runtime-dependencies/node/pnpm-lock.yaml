@@ -18,6 +18,9 @@ importers:
       '@deepseek-ai/libreoffice-kit-darwin-arm64':
         specifier: 0.2.3
         version: 0.2.3
+      '@playwright/mcp':
+        specifier: 0.0.84
+        version: 0.0.84
       '@tesseract.js-data/chi_sim':
         specifier: 1.0.0
         version: 1.0.0
@@ -312,6 +315,11 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@playwright/mcp@0.0.84':
+    resolution: {integrity: sha512-weqLrA7/D8MJzNV9/t3Hnjp100tS2sxFXKeb2gH6Nhktqmdfvx5qRA9AZ5Mhjnre1jY0wltsrRK5VZS5NBgcvw==}
+    engines: {node: '>=18'}
+    hasBin: true
+
   '@swc/helpers@0.5.23':
     resolution: {integrity: sha512-5lSsMOTXURePglDfvuAQUqkGek9Hg2kksOYay2m0+XR++b2NWYL/4sWyuvVBIs8oKnJaxkdi9whaL/sqN13afw==}
 
@@ -424,6 +432,16 @@ packages:
 
   pako@1.0.11:
     resolution: {integrity: sha512-4hLB8Py4zZce5s4yd9XzopqwVv/yGNhV1Bl8NTmCq1763HeK2+EwVTv+leGeL13Dnh2wfbqowVPXCIO0z4taYw==}
+
+  playwright-core@1.65.0-alpha-2026-10-30:
+    resolution: {integrity: sha512-LPMw8B/HRQKMcJeXTqWSrkB/AfCKKmbDQMbu0p7zg8MgibOWaKMjZWR/StAtrQkOxvOmZEju1o1TnPgdoOCwrg==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  playwright@1.65.0-alpha-2026-10-30:
+    resolution: {integrity: sha512-dmAJMVHKzHvMQjn+XDcaq/pxaZ0W6n8i78rwTM+VGRtQ3WBF5ZiSdB1yL/cyoYUGUMwg3jxN65KqC9cERaCbIg==}
+    engines: {node: '>=20'}
+    hasBin: true
 
   pptxgenjs@4.0.1:
     resolution: {integrity: sha512-TeJISr8wouAuXw4C1F/mC33xbZs/FuEG6nH9FG1Zj+nuPcGMP5YRHl6X+j3HSUnS1f3at6k75ZZXPMZlA5Lj9A==}
@@ -708,6 +726,11 @@ snapshots:
   '@koromix/koffi-win32-x64@3.1.1':
     optional: true
 
+  '@playwright/mcp@0.0.84':
+    dependencies:
+      playwright: 1.65.0-alpha-2026-10-30
+      playwright-core: 1.65.0-alpha-2026-10-30
+
   '@swc/helpers@0.5.23':
     dependencies:
       tslib: 2.8.1
@@ -827,6 +850,12 @@ snapshots:
   pako@0.2.9: {}
 
   pako@1.0.11: {}
+
+  playwright-core@1.65.0-alpha-2026-10-30: {}
+
+  playwright@1.65.0-alpha-2026-10-30:
+    dependencies:
+      playwright-core: 1.65.0-alpha-2026-10-30
 
   pptxgenjs@4.0.1:
     dependencies:

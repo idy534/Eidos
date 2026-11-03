@@ -21,6 +21,7 @@ from eidos_runtime.domain.completion import CompletionCheckRecord
 from eidos_runtime.domain.run_termination import RunTermination
 from eidos_runtime.domain.queued_runs import QueuedRunChange
 from eidos_runtime.domain.context_management import ContextCompactionRecord
+from eidos_runtime.domain.model_retry import ModelRetryCause, ModelRetryStatus
 
 
 EVENT_CONTRACT_VERSION = 1
@@ -34,6 +35,11 @@ class SkillStateChangedPayload(ClosedModel):
 
 class SidebarPinsChangedPayload(ClosedModel):
     pass
+
+
+class BrowserGrantChangedPayload(ClosedModel):
+    session_id: str = Field(alias="sessionId")
+    active: bool
 
 
 class McpConnectionChangedPayload(ClosedModel):
@@ -168,6 +174,20 @@ class ContextCompactedPayload(ClosedModel):
     compaction: ContextCompactionRecord | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
+class ModelRetryChangedPayload(ClosedModel):
+    request_group_id: str = Field(alias="requestGroupId", min_length=1, max_length=80)
+    started_at: int = Field(alias="startedAt", ge=0)
+    status: ModelRetryStatus
+    retry_index: int = Field(alias="retryIndex", ge=0, le=64)
+    cause: ModelRetryCause
+    http_status: int | None = Field(default=None, alias="httpStatus", ge=100, le=599)
+    retry_after_applied: bool = Field(default=False, alias="retryAfterApplied")
+    next_retry_at: int | None = Field(default=None, alias="nextRetryAt", ge=0)
+    deadline_at: int | None = Field(default=None, alias="deadlineAt", ge=0)
+    provider_id: str | None = Field(default=None, alias="providerId", min_length=1, max_length=128)
+    model_id: str | None = Field(default=None, alias="modelId", min_length=1, max_length=128)
+
+
 class InputEventPayload(ClosedModel):
     input_id: str = Field(alias="inputId")
 
@@ -217,9 +237,12 @@ EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.MCP_CONNECTION_CHANGED: McpConnectionChangedPayload,
     EventType.MCP_TOOL_LIST_CHANGED: McpToolListChangedPayload,
     EventType.CONTEXT_COMPACTED: ContextCompactedPayload,
+    EventType.MODEL_RETRY_CHANGED: ModelRetryChangedPayload,
     EventType.INPUT_QUEUED: InputEventPayload,
     EventType.INPUT_INJECTED: InputEventPayload,
     EventType.MEMORY_CHANGED: MemoryChangedPayload,
+    EventType.BROWSER_GRANT_CHANGED: BrowserGrantChangedPayload,
+    EventType.BROWSER_SETTINGS_CHANGED: AutomationChangedPayload,
 }
 
 

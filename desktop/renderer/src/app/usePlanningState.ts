@@ -64,7 +64,15 @@ export function usePlanningState(
 
     const unsubscribe =
       typeof window.eidosRuntime?.onNotification === "function"
-        ? window.eidosRuntime.onNotification(() => {
+        ? window.eidosRuntime.onNotification((notification) => {
+            if (notification.method === "item/delta") return;
+            if (
+              "sessionId" in notification.params
+              && typeof notification.params.sessionId === "string"
+              && notification.params.sessionId !== sessionId
+            ) {
+              return;
+            }
             if (timer !== undefined) return;
             timer = setTimeout(() => {
               timer = undefined;

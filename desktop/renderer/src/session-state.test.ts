@@ -581,3 +581,21 @@ test("cancellation targets the executing Run while follow-ups stay queued", () =
   assert.equal(findActiveRun([first, second])?.id, "first");
   assert.equal(findActiveRun([{ ...running, status: "waiting_agents" }, first])?.id, "executing");
 });
+
+test("merges model retry updates by request group and ignores events older than the snapshot", () => {
+  const base = snapshot("running", "working");
+  const activity = {
+    requestGroupId: "group", runId: "run-1", eventId: 20, startedAt: 5, updatedAt: 5, status: "waiting" as const,
+    retryIndex: 1, cause: "connection_failed" as const, nextRetryAt: 9,
+  };
+  const waiting = applyNotification({ ...base, throughEventId: 10 }, { method: "model/retryUpdated", params: { sessionId: session.id, activity } })!;
+  assert.deepEqual(waiting.modelRetries, [activity]);
+  const requesting = applyNotification(waiting, {
+    method: "model/retryUpdated", params: { sessionId: session.id, activity: { ...activity, eventId: 21, status: "requesting", nextRetryAt: null } },
+  })!;
+  assert.deepEqual(requesting.modelRetries?.map((entry) => entry.status), ["requesting"]);
+  const stale = { ...base, throughEventId: 30 };
+  assert.equal(applyNotification(stale, { method: "model/retryUpdated", params: { sessionId: session.id, activity } }), stale);
+  const unknownRun = applyNotification(base, { method: "model/retryUpdated", params: { sessionId: session.id, activity: { ...activity, runId: "other" } } });
+  assert.equal(unknownRun, base);
+});

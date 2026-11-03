@@ -169,6 +169,7 @@ if (runtimeClientText) {
     const expected = {
       file_change: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "requiresHumanConfirmation", "riskWarning", "diff", "diffBytes", "diffHash", "sandboxPermissions", "additionalFileSystemAccess"],
       external_tool: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "requiresHumanConfirmation", "riskWarning", "toolName", "arguments", "provenance", "permissionProfile", "timeoutSeconds", "envNames"],
+      browser_access: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "requiresHumanConfirmation", "riskWarning", "toolName", "arguments", "grantScope", "profile", "access", "provenance", "permissionProfile", "timeoutSeconds"],
       permission_request: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "requiresHumanConfirmation", "riskWarning", "grantScope", "permissions", "reason", "command", "cwd"],
       network_access: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "requiresHumanConfirmation", "riskWarning", "toolName", "hosts", "target"],
       command_execution: [

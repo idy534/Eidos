@@ -36,5 +36,21 @@
     "inputTokens": 20000,
     "outputTokens": 1200,
     "sourceItemCount": 52
+  },
+  "modelRetry": {
+    "requestGroupId": "00000000-0000-4000-8000-000000000003",
+    "runId": "00000000-0000-4000-8000-000000000001",
+    "eventId": 43,
+    "startedAt": 1700000000000,
+    "updatedAt": 1700000002000,
+    "status": "waiting",
+    "retryIndex": 2,
+    "cause": "rate_limited",
+    "httpStatus": 429,
+    "retryAfterApplied": true,
+    "nextRetryAt": 1700000010000,
+    "deadlineAt": 1700000180000,
+    "providerId": "deepseek",
+    "modelId": "deepseek-flash"
   }
 }

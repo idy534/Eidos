@@ -4,6 +4,7 @@ import type { Item, Run } from "../contracts.js";
 import { DiffViewer, parseMultiFileDiff } from "./DiffViewer.js";
 import { ExecutionFeed } from "./ExecutionFeed.js";
 import { ToolTextView } from "./ToolTextView.js";
+import { expandDetails } from "../../test/expand-details.js";
 
 const path = "build/scripts/receipt.py";
 const added = `diff --git /dev/null b/${path}\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n+print('receipt')\n`;
@@ -32,7 +33,7 @@ describe("tool diff filenames", () => {
     expect(screen.getAllByRole("button", { name: "复制代码差异" })).toHaveLength(2);
   });
 
-  it.each(["apply_patch", "write_file"])("keeps only apply_patch's filename inside its diff header: %s", (toolName) => {
+  it.each(["apply_patch", "write_file"])("keeps only apply_patch's filename inside its diff header: %s", async (toolName) => {
     const openFile = vi.fn();
     const run: Run = { id: "run", sessionId: "session", status: "running", modelStepCount: 1, createdAt: 1, updatedAt: 1 };
     const item: Item = {
@@ -42,7 +43,7 @@ describe("tool diff filenames", () => {
     };
     const { container } = render(<ExecutionFeed items={[item]} runs={[run]} approvals={[]}
       onOpenFile={openFile} />);
-    container.querySelectorAll("details").forEach((details) => { details.open = true; });
+    await expandDetails(container);
     const tool = container.querySelector(".tool-item")!;
     expect(tool.querySelector(".diff-file-name")).toHaveTextContent("receipt.py");
     expect(tool.querySelector(".tool-file-list") !== null).toBe(toolName !== "apply_patch");

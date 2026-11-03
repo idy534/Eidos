@@ -83,7 +83,7 @@ export function ApprovalComposer({
           </div>
         </div>
         <span className="approval-heading-badge">
-          {isExpired ? "已过期" : approval.kind === "file_change" ? "文件变更" : approval.kind === "external_tool" ? "MCP 工具" : approval.kind === "network_access" ? "网络访问" : approval.kind === "permission_request" ? "权限申请" : "Shell 命令"}
+          {isExpired ? "已过期" : approval.kind === "file_change" ? "文件变更" : approval.kind === "browser_access" || (approval.kind === "external_tool" && approval.permissionProfile === "browser") ? "浏览器" : approval.kind === "external_tool" ? "MCP 工具" : approval.kind === "network_access" ? "网络访问" : approval.kind === "permission_request" ? "权限申请" : "Shell 命令"}
         </span>
       </div>
       <div className="approval-body">
@@ -146,6 +146,10 @@ function approvalWarning(approval: ApprovalRequest): string | undefined {
     if (approval.requiresHumanConfirmation) return "此操作将修改受保护文件，请确认变更范围。";
   }
   if (approval.requiresHumanConfirmation) return "此请求将开放受保护路径，请确认权限范围。";
+  // Browser access and uploads always carry their own scope warning.
+  if (approval.kind === "browser_access" || (approval.kind === "external_tool" && approval.permissionProfile === "browser")) {
+    return approval.riskWarning;
+  }
   return undefined;
 }
 
@@ -161,6 +165,18 @@ function approvalTitle(approval: ApprovalRequest): string {
     "Download a public GitHub skill": "批准下载 GitHub Skill",
   };
   return titles[approval.summary] ?? approval.summary;
+}
+
+const browserToolLabels: Record<string, string> = {
+  browser_navigate: "打开网页", browser_navigate_back: "返回上一页", browser_click: "点击",
+  browser_type: "输入文字", browser_fill_form: "填写表单", browser_select_option: "选择选项",
+  browser_press_key: "按键", browser_hover: "悬停", browser_drag: "拖动", browser_drop: "放下",
+  browser_tabs: "管理标签页", browser_handle_dialog: "处理对话框", browser_resize: "调整窗口",
+  browser_close: "关闭页面", browser_file_upload: "上传文件",
+};
+
+function browserToolLabel(toolName: string): string {
+  return browserToolLabels[toolName.replace(/^mcp__browser__/, "")] ?? toolName;
 }
 
 function DetailRow({ label, children }: { label: string; children: ReactNode }) {
@@ -242,6 +258,15 @@ function ApprovalContent({ approval }: { approval: ApprovalRequest }) {
     </dl>
   </>;
 
+  if (approval.kind === "browser_access") return <>
+    <dl className="approval-details">
+      <DetailRow label="授权范围">当前会话的后续任务，直到你撤销</DetailRow>
+      <DetailRow label="浏览器">{approval.profile === "user" ? "你日常使用的 Google Chrome，包含其中所有已登录的账号" : "Eidos 专用 Chrome，所有会话共用"}</DetailRow>
+      <DetailRow label="首个操作">{browserToolLabel(approval.toolName)}</DetailRow>
+    </dl>
+    <pre className="approval-command" aria-label="操作参数">{JSON.stringify(approval.arguments, null, 2)}</pre>
+  </>;
+
   if (approval.kind === "network_access") return <dl className="approval-details">
     <DetailRow label="目标">{approval.target}</DetailRow>
     <DetailRow label="允许访问的主机">{approval.hosts.join("、")}</DetailRow>
@@ -254,7 +279,7 @@ function ApprovalContent({ approval }: { approval: ApprovalRequest }) {
       <DetailRow label="工具">{approval.toolName}</DetailRow>
       <DetailRow label="来源">{approval.provenance.serverId ?? approval.provenance.sourceId}</DetailRow>
       {approval.provenance.pluginId && <DetailRow label="插件">{approval.provenance.pluginId}</DetailRow>}
-      <DetailRow label="权限配置">{approval.permissionProfile === "workspace_read" ? "工作区只读" : "连接器"}</DetailRow>
+      <DetailRow label="权限配置">{approval.permissionProfile === "workspace_read" ? "工作区只读" : approval.permissionProfile === "browser" ? "浏览器" : "连接器"}</DetailRow>
       <DetailRow label="批准范围">仅本次工具调用</DetailRow>
     </dl>
     <pre className="approval-command" aria-label="工具参数">{JSON.stringify(approval.arguments, null, 2)}</pre>

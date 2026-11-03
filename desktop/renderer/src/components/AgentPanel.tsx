@@ -7,6 +7,7 @@ import { userFacingError } from "../session-state.js";
 import { terminalRunPresentation } from "../run-presentation.js";
 import { getProviderName } from "./ProviderLogo.js";
 import { mergeContextCompactions } from "../context-compaction.js";
+import { mergeModelRetries } from "../model-retry.js";
 import { EmptyState } from "./EmptyState.js";
 import { AlertBanner } from "./AlertBanner.js";
 
@@ -59,7 +60,8 @@ export function useAgentState(sessionId: string | undefined, ready: boolean) {
     };
 
     load();
-    const unsubscribe = window.eidosRuntime.onNotification(() => {
+    const unsubscribe = window.eidosRuntime.onNotification((notification) => {
+      if (notification.method === "item/delta") return;
       if (timer === undefined) {
         timer = setTimeout(() => {
           timer = undefined;
@@ -327,6 +329,7 @@ function AgentTranscript({
         const pages: Item[][] = [latest.items];
         const runs = new Map(latest.runs.map((run) => [run.id, run]));
         let compactions = latest.contextCompactions ?? [];
+        let retries = latest.modelRetries ?? [];
         const visited = new Set<string>();
         let cursor = latest.previousItemId;
         while (cursor && !disposed) {
@@ -338,6 +341,7 @@ function AgentTranscript({
           });
           pages.push(page.items);
           compactions = mergeContextCompactions(compactions, page.contextCompactions);
+          retries = mergeModelRetries(retries, page.modelRetries);
           for (const run of page.runs) runs.set(run.id, run);
           cursor = page.previousItemId;
         }
@@ -348,6 +352,7 @@ function AgentTranscript({
           items: [...items.values()],
           runs: [...runs.values()].sort((a, b) => a.createdAt - b.createdAt),
           contextCompactions: compactions,
+          modelRetries: retries,
         };
         delete complete.previousItemId;
         setSnapshot(complete);
@@ -452,6 +457,7 @@ function AgentTranscript({
         <ExecutionFeed
           items={displayItems}
           contextCompactions={snapshot?.contextCompactions}
+          modelRetries={snapshot?.modelRetries}
           runs={runs}
           approvals={childApprovals}
           onOpenFile={onOpenFile}

@@ -259,7 +259,7 @@ class McpServerRecordDto(ClosedModel):
     cwd: StrictStr | None = None
     argv: list[StrictStr]
     env_names: list[StrictStr] = Field(alias="envNames")
-    permission_profile: Literal["connector", "workspace_read"] = Field(
+    permission_profile: Literal["connector", "workspace_read", "browser"] = Field(
         alias="permissionProfile"
     )
     startup_timeout_seconds: StrictInt = Field(alias="startupTimeoutSeconds")

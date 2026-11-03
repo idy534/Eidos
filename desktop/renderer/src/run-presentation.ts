@@ -32,6 +32,7 @@ const messages: Record<string, string> = {
   error: "模型服务报告回复失败",
   MODEL_STREAM_INTERRUPTED: "模型回复在接收过程中中断",
   model_stream_interrupted: "模型回复在接收过程中中断",
+  stream_interrupted: "模型回复在接收过程中中断",
   MODEL_REQUEST_FAILED: "Eidos 未能取得模型回复",
   model_request_failed: "Eidos 未能取得模型回复",
   provider_unavailable: "模型服务连接失败或暂时不可用",

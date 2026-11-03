@@ -9,6 +9,8 @@ import sys
 import time
 
 
+PNG = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP8zwACTGCSAQANHQEDgslx/wAAAABJRU5ErkJggg=="
+
 TOOLS = [
     {
         "name": "environment",
@@ -55,6 +57,16 @@ TOOLS = [
     {
         "name": "image",
         "description": "Return unsupported content",
+        "inputSchema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+    },
+    {
+        "name": "screenshot",
+        "description": "Return text and one valid PNG",
+        "inputSchema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+    },
+    {
+        "name": "audio",
+        "description": "Return unsupported audio content",
         "inputSchema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
     },
     {
@@ -170,6 +182,15 @@ for line in sys.stdin:
             is_error = False
         elif name == "image":
             content = [{"type": "image", "data": "AA==", "mimeType": "image/png"}]
+            is_error = False
+        elif name == "screenshot":
+            content = [
+                {"type": "text", "text": "captured"},
+                {"type": "image", "data": PNG, "mimeType": "image/png"},
+            ]
+            is_error = False
+        elif name == "audio":
+            content = [{"type": "audio", "data": "AA==", "mimeType": "audio/wav"}]
             is_error = False
         elif name == "slow":
             time.sleep(5)

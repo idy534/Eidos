@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eidos · 工具调用折叠设计稿</title>
+<style>
+  /* Tokens copied from desktop/renderer/src/styles/tokens.css */
+  :root {
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+    --font-code: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "PingFang SC", monospace;
+    --surface: #f8f9fb; --surface-raised: #fff; --surface-muted: #f0f2f5; --surface-hover: #f3f3f6; --surface-selected: #e5e8ec;
+    --text: #1d1d1f; --text-secondary: #48484a; --muted: #6e6e73; --text-tertiary: #86868b;
+    --line: rgba(0,0,0,.07);
+    --accent: #2e624c; --accent-soft: #e5ede8; --danger: #913d34; --danger-soft: #fbf0ee;
+    --status-success: #246845; --status-success-bg: #eaf5ee; --status-danger: #9e352b; --status-warning: #8a6723;
+    --radius-sm: 6px; --radius: 10px; --radius-md: 8px;
+    --apple-spring: cubic-bezier(.16,1,.3,1);
+    --apple-shadow-sm: 0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.02);
+    --apple-shadow-md: 0 6px 20px -3px rgba(0,0,0,.07), 0 2px 6px rgba(0,0,0,.03);
+    /* new tokens proposed for the tool group */
+    --tg-text: #6b706c;           /* collapsed header / row text */
+    --tg-text-strong: #3d423e;    /* targets (path / command) */
+    --tg-rail: rgba(0,0,0,.09);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #e9ebef; font-family: var(--font-ui); color: var(--text); -webkit-font-smoothing: antialiased; }
+  .page { max-width: 1120px; margin: 0 auto; padding: 32px 24px 64px; display: grid; grid-template-columns: minmax(0, 46rem) minmax(0, 1fr); gap: 28px; align-items: start; }
+  @media (max-width: 960px) { .page { grid-template-columns: 1fr; } }
+
+  .window { background: var(--surface); border-radius: 14px; box-shadow: var(--apple-shadow-md), 0 0 0 .5px rgba(0,0,0,.08); overflow: hidden; }
+  .titlebar { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; border-bottom: 1px solid var(--line); font-size: 13px; font-weight: 600; }
+  .seg { display: inline-flex; background: var(--surface-muted); border-radius: 8px; padding: 2px; gap: 2px; }
+  .seg button { font: inherit; font-size: 12px; font-weight: 500; border: 0; background: transparent; color: var(--muted); padding: 3px 10px; border-radius: 6px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: #fff; color: var(--text); box-shadow: var(--apple-shadow-sm); }
+  .feed { padding: 22px 28px 28px; font-size: 14px; line-height: 22px; }
+
+  .user { margin: 0 0 20px auto; width: fit-content; max-width: 82%; background: var(--surface-muted); border: 1px solid rgba(0,0,0,.05); border-radius: var(--radius); padding: 10px 16px; }
+  .prose { margin: 0 0 14px; color: var(--text); }
+  .prose code { font-family: var(--font-code); font-size: 12.5px; background: #eef0f2; padding: 1px 5px; border-radius: 4px; }
+
+  /* ===== Tool group ===== */
+  .tg { margin: 0 0 14px; }
+  .tg-head {
+    display: inline-flex; align-items: center; gap: 7px; max-width: 100%;
+    margin-left: -8px; padding: 3px 8px 3px 8px; border: 0; border-radius: 8px;
+    background: transparent; color: var(--tg-text); font: inherit; cursor: pointer; text-align: left;
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  .tg-head:hover { background: rgba(0,0,0,.045); color: var(--tg-text-strong); }
+  .tg-head .lead { display: grid; place-items: center; width: 16px; height: 16px; color: #8a8f8b; flex: none; }
+  .tg-head .lead svg { width: 15px; height: 15px; }
+  .tg-head .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .tg-head .label b { font-weight: 500; color: var(--tg-text-strong); font-variant-numeric: tabular-nums; }
+  .tg-head .sep { color: #b4b8b4; margin: 0 1px; }
+  .tg-head .fail { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--status-danger); background: var(--danger-soft); padding: 0 7px; border-radius: 999px; line-height: 18px; flex: none; }
+  .tg-head .fail::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+  .tg-head .chev { width: 12px; height: 12px; flex: none; color: #9a9f9b; transition: transform 220ms var(--apple-spring); }
+  .tg[data-open="true"] .tg-head .chev { transform: rotate(90deg); }
+
+  /* running: spinner + shimmering live action */
+  .tg[data-running="true"] .lead { color: var(--accent); }
+  .tg[data-running="true"] .lead svg { animation: spin 1s linear infinite; }
+  .tg[data-running="true"] .label { background: linear-gradient(90deg, #6b706c 30%, #b9beba 50%, #6b706c 70%); background-size: 220% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.8s ease-in-out infinite; }
+  .tg[data-running="true"] .label b { color: transparent; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+
+  /* body: animated height via grid-rows */
+  .tg-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 260ms var(--apple-spring); }
+  .tg[data-open="true"] .tg-body { grid-template-rows: 1fr; }
+  .tg-body > .clip { overflow: hidden; min-height: 0; }
+  .tg-list {
+    position: relative; margin: 6px 0 2px 7px; padding: 2px 0 2px 14px;
+    border-left: 1px solid var(--tg-rail);
+    max-height: 268px; overflow-y: auto; overscroll-behavior: contain;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 18px), transparent 100%);
+            mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 18px), transparent 100%);
+    scrollbar-width: thin; scrollbar-color: rgba(106,111,103,.28) transparent;
+  }
+  .tg-list.short { -webkit-mask-image: none; mask-image: none; }
+
+  .row { position: relative; }
+  .row-head {
+    display: grid; grid-template-columns: 16px auto minmax(0, 1fr) auto; align-items: center; gap: 8px;
+    width: 100%; min-height: 28px; padding: 2px 8px 2px 6px; margin-left: -6px; border: 0; border-radius: 7px;
+    background: transparent; font: inherit; font-size: 13px; line-height: 20px; color: var(--tg-text); text-align: left;
+    cursor: default; transition: background-color 120ms ease;
+  }
+  .row.expandable > .row-head { cursor: pointer; }
+  .row.expandable > .row-head:hover { background: rgba(0,0,0,.04); }
+  .row .ico { width: 14px; height: 14px; color: #8d928e; }
+  .row .verb { white-space: nowrap; }
+  .row .target { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tg-text-strong); }
+  .row .target.mono { font-family: var(--font-code); font-size: 12px; }
+  .row .meta { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+  .row .add { color: var(--status-success); } .row .del { color: var(--status-danger); }
+  .row .dur { opacity: 0; transition: opacity 120ms ease; }
+  .row:hover .dur { opacity: 1; }
+  .row .rchev { width: 10px; height: 10px; color: #b0b4b0; opacity: 0; transition: opacity 120ms ease, transform 200ms var(--apple-spring); }
+  .row.expandable:hover .rchev, .row[data-open="true"] .rchev { opacity: 1; }
+  .row[data-open="true"] .rchev { transform: rotate(90deg); }
+  .row[data-status="failed"] .ico, .row[data-status="failed"] .verb { color: var(--status-danger); }
+  .row[data-status="failed"] .meta .state { color: var(--status-danger); }
+
+  .row-detail { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 240ms var(--apple-spring); }
+  .row[data-open="true"] .row-detail { grid-template-rows: 1fr; }
+  .row-detail > .clip { overflow: hidden; min-height: 0; }
+  .card {
+    position: relative; margin: 4px 0 8px 0; padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px;
+    background: var(--surface-muted); font-family: var(--font-code); font-size: 12px; line-height: 18px; color: #555b56;
+  }
+  .card pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-height: 156px; overflow: auto; }
+  .card .cmd { color: #3d423e; } .card .cmd::before { content: "$ "; color: #8d928e; }
+  .card hr { border: 0; border-top: 1px dashed var(--line); margin: 8px 0; }
+  .card .err { color: var(--danger); }
+  .card .foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-family: var(--font-ui); font-size: 12px; color: #737873; }
+  .card .pill { padding: 0 7px; border-radius: 999px; background: var(--status-success-bg); color: var(--status-success); line-height: 18px; }
+  .card .pill.bad { background: var(--danger-soft); color: var(--status-danger); }
+  .copy { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 120ms ease, background-color 120ms; }
+  .card:hover .copy { opacity: 1; } .copy:hover { background: rgba(0,0,0,.06); color: var(--text); }
+  .diff { font-family: var(--font-code); }
+  .diff div { padding: 0 6px; margin: 0 -6px; white-space: pre-wrap; }
+  .diff .a { background: rgba(36,104,69,.09); color: #1f5a3b; } .diff .d { background: rgba(158,53,43,.08); color: #8a3027; }
+  .diff .h { color: var(--text-tertiary); margin-bottom: 3px; font-family: var(--font-ui); }
+
+  /* ===== "Before" ===== */
+  .old .tg-head, .old .tg-body { display: none; }
+  .old-rows { display: none; }
+  .old .old-rows { display: block; }
+  .old-row { display: flex; align-items: center; gap: .35rem; margin: 0 0 .45rem; color: #7a7f7a; }
+  .old-row svg { width: 14px; height: 14px; flex: none; }
+  .old-row span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .old-row::after { content: ""; width: .38rem; height: .38rem; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); margin-left: 2px; }
+
+  /* ===== Side notes ===== */
+  .notes { font-size: 13px; line-height: 21px; color: var(--text-secondary); }
+  .notes h2 { font-size: 13px; letter-spacing: .02em; margin: 0 0 8px; color: var(--text); }
+  .notes section { background: var(--surface); border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; box-shadow: var(--apple-shadow-sm), 0 0 0 .5px rgba(0,0,0,.06); }
+  .notes ul { margin: 0; padding-left: 18px; } .notes li { margin: 3px 0; }
+  .notes code { font-family: var(--font-code); font-size: 11.5px; background: #eef0f2; padding: 0 4px; border-radius: 4px; }
+  .states { display: grid; gap: 10px; }
+  .states .tg { margin: 0; }
+  .cap { font-size: 11px; color: var(--text-tertiary); letter-spacing: .04em; margin: 0 0 2px; }
+  .ctl { display: flex; gap: 8px; margin-top: 12px; }
+  .ctl button { font: inherit; font-size: 12px; border: 1px solid var(--line); background: #fff; border-radius: 7px; padding: 4px 10px; cursor: pointer; color: var(--text-secondary); }
+  .ctl button:hover { background: var(--surface-hover); }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="window">
+    <div class="titlebar">
+      <span>评审会话切换卡顿修复</span>
+      <div class="seg" id="mode"><button data-m="old" aria-pressed="false">现状</button><button data-m="new" aria-pressed="true">新设计</button></div>
+    </div>
+    <div class="feed" id="feed"></div>
+  </div>
+
+  <aside class="notes">
+    <section>
+      <h2>设计要点</h2>
+      <ul>
+        <li><b>连续的工具调用合并为一组</b>，默认折叠成一行摘要：「读取 4 个文件 · 搜索 3 次 · 运行 6 条命令」。模型的叙述文字仍然在组与组之间正常显示，保持阅读节奏。</li>
+        <li><b>进行中的一组</b>：前置转圈图标，摘要变成流光的「正在运行 git diff …」，用户不展开也知道在做什么。</li>
+        <li><b>展开后是紧凑的 28px 行列表</b>：左侧 1px 细线作为引导，图标 + 动词（灰）+ 目标（深色，路径/命令用等宽字体）。超过约 9 行时限高滚动，上下渐隐遮罩，不再把对话顶出屏幕。</li>
+        <li><b>单行再展开</b>才看详情：命令输出、编辑 Diff、报错。沿用现有 <code>shell-result</code> 卡片的底色与圆角，但去掉 “Shell” 标题，缩小内边距。</li>
+        <li><b>失败只提示不打断</b>：摘要末尾一个红色小胶囊「1 失败」，展开后该行文字变红。</li>
+        <li>仅用 Eidos 现有 token（<code>--accent</code>、<code>--line</code>、<code>--apple-spring</code>、圆角体系），不新增色相；只补 3 个中性灰 token。无焦点环，hover 底色即反馈。</li>
+      </ul>
+    </section>
+    <section>
+      <h2>状态一览</h2>
+      <div class="states" id="states"></div>
+    </section>
+    <section>
+      <h2>落地改动范围（若采用）</h2>
+      <ul>
+        <li><code>ExecutionFeed.tsx</code>：在 <code>ProcessGroup</code> 内把相邻的 tool item 聚合为 <code>ToolGroup</code>（纯展示层聚合，不改 Run/Item 持久事实）。</li>
+        <li><code>ExecutionFeed.css</code>：新增 <code>.tool-group*</code>，<code>.tool-item</code> 在组内改用紧凑行样式；沿用 <code>useLazyDetails</code> 懒挂载，折叠时不渲染行。</li>
+        <li>终态 Run 默认折叠，进行中默认折叠但显示实时动作；聊天搜索命中组内条目时自动展开（沿用 <code>containsSearchTarget</code>）。</li>
+        <li>需补 <code>ExecutionFeed.behavior.test.tsx</code> 的聚合、展开、失败计数用例。</li>
+      </ul>
+    </section>
+  </aside>
+</div>
+
+<script>
+const I = {
+  read:  '<path d="M3 3.5h4.2c.8 0 1.3.5 1.3 1.2V13c0-.6-.5-1-1.2-1H3z M13 3.5H8.8c-.8 0-1.3.5-1.3 1.2V13c0-.6.5-1 1.2-1H13z"/>',
+  grep:  '<circle cx="7" cy="7" r="4"/><path d="m10 10 3 3"/>',
+  shell: '<rect x="2" y="2.5" width="12" height="11" rx="2.5"/><path d="m5 6.5 2 1.5-2 1.5M8.5 10h2.5"/>',
+  edit:  '<path d="M9.5 3.5 12.5 6.5M3 13l.7-3L10.6 3.1a1.4 1.4 0 0 1 2 0l.3.3a1.4 1.4 0 0 1 0 2L6 12.3z"/>',
+  stack: '<path d="M8 2.5 13.5 5.5 8 8.5 2.5 5.5zM2.5 8.5 8 11.5l5.5-3M2.5 11 8 14l5.5-3"/>',
+  spin:  '<path d="M8 2.5a5.5 5.5 0 1 0 5.5 5.5" />',
+  chev:  '<path d="m6 3.5 4.5 4.5L6 12.5"/>',
+  copy:  '<rect x="5.5" y="5.5" width="8" height="8" rx="2"/><path d="M10.5 5.5v-1a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h1"/>'
+};
+const svg = (k, cls='') => `<svg class="${cls}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[k]}</svg>`;
+const esc = s => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+const G1 = [
+  {k:'shell', v:'运行', t:'git diff -- desktop/renderer/src/app/AppShell.tsx desktop/renderer/src/app/useSessionController.ts', mono:1, dur:'0.4s', out:'diff --git a/desktop/renderer/src/app/AppShell.tsx …\n@@ -212,7 +212,9 @@ export function AppShell() {\n…（输出已截断）', ok:'已完成 · 退出码 0'},
+  {k:'shell', v:'运行', t:'git diff -- runtime/eidos_runtime/db/thread_history.py | sed -n \'1,140p\'', mono:1, dur:'0.3s'},
+  {k:'shell', v:'运行', t:'git diff -- runtime/eidos_runtime/persistence/repository_intelligence.py', mono:1, dur:'0.2s'},
+  {k:'shell', v:'运行', t:'git diff -- desktop/renderer/src/components/ExecutionFeed.tsx', mono:1, dur:'0.3s'},
+  {k:'read',  v:'读取', t:'event_query_migration.py', dur:'12ms'},
+  {k:'grep',  v:'搜索', t:'catch_up|project_thread_history|ThreadHistoryStore', dur:'0.2s', mono:1},
+  {k:'grep',  v:'搜索', t:'def handle|readline|for line in|stdin', dur:'0.1s', mono:1},
+  {k:'shell', v:'运行', t:'grep -n "item/delta\\|applyNotification" runtime/eidos_runtime', mono:1, status:'failed', state:'失败', dur:'0.1s', out:'grep: Unmatched ( or \\(', err:1, ok:'失败 · 退出码 2'},
+  {k:'read',  v:'读取', t:'useSessionController.ts', dur:'9ms'},
+  {k:'read',  v:'读取', t:'event_delivery.py', dur:'8ms'},
+  {k:'read',  v:'读取', t:'AppShell.tsx', dur:'11ms'},
+  {k:'grep',  v:'搜索', t:'setSnapshot|applyNotification', dur:'0.2s', mono:1}
+];
+const G2 = [
+  {k:'read', v:'读取', t:'resources.go', dur:'8ms'},
+  {k:'edit', v:'编辑', t:'resources.go', add:7, del:3, dur:'14ms', diff:1},
+  {k:'shell', v:'运行', t:'gofmt -w internal/app/workflow/version/resources.go', mono:1, dur:'0.5s', out:'', ok:'已完成 · 无输出 · 退出码 0'},
+  {k:'shell', v:'运行', t:'go build -mod=readonly ./internal/app/workflow/...', mono:1, dur:'6.8s', out:'', ok:'已完成 · 无输出 · 退出码 0'}
+];
+const G3 = [
+  {k:'read', v:'读取', t:'ontology.go'}, {k:'read', v:'读取', t:'tools.go'},
+  {k:'grep', v:'搜索', t:'IsEnabled', mono:1}
+];
+
+function summarize(rows) {
+  const n = {read:0, grep:0, shell:0, edit:0}; let bad = 0;
+  rows.forEach(r => { n[r.k]++; if (r.status === 'failed') bad++; });
+  const parts = [];
+  if (n.read)  parts.push(`读取 <b>${n.read}</b> 个文件`);
+  if (n.grep)  parts.push(`搜索 <b>${n.grep}</b> 次`);
+  if (n.edit)  parts.push(`编辑 <b>${n.edit}</b> 个文件`);
+  if (n.shell) parts.push(`运行 <b>${n.shell}</b> 条命令`);
+  return {html: parts.join('<span class="sep"> · </span>'), bad};
+}
+function rowHTML(r) {
+  const exp = !!(r.out !== undefined || r.diff);
+  let detail = '';
+  if (r.diff) detail = `<div class="card"><div class="diff"><div class="h">resources.go · +${r.add} −${r.del}</div><div class="d">-	return len(items)</div><div class="d">-	// legacy</div><div class="a">+	seen := map[string]struct{}{}</div><div class="a">+	for _, it := range items { seen[it.ID] = struct{}{} }</div><div class="a">+	return len(seen)</div></div></div>`;
+  else if (exp) detail = `<div class="card"><button class="copy" title="复制命令">${svg('copy','')}</button><pre class="cmd">${esc(r.t)}</pre>${r.out ? `<hr><pre class="${r.err?'err':''}">${esc(r.out)}</pre>` : ''}<div class="foot"><span class="pill ${r.err?'bad':''}">${r.ok||'已完成'}</span></div></div>`;
+  return `<div class="row ${exp?'expandable':''}" data-status="${r.status||'done'}">
+    <${exp?'button':'div'} class="row-head" ${exp?'aria-expanded="false"':''}>
+      ${svg(r.k,'ico')}<span class="verb">${r.v}</span><span class="target ${r.mono?'mono':''}" title="${esc(r.t)}">${esc(r.t)}</span>
+      <span class="meta">${r.add!=null?`<span class="add">+${r.add}</span><span class="del">−${r.del}</span>`:''}${r.state?`<span class="state">${r.state}</span>`:''}${r.dur?`<span class="dur">${r.dur}</span>`:''}${exp?svg('chev','rchev'):''}</span>
+    </${exp?'button':'div'}>
+    ${exp?`<div class="row-detail"><div class="clip">${detail}</div></div>`:''}
+  </div>`;
+}
+function groupHTML(rows, o={}) {
+  const s = summarize(rows);
+  const label = o.running ? `正在${o.running}` : s.html;
+  const oldRows = rows.slice(0, 5).map(r => `<div class="old-row">${svg(r.k)}<span>${r.v === '运行' ? '已运行 ' : r.v === '读取' ? '已读取 ' : r.v === '搜索' ? '已搜索 ' : '已编辑 '}${esc(r.t)}</span></div>`).join('') + (rows.length>5?`<div class="old-row" style="color:#a0a5a0">…另有 ${rows.length-5} 条</div>`:'');
+  return `<div class="tg" data-open="${!!o.open}" data-running="${!!o.running}">
+    <button class="tg-head" aria-expanded="${!!o.open}">
+      <span class="lead">${svg(o.running?'spin':'stack')}</span>
+      <span class="label">${label}</span>
+      ${s.bad && !o.running ? `<span class="fail">${s.bad} 失败</span>` : ''}
+      ${svg('chev','chev')}
+    </button>
+    <div class="tg-body"><div class="clip"><div class="tg-list ${rows.length<=8?'short':''}">${rows.map(rowHTML).join('')}</div></div></div>
+    <div class="old-rows">${oldRows}</div>
+  </div>`;
+}
+
+document.getElementById('feed').innerHTML = `
+  <div class="user">现在命令、tool 都是大块大块的，一次出现一堆。帮我评审会话切换卡顿的修复。</div>
+  <p class="prose">输出被截断，我改为逐文件读取，先看持久层和事件投影的完整改法。</p>
+  ${groupHTML(G1, {open:true})}
+  <p class="prose">我看清了持久层的改法。下一步核对两件事：<code>session/read</code> 是否还会被写锁拖住，以及渲染层收到 <code>item/delta</code> 后的更新路径。</p>
+  ${groupHTML(G2)}
+  <p class="prose">统一诊断已经接入历史查看和还原流程，还原事务会先提交，再检查资源。</p>
+  ${groupHTML(G3, {running:'搜索 “IsEnabled”'})}
+`;
+document.getElementById('states').innerHTML = `
+  <div><p class="cap">折叠 · 已完成</p>${groupHTML(G2)}</div>
+  <div><p class="cap">折叠 · 含失败</p>${groupHTML(G1)}</div>
+  <div><p class="cap">折叠 · 进行中（实时动作）</p>${groupHTML(G3,{running:'运行 go build -mod=readonly ./…'})}</div>`;
+
+document.addEventListener('click', e => {
+  const head = e.target.closest('.tg-head');
+  if (head) { const g = head.parentElement, o = g.dataset.open !== 'true'; g.dataset.open = o; head.setAttribute('aria-expanded', o); return; }
+  const rh = e.target.closest('.row.expandable > .row-head');
+  if (rh && !e.target.closest('.copy')) { const r = rh.parentElement, o = r.dataset.open !== 'true'; r.dataset.open = o; rh.setAttribute('aria-expanded', o); }
+});
+document.getElementById('mode').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#mode button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  document.getElementById('feed').classList.toggle('old', b.dataset.m === 'old');
+});
+</script>
+</body>
+</html>

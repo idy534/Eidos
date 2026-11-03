@@ -21,6 +21,7 @@ from eidos_runtime.runtime.resource_registry import (
     ResourceRegistryError,
 )
 from eidos_runtime.sandbox.shell import (
+    LIVE_OUTPUT_PREVIEW_BYTES,
     MAX_OUTPUT_BYTES,
     MAX_OUTPUT_METADATA_BYTES,
     POST_TERMINATION_DRAIN_SECONDS,
@@ -694,7 +695,7 @@ class ShellProcessManager:
                 session.output[stream].append(text.encode("utf-8"))
             # Persist only a bounded live preview. Polls and the final result
             # carry the latest retained tail without unbounded delta events.
-            remaining = max(0, MAX_OUTPUT_BYTES - session.delta_bytes)
+            remaining = max(0, LIVE_OUTPUT_PREVIEW_BYTES - session.delta_bytes)
             preview = text.encode("utf-8")[:remaining].decode("utf-8", errors="ignore")
             session.delta_bytes += len(preview.encode("utf-8"))
         if preview and session.on_output is not None:

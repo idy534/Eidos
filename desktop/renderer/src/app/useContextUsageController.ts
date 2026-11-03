@@ -160,7 +160,6 @@ export function useContextUsageController({
 
     if (
       notification.method === "item/started"
-      || notification.method === "item/delta"
       || notification.method === "item/completed"
       || notification.method === "approval/requested"
       || notification.method === "approval/resolved"

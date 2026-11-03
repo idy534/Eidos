@@ -10,6 +10,7 @@ import type {
 } from "../contracts.js";
 import { SnapshotReadCoordinator, taskStatusFromRun, upsertRun, userFacingError } from "../session-state.js";
 import { mergeContextCompactions } from "../context-compaction.js";
+import { mergeModelRetries } from "../model-retry.js";
 
 const READ_COMPLETIONS_KEY = "eidos.readCompletedSessionIds";
 
@@ -127,6 +128,7 @@ function mergeOlderHistory(current: SessionSnapshot, older: SessionSnapshot): Se
     runs: [...new Map([...older.runs, ...current.runs].map((run) => [run.id, run])).values()],
     items: [...new Map([...older.items, ...current.items].map((item) => [item.id, item])).values()],
     contextCompactions: mergeContextCompactions(older.contextCompactions, current.contextCompactions),
+    modelRetries: mergeModelRetries(older.modelRetries, current.modelRetries),
     ...(older.previousItemId ? { previousItemId: older.previousItemId } : {}),
     ...(history.length ? { inheritedHistory: history } : {}),
   };
@@ -159,6 +161,9 @@ export function useSessionController(): [SessionControllerState, SessionControll
   const selectionEpochRef = useRef(0);
   const historyLoadingRef = useRef<{ sessionId: string; epoch: number } | undefined>(undefined);
   const sessionListLoadRef = useRef(0);
+  const sessionsRef = useRef<Session[]>(sessions);
+  sessionsRef.current = sessions;
+  const unknownRunSessionsRef = useRef<Set<string>>(new Set());
 
   function updateReadCompleted(updater: (prev: Set<string>) => Set<string>): void {
     setReadCompletedSessions((prev) => {
@@ -203,6 +208,10 @@ export function useSessionController(): [SessionControllerState, SessionControll
           seenCursors.add(cursor);
         }
       } while (cursor !== undefined);
+      sessionsRef.current = loaded;
+      for (const item of loaded) {
+        unknownRunSessionsRef.current.delete(item.id);
+      }
       setSessions(loaded);
     } catch (cause) {
       if (loadId === sessionListLoadRef.current) setError(userFacingError(cause));
@@ -459,6 +468,8 @@ export function useSessionController(): [SessionControllerState, SessionControll
       const token = snapshotReads.select(session.id);
       selectedSessionIdRef.current = session.id;
       setNavigationSessionId(session.id);
+      sessionsRef.current = [session, ...sessionsRef.current];
+      unknownRunSessionsRef.current.delete(session.id);
       setSessions((prev) => [session, ...prev]);
       const project = session.project;
       if (project && session.projectless !== true) {
@@ -518,6 +529,8 @@ export function useSessionController(): [SessionControllerState, SessionControll
   ): Promise<boolean> => {
     try {
       const deleted = await window.eidosRuntime.deleteSession(session.id);
+      sessionsRef.current = sessionsRef.current.filter((item) => item.id !== deleted.deletedSessionId);
+      unknownRunSessionsRef.current.delete(deleted.deletedSessionId);
       setSessions((prev) => prev.filter((item) => item.id !== deleted.deletedSessionId));
       setSnapshot((prev) => prev?.session.id === deleted.deletedSessionId ? undefined : prev);
       setDraft(draftSnapshot);
@@ -561,6 +574,8 @@ export function useSessionController(): [SessionControllerState, SessionControll
     }
     try {
       const session = await window.eidosRuntime.forkSession({ sourceSessionId, sourceItemId, target, operationId });
+      sessionsRef.current = [session, ...sessionsRef.current.filter((existing) => existing.id !== session.id)];
+      unknownRunSessionsRef.current.delete(session.id);
       setSessions((prev) => [session, ...prev.filter((existing) => existing.id !== session.id)]);
       const loaded = await selectSession(session);
       forkOperations.current.delete(key);
@@ -690,6 +705,8 @@ export function useSessionController(): [SessionControllerState, SessionControll
     try {
       const deleted = await window.eidosRuntime.deleteSession(session.id);
       const remaining = sessions.filter((s) => s.id !== deleted.deletedSessionId);
+      sessionsRef.current = remaining;
+      unknownRunSessionsRef.current.delete(deleted.deletedSessionId);
       setSessions(remaining);
       updateReadCompleted((prev) => {
         const next = new Set(prev);
@@ -754,7 +771,11 @@ export function useSessionController(): [SessionControllerState, SessionControll
 
   const handleRunNotification = useCallback((run: Pick<Run, "id" | "sessionId" | "status" | "updatedAt" | "reconciliationRequired">): void => {
     const taskStatus = taskStatusFromRun(run);
-    void loadSessions();
+    const knownSession = sessionsRef.current.some((s) => s.id === run.sessionId);
+    if (!knownSession && !unknownRunSessionsRef.current.has(run.sessionId)) {
+      unknownRunSessionsRef.current.add(run.sessionId);
+      void loadSessions();
+    }
     setSessions((prev) => prev.map((s) => s.id === run.sessionId
       ? { ...s, taskStatus, activeRunStatus: activeStatus(run.status), updatedAt: run.updatedAt }
       : s));

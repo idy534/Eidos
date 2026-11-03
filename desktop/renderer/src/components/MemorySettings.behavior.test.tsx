@@ -60,10 +60,13 @@ it("shows one mode selector and opens a note from the Markdown index", async () 
   const { memory, onOpenSource } = mount();
   const user = userEvent.setup();
   await screen.findByRole("link", { name: note.path });
+  expect(screen.getByText("模型先读取这份索引，再按需打开笔记。")).toBeInTheDocument();
   expect(screen.getByRole("combobox", { name: "模式" })).toHaveValue("read");
   expect(screen.queryByText(/回填|预算|候选|重试任务|完整备份/)).not.toBeInTheDocument();
   await user.click(screen.getByRole("link", { name: note.path }));
   await screen.findByText("用户只在明确要求时运行全量测试。");
+  expect(screen.queryByText("笔记会保留适用条件，并在后续对话中使用。")).not.toBeInTheDocument();
+  expect(document.querySelector(".memory-note-title-wrap p")).toBeNull();
   expect(memory).toHaveBeenCalledWith("memory/read", expect.objectContaining({ path: note.path, scope: "current" }));
   await user.click(screen.getByText("来源和版本"));
   await user.click(screen.getByRole("button", { name: "查看来源对话" }));
@@ -142,6 +145,7 @@ it("creates a note directly without a maintenance or candidate workflow", async 
   const { memory } = mount();
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "新建笔记" }));
+  expect(document.querySelector(".memory-note-title-wrap p")).toBeNull();
   await user.type(screen.getByRole("textbox", { name: "笔记文件名" }), "project_setup.md");
   await user.type(screen.getByRole("textbox", { name: "笔记摘要" }), "项目启动条件");
   await user.type(screen.getByRole("textbox", { name: "笔记正文" }), "用户要求先检查本地依赖。");
@@ -164,12 +168,15 @@ it("shows archived notes and restores them with the visible revision using the k
   expect(memory).toHaveBeenCalledWith("memory/list", expect.objectContaining({ includeArchived: true }));
   screen.getByRole("button", { name: /feedback_testing.md.*已归档/ }).focus();
   await user.keyboard("{Enter}");
-  await user.click(await screen.findByRole("button", { name: "恢复笔记" }));
+  const restoreButton = await screen.findByRole("button", { name: "恢复笔记" });
+  expect(screen.getByText("这份笔记已归档，后续对话不会自动使用。你可以恢复它或彻底删除。")).toBeInTheDocument();
+  await user.click(restoreButton);
   await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/edit", expect.objectContaining({
     path: note.path, expectedRevision: 3, action: "write", content: "用户只在明确要求时运行全量测试。",
   })));
   await screen.findByRole("button", { name: "编辑" });
   expect(screen.queryByText("已归档")).not.toBeInTheDocument();
+  expect(document.querySelector(".memory-note-title-wrap p")).toBeNull();
 });
 
 it("keeps an archived note visible when restoration conflicts", async () => {

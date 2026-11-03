@@ -12,12 +12,27 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, BinaryIO, TextIO
+from typing import Any, BinaryIO, Callable, TextIO
 
 from pydantic import BaseModel, ValidationError
 from eidos_runtime.models.mcp_details import McpToolsRequest, McpToolsResponse
 from eidos_runtime.extensions.mcp_details import McpDetails
 from eidos_runtime.models.mcp_connections import BuiltinPluginRequest, BuiltinPluginsResponse, McpConnectionRequest, McpConnectionState
+from eidos_runtime.application.browser import BrowserApplication
+from eidos_runtime.models.browser import (
+    BrowserClearRequest,
+    BrowserClearResponse,
+    BrowserOpenRequest,
+    BrowserOpenResponse,
+    BrowserCloseRequest,
+    BrowserCloseResponse,
+    BrowserGrantRevokeRequest,
+    BrowserGrantRevokeResponse,
+    BrowserStatus,
+    BrowserStatusRequest,
+    BrowserTargetRequest,
+    BrowserTargetResponse,
+)
 from eidos_runtime.domain.hooks import HookActivityPage, HookConfigurationRequest, HookHistoryRequest, HookSourceList
 
 from eidos_runtime import __version__
@@ -114,6 +129,7 @@ from eidos_runtime.model.pydantic_ai_client import (
 )
 from eidos_runtime.application.memory import MEMORY_METHODS, MemoryApplication
 from eidos_runtime.db.maintenance import StorageMaintenance
+from eidos_runtime.infrastructure.browser_host import BrowserHost
 from eidos_runtime.telemetry.tracing import startup_phase
 from eidos_runtime.telemetry.logging import configure_stderr_logging
 from eidos_runtime.model.gateway import ModelGateway
@@ -538,6 +554,41 @@ class _McpToolsAdapter:
         return DeferredMethodResult()
 
 
+class _BrowserTaskAdapter:
+    """Reply from a managed task so the single request loop never waits on Chrome.
+
+    Chrome start and stop take seconds, and status waits for the host lock
+    that a starting Chrome holds and rechecks the browser resource files.
+    """
+
+    def __init__(
+        self,
+        server: "RuntimeServer",
+        action: Callable[[BrowserApplication, BaseModel], BaseModel],
+        *,
+        inline_when_draining: bool = False,
+    ) -> None:
+        self._server = server
+        self._action = action
+        self._inline_when_draining = inline_when_draining
+
+    def __call__(self, request_id: str, request: BaseModel) -> BaseModel | DeferredMethodResult:
+        application = self._server._browser_application()
+
+        def run(_cancel: threading.Event) -> None:
+            try:
+                self._server.send(response(request_id, self._action(application, request).to_wire_dict(exclude_none=True)))
+            except Exception:
+                logger.warning("Browser operation failed")
+                self._server.send(business_error(request_id, "INTERNAL_ERROR"))
+
+        if not self._server.supervisor.start_managed_task("browser-operation", run):
+            if self._inline_when_draining:
+                return self._action(application, request)
+            raise ApplicationError("RUNTIME_DRAINING")
+        return DeferredMethodResult()
+
+
 class _CustomProviderAdapter:
     def __init__(self, server: "RuntimeServer") -> None:
         self._server = server
@@ -775,6 +826,7 @@ class RuntimeServer:
         self.model = model
         self.model_gateway: ModelGateway | None = None
         self.storage_maintenance: StorageMaintenance | None = None
+        self.browser_host: BrowserHost | None = None
         self.channel_service: ChannelService | None = None
         self.automation_scheduler: AutomationScheduler | None = None
         self._frozen_model_configs: dict[str, ModelConfig] = {}
@@ -1402,11 +1454,7 @@ class RuntimeServer:
                 method_dtos.PluginSetEnabledRequestDto,
                 method_dtos.PluginSetEnabledResponseDto,
                 lambda _id,
-                request: self._applications_or_error().extensions.set_plugin_enabled(
-                    plugin_id=request.plugin_id,
-                    enabled=request.enabled,
-                    operation_id=request.operation_id,
-                ),
+                request: self._set_plugin_enabled(request),
             ),
             (
                 "plugin/remove",
@@ -1615,10 +1663,29 @@ class RuntimeServer:
             handler=_McpToolsAdapter(self), allowed_when_draining=False,
             allowed_during_reconfiguration=False, error_mapper=_application_error_mapping,
         ))
+        for name, request_type, response_type, handler in (
+            ("browser/status", BrowserStatusRequest, BrowserStatus, _BrowserTaskAdapter(
+                self, lambda application, request: application.status(request), inline_when_draining=True)),
+            ("browser/setTarget", BrowserTargetRequest, BrowserTargetResponse, _ApplicationMethodAdapter(
+                lambda _id, request: self._browser_application().set_target(request), BrowserTargetResponse)),
+            ("browser/revokeGrant", BrowserGrantRevokeRequest, BrowserGrantRevokeResponse, _ApplicationMethodAdapter(
+                lambda _id, request: self._browser_application().revoke(request), BrowserGrantRevokeResponse)),
+            ("browser/close", BrowserCloseRequest, BrowserCloseResponse,
+             _BrowserTaskAdapter(self, lambda application, _request: application.close())),
+            ("browser/open", BrowserOpenRequest, BrowserOpenResponse,
+             _BrowserTaskAdapter(self, lambda application, _request: application.open())),
+            ("browser/clearProfile", BrowserClearRequest, BrowserClearResponse,
+             _BrowserTaskAdapter(self, lambda application, _request: application.clear_profile())),
+        ):
+            registry.register(MethodRegistration(
+                name=name, request_type=request_type, response_type=response_type, handler=handler,
+                allowed_when_draining=name == "browser/status", allowed_during_reconfiguration=True,
+                error_mapper=_application_error_mapping,
+            ))
         registry.register(MethodRegistration(
             name="plugin/builtin", request_type=BuiltinPluginRequest, response_type=BuiltinPluginsResponse,
             handler=_ApplicationMethodAdapter(
-                lambda _id, request: self._applications_or_error().extensions.builtin_plugins(request),
+                lambda _id, request: self._builtin_plugins(request),
                 BuiltinPluginsResponse,
             ),
             allowed_when_draining=False, allowed_during_reconfiguration=False, error_mapper=_application_error_mapping,
@@ -2076,6 +2143,13 @@ class RuntimeServer:
                     self._idle_maintenance,
                 )
                 self.supervisor.start_managed_task("storage-maintenance", self.storage_maintenance.run, persistent=True)
+                data_directory = self.store.data_directory
+                if data_directory is not None:
+                    # One Chrome per profile is shared by every Session; the
+                    # persistent task closes it when idle and at shutdown.
+                    self.browser_host = BrowserHost(data_directory / "browser" / "profiles" / "default")
+                    self.supervisor.bind_browser_host(self.browser_host)
+                    self.supervisor.start_managed_task("browser-host", self.browser_host.run, persistent=True)
         except (
             StorageError,
             ModelConfigError,
@@ -2127,7 +2201,43 @@ class RuntimeServer:
                 self.supervisor.events.deliver_pending()
         logger.info("Runtime initialized duration_ms=%.3f", (time.perf_counter() - startup_started) * 1000)
         self.managed_resources.warmup()
+        self._warm_browser_resources()
         self.supervisor.schedule_next()
+
+    def _browser_application(self) -> BrowserApplication:
+        self._applications_or_error()
+        return BrowserApplication(
+            self.store, self.supervisor.events, lambda: self.browser_host,
+            lambda: self.managed_resources.manager,
+        )
+
+    def _builtin_plugins(self, request: BuiltinPluginRequest) -> BuiltinPluginsResponse:
+        result = self._applications_or_error().extensions.builtin_plugins(request)
+        if request.action == "install":
+            self._warm_browser_resources()
+        return result
+
+    def _set_plugin_enabled(self, request: method_dtos.PluginSetEnabledRequestDto) -> object:
+        result = self._applications_or_error().extensions.set_plugin_enabled(
+            plugin_id=request.plugin_id, enabled=request.enabled, operation_id=request.operation_id,
+        )
+        if request.enabled:
+            self._warm_browser_resources()
+        return result
+
+    def _warm_browser_resources(self) -> None:
+        """Prepare the browser pack in the background once the plugin is enabled."""
+        from eidos_runtime.extensions.browser_plugin import BROWSER_PLUGIN_ID
+        from eidos_runtime.infrastructure.browser_runtime import BROWSER_PACK_ID
+
+        manager = self.managed_resources.manager
+        if self.plugins is None or manager is None:
+            return
+        record = self.plugins.store.plugin_record(BROWSER_PLUGIN_ID)
+        if record is None or record.get("status") != "installed" or not record.get("enabled"):
+            return
+        if any(pack.id == BROWSER_PACK_ID for pack in manager.index.packs):
+            self.managed_resources.retry(ResourceRetryRequest(pack_id=BROWSER_PACK_ID))
 
     def _idle_maintenance(self, cancel: threading.Event) -> None:
         if self.store.maintain_repository_cache(cancel):

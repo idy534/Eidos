@@ -138,6 +138,19 @@ from eidos_runtime.tools.workspace import (
     ToolCancelled,
     WorkspacePathError,
 )
+from eidos_runtime.domain.browser import BrowserGrant, BrowserToolClass
+from eidos_runtime.extensions.browser_plugin import BROWSER_PLUGIN_ID, bundled_browser_plugin_hash
+from eidos_runtime.persistence.browser_grants import BrowserGrantRepository
+from eidos_runtime.runtime.browser_tools import (
+    BrowserCall,
+    BrowserUploadRejected,
+    browser_access_description,
+    browser_call,
+    browser_upload_description,
+    chrome_missing,
+    upload_paths,
+    with_browser,
+)
 from eidos_runtime.tools.contracts import (
     GitWriteAccess,
     RunShellInput,
@@ -1557,6 +1570,13 @@ class ShellToolHandler:
         )
 
 
+_UPLOAD_SUMMARIES = {
+    "browser_upload_invalid": "browser_file_upload needs 1-16 file paths",
+    "browser_upload_outside_workspace": "Only files inside the current Workspace can be uploaded",
+    "browser_upload_not_a_file": "Each upload path must be an existing regular file",
+}
+
+
 class ExternalToolHandler:
     def __init__(self, dependencies: _HandlerDependencies) -> None:
         self.dependencies = dependencies
@@ -1596,14 +1616,39 @@ class ExternalToolHandler:
                 "timeoutSeconds": details.get("timeoutSeconds"),
             },
         )
+        def call_tool() -> dict[str, object]:
+            return implementation.execute(call.arguments, cancel)
+
+        execute: Callable[[], dict[str, object]] = call_tool
+        browser = browser_call(implementation)
+        grant: BrowserGrant | None = None
+        if browser is not None:
+            missing = chrome_missing(call.name, browser)
+            if missing is not None:
+                return HandlerOutcome(missing, "failed", "failed")
+            execute = with_browser(call.name, browser, cancel, execute)
+            prepared, grant, rejected = self._prepare_browser(run_id, call, browser, prepared, details, connection)
+            if rejected is not None:
+                return HandlerOutcome(rejected, "failed", "failed")
         pending = self.dependencies.store.typed_runtime_repository().read_pending_approval(run_id)
-        if runtime.spec.approval_required or pending is not None:
+        if grant is not None and pending is None:
+            verified = self.dependencies.execute_workspace_side_effect(
+                item=item,
+                prepared=prepared.model_copy(update={"intent_preconditions": {
+                    **prepared.intent_preconditions,
+                    "authorization": "browser_session_grant",
+                    "browserGrantId": grant.id,
+                }}),
+                cancel=cancel,
+                execute=execute,
+            )
+        elif runtime.spec.approval_required or pending is not None:
             approval, verified = self.dependencies.execute_side_effect(
                 run_id=run_id,
                 item=item,
                 prepared=prepared,
                 cancel=cancel,
-                execute=lambda: implementation.execute(call.arguments, cancel),
+                execute=self._granting(run_id, item, browser, prepared, execute),
             )
             if approval.decision != "approve":
                 return HandlerOutcome(
@@ -1624,7 +1669,7 @@ class ExternalToolHandler:
                     "authorization": "mcp_read_only",
                 }}),
                 cancel=cancel,
-                execute=lambda: implementation.execute(call.arguments, cancel),
+                execute=execute,
             )
         assert verified is not None
         result = verified.result
@@ -1632,6 +1677,79 @@ class ExternalToolHandler:
             self.dependencies.store.clear_rejects(run_id)
         status = "completed" if result["outcome"] == "success" else "failed"
         return HandlerOutcome(result, status, status, model_content=verified.model_content)
+
+    def _prepare_browser(
+        self,
+        run_id: str,
+        call: ModelToolCall,
+        browser: BrowserCall,
+        prepared: PreparedToolExecution,
+        details: dict[str, object],
+        connection: object,
+    ) -> tuple[PreparedToolExecution, BrowserGrant | None, dict[str, object] | None]:
+        """Choose the Session grant, a grant request or a per-call upload approval."""
+
+        if self.dependencies.store.read_run(run_id).get("approvalMode") == "full_access":
+            return prepared, None, None
+        # With no paths, browser_file_upload only cancels the open file chooser.
+        uploads = browser.tool_class is BrowserToolClass.FILE and bool(call.arguments.get("paths"))
+        if uploads:
+            roots = (
+                Path(getattr(connection, "workspace_root")),
+                *getattr(connection, "additional_workspace_roots", ()),
+            )
+            try:
+                paths = upload_paths(call.arguments, roots)
+            except BrowserUploadRejected as error:
+                return prepared, None, tool_error(call.name, error.code, _UPLOAD_SUMMARIES[error.code])
+            return prepared.model_copy(update={
+                "approval_description": browser_upload_description(call.name, call.arguments, paths, details),
+                "intent_preconditions": {**prepared.intent_preconditions, "uploadPaths": list(paths)},
+            }), None, None
+        if browser.tool_class is BrowserToolClass.READ:
+            return prepared, None, None
+        grants = BrowserGrantRepository(self.dependencies.store.database)
+        grant = grants.active(grants.grant_session_for_run(run_id), browser.launch.profile)
+        if grant is not None and grant.plugin_hash == bundled_browser_plugin_hash():
+            return prepared, grant, None
+        return prepared.model_copy(update={
+            "approval_description": browser_access_description(
+                call.name, call.arguments, details, browser.launch.profile,
+            ),
+            "approval_kind": "additional_permissions",
+            "transition_reason": "browser_access_approval",
+        }), None, None
+
+    def _granting(
+        self,
+        run_id: str,
+        item: dict[str, object],
+        browser: BrowserCall | None,
+        prepared: PreparedToolExecution,
+        execute: Callable[[], dict[str, object]],
+    ) -> Callable[[], dict[str, object]]:
+        """After a browser access approval, persist the Session grant before acting."""
+
+        if browser is None or prepared.approval_description.get("kind") != "browser_access":
+            return execute
+
+        def run() -> dict[str, object]:
+            grants = BrowserGrantRepository(self.dependencies.store.database)
+            plugin_hash = bundled_browser_plugin_hash()
+            provenance = prepared.intent_preconditions.get("provenance")
+            version = provenance.get("sourceVersion") if isinstance(provenance, dict) else None
+            if plugin_hash is not None and isinstance(version, str):
+                mutation = grants.grant(
+                    session_id=grants.grant_session_for_run(run_id),
+                    plugin_id=BROWSER_PLUGIN_ID, plugin_version=version, plugin_hash=plugin_hash,
+                    source_approval_id=grants.approved_source(str(item["id"])),
+                    profile="user" if prepared.approval_description.get("profile") == "user" else "default",
+                )
+                if mutation.events:
+                    self.dependencies.events.publish(mutation)
+            return execute()
+
+        return run
 
 
 class EidosStateToolHandler:

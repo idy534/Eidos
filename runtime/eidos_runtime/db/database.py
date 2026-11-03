@@ -65,6 +65,8 @@ from eidos_runtime.db.schema import (
     V35_SCHEMA_VERSION,
     V36_SCHEMA_VERSION,
     V46_SCHEMA_VERSION,
+    V47_SCHEMA_VERSION,
+    V48_SCHEMA_VERSION,
     PLANNING_SCHEMA_SQL,
     V13_TO_V14_MIGRATION_SQL,
     V12_TO_V13_MIGRATION_SQL,
@@ -214,6 +216,8 @@ class Database:
                     44,
                     45,
                     V46_SCHEMA_VERSION,
+                    V47_SCHEMA_VERSION,
+                    V48_SCHEMA_VERSION,
                     SCHEMA_VERSION,
                     4,
                 }
@@ -525,6 +529,18 @@ class Database:
                 )
                 try:
                     migrate_worktree_git_identity(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V47_SCHEMA_VERSION:
+                from eidos_runtime.db.browser_grants_migration import migrate_browser_grants
+                try:
+                    migrate_browser_grants(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V48_SCHEMA_VERSION:
+                from eidos_runtime.db.event_query_migration import migrate_event_query_indexes
+                try:
+                    migrate_event_query_indexes(connection)
                 except sqlite3.Error as error:
                     raise StorageError("schema_migration_failed") from error
             _verify_integrity(connection)

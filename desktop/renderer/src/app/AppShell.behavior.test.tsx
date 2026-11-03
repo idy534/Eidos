@@ -159,6 +159,10 @@ beforeEach(() => {
   Object.defineProperty(window, "scrollTo", { configurable: true, value: vi.fn() });
   window.eidosRuntime = {
     onNotification: vi.fn(() => () => undefined),
+    readBrowserAgentStatus: vi.fn(async () => ({
+      chromeInstalled: true, running: false, pluginInstalled: false, pluginEnabled: false, resource: "unavailable", granted: false,
+    })),
+    revokeBrowserAgentGrant: vi.fn(async () => ({ revoked: true })),
     listSidebarPins: vi.fn(async () => ({ items: [], throughEventId: 0 })),
     listWorkspaceDirectory: vi.fn(async () => ({ path: ".", entries: [], truncated: false })),
     readWorkspaceFilePreview: vi.fn(async (_sessionId: string, path: string) => ({

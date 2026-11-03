@@ -70,6 +70,7 @@ from eidos_runtime.runtime.protocol_diagnostics import ProtocolDiagnostic
 from eidos_runtime.runtime.run_resources import RunResourceError, RunResources
 from eidos_runtime.runtime.shell_process_manager import ShellSessionFinalizationError
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
+from eidos_runtime.infrastructure.browser_host import BrowserHost
 from eidos_runtime.runtime.runtime_dependencies import RuntimeDependencyCatalog
 from eidos_runtime.runtime.sampling import (
     SamplingAuthenticationFailed,
@@ -149,7 +150,9 @@ class RuntimeEngine:
         collaboration: CollaborationApplication | None = None,
         lifecycle_observer: Callable[[LoopLifecycleEvent], None] | None = None,
         hook_lifecycle: HookLifecycle | None = None,
+        browser_host: BrowserHost | None = None,
     ) -> None:
+        self.browser_host = browser_host
         self.collaboration = collaboration
         self.store = store
         self.model = model
@@ -296,6 +299,7 @@ class RuntimeEngine:
                 events=self.events,
                 runtime_dependency_catalog=self.runtime_dependency_catalog,
                 collaboration=self.collaboration,
+                browser_host=self.browser_host,
             ) as resources:
                 if extension_snapshot.get("hooks"):
                     resources.hooks = HookService(self.store, run_id, resources=self.resources,
@@ -874,6 +878,7 @@ class RuntimeEngine:
                                     return
                                 raise
                             step = step.model_copy(update={"model_attempt_id": attempt_id})
+                            self.events.deliver_pending()
                             continue
                     repair_code = _sampling_protocol_repair_code(error)
                     if repair_code is not None:

@@ -9,12 +9,13 @@ from eidos_runtime.model.replay import ModelResponseReplay
 
 from eidos_runtime.memory.context import context_epochs
 from eidos_runtime.memory.repository import MemoryRejected
-from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.db.storage import InvalidRunStateError, SessionStore
 from eidos_runtime.model.client import (
     ModelClient,
     ModelRequestError,
     ModelRequestFailure,
 )
+from eidos_runtime.domain.model_retry import classify_retry_cause
 from eidos_runtime.model.retry import RetryDecision, RetryState, retry_decision, select_retry_delay
 from eidos_runtime.model.request_scope import foreground_request
 from eidos_runtime.model.gateway_types import RetryPolicy
@@ -173,6 +174,12 @@ class SamplingRuntime:
                 tool_definitions=frozen.tool_definitions,
             )
         except ModelStreamInterrupted as interrupted:
+            # Batched safe text belongs to the interrupted Item, as it did when
+            # every line was flushed immediately.
+            try:
+                writer.flush()
+            except InvalidRunStateError:
+                pass
             had_progress = bool(provisional_text or interrupted.text)
             partial_text = "".join((*provisional_text, interrupted.text))
             response_text_bytes, response_text_sha256 = response_text_metrics(
@@ -523,6 +530,12 @@ def _retry_decision_payload(
         "lastRetryReason": failure.last_retry_reason if failure else None,
         "lastBackoffSeconds": failure.last_backoff_seconds if failure else None,
         "retryAfterApplied": failure.retry_after_applied if failure else False,
+        "cause": classify_retry_cause(
+            failure.code if failure else None,
+            failure.reason if failure else None,
+            failure.status_code if failure else None,
+        ),
+        "httpStatus": failure.status_code if failure else None,
     }
 
 

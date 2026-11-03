@@ -778,6 +778,9 @@ class SessionRepository(Repository):
                 f"DELETE FROM durable_intents WHERE run_id IN ({run_ids})",
                 (session_id,),
             )
+            from eidos_runtime.persistence.browser_grants import delete_session_browser_grants
+
+            delete_session_browser_grants(connection, session_id)
             connection.execute(
                 f"DELETE FROM approvals WHERE run_id IN ({run_ids})", (session_id,)
             )
@@ -1162,10 +1165,19 @@ class SessionRepository(Repository):
                 snapshot["inheritedHistory"] = [history.view(record) for record in history_page.records]
             if history_page.previous_item_id:
                 snapshot["previousItemId"] = history_page.previous_item_id
-            elif not history_page.records and connection.execute(
-                "SELECT 1 FROM session_history_entries WHERE session_id=?", (session_id,),
-            ).fetchone() and selected_items:
-                snapshot["previousItemId"] = selected_items[0]["id"]
+            elif not history_page.records and selected_items:
+                with self.lock:
+                    has_history_entries = (
+                        self._connection()
+                        .execute(
+                            "SELECT 1 FROM session_history_entries WHERE session_id=? LIMIT 1",
+                            (session_id,),
+                        )
+                        .fetchone()
+                        is not None
+                    )
+                if has_history_entries:
+                    snapshot["previousItemId"] = selected_items[0]["id"]
         if selected_items:
             from eidos_runtime.persistence.context_management import ContextManagementRepository
             activities = ContextManagementRepository(self.database).activities(
@@ -1176,6 +1188,15 @@ class SessionRepository(Repository):
             )
             if activities:
                 snapshot["contextCompactions"] = [activity.to_wire_dict() for activity in activities]
+            from eidos_runtime.persistence.model_retries import ModelRetryRepository
+            retries = ModelRetryRepository(self.database).activities(
+                session_id, tuple(dict.fromkeys(str(item["runId"]) for item in selected_items)),
+                through_event_id=through_event_id,
+                since=min(int(item["createdAt"]) for item in selected_items),
+                before=before_timestamp, byte_budget=max(0, MAX_SNAPSHOT_BYTES - _json_bytes(snapshot) - 64),
+            )
+            if retries:
+                snapshot["modelRetries"] = [activity.to_wire_dict(exclude_none=True) for activity in retries]
         return snapshot
 
     def list_events(

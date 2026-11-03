@@ -27,7 +27,7 @@ from eidos_runtime.context.facts import ContextFacts
 from eidos_runtime.context.input_references import inline_reference_mention, project_input_mentions
 from eidos_runtime.infrastructure.automation_time import local_timezone
 from eidos_runtime.domain.automation import AutomationError
-from eidos_runtime.context.tool_history import clear_old_tool_results
+from eidos_runtime.context.tool_history import clear_old_tool_results, omit_old_browser_images
 from eidos_runtime.model.context_projection import project_context, recovery_context, generated_summary_view, fit_personalization
 from eidos_runtime.context.policy import TOOL_RESULT_CLEARING_TARGET_TOKENS, CONTINUITY_SECTION_ID
 from eidos_runtime.context.summary_evidence import continuity_context
@@ -536,6 +536,7 @@ class ContextBuilder:
                     provider_usage=provider_usage, provider_calibration_estimate=calibration_estimate,
                     usage_updated_at=time.time_ns() // 1_000_000,
                 )
+        context = list(omit_old_browser_images(tuple(context)))
         for projected in context:
             if projected.get('type') == 'tool_result' and projected.get('name') == 'read_agent_message':
                 try:

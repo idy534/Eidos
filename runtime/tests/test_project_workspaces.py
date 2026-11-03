@@ -13,7 +13,7 @@ import pytest
 
 from eidos_runtime.db.database import Database
 from eidos_runtime.db.layout import STATE_DATABASE_NAME
-from eidos_runtime.db.schema import V44_SCHEMA_SQL
+from eidos_runtime.db.schema import SCHEMA_VERSION, V44_SCHEMA_SQL
 from eidos_runtime.protocol.server import RuntimeServer
 
 
@@ -529,7 +529,7 @@ def test_v44_to_v45_migration_preserves_project_and_session_bindings(
             (session_id,),
         ).fetchone()
 
-        assert revision == 47
+        assert revision == SCHEMA_VERSION
         assert project["id"] == project_id
         assert project["name"] == "Legacy project"
         assert project["workspace_root"] == str(workspace.resolve())

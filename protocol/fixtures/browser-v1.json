@@ -1,0 +1,12 @@
+{
+  "statusRequest": { "sessionId": "00000000-0000-4000-8000-000000000001" },
+  "status": {
+    "chromeInstalled": true, "chromeVersion": "156.0.8078.76", "running": false,
+    "pluginInstalled": true, "pluginEnabled": true, "resource": "ready", "granted": true
+  },
+  "revokeRequest": { "sessionId": "00000000-0000-4000-8000-000000000001" },
+  "revokeResponse": { "revoked": true },
+  "closeRequest": {},
+  "closeResponse": { "closed": false },
+  "grantChanged": { "sessionId": "00000000-0000-4000-8000-000000000001", "active": false }
+}

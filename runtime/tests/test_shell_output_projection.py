@@ -7,8 +7,8 @@ import unittest
 from eidos_runtime.tools.contracts import project_tool_result
 
 
-_MODEL_TOTAL_BYTES = 48 * 1024
-_MODEL_STREAM_BYTES = 16 * 1024
+_MODEL_TOTAL_BYTES = 64 * 1024
+_MODEL_STREAM_BYTES = 32 * 1024
 
 
 def _shell_result(stdout: str, stderr: str) -> dict[str, object]:
@@ -51,8 +51,8 @@ def _model_bytes(value: dict[str, object]) -> int:
 
 class ShellOutputProjectionTests(unittest.TestCase):
     def test_shell_output_keeps_heads_tails_and_raw_truncation_facts(self) -> None:
-        stdout = "stdout-head-" + ("o" * 20_000) + "stdout-tail-50"
-        stderr = "stderr-head-" + ("e" * 21_000) + "stderr-tail-188"
+        stdout = "stdout-head-" + ("o" * 40_000) + "stdout-tail-50"
+        stderr = "stderr-head-" + ("e" * 42_000) + "stderr-tail-188"
         canonical = _shell_result(stdout, stderr)
         original = copy.deepcopy(canonical)
 
@@ -236,8 +236,21 @@ class ShellOutputProjectionTests(unittest.TestCase):
         self.assertNotIn("modelProjectionContinuation", projected_data)
         self.assertEqual(canonical, original)
 
+    def test_single_stream_uses_shell_budget_and_keeps_more_tail(self) -> None:
+        stdout = "H" * 50_000 + "T" * 50_000
+        canonical = _shell_result(stdout, "")
+
+        projection = project_tool_result("run_shell", canonical)
+        value = projection.model_result["data"]["stdout"]
+        assert isinstance(value, str)
+
+        retained = len(value.replace("\n[... model output omitted ...]\n", ""))
+        self.assertGreater(retained, 24 * 1024)
+        self.assertLessEqual(len(value.encode("utf-8")), _MODEL_STREAM_BYTES)
+        self.assertGreater(value.count("T"), 2 * value.count("H"))
+
     def test_shell_projection_continuation_reads_existing_output(self) -> None:
-        canonical = _shell_result("x" * 40_000, "short")
+        canonical = _shell_result("x" * 80_000, "short")
 
         projection = project_tool_result("run_shell", canonical)
         data = projection.model_result["data"]

@@ -1,16 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { renderToStaticMarkup } from "react-dom/server";
+import type { ReactElement } from "react";
+import { renderToStaticMarkup as renderMarkup } from "react-dom/server";
 
 import { ApprovalComposer } from "./ApprovalComposer.js";
 import type { Item, Run } from "../contracts.js";
 import {
   ExecutionFeed,
   formatItemTime,
+  groupProcessEntries,
   isFeedAtBottom,
+  MountCollapsedBodiesContext,
   shellOutputSegments,
+  summarizeToolGroup,
 } from "./ExecutionFeed.js";
+
+// These snapshots inspect collapsed process and tool bodies, which the feed
+// otherwise mounts only after a user opens them.
+function renderToStaticMarkup(element: ReactElement): string {
+  return renderMarkup(
+    <MountCollapsedBodiesContext.Provider value={true}>{element}</MountCollapsedBodiesContext.Provider>,
+  );
+}
 
 
 const run: Run = {
@@ -2230,5 +2242,69 @@ test("falls back to result data.query when argumentsJson is missing for tool_sea
   assert.match(html, /class="tool-search-name"[^>]*>automation<\/span>/);
 });
 
+function groupToolItem(id: string, ordinal: number, toolName: string, args: object, status: Item["status"] = "completed"): Item {
+  return item({
+    id,
+    ordinal,
+    kind: toolName === "run_shell" ? "command_execution" : "tool_call",
+    status,
+    toolCall: {
+      id: `${id}-tool`, itemId: id, modelStepIndex: 1, batchOrder: ordinal, providerCallId: id,
+      toolName, status: status === "in_progress" ? "running" : status === "failed" ? "failed" : "completed", startedAt: 1_000,
+      argumentsJson: JSON.stringify(args),
+      ...(status === "in_progress" ? {} : { resultJson: JSON.stringify({ outcome: status === "failed" ? "error" : "success", code: status === "failed" ? "x" : "ok", summary: "done" }) }),
+    },
+  });
+}
 
+test("groups only adjacent tool calls and leaves narration and lone calls alone", () => {
+  const entries = [
+    groupToolItem("a", 1, "read_file", { path: "a.ts" }),
+    groupToolItem("b", 2, "search_text", { query: "x" }),
+    item({ id: "text", ordinal: 3, kind: "assistant_message", content: "说明" }),
+    groupToolItem("c", 4, "run_shell", { command: "ls" }),
+  ].map((entry) => ({ kind: "item" as const, item: entry }));
+  const nodes = groupProcessEntries(entries);
+  assert.deepEqual(nodes.map((node) => node.kind), ["tools", "item", "item"]);
+  assert.deepEqual(nodes[0]!.kind === "tools" ? nodes[0]!.items.map((entry) => entry.id) : [], ["a", "b"]);
+});
 
+test("summarizes a tool group by action with a failure count", () => {
+  const summary = summarizeToolGroup([
+    groupToolItem("a", 1, "read_file", { path: "a.ts" }),
+    groupToolItem("b", 2, "read_file", { path: "b.ts" }),
+    groupToolItem("c", 3, "search_text", { query: "x" }),
+    groupToolItem("d", 4, "run_shell", { command: "ls" }, "failed"),
+  ]);
+  assert.deepEqual(summary.parts.map((part) => part.text), ["读取 2 个文件", "搜索 1 次", "运行 1 条命令"]);
+  assert.equal(summary.failed, 1);
+});
+
+test("renders a collapsed tool group summary and a live action while running", () => {
+  const done = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        groupToolItem("a", 1, "read_file", { path: "a.ts" }),
+        groupToolItem("b", 2, "run_shell", { command: "git status" }),
+      ]}
+      runs={[run]}
+      approvals={[]}
+    />,
+  );
+  assert.match(done, /<details class="tool-group"[^>]*><summary>/);
+  assert.match(done, /读取 1 个文件 · 运行 1 条命令/);
+  assert.doesNotMatch(done, /data-running/);
+
+  const running = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        groupToolItem("a", 1, "read_file", { path: "a.ts" }),
+        groupToolItem("b", 2, "run_shell", { command: "pnpm test" }, "in_progress"),
+      ]}
+      runs={[{ ...run, status: "running" }]}
+      approvals={[]}
+    />,
+  );
+  assert.match(running, /data-running="true"/);
+  assert.match(running, /<span class="tool-group-label">正在运行 pnpm test<\/span>/);
+});

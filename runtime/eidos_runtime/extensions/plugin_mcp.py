@@ -6,6 +6,7 @@ import re
 
 from pydantic import JsonValue
 
+from eidos_runtime.extensions.browser_plugin import BROWSER_LAUNCH_VARIABLES, BROWSER_PERMISSION_PROFILE
 from eidos_runtime.extensions.contracts import McpServerConfigV1
 
 
@@ -84,6 +85,10 @@ def read_mcp_servers(files: Mapping[str, bytes], settings: dict[str, JsonValue],
                 "toolTimeoutSeconds": eidos.get("toolTimeoutSeconds", 60), "enabled": not disabled,
             })
             supported_variables = {"PLUGIN_ROOT", "CLAUDE_PLUGIN_ROOT", "RUNTIME_PYTHON"}
+            if config.permission_profile == BROWSER_PERMISSION_PROFILE:
+                # Only the bundled browser package can start with this profile;
+                # McpManager checks that identity before resolving these values.
+                supported_variables |= BROWSER_LAUNCH_VARIABLES
             if any(variable not in supported_variables for argument in [config.executable, *config.argv]
                    for variable in re.findall(r"\$\{([^}]+)\}", argument)):
                 issues.append(f"mcp_settings_unsupported:{name}")

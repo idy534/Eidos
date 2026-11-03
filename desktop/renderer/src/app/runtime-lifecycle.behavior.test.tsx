@@ -82,6 +82,9 @@ describe("App & Runtime Lifecycle behavior", () => {
       readPlan: vi.fn().mockResolvedValue(undefined),
       editPlan: vi.fn().mockResolvedValue(undefined),
       openPlan: vi.fn().mockResolvedValue(undefined),
+      readBrowserAgentStatus: vi.fn().mockResolvedValue({
+        chromeInstalled: true, running: false, pluginInstalled: false, pluginEnabled: false, resource: "unavailable", granted: false,
+      }),
       ...overrides,
     };
     (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
