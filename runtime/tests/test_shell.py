@@ -458,25 +458,60 @@ class ShellLifecycleUnitTests(unittest.TestCase):
         self.assertIn("exit code 7", result["summary"])
 
     def test_shell_output_limit_reports_reason_and_bounded_byte_counts(self) -> None:
-        result = self._run_shell("/usr/bin/printf '%*s' 300000 ''", 2)
+        result = self._run_shell("/usr/bin/printf '%*s' 1200000 ''", 2)
         data = result["data"]
 
         self.assertEqual(result["outcome"], "success")
         self.assertTrue(data["truncated"])
         self.assertEqual(data["truncationReason"], "output_limit")
-        self.assertEqual(data["originalBytes"], 300000)
-        self.assertEqual(data["omittedBytes"], 300000 - 256 * 1024)
+        self.assertEqual(data["originalBytes"], 1200000)
+        self.assertEqual(data["omittedBytes"], 1200000 - 1024 * 1024)
         self.assertLessEqual(data["originalBytes"], 9_007_199_254_740_991)
         self.assertLessEqual(data["omittedBytes"], 9_007_199_254_740_991)
 
-    def test_shell_output_limit_preserves_exact_counts_above_512_kib(self) -> None:
-        result = self._run_shell("/usr/bin/printf '%*s' 600000 ''", 2)
+    def test_shell_output_limit_preserves_exact_counts_above_2_mib(self) -> None:
+        result = self._run_shell("/usr/bin/printf '%*s' 2500000 ''", 2)
         data = result["data"]
 
         self.assertTrue(data["truncated"])
         self.assertEqual(data["truncationReason"], "output_limit")
-        self.assertEqual(data["originalBytes"], 600000)
-        self.assertEqual(data["omittedBytes"], 600000 - 256 * 1024)
+        self.assertEqual(data["originalBytes"], 2500000)
+        self.assertEqual(data["omittedBytes"], 2500000 - 1024 * 1024)
+
+    def test_shell_output_limit_keeps_each_stream_head_and_latest_tail(self) -> None:
+        code = (
+            "import sys; "
+            "sys.stdout.write('OUT-HEAD' + 'o' * 1200000 + 'OUT-TAIL'); "
+            "sys.stderr.write('ERR-HEAD' + 'e' * 1200000 + 'ERR-TAIL')"
+        )
+        launch = ShellLaunchSpec(
+            argv=(sys.executable, "-c", code),
+            cwd=self.workspace,
+            environment=os.environ.copy(),
+            sandboxed=False,
+        )
+
+        result = run_shell_process(
+            launch,
+            timeout_seconds=5,
+            cancel=threading.Event(),
+            on_delta=lambda _text: None,
+            started=time.monotonic(),
+            resource_registry=None,
+            owner_id="head-tail-test",
+        )
+
+        data = result["data"]
+        self.assertTrue(data["truncated"])
+        for key, head, tail in (
+            ("stdout", "OUT-HEAD", "OUT-TAIL"),
+            ("stderr", "ERR-HEAD", "ERR-TAIL"),
+        ):
+            self.assertTrue(data[key].startswith(head))
+            self.assertTrue(data[key].endswith(tail))
+            self.assertIn("output bytes omitted", data[key])
+        self.assertEqual(data["originalBytes"], 2 * (1200000 + 16))
+        self.assertEqual(data["omittedBytes"], 2 * (1200000 + 16 - 1024 * 1024))
 
     def test_streamed_output_preserves_utf8_split_across_stdout_and_stderr(self) -> None:
         code = (
@@ -524,7 +559,7 @@ class ShellLifecycleUnitTests(unittest.TestCase):
         self.assertEqual(streamed.count("😀"), 1)
         self.assertEqual(streamed.count("€"), 1)
 
-    def test_streamed_output_flushes_incomplete_utf8_after_output_truncation(self) -> None:
+    def test_streamed_output_flushes_incomplete_utf8_after_preview_limit(self) -> None:
         code = (
             "import sys; "
             f"sys.stdout.buffer.write(b'A' * {256 * 1024 - 1} + b'\\xf0\\x9f\\x98\\x80')"
@@ -549,12 +584,12 @@ class ShellLifecycleUnitTests(unittest.TestCase):
 
         self.assertEqual(result["outcome"], "success")
         data = result["data"]
-        self.assertTrue(data["truncated"])
+        self.assertFalse(data["truncated"])
         self.assertEqual(data["originalBytes"], 256 * 1024 + 3)
-        self.assertEqual(data["omittedBytes"], 3)
+        self.assertEqual(data["omittedBytes"], 0)
+        self.assertEqual(data["stdout"], "A" * (256 * 1024 - 1) + "😀")
         streamed = "".join(deltas)
-        self.assertEqual(streamed, data["stdout"])
-        self.assertEqual(streamed.count("\ufffd"), 1)
+        self.assertEqual(streamed, "A" * (256 * 1024 - 1) + "\ufffd")
 
     def test_streamed_output_flushes_incomplete_utf8_after_forced_termination(self) -> None:
         code = (
@@ -955,7 +990,7 @@ class ShellProcessManagerTests(unittest.TestCase):
         self.assertEqual(self.resources.active_resources(), ())
 
     def test_output_limit_drains_to_exit_and_reports_exact_byte_counts(self) -> None:
-        original_bytes = 300_000
+        original_bytes = 1_200_000
         result = self.manager.start(
             self._python_launch(
                 "import sys; "
@@ -965,7 +1000,7 @@ class ShellProcessManagerTests(unittest.TestCase):
             yield_time_ms=5_000,
         )
         data = result["data"]
-        accepted_bytes = 256 * 1024
+        accepted_bytes = 1024 * 1024
 
         self.assertEqual(result["outcome"], "success")
         self.assertEqual(data["executionStatus"], "exited")

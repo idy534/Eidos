@@ -35,11 +35,17 @@ from eidos_runtime.runtime.resource_registry import (
     RuntimeResourceKind,
 )
 from eidos_runtime.runtime.fault_injection import hit_fault
+from eidos_runtime.runtime.shell_output_buffer import ShellOutputBuffer
 from eidos_runtime.sandbox.permissions import SandboxAttempt, SandboxType
 from eidos_runtime.workspace.search_driver import RipgrepBinaryResolver, SearchDriverError
 
 
-MAX_OUTPUT_BYTES = 256 * 1024
+# Retained per stream as a stable head plus the latest tail, so a failure
+# summary at the end of long output stays readable through read_tool_output.
+MAX_OUTPUT_BYTES = 1024 * 1024
+# Live output events are a bounded preview; the final result carries the
+# retained output.
+LIVE_OUTPUT_PREVIEW_BYTES = 256 * 1024
 MAX_OUTPUT_METADATA_BYTES = 9_007_199_254_740_991
 TERMINATION_GRACE_SECONDS = 0.5
 POST_TERMINATION_DRAIN_SECONDS = 1.0
@@ -547,7 +553,10 @@ def run_shell_process(
     assert process.stdout is not None and process.stderr is not None
     selector.register(process.stdout, selectors.EVENT_READ, "stdout")
     selector.register(process.stderr, selectors.EVENT_READ, "stderr")
-    outputs = {"stdout": bytearray(), "stderr": bytearray()}
+    outputs = {
+        "stdout": ShellOutputBuffer(MAX_OUTPUT_BYTES),
+        "stderr": ShellOutputBuffer(MAX_OUTPUT_BYTES),
+    }
     decoders = {
         stream: codecs.getincrementaldecoder("utf-8")(errors="replace")
         for stream in outputs
@@ -558,9 +567,8 @@ def run_shell_process(
         if text:
             on_delta(text)
 
-    total = 0
+    preview_bytes = 0
     observed_bytes = 0
-    truncated = False
     termination = "exit"
     termination_started_at: float | None = None
     process_group = process.pid
@@ -600,14 +608,11 @@ def run_shell_process(
                     MAX_OUTPUT_METADATA_BYTES,
                     observed_bytes + len(chunk),
                 )
-                remaining = max(0, MAX_OUTPUT_BYTES - total)
-                accepted = chunk[:remaining]
-                if accepted:
-                    outputs[key.data].extend(accepted)
-                    total += len(accepted)
-                    emit_decoded(key.data, accepted)
-                if len(accepted) < len(chunk):
-                    truncated = True
+                outputs[key.data].append(chunk)
+                preview = chunk[:max(0, LIVE_OUTPUT_PREVIEW_BYTES - preview_bytes)]
+                if preview:
+                    preview_bytes += len(preview)
+                    emit_decoded(key.data, preview)
             if process.poll() is not None and termination == "exit":
                 if _process_group_exists(process_group):
                     termination = "background_process"
@@ -642,8 +647,12 @@ def run_shell_process(
             resource.close()
     for stream in outputs:
         emit_decoded(stream, b"", final=True)
-    stdout = bytes(outputs["stdout"]).decode("utf-8", errors="replace")
-    stderr = bytes(outputs["stderr"]).decode("utf-8", errors="replace")
+    for buffer in outputs.values():
+        buffer.finished = True
+    stdout = outputs["stdout"].read().text
+    stderr = outputs["stderr"].read().text
+    truncated = any(buffer.omitted_bytes for buffer in outputs.values())
+    retained_bytes = sum(buffer.retained_bytes for buffer in outputs.values())
     hit_fault("shell_modify_then_fail")
     outcome = "success" if returncode == 0 and termination == "exit" else "error"
     code = (
@@ -663,7 +672,7 @@ def run_shell_process(
         "originalBytes": observed_bytes,
         "omittedBytes": min(
             MAX_OUTPUT_METADATA_BYTES,
-            max(0, observed_bytes - total),
+            max(0, observed_bytes - retained_bytes),
         ),
         "shellKind": launch.shell_kind,
         "environmentSource": launch.environment_source,

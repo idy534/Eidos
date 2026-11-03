@@ -182,7 +182,7 @@ def test_missing_helper_fails_before_command_start(tmp_path, shell_manager, monk
 def test_large_output_keeps_latest_prompt_and_final_evidence(tmp_path, shell_manager):
     deltas = []
     code = (
-        "import sys; print('HEAD',flush=True); sys.stdout.write('x'*400000); "
+        "import sys; print('HEAD',flush=True); sys.stdout.write('x'*1200000); "
         "sys.stdout.flush(); print('LATEST_PROMPT',flush=True); sys.stdin.readline(); "
         "print('FINAL_TEST_RESULT',flush=True)"
     )

@@ -82,7 +82,7 @@ def test_large_result_is_saved_and_paged_without_hash_or_operation_replay(worksp
         result_page = adapter.execute({"callId": "large-result", "itemId": item["id"], "stream": "result", "offsetBytes": offset}, threading.Event())
         assert result_page["outcome"] == "success"
         data = result_page["data"]
-        assert len(data["content"].encode()) <= 4096
+        assert len(data["content"].encode()) <= 12 * 1024
         pages.append(data["content"])
         if not data["hasMoreAfter"]:
             break

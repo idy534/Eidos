@@ -415,7 +415,7 @@ Run `e277e61b`（`deepseek-v4-1-flash-261017`，reasoning high）共 10 步。�
 - ShellEnvironmentSnapshot 不恢复 aliases、functions 或其他 shell state。
 - Skill 依赖自动绑定只适用于现有识别器能识别的直接脚本调用，包括 `$RUNTIME_PYTHON` 和 `$RUNTIME_NODE`。Runtime 不会从任意 Shell 包装、变量脚本路径或已激活 Skill 列表推断普通命令的依赖，也不会自动安装缺失包。
 - manual 与 auto_review 要求 Shell cwd 位于 Workspace 内。调用方可以使用 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径。full_access 允许 Workspace 外的 absolute cwd，但准备和启动仍核验目录身份。
-- Agent Shell 的 stdout/stderr 各保留最多 256 KiB 首尾，合计最多 512 KiB。PTY 使用一条合并流，最多保留 256 KiB。实时 Feed 预览合计最多 256 KiB，完整终态展示使用保留结果。系统不提供无限输出或完整 TUI，具体边界见 [Agent Shell](features/agent-shell.md)。
+- Agent Shell 的 stdout/stderr 各保留最多 1 MiB 首尾，合计最多 2 MiB。PTY 使用一条合并流，最多保留 1 MiB。实时 Feed 预览合计最多 256 KiB，完整终态展示使用保留结果。系统不提供无限输出或完整 TUI，具体边界见 [Agent Shell](features/agent-shell.md)。
 - Agent Shell 会对 stdout 和 stderr 做 UTF-8 增量解码。Desktop Execution Feed 在有界实时预览内保留两条流的展示脱敏片段顺序；预览不足时，终态使用保留的首尾，并把 ANSI/OSC 控制序列按纯文本处理；聚合结果仍保留原始 stdout/stderr。旧 Item 缺少或为空的 `content` 时，Feed 使用结果中的 stdout/stderr 回退，并在结果存在时展示 `attemptCount`、`sandboxed` 和 `escalated` 事实。
 - 模型收到的 `run_shell` 输出每条 stdout/stderr 流最多 16 KiB，整个结果 JSON 最多 48 KiB。模型投影保留每条流的首尾，并用独立的 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 说明模型省略的 stdout/stderr UTF-8 字节。原始 `truncated` 和 `omittedBytes` 仍表示 Shell 原始输出限制，已丢失的原始字节不能恢复。
 - `read_tool_output` 可读取当前 Run 活动 Shell 的累计快照和同 Session 历史 Run 的持久终态输出。跨 Run 活动 Shell、跨 Session、缺失或歧义 ID 仍拒绝。provider tool call ID 不能换成 Shell session ID。`maxBytes` 范围为 4 字节至 16 KiB，按 UTF-8 边界分页，调用方按 `nextOffset` 继续。该工具不消费等待游标，不重放 Shell，也不清除 reconciliation。

@@ -456,7 +456,7 @@ Shell 输出在 Renderer 中使用成熟的 ANSI stripping 实现转为纯文本
 
 `run_shell` 的模型结果投影对 stdout 和 stderr 各保留首尾，每条流最多 16 KiB，整个 JSON 最多 48 KiB。原始 `truncated` 和 `omittedBytes` 保持为原始 Shell 事实，不会被模型投影覆盖。模型投影使用独立的 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 字段，其中 omitted bytes 只计算模型省略的 stdout/stderr UTF-8 字节。
 
-`read_tool_output` 是只读 Shell 输出分页工具。它使用前一次 `run_shell` 的 provider tool call ID，默认读取 stdout，也可读取 stderr。当前 Run 的活动 Shell 通过其 ShellProcessManager 读取累计快照，不移动等待游标；同 Session 的历史 Run 读取持久终态结果。跨 Run 活动结果、跨 Session、缺失和歧义 ID 拒绝。`offsetBytes`、`maxBytes`（4 字节至 16 KiB）和 `fromEnd` 控制分页；返回 UTF-8 对齐的实际 `startByte`、`endByte` 和 `nextOffset`。该工具不重新执行 Shell、不清除 reconciliation，也不能恢复原始输出上限已丢失的字节。
+`read_tool_output` 是只读 Shell 输出分页工具。它使用前一次 `run_shell` 的 provider tool call ID，默认读取 stdout，也可读取 stderr。当前 Run 的活动 Shell 通过其 ShellProcessManager 读取累计快照，不移动等待游标；同 Session 的历史 Run 读取持久终态结果。跨 Run 活动结果、跨 Session、缺失和歧义 ID 拒绝。`offsetBytes`、`maxBytes`（4 字节至 16 KiB）和 `fromEnd` 控制分页；转义后正文超过 32 KiB 时 Adapter 缩小范围重读，最少 4 KiB；返回 UTF-8 对齐的实际 `startByte`、`endByte` 和 `nextOffset`。该工具不重新执行 Shell、不清除 reconciliation，也不能恢复原始输出上限已丢失的字节。
 
 ### 沙盒环境设置
 

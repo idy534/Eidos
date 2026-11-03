@@ -26,9 +26,13 @@ if TYPE_CHECKING:
 
 READ_TOOL_OUTPUT_MIN_BYTES = 4
 READ_TOOL_OUTPUT_MAX_BYTES = 16 * 1024
-# Generic model projection escapes control characters. Keep the actual page
-# below the projection budget even when every byte needs a JSON escape.
-READ_TOOL_OUTPUT_MODEL_PAGE_BYTES = 4 * 1024
+READ_TOOL_OUTPUT_MODEL_PAGE_BYTES = READ_TOOL_OUTPUT_MAX_BYTES
+# Generic model projection escapes control characters and quotes. A page whose
+# escaped content exceeds this budget is read again with fewer bytes, so the
+# projection never cuts content out from under the returned offsets.
+READ_TOOL_OUTPUT_MODEL_CONTENT_JSON_BYTES = 32 * 1024
+# Even when every byte needs a six-byte JSON escape, this page fits the budget.
+READ_TOOL_OUTPUT_SAFE_PAGE_BYTES = 4 * 1024
 _JSON_SAFE_INTEGER_MAX = 9_007_199_254_740_991
 
 
@@ -126,17 +130,32 @@ class ReadToolOutputAdapter:
             return _error("tool_canceled", "Output reading was canceled")
         try:
             request = ReadToolOutputInput.model_validate(arguments)
-            page = self.store.read_tool_output(
-                self.run_id,
-                tool_call_id=request.callId,
-                stream=request.stream,
-                offset_bytes=request.offsetBytes,
-                max_bytes=min(request.maxBytes, READ_TOOL_OUTPUT_MODEL_PAGE_BYTES),
-                from_end=request.fromEnd,
-                item_id=request.itemId,
-                output_revision=request.outputRevision,
-                live_output_reader=(self.shell_process_manager.read_output if self.shell_process_manager is not None else None),
-            )
+            max_bytes = min(request.maxBytes, READ_TOOL_OUTPUT_MODEL_PAGE_BYTES)
+            while True:
+                page = self.store.read_tool_output(
+                    self.run_id,
+                    tool_call_id=request.callId,
+                    stream=request.stream,
+                    offset_bytes=request.offsetBytes,
+                    max_bytes=max_bytes,
+                    from_end=request.fromEnd,
+                    item_id=request.itemId,
+                    output_revision=request.outputRevision,
+                    live_output_reader=(self.shell_process_manager.read_output if self.shell_process_manager is not None else None),
+                )
+                escaped_bytes = _escaped_content_bytes(page.content)
+                if (
+                    escaped_bytes <= READ_TOOL_OUTPUT_MODEL_CONTENT_JSON_BYTES
+                    or max_bytes <= READ_TOOL_OUTPUT_SAFE_PAGE_BYTES
+                ):
+                    break
+                max_bytes = max(
+                    READ_TOOL_OUTPUT_SAFE_PAGE_BYTES,
+                    min(
+                        max_bytes - 1,
+                        max_bytes * READ_TOOL_OUTPUT_MODEL_CONTENT_JSON_BYTES // escaped_bytes,
+                    ),
+                )
         except ToolOutputReadError as error:
             return _error(error.code, _summary_for_code(error.code))
         except (TypeError, ValueError):
@@ -203,6 +222,10 @@ def read_tool_output_entry(
     )
 
 
+def _escaped_content_bytes(content: str) -> int:
+    return len(json.dumps(content, ensure_ascii=False).encode("utf-8"))
+
+
 def _page_result(
     page: ToolOutputPage, *, content: str | None = None
 ) -> dict[str, object]:
@@ -265,8 +288,10 @@ def _summary_for_code(code: str) -> str:
 
 __all__ = [
     "READ_TOOL_OUTPUT_MAX_BYTES",
-    "READ_TOOL_OUTPUT_MODEL_PAGE_BYTES",
     "READ_TOOL_OUTPUT_MIN_BYTES",
+    "READ_TOOL_OUTPUT_MODEL_CONTENT_JSON_BYTES",
+    "READ_TOOL_OUTPUT_MODEL_PAGE_BYTES",
+    "READ_TOOL_OUTPUT_SAFE_PAGE_BYTES",
     "ReadToolOutputAdapter",
     "ReadToolOutputInput",
     "ReadToolOutputResultData",

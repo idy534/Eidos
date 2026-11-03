@@ -1187,7 +1187,10 @@ PROJECTORS: dict[str, VersionedToolResultProjector] = {
 
 _MODEL_TOTAL_BYTES = 48 * 1024
 _MODEL_STRING_BYTES = 16 * 1024
-_MODEL_SHELL_STREAM_BYTES = 16 * 1024
+# Shell output gets its own budget: a single stream may use most of it, and
+# the serialized fit shrinks both streams when stdout and stderr are large.
+_MODEL_SHELL_TOTAL_BYTES = 64 * 1024
+_MODEL_SHELL_STREAM_BYTES = 32 * 1024
 _MODEL_OUTPUT_MARKER = "\n[... model output omitted ...]\n"
 _MODEL_MAX_DEPTH = 8
 _MODEL_MAX_NODES = 1_000
@@ -1437,7 +1440,8 @@ def _bounded_shell_output(
         return accepted.decode("utf-8"), True, len(encoded) - len(accepted)
 
     available = max_bytes - len(marker)
-    head_limit = (available + 1) // 2
+    # Failures and test summaries usually land at the end of the output.
+    head_limit = available // 4
     tail_limit = available - head_limit
     head = encoded[:head_limit].decode("utf-8", errors="ignore").encode("utf-8")
     tail = encoded[-tail_limit:].decode("utf-8", errors="ignore").encode("utf-8")
@@ -1451,7 +1455,7 @@ def _fit_shell_serialized_budget(
     raw_streams: dict[str, str],
     stream_omitted: dict[str, int],
 ) -> dict[str, object]:
-    if len(_canonical_json(value).encode("utf-8")) <= _MODEL_TOTAL_BYTES:
+    if len(_canonical_json(value).encode("utf-8")) <= _MODEL_SHELL_TOTAL_BYTES:
         return value
 
     bounded = dict(value)
@@ -1462,7 +1466,7 @@ def _fit_shell_serialized_budget(
     _set_shell_projection_markers(data, stream_omitted)
 
     critical = _SHELL_MODEL_FACT_FIELDS | {"stdout", "stderr"}
-    while len(_canonical_json({**bounded, "data": data}).encode("utf-8")) > _MODEL_TOTAL_BYTES:
+    while len(_canonical_json({**bounded, "data": data}).encode("utf-8")) > _MODEL_SHELL_TOTAL_BYTES:
         candidates = [key for key in data if key not in critical]
         if not candidates:
             break
@@ -1472,7 +1476,7 @@ def _fit_shell_serialized_budget(
         )
         data.pop(key, None)
 
-    while len(_canonical_json({**bounded, "data": data}).encode("utf-8")) > _MODEL_TOTAL_BYTES:
+    while len(_canonical_json({**bounded, "data": data}).encode("utf-8")) > _MODEL_SHELL_TOTAL_BYTES:
         summary = bounded.get("summary")
         if not isinstance(summary, str) or not summary:
             break
@@ -1485,7 +1489,7 @@ def _fit_shell_serialized_budget(
         bounded["summary"] = shortened
 
     minimum = max(1_024, len(_MODEL_OUTPUT_MARKER.encode("utf-8")) + 2)
-    while len(_canonical_json({**bounded, "data": data}).encode("utf-8")) > _MODEL_TOTAL_BYTES:
+    while len(_canonical_json({**bounded, "data": data}).encode("utf-8")) > _MODEL_SHELL_TOTAL_BYTES:
         candidates = [
             key
             for key in ("stdout", "stderr")
