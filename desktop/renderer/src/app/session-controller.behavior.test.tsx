@@ -735,4 +735,52 @@ describe("useSessionController real Hook behavior", () => {
     expect(result.current[0].draft).toBe(draft);
     expect(result.current[0].sessions).toEqual([]);
   });
+
+  it("updates known sessions in place on Run notifications without re-listing all sessions", async () => {
+    const listSessions = vi.fn().mockResolvedValue({ items: [mockSession1, mockSession2] });
+    setupMockRuntime({ listSessions });
+
+    const { result } = renderHook(() => useSessionController());
+    await act(async () => {
+      await result.current[1].loadSessions();
+    });
+    expect(listSessions).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      result.current[1].handleRunNotification({
+        id: "run-known",
+        sessionId: mockSession1.id,
+        status: "running",
+        updatedAt: 50,
+        reconciliationRequired: false,
+      });
+      result.current[1].handleRunNotification({
+        id: "run-known",
+        sessionId: mockSession1.id,
+        status: "succeeded",
+        updatedAt: 60,
+        reconciliationRequired: false,
+      });
+    });
+    expect(listSessions).toHaveBeenCalledTimes(1);
+    expect(result.current[0].sessions.find((s) => s.id === mockSession1.id)?.taskStatus).toBe("completed");
+
+    await act(async () => {
+      result.current[1].handleRunNotification({
+        id: "run-unknown",
+        sessionId: "unknown-child-session",
+        status: "running",
+        updatedAt: 70,
+        reconciliationRequired: false,
+      });
+      result.current[1].handleRunNotification({
+        id: "run-unknown",
+        sessionId: "unknown-child-session",
+        status: "succeeded",
+        updatedAt: 80,
+        reconciliationRequired: false,
+      });
+    });
+    expect(listSessions).toHaveBeenCalledTimes(2);
+  });
 });

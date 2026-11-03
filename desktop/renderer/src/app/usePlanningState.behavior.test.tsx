@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { PlanningReadResponse } from "../../../shared/planning.generated.js";
+import type { RuntimeNotification } from "../contracts.js";
 import { usePlanningState } from "./usePlanningState.js";
 
 const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
@@ -31,4 +32,56 @@ it("hides previous session data while loading or failing and ignores late respon
   expect(result.current.error).not.toBe("");
   await act(async () => { resolveA(a); });
   expect(result.current.state).toBeUndefined();
+});
+
+it("ignores item/delta and other-session notifications when refreshing planning state", async () => {
+  vi.useFakeTimers();
+  try {
+    let listener: ((notification: RuntimeNotification) => void) | undefined;
+    const readPlanning = vi.fn().mockResolvedValue({ plans: [], questions: [] });
+    const onNotification = vi.fn((callback: (notification: RuntimeNotification) => void) => {
+      listener = callback;
+      return () => {};
+    });
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: { readPlanning, onNotification },
+    });
+
+    renderHook(() => usePlanningState("session-a", true));
+    await act(async () => { await Promise.resolve(); });
+    expect(readPlanning).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      listener?.({
+        method: "item/delta",
+        params: { sessionId: "session-a", runId: "run-a", itemId: "item-a", delta: "hello" },
+      });
+      listener?.({
+        method: "item/completed",
+        params: {
+          sessionId: "session-b",
+          runId: "run-b",
+          item: { id: "item-b", sessionId: "session-b", runId: "run-b", ordinal: 1, kind: "assistant_message", status: "completed", createdAt: 1 },
+        },
+      });
+      vi.advanceTimersByTime(500);
+    });
+    expect(readPlanning).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      listener?.({
+        method: "item/completed",
+        params: {
+          sessionId: "session-a",
+          runId: "run-a",
+          item: { id: "item-a", sessionId: "session-a", runId: "run-a", ordinal: 1, kind: "assistant_message", status: "completed", createdAt: 1 },
+        },
+      });
+      vi.advanceTimersByTime(300);
+    });
+    expect(readPlanning).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
 });

@@ -13,7 +13,8 @@ import {
 import { InlineRichEditor } from "./InlineRichEditor.js";
 import { ToolTextView } from "./ToolTextView.js";
 import { toolFilePaths } from "./ResultFiles.js";
-import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { SyntheticEvent } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import stripAnsi from "strip-ansi";
@@ -97,6 +98,15 @@ interface Segment {
 
 type ProcessEntry = { kind: "item"; item: Item } | { kind: "compaction"; activity: ContextCompactionActivity };
 const EMPTY_COMPACTIONS: readonly ContextCompactionActivity[] = [];
+const EMPTY_ITEMS: Item[] = [];
+
+function shallowEqualArray<T>(left: readonly T[], right: readonly T[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
 
 const ACTIVE_RUN_STATUSES = new Set<Run["status"]>([
   "queued", "running", "waiting_input", "waiting_agents", "waiting_approval", "finalizing",
@@ -184,6 +194,33 @@ export const ExecutionFeed = memo(function ExecutionFeed({
 
   const runsById = new Map(runs.map((run) => [run.id, run]));
   const itemGroups = groupItemsByRun(items).filter(({ runId }) => (!supersededRunIds.has(runId) || items.some((item) => item.runId === runId && item.id === searchTarget?.itemId)));
+  const segmentCacheRef = useRef(
+    new Map<string, { items: Item[]; compactions: readonly ContextCompactionActivity[]; segments: Segment[] }>(),
+  );
+  const resultItemsCacheRef = useRef(new Map<string, Item[]>());
+
+  const resultItemsByRunId = useMemo(() => {
+    const grouped = new Map<string, Item[]>();
+    for (const item of resultItems) {
+      let bucket = grouped.get(item.runId);
+      if (!bucket) {
+        bucket = [];
+        grouped.set(item.runId, bucket);
+      }
+      bucket.push(item);
+    }
+    const nextCache = new Map<string, Item[]>();
+    for (const [runId, bucket] of grouped) {
+      const previous = resultItemsCacheRef.current.get(runId);
+      if (previous && shallowEqualArray(previous, bucket)) {
+        nextCache.set(runId, previous);
+      } else {
+        nextCache.set(runId, bucket);
+      }
+    }
+    resultItemsCacheRef.current = nextCache;
+    return nextCache;
+  }, [resultItems]);
 
   return (
     <div className="feed-shell">
@@ -227,7 +264,20 @@ export const ExecutionFeed = memo(function ExecutionFeed({
           {itemGroups.map(({ runId, items: runItems }) => {
             const run = runsById.get(runId);
             if (!run) return null;
-            const segments = splitRunIntoSegments(runItems, contextCompactions.filter((activity) => activity.runId === runId));
+            const runCompactions = contextCompactions.filter((activity) => activity.runId === runId);
+            const cachedSegmentEntry = segmentCacheRef.current.get(runId);
+            let segments: Segment[];
+            if (
+              cachedSegmentEntry
+              && shallowEqualArray(cachedSegmentEntry.items, runItems)
+              && shallowEqualArray(cachedSegmentEntry.compactions, runCompactions)
+            ) {
+              segments = cachedSegmentEntry.segments;
+            } else {
+              segments = splitRunIntoSegments(runItems, runCompactions);
+              segmentCacheRef.current.set(runId, { items: runItems, compactions: runCompactions, segments });
+            }
+            const runResultItems = resultItemsByRunId.get(runId) ?? EMPTY_ITEMS;
             const canReviseRun = !run.inherited && latestVisibleRun?.id === run.id
               && TERMINAL_RUN_STATUSES.has(run.status)
               && !hasActiveRun
@@ -240,7 +290,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
                     key={`${runId}:${segment.user?.id ?? index}`}
                     segment={segment}
                     run={run}
-                    resultItems={resultItems}
+                    resultItems={runResultItems}
                     modelName={modelName}
                     workspaceRoot={workspaceRoot}
                     isLast={index === segments.length - 1}
@@ -261,6 +311,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
                     allowRegenerate={allowRegenerate}
                     allowEditResend={allowEditResend}
                     isSearchTarget={searchTarget?.itemId === segment.user?.id}
+                    searchItemId={searchTarget?.itemId}
                   />
                 ))}
                 <RunNotice run={run} />
@@ -307,6 +358,7 @@ const RunSegment = memo(function RunSegment({
   allowRegenerate = true,
   allowEditResend = true,
   isSearchTarget = false,
+  searchItemId,
 }: {
   segment: Segment;
   run: Run;
@@ -331,6 +383,7 @@ const RunSegment = memo(function RunSegment({
   allowRegenerate?: boolean | undefined;
   allowEditResend?: boolean | undefined;
   isSearchTarget?: boolean | undefined;
+  searchItemId?: string | undefined;
 }) {
   // Hidden observations still determine which assistant messages are progress.
   const visibleProcess = segment.process.filter((entry) => {
@@ -360,6 +413,8 @@ const RunSegment = memo(function RunSegment({
       {visibleProcess.length > 0 && (
         <ProcessGroup
           run={run}
+          containsSearchTarget={searchItemId !== undefined
+            && visibleProcess.some((entry) => entry.kind === "item" && entry.item.id === searchItemId)}
         >
           {visibleProcess.map((entry) => entry.kind === "compaction" ? (
             <ContextCompactionRow key={`compaction:${entry.activity.requestId}`} activity={entry.activity} run={run} />
@@ -420,22 +475,61 @@ const RunSegment = memo(function RunSegment({
   );
 });
 
-function ProcessGroup({ run, children }: { run: Run; children: ReactNode }) {
+/**
+ * Collapsed tool and process bodies are not mounted until first opened.
+ * Switching Sessions remounts the whole feed, so mounting every closed body
+ * (diffs, shell output) blocks the Renderer. Once opened, the body stays
+ * mounted so paging and scroll state survive collapsing it again.
+ */
+/** Static markup snapshots cannot open details, so they mount every body. */
+export const MountCollapsedBodiesContext = createContext(false);
+
+function useLazyDetails(initialOpen: boolean) {
+  const mountAll = useContext(MountCollapsedBodiesContext);
+  const [open, setOpen] = useState(initialOpen);
+  const [mountedState, setMounted] = useState(initialOpen);
+  const mounted = mountedState || mountAll;
+  const onToggle = useCallback((event: SyntheticEvent<HTMLDetailsElement>) => {
+    const next = event.currentTarget.open;
+    setOpen(next);
+    if (next) setMounted(true);
+  }, []);
+  const show = useCallback(() => {
+    setOpen(true);
+    setMounted(true);
+  }, []);
+  return { open, mounted, onToggle, show, close: () => setOpen(false) };
+}
+
+function ProcessGroup({ run, containsSearchTarget = false, children }: {
+  run: Run;
+  containsSearchTarget?: boolean;
+  children: ReactNode;
+}) {
   const terminal = TERMINAL_RUN_STATUSES.has(run.status);
-  const [open, setOpen] = useState(!terminal);
+  const details = useLazyDetails(!terminal || containsSearchTarget);
   const prevTerminalRef = useRef(terminal);
+  const [openedForSearch, setOpenedForSearch] = useState(containsSearchTarget);
+
+  // Chat search locates the target by DOM id after this render commits, so
+  // the body must mount in the same render rather than in a later effect.
+  if (containsSearchTarget !== openedForSearch) {
+    setOpenedForSearch(containsSearchTarget);
+    if (containsSearchTarget) details.show();
+  }
 
   useEffect(() => {
     if (!prevTerminalRef.current && terminal) {
-      setOpen(false);
+      details.close();
     }
     prevTerminalRef.current = terminal;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminal]);
 
   return (
-    <details className="process-group" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <details className="process-group" open={details.open} onToggle={details.onToggle}>
       <summary><ProcessLabel run={run} /></summary>
-      <div className="process-content">{children}</div>
+      {details.mounted && <div className="process-content">{children}</div>}
     </details>
   );
 }
@@ -1031,7 +1125,7 @@ function EditIcon() {
   );
 }
 
-function ProcessItem({
+const ProcessItem = memo(function ProcessItem({
   item,
   run,
   approval,
@@ -1101,7 +1195,7 @@ function ProcessItem({
   }
 
   return toolItem;
-}
+});
 
 
 export interface ShellOutputSegment {
@@ -1134,9 +1228,9 @@ export function shellOutputSegments(
   ].filter((segment) => Boolean(segment.content));
 }
 
-function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
-  const args = parseObject(toolCall.argumentsJson);
-  const result = parseObject(toolCall.resultJson);
+const ShellItem = memo(function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
+  const args = useMemo(() => parseObject(toolCall.argumentsJson), [toolCall.argumentsJson]);
+  const result = useMemo(() => parseObject(toolCall.resultJson), [toolCall.resultJson]);
   const data = objectField(result, "data");
   const running = !item.inherited && (item.status === "in_progress" || stringField(data, "executionStatus") === "running");
   const command = stringField(args, "command") || stringArrayField(args, "argv").join(" ") || "Shell 命令";
@@ -1153,7 +1247,11 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
   // final evidence once that preview cannot contain the complete output.
   const useRetainedOutput = !running && numberField(data, "outputRevision") !== undefined
     && (truncated || (numberField(data, "originalBytes") ?? 0) > 256 * 1024);
-  const outputSegments = shellOutputSegments(useRetainedOutput ? undefined : item.content, stdout, stderr);
+  const outputSourceContent = useRetainedOutput ? undefined : item.content;
+  const outputSegments = useMemo(
+    () => shellOutputSegments(outputSourceContent, stdout, stderr),
+    [outputSourceContent, stdout, stderr],
+  );
   const hasOutput = outputSegments.length > 0;
   const pendingVerification = reconciliationRequired && !gateRejected;
   const failed = result.outcome === "error"
@@ -1183,7 +1281,7 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
           : failed
             ? "失败"
             : statusLabel(item.status);
-  const [open, setOpen] = useState(false);
+  const details = useLazyDetails(false);
 
   const isExitNonzero = code === "shell_exit_nonzero" || code === "nonzero_exit";
   const showErrorCode = !running
@@ -1208,14 +1306,14 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
     && exitCode !== 0;
 
   return (
-    <details className="tool-item tool-item--shell" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <details className="tool-item tool-item--shell" open={details.open} onToggle={details.onToggle}>
       <summary>
         <span className="tool-icon tool-icon--terminal" aria-hidden="true">
           <ShellIcon />
         </span>
         <span>{shellSummary(running ? "in_progress" : item.status, command)}</span>
       </summary>
-      <div className="shell-result">
+      {details.mounted && <div className="shell-result">
         <div className="shell-command-zone">
           <div className="shell-command-header">
             <p className="shell-label">Shell</p>
@@ -1252,10 +1350,10 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
           )}
           <span>{statusText}</span>
         </p>
-      </div>
+      </div>}
     </details>
   );
-}
+});
 
 function PlanResponseItem({
   item,
@@ -1651,7 +1749,7 @@ function SkillReadToolItem({
   );
 }
 
-function ToolItem({
+const ToolItem = memo(function ToolItem({
   item,
   toolCall,
   onOpenFile,
@@ -1664,7 +1762,7 @@ function ToolItem({
   agents?: AgentSummary[] | undefined;
   onOpenSubagent?: ((target?: { id?: string | undefined; taskName?: string | undefined }) => void) | undefined;
 }) {
-  const [open, setOpen] = useState(false);
+  const details = useLazyDetails(false);
 
   if (isSubagentTool(toolCall.toolName)) {
     const { id: agentId, name: agentName } = extractSubagentInfo(toolCall, agents);
@@ -1767,7 +1865,7 @@ function ToolItem({
       : [];
 
     return (
-      <details className="tool-item tool-item--user-input" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <details className="tool-item tool-item--user-input" open={details.open} onToggle={details.onToggle}>
         <summary>
           <span className="tool-icon tool-icon--question" aria-hidden="true">
             <QuestionCircleIcon />
@@ -1928,12 +2026,12 @@ function ToolItem({
     && Boolean(toolCall.changeDiff || toolCall.changeDiffHash);
 
   return (
-    <details className="tool-item" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <details className="tool-item" open={details.open} onToggle={details.onToggle}>
       <summary>
         <span className="tool-icon" aria-hidden="true">{toolIcon(toolCall.toolName)}</span>
         <span>{toolSummary(toolCall, item.status, agents)}</span>
       </summary>
-      <div className="tool-body">
+      {details.mounted && <div className="tool-body">
         {isViewImage ? (
           <ViewImageViewer
             toolCall={toolCall}
@@ -2001,10 +2099,10 @@ function ToolItem({
             )}
           </>
         )}
-      </div>
+      </div>}
     </details>
   );
-}
+});
 
 function ProcessLabel({ run }: { run: Run }) {
   const now = useCurrentTime(!TERMINAL_RUN_STATUSES.has(run.status));

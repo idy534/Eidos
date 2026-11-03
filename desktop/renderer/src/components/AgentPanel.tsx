@@ -59,7 +59,8 @@ export function useAgentState(sessionId: string | undefined, ready: boolean) {
     };
 
     load();
-    const unsubscribe = window.eidosRuntime.onNotification(() => {
+    const unsubscribe = window.eidosRuntime.onNotification((notification) => {
+      if (notification.method === "item/delta") return;
       if (timer === undefined) {
         timer = setTimeout(() => {
           timer = undefined;

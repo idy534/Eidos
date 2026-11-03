@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { renderToStaticMarkup } from "react-dom/server";
+import type { ReactElement } from "react";
+import { renderToStaticMarkup as renderMarkup } from "react-dom/server";
 
 import { ApprovalComposer } from "./ApprovalComposer.js";
 import type { Item, Run } from "../contracts.js";
@@ -9,8 +10,17 @@ import {
   ExecutionFeed,
   formatItemTime,
   isFeedAtBottom,
+  MountCollapsedBodiesContext,
   shellOutputSegments,
 } from "./ExecutionFeed.js";
+
+// These snapshots inspect collapsed process and tool bodies, which the feed
+// otherwise mounts only after a user opens them.
+function renderToStaticMarkup(element: ReactElement): string {
+  return renderMarkup(
+    <MountCollapsedBodiesContext.Provider value={true}>{element}</MountCollapsedBodiesContext.Provider>,
+  );
+}
 
 
 const run: Run = {

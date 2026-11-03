@@ -53,6 +53,7 @@ import {
 import type { RuntimeLifecycleState } from "./useRuntimeLifecycle.js";
 import { useSessionController } from "./useSessionController.js";
 import { useSidebarPins } from "./useSidebarPins.js";
+import { useStableHandlers } from "./useStableHandlers.js";
 import { useRunController } from "./useRunController.js";
 import { useApprovalController } from "./useApprovalController.js";
 import { usePlanningState } from "./usePlanningState.js";
@@ -1013,6 +1014,21 @@ export function AppShell({ runtime }: AppShellProps) {
     () => (currentSessionId ? approvals.filter((a) => a.sessionId === currentSessionId) : []),
     [approvals, currentSessionId],
   );
+  const feedVisibleRuns = useMemo(
+    () => (currentSnapshot ? currentSnapshot.runs.filter((run) => !isQueuedMessage(run)) : []),
+    [currentSnapshot?.runs],
+  );
+  const feedVisibleItems = useMemo(() => {
+    if (!currentSnapshot) return [];
+    const queuedRunIds = new Set(
+      currentSnapshot.runs.filter((run) => isQueuedMessage(run)).map((run) => run.id),
+    );
+    if (queuedRunIds.size === 0) return currentSnapshot.items;
+    return currentSnapshot.items.filter((item) => !queuedRunIds.has(item.runId));
+  }, [currentSnapshot?.items, currentSnapshot?.runs]);
+  const handleFeedLoadOlder = useCallback(() => {
+    void sessionActions.loadOlderSession();
+  }, [sessionActions.loadOlderSession]);
 
   const handleFeedRetryLoadPending = useCallback(() => {
     void approvalActions.loadPending();
@@ -1467,6 +1483,52 @@ export function AppShell({ runtime }: AppShellProps) {
     ? <WorkspaceDockToggle open={dockOpen} onClick={toggleDock} />
     : null;
 
+  // The sidebar is memoized; its handlers forward to the latest AppShell
+  // functions so streaming deltas in the current Session do not re-render it.
+  const sidebarHandlers = useStableHandlers({
+    onSearch: () => setSearchMode("global"),
+    onSetPinned: (target: Parameters<typeof sidebarPins.setPinned>[0], pinned: boolean) => {
+      void sidebarPins.setPinned(target, pinned);
+    },
+    onCreate: () => { setAutomationsOpen(false); handleCreateSession(); },
+    onCreateInProject: (workspaceRoot: string) => handleCreateInProject(workspaceRoot),
+    onCreateInProjectById: (id: string) => handleCreateSession(sessionState.projects.find((project) => project.id === id)),
+    onEditProject: (project: Project) => { void handleEditProject(project); },
+    onSelect: (session: Session) => { setAutomationsOpen(false); void handleSelectSession(session); },
+    onRename: (session: Session) => { void beginRename(session); },
+    onDelete: (session: Session) => requestDeleteSession(session),
+    onDeleteProject: (project: Project) => requestDeleteProject(project),
+    onShowInFinder: (project: Project) => {
+      void window.eidosRuntime.showItemInFolder(project.workspaceRoot).catch(() => undefined);
+    },
+    onOpenSettings: () => {
+      setAutomationsOpen(false);
+      setSettingsOpen(true);
+      setDockOpen(false);
+      setDockExpanded(false);
+      setRenamingSessionId(undefined);
+    },
+    onOpenAutomations: () => {
+      setAutomationDetailId(undefined); setAutomationsOpen(true); setSettingsOpen(false); setDockOpen(false); setDockExpanded(false);
+    },
+    onOpenAutomation: (id: string) => {
+      setAutomationDetailId(id); setAutomationsOpen(true); setSettingsOpen(false); setDockOpen(false); setDockExpanded(false);
+    },
+    onGoBack: () => handleGoBack(),
+    onGoForward: () => handleGoForward(),
+  });
+  const sidebarNavigationSlot = useMemo(() => (
+    <NavigationControls
+      sidebarOpen={sidebarOpen}
+      canGoBack={canGoBack}
+      canGoForward={canGoForward}
+      onToggleSidebar={toggleSidebar}
+      onGoBack={sidebarHandlers.onGoBack}
+      onGoForward={sidebarHandlers.onGoForward}
+      showTrafficSpacer={true}
+    />
+  ), [sidebarOpen, canGoBack, canGoForward, toggleSidebar, sidebarHandlers]);
+
 
   return (
     <ArtifactProvider value={currentSnapshot ? {
@@ -1495,51 +1557,33 @@ export function AppShell({ runtime }: AppShellProps) {
     <main className={`workbench${sidebarOpen && !settingsOpen && !automationsOpen ? "" : " workbench--sidebar-collapsed"}${settingsOpen ? " workbench--settings" : ""}${automationsOpen ? " workbench--settings workbench--automations" : ""}`}>
       <ToastContainer toasts={toasts} onDismiss={dismissToast} portal={false} />
       <SessionSidebar
-        onSearch={() => setSearchMode("global")}
+        onSearch={sidebarHandlers.onSearch}
         collapsed={!sidebarOpen || settingsOpen || automationsOpen}
         sessions={sessionState.sessions}
         projects={sessionState.projects}
         pins={sidebarPins.pins}
         pinningDisabled={!sidebarPins.loaded || !isStorageReady}
         pendingPinTargets={sidebarPins.pending}
-        onSetPinned={(target, pinned) => void sidebarPins.setPinned(target, pinned)}
+        onSetPinned={sidebarHandlers.onSetPinned}
         selectedId={sessionState.navigationSessionId ?? currentSnapshot?.session.id}
         disabled={sidebarDisabled}
         readCompletedSessions={sessionState.readCompletedSessions}
         runtimePresentation={runtimePresentation}
         isSelectingSessionId={sessionState.pending.selectingSessionId}
         gitStatusBySessionId={gitReviewState.statusBySessionId}
-        onCreate={() => { setAutomationsOpen(false); handleCreateSession(); }}
-        onCreateInProject={handleCreateInProject}
-        onCreateInProjectById={(id) => handleCreateSession(sessionState.projects.find((project) => project.id === id))}
-        onEditProject={(project) => void handleEditProject(project)}
-        onSelect={(session) => { setAutomationsOpen(false); void handleSelectSession(session); }}
-        onRename={(session) => void beginRename(session)}
-        onDelete={(session) => requestDeleteSession(session)}
-        onDeleteProject={(project) => requestDeleteProject(project)}
-        onShowInFinder={(project) => {
-          void window.eidosRuntime.showItemInFolder(project.workspaceRoot).catch(() => undefined);
-        }}
-        onOpenSettings={() => {
-          setAutomationsOpen(false);
-          setSettingsOpen(true);
-          setDockOpen(false);
-          setDockExpanded(false);
-          setRenamingSessionId(undefined);
-        }}
-        onOpenAutomations={() => { setAutomationDetailId(undefined); setAutomationsOpen(true); setSettingsOpen(false); setDockOpen(false); setDockExpanded(false); }}
-        onOpenAutomation={(id) => { setAutomationDetailId(id); setAutomationsOpen(true); setSettingsOpen(false); setDockOpen(false); setDockExpanded(false); }}
-        navigationSlot={
-          <NavigationControls
-            sidebarOpen={sidebarOpen}
-            canGoBack={canGoBack}
-            canGoForward={canGoForward}
-            onToggleSidebar={toggleSidebar}
-            onGoBack={handleGoBack}
-            onGoForward={handleGoForward}
-            showTrafficSpacer={true}
-          />
-        }
+        onCreate={sidebarHandlers.onCreate}
+        onCreateInProject={sidebarHandlers.onCreateInProject}
+        onCreateInProjectById={sidebarHandlers.onCreateInProjectById}
+        onEditProject={sidebarHandlers.onEditProject}
+        onSelect={sidebarHandlers.onSelect}
+        onRename={sidebarHandlers.onRename}
+        onDelete={sidebarHandlers.onDelete}
+        onDeleteProject={sidebarHandlers.onDeleteProject}
+        onShowInFinder={sidebarHandlers.onShowInFinder}
+        onOpenSettings={sidebarHandlers.onOpenSettings}
+        onOpenAutomations={sidebarHandlers.onOpenAutomations}
+        onOpenAutomation={sidebarHandlers.onOpenAutomation}
+        navigationSlot={sidebarNavigationSlot}
       />
 
       {searchMode === "global" && <ChatSearch key="global-search" mode="global" onClear={clearSearchTarget} projects={sessionState.projects} sessions={sessionState.sessions} onClose={() => { setSearchMode(undefined); setSearchTarget(undefined); }} onSelect={handleSearchSelect} />}
@@ -1697,12 +1741,12 @@ export function AppShell({ runtime }: AppShellProps) {
                   feed={<ExecutionFeed
                   key={currentSnapshot.session.id}
                   searchTarget={searchTarget}
-                  items={currentSnapshot.items.filter((item) => !currentSnapshot.runs.some((run) => run.id === item.runId && isQueuedMessage(run)))}
+                  items={feedVisibleItems}
                   resultItems={completeSessionItems.items}
                   allRuns={completeSessionItems.runs}
                   onEnsureItemMounted={sessionActions.ensureItemLoaded}
                   contextCompactions={currentSnapshot.contextCompactions}
-                  runs={currentSnapshot.runs.filter((run) => !isQueuedMessage(run))}
+                  runs={feedVisibleRuns}
                   models={feedModels}
                   workspaceRoot={currentSnapshot.session.workspaceRoot}
                   responseActionState={responseActionState.responseState}
@@ -1714,7 +1758,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   onRetryLoadPending={handleFeedRetryLoadPending}
                   onFeedback={handleFeedFeedback}
                   onFork={handleFeedFork}
-                  onLoadOlder={currentSnapshot.previousItemId ? () => void sessionActions.loadOlderSession() : undefined}
+                  onLoadOlder={currentSnapshot.previousItemId ? handleFeedLoadOlder : undefined}
                   loadingOlder={sessionState.pending.loadingHistorySessionId === currentSnapshot.session.id}
                   onRegenerate={handleFeedRegenerate}
                   onEditResend={handleFeedEditResend}

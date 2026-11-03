@@ -261,4 +261,28 @@ describe("useContextUsageController", () => {
     expect(result.current[0].usage).toBeUndefined();
     expect(result.current[0].loading).toBe(false);
   });
+
+  it("ignores item/delta notifications without polling context/details", async () => {
+    const readContextDetails = vi.fn().mockResolvedValue(details);
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { readContextDetails } });
+    const { result } = renderHook(() => useContextUsageController({
+      ready: true,
+      sessionId: "session-1",
+      modelId: run.modelId,
+      runId: run.id,
+    }));
+    await act(async () => { await Promise.resolve(); });
+    expect(readContextDetails).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      for (let index = 0; index < 10; index++) {
+        result.current[1].handleNotification({
+          method: "item/delta",
+          params: { sessionId: "session-1", runId: run.id, itemId: "item-1", delta: "chunk" },
+        });
+      }
+      await Promise.resolve();
+    });
+    expect(readContextDetails).toHaveBeenCalledTimes(1);
+  });
 });
