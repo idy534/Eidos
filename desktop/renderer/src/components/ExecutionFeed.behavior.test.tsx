@@ -1451,7 +1451,7 @@ describe("ExecutionFeed view_image tool rendering and lightbox", () => {
 });
 
 describe("ExecutionFeed memory tools static rendering", () => {
-  it("renders memory tools without details/summary and without expanding", () => {
+  it("renders memory tools as static rows inside a tool group", async () => {
     const memoryItems: Item[] = [
       {
         id: "mem-search-1",
@@ -1505,7 +1505,10 @@ describe("ExecutionFeed memory tools static rendering", () => {
       />,
     );
 
-    const searchRow = screen.getByText('正在搜索记忆 "2026-10-13|最近|latest|rollout"');
+    // Adjacent tool calls fold into one group that shows the live action.
+    await expandDetails(document.body, "details.tool-group");
+    const searchRow = screen.getAllByText('正在搜索记忆 "2026-10-13|最近|latest|rollout"')
+      .find((element) => element.closest(".tool-item--read-done"))!;
     const readRow = screen.getByText("已读取记忆");
 
     expect(searchRow).toBeInTheDocument();
@@ -2073,5 +2076,33 @@ describe("ExecutionFeed collapsed bodies", () => {
     const group = container.querySelector<HTMLDetailsElement>("details.process-group")!;
     expect(group.open).toBe(true);
     expect(container.querySelector("#item-progress")).toHaveTextContent("我正在检查目录。");
+  });
+
+  it("keeps a tool group collapsed until opened, but opens it for a pending approval", async () => {
+    const items = [
+      shellItem({ id: "g1", ordinal: 1, status: "completed", toolCall: { ...shellItem().toolCall!, id: "g1-tool", itemId: "g1", status: "completed", argumentsJson: JSON.stringify({ command: "git status" }) } }),
+      shellItem({ id: "g2", ordinal: 2, status: "completed", toolCall: { ...shellItem().toolCall!, id: "g2-tool", itemId: "g2", status: "completed", argumentsJson: JSON.stringify({ command: "git diff" }) } }),
+    ];
+    const { container, unmount } = render(<ExecutionFeed items={items} runs={[baseRun]} approvals={[]} />);
+    const group = container.querySelector<HTMLDetailsElement>("details.tool-group")!;
+    expect(group.open).toBe(false);
+    expect(container.querySelector(".tool-group-list")).toBeNull();
+    expect(group.querySelector(":scope > summary")).toHaveTextContent("运行 2 条命令");
+    await expandDetails(container, "details.tool-group");
+    expect(container.querySelector(".tool-group-list")).toHaveTextContent("git diff");
+    unmount();
+
+    const pending = render(
+      <ExecutionFeed
+        items={items}
+        runs={[baseRun]}
+        approvals={[{
+          id: "approval-1", sessionId: baseRun.sessionId, runId: baseRun.id, itemId: "g2", toolCallId: "g2-tool",
+          summary: "git diff", kind: "command_execution",
+        } as never]}
+      />,
+    );
+    expect(pending.container.querySelector<HTMLDetailsElement>("details.tool-group")!.open).toBe(true);
+    expect(pending.container).toHaveTextContent("需要批准");
   });
 });

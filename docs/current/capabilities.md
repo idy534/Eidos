@@ -275,6 +275,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 普通 `run_shell` 命令使用 resolved shell 的 `-c`。Snapshot 捕获失败时使用 sanitized parent environment，并记录有界的稳定 warning。Snapshot 不恢复 aliases、functions 或其他 shell state。
 - Runtime 分开管理 Shell 进程寿命和工具等待窗口。模型收到 `shell_running` 后，可以用 `write_stdin` 的空 `chars` 继续等待和读取新输出，也可以发送输入，或使用 `control_shell` 明确停止命令。PTY 的 Ctrl-C 允许程序处理后继续运行。Runtime 持续读取 stdout/stderr，并把做过 best-effort 展示脱敏的片段追加到原命令 Item；聚合结果保留原始 stdout/stderr。内部会保存每次跟进 ToolCall；Desktop 不显示正常的 `write_stdin` 和 `control_shell` 跟进卡片。跟进失败会显示中文错误提示。
 - Shell stdout 和 stderr 使用 UTF-8 增量解码。Runtime 按片段到达顺序将展示脱敏后的内容累积到 Item content，实时预览合计最多 256 KiB。Desktop 在预览不足时使用终态结果中保留的首尾；其他情况继续保留片段顺序。
+- Desktop 处理过程中相邻的两个及以上工具调用会折叠为一个工具组，默认只显示一行摘要，例如“读取 4 个文件 · 搜索 3 次 · 运行 6 条命令”，含失败时附“N 失败”标记。组内有进行中的工具时，摘要显示该工具的实时动作并带转圈图标。展开后以紧凑行列出各工具，超过 8 项时限高滚动；每行仍按原样展开详情。待审批的工具和会话内搜索命中的条目会让所在工具组自动展开。工具组只是展示层聚合，不改变 Run、Item 和 ToolCall 的持久事实；单个孤立的工具调用和助手叙述文字保持原样，叙述文字会把工具组分开。
 - Desktop Shell Feed 默认折叠 Shell Item。用户展开后，Feed 将 Shell 输出按纯文本展示，并移除 ANSI 和 OSC 控制序列，不激活终端格式或链接。旧 Item 缺少或没有 `content` 时，Feed 回退到结果中的 stdout 和 stderr。待审批、已批准和已拒绝的 Shell 历史都使用这个 Shell Item，审批状态单独显示。
 - Feed 先按完整 Item 顺序区分过程消息和回复，再隐藏正常的 Shell 跟进卡片。隐藏 `write_stdin` 不会把它前面的进度文字变成最终回复。Run 仍在执行时，回复不显示最终操作栏；Run 进入终态后，只有最后一个消息段中的最后一条回复显示该操作栏。跟进失败仍显示中文错误提示。
 - Shell Result 存在 `attemptCount`、`sandboxed` 或 `escalated` 时，Execution Feed 会展示这些已有执行和权限事实，包括扩权重试信息。

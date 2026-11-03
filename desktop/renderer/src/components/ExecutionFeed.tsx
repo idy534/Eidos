@@ -416,19 +416,35 @@ const RunSegment = memo(function RunSegment({
           containsSearchTarget={searchItemId !== undefined
             && visibleProcess.some((entry) => entry.kind === "item" && entry.item.id === searchItemId)}
         >
-          {visibleProcess.map((entry) => entry.kind === "compaction" ? (
-            <ContextCompactionRow key={`compaction:${entry.activity.requestId}`} activity={entry.activity} run={run} />
-          ) : (
-            <ProcessItem
-              key={entry.item.id}
-              item={entry.item}
-              run={run}
-              approval={approvals.find((request) => request.itemId === entry.item.id)}
-              onOpenFile={onOpenFile}
-              agents={agents}
-              onOpenSubagent={onOpenSubagent}
-            />
-          ))}
+          {groupProcessEntries(visibleProcess).map((node) => {
+            if (node.kind === "compaction") {
+              return <ContextCompactionRow key={`compaction:${node.activity.requestId}`} activity={node.activity} run={run} />;
+            }
+            const renderItem = (item: Item) => (
+              <ProcessItem
+                key={item.id}
+                item={item}
+                run={run}
+                approval={approvals.find((request) => request.itemId === item.id)}
+                onOpenFile={onOpenFile}
+                agents={agents}
+                onOpenSubagent={onOpenSubagent}
+              />
+            );
+            if (node.kind === "item") return renderItem(node.item);
+            return (
+              <ToolGroup
+                key={`tools:${node.items[0]!.id}`}
+                items={node.items}
+                needsApproval={run.approvalMode !== "full_access"
+                  && node.items.some((item) => approvals.some((request) => request.itemId === item.id))}
+                containsSearchTarget={searchItemId !== undefined && node.items.some((item) => item.id === searchItemId)}
+                agents={agents}
+              >
+                {node.items.map(renderItem)}
+              </ToolGroup>
+            );
+          })}
         </ProcessGroup>
       )}
       {showThinking && <p className="thinking-indicator" role="status">正在思考</p>}
@@ -531,6 +547,142 @@ function ProcessGroup({ run, containsSearchTarget = false, children }: {
       <summary><ProcessLabel run={run} /></summary>
       {details.mounted && <div className="process-content">{children}</div>}
     </details>
+  );
+}
+
+type ProcessNode =
+  | { kind: "compaction"; activity: ContextCompactionActivity }
+  | { kind: "item"; item: Item }
+  | { kind: "tools"; items: Item[] };
+
+function isToolEntryItem(item: Item): boolean {
+  return Boolean(item.toolCall) && item.kind !== "user_message" && item.kind !== "assistant_message";
+}
+
+/** Presentation-only: two or more adjacent tool calls fold into one ToolGroup. */
+export function groupProcessEntries(entries: readonly ProcessEntry[]): ProcessNode[] {
+  const nodes: ProcessNode[] = [];
+  let run: Item[] = [];
+  const flush = () => {
+    if (run.length === 1) nodes.push({ kind: "item", item: run[0]! });
+    else if (run.length > 1) nodes.push({ kind: "tools", items: run });
+    run = [];
+  };
+  for (const entry of entries) {
+    if (entry.kind === "item" && isToolEntryItem(entry.item)) {
+      run.push(entry.item);
+      continue;
+    }
+    flush();
+    nodes.push(entry.kind === "compaction" ? entry : { kind: "item", item: entry.item });
+  }
+  flush();
+  return nodes;
+}
+
+type ToolGroupKind = "read" | "search" | "edit" | "shell" | "other";
+
+function toolGroupKind(toolName: string): ToolGroupKind {
+  if (toolName === "run_shell") return "shell";
+  if (["read_file", "read_file_range"].includes(toolName)) return "read";
+  if (["search_text", "tool_search", "web_search"].includes(toolName)) return "search";
+  if (["write_file", "apply_patch", "delete_file"].includes(toolName)) return "edit";
+  return "other";
+}
+
+export function summarizeToolGroup(items: readonly Item[]): { parts: Array<{ kind: ToolGroupKind; text: string }>; failed: number } {
+  const counts: Record<ToolGroupKind, number> = { read: 0, search: 0, edit: 0, shell: 0, other: 0 };
+  const editedPaths = new Set<string>();
+  let editsWithoutPath = 0;
+  let failed = 0;
+  for (const item of items) {
+    const toolCall = item.toolCall!;
+    const kind = toolGroupKind(toolCall.toolName);
+    if (item.status === "failed") failed += 1;
+    if (kind === "edit") {
+      const paths = toolFilePaths(toolCall);
+      if (paths.length === 0) editsWithoutPath += 1;
+      paths.forEach((path) => editedPaths.add(path));
+    } else {
+      counts[kind] += 1;
+    }
+  }
+  counts.edit = editedPaths.size + editsWithoutPath;
+  const parts: Array<{ kind: ToolGroupKind; text: string }> = [];
+  if (counts.read) parts.push({ kind: "read", text: `读取 ${counts.read} 个文件` });
+  if (counts.search) parts.push({ kind: "search", text: `搜索 ${counts.search} 次` });
+  if (counts.edit) parts.push({ kind: "edit", text: `编辑 ${counts.edit} 个文件` });
+  if (counts.shell) parts.push({ kind: "shell", text: `运行 ${counts.shell} 条命令` });
+  if (counts.other) parts.push({ kind: "other", text: `${parts.length ? "其他" : "调用"} ${counts.other} 项工具` });
+  return { parts, failed };
+}
+
+const ToolGroup = memo(function ToolGroup({
+  items,
+  needsApproval,
+  containsSearchTarget,
+  agents,
+  children,
+}: {
+  items: readonly Item[];
+  needsApproval: boolean;
+  containsSearchTarget: boolean;
+  agents?: AgentSummary[] | undefined;
+  children: ReactNode;
+}) {
+  const forceOpen = needsApproval || containsSearchTarget;
+  const details = useLazyDetails(forceOpen);
+  const [forcedBy, setForcedBy] = useState(forceOpen);
+  // An approval prompt or a chat-search hit must be visible, and the body has
+  // to mount in the same render because search locates targets by DOM id.
+  if (forceOpen !== forcedBy) {
+    setForcedBy(forceOpen);
+    if (forceOpen) details.show();
+  }
+
+  const summary = useMemo(() => summarizeToolGroup(items), [items]);
+  const active = [...items].reverse().find((item) => !item.inherited && item.status === "in_progress");
+  const activeText = active?.toolCall
+    ? active.toolCall.toolName === "run_shell"
+      ? shellSummary("in_progress", stringField(parseObject(active.toolCall.argumentsJson), "command")
+        || stringArrayField(parseObject(active.toolCall.argumentsJson), "argv").join(" ") || "Shell 命令")
+      : toolSummary(active.toolCall, "in_progress", agents)
+    : undefined;
+  const label = activeText ?? summary.parts.map((part) => part.text).join(" · ");
+  const failedLabel = !active && summary.failed > 0 ? `${summary.failed} 失败` : undefined;
+
+  return (
+    <details
+      className="tool-group"
+      data-running={active ? "true" : undefined}
+      open={details.open}
+      onToggle={details.onToggle}
+    >
+      <summary>
+        <span className="tool-group-lead" aria-hidden="true">
+          {active ? <ToolGroupSpinnerIcon /> : <ToolGroupStackIcon />}
+        </span>
+        <span className="tool-group-label">{label}</span>
+        {failedLabel && <span className="tool-group-fail">{failedLabel}</span>}
+      </summary>
+      {details.mounted && <div className="tool-group-list" data-scrollable={items.length > 8 ? "true" : undefined}>{children}</div>}
+    </details>
+  );
+});
+
+function ToolGroupStackIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 2.5 13.5 5.5 8 8.5 2.5 5.5zM2.5 8.5 8 11.5l5.5-3M2.5 11 8 14l5.5-3" />
+    </svg>
+  );
+}
+
+function ToolGroupSpinnerIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+      <path d="M8 2.5a5.5 5.5 0 1 0 5.5 5.5" />
+    </svg>
   );
 }
 
