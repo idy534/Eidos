@@ -32,6 +32,7 @@ from eidos_runtime.extensions.browser_plugin import (
     BrowserLaunch,
     is_bundled_browser_server,
 )
+from eidos_runtime.domain.browser import BrowserToolClass, browser_tool_class
 from eidos_runtime.extensions.contracts import McpServerConfigV1
 from eidos_runtime.infrastructure.browser_runtime import BrowserRuntimeUnavailable
 from eidos_runtime.extensions.plugin_mcp import resolve_package_mcp
@@ -629,7 +630,9 @@ class McpConnection:
             command=executable,
             args=arguments,
             env=environment,
-            cwd=self.plugin_root,
+            # Playwright MCP limits upload paths to its cwd root. The browser
+            # profile already allows read-only Workspace access.
+            cwd=self.workspace_root if browser else self.plugin_root,
             encoding="utf-8",
             encoding_error_handler="strict",
         )
@@ -1020,6 +1023,8 @@ def _tool_entry(
     connection: McpConnection,
     tool: mcp_types.Tool,
     server: dict[str, object],
+    *,
+    approval_required: bool | None = None,
 ) -> ToolRegistryEntry:
     input_schema = _normalize_mcp_schema(tool.input_schema)
     input_validator = BoundedJsonSchema(input_schema)
@@ -1044,8 +1049,11 @@ def _tool_entry(
             "sideEffect": "external",
             # Discovery only includes servers the user has reviewed and enabled.
             # Their explicit read-only hint does not change the process sandbox.
+            # Eidos classifies the bundled browser tools itself; an upstream
+            # annotation can neither add nor remove approval for them.
             "approvalRequired": (
-                tool.annotations is None or tool.annotations.read_only_hint is not True
+                approval_required if approval_required is not None
+                else tool.annotations is None or tool.annotations.read_only_hint is not True
             ),
             "timeoutSeconds": connection.config.tool_timeout_seconds,
             "batchPolicy": "single",
@@ -1099,9 +1107,18 @@ def _valid_tool_entries(
     server: dict[str, object],
 ) -> list[ToolRegistryEntry]:
     entries: list[ToolRegistryEntry] = []
+    browser = connection.browser_launch is not None
     for tool in tools:
+        tool_class = browser_tool_class(tool.name) if browser else None
+        if browser and tool_class is None:
+            # Unlisted browser tools are blocked, not registered as rejected.
+            continue
         try:
-            entries.append(_tool_entry(connection, tool, server))
+            entries.append(
+                _tool_entry(connection, tool, server) if tool_class is None else _tool_entry(
+                    connection, tool, server, approval_required=tool_class is not BrowserToolClass.READ,
+                )
+            )
         except (TypeError, ValueError):
             entries.append(_rejected_tool_entry(connection, tool, server))
     return entries

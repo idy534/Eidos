@@ -1404,11 +1404,7 @@ class RuntimeServer:
                 method_dtos.PluginSetEnabledRequestDto,
                 method_dtos.PluginSetEnabledResponseDto,
                 lambda _id,
-                request: self._applications_or_error().extensions.set_plugin_enabled(
-                    plugin_id=request.plugin_id,
-                    enabled=request.enabled,
-                    operation_id=request.operation_id,
-                ),
+                request: self._set_plugin_enabled(request),
             ),
             (
                 "plugin/remove",
@@ -1620,7 +1616,7 @@ class RuntimeServer:
         registry.register(MethodRegistration(
             name="plugin/builtin", request_type=BuiltinPluginRequest, response_type=BuiltinPluginsResponse,
             handler=_ApplicationMethodAdapter(
-                lambda _id, request: self._applications_or_error().extensions.builtin_plugins(request),
+                lambda _id, request: self._builtin_plugins(request),
                 BuiltinPluginsResponse,
             ),
             allowed_when_draining=False, allowed_during_reconfiguration=False, error_mapper=_application_error_mapping,
@@ -2138,6 +2134,20 @@ class RuntimeServer:
         self.managed_resources.warmup()
         self._warm_browser_resources()
         self.supervisor.schedule_next()
+
+    def _builtin_plugins(self, request: BuiltinPluginRequest) -> BuiltinPluginsResponse:
+        result = self._applications_or_error().extensions.builtin_plugins(request)
+        if request.action == "install":
+            self._warm_browser_resources()
+        return result
+
+    def _set_plugin_enabled(self, request: method_dtos.PluginSetEnabledRequestDto) -> object:
+        result = self._applications_or_error().extensions.set_plugin_enabled(
+            plugin_id=request.plugin_id, enabled=request.enabled, operation_id=request.operation_id,
+        )
+        if request.enabled:
+            self._warm_browser_resources()
+        return result
 
     def _warm_browser_resources(self) -> None:
         """Prepare the browser pack in the background once the plugin is enabled."""

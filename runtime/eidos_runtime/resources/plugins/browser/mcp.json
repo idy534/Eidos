@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "browser": {
+      "type": "stdio",
+      "command": "${RUNTIME_NODE}",
+      "args": [
+        "${BROWSER_MCP_ENTRY}",
+        "--cdp-endpoint", "${BROWSER_CDP_ENDPOINT}",
+        "--output-dir", "${BROWSER_OUTPUT_DIR}",
+        "--image-responses", "${BROWSER_IMAGE_RESPONSES}",
+        "--ignore-roots",
+        "--no-webmcp"
+      ],
+      "extensions": {
+        "com.eidos": {"permissionProfile": "browser", "startupTimeoutSeconds": 30, "toolTimeoutSeconds": 120}
+      }
+    }
+  }
+}

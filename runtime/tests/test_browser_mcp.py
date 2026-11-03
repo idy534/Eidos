@@ -146,3 +146,72 @@ class BrowserProfileTrustTests(unittest.TestCase):
         self.assertEqual(launched, [])
         server = next(value for value in self.plugins.list_mcp_servers() if value["serverId"] == "browser")
         self.assertEqual(server.get("errorCode"), "mcp_permission_profile_unsupported")
+
+
+class BundledBrowserPluginTests(unittest.TestCase):
+    """The shipped package runs with a Python stand-in for Playwright MCP."""
+
+    def setUp(self) -> None:
+        from eidos_runtime.extensions.browser_plugin import BUNDLED_BROWSER_PLUGIN_ROOT
+
+        self.temporary = tempfile.TemporaryDirectory(prefix="eidos-browser-bundled-")
+        root = Path(self.temporary.name).resolve()
+        self.data = root / "data"
+        self.data.mkdir(mode=0o700)
+        self.workspace = root / "workspace"
+        self.workspace.mkdir()
+        self.store = SessionStore(self.data)
+        self.store.initialize()
+        self.plugins = PluginCatalog(self.store)
+        self.plugins.import_directory(BUNDLED_BROWSER_PLUGIN_ROOT)
+        self.plugins.set_enabled("eidos-browser", True)
+        self.plugins.set_mcp_enabled("eidos-browser", "browser", True)
+        self.resources = ResourceRegistry()
+        self.kernel = RuntimeAsyncKernel(resource_registry=self.resources)
+        self.kernel.start()
+        fixture = Path(__file__).parent / "fixtures" / "browser_mcp_fixture.py"
+        self.launch = BrowserLaunch(
+            runtime=BrowserRuntime(node=Path(sys.executable), entry=fixture, read_roots=(root, root)),
+            variables={"BROWSER_CDP_ENDPOINT": "http://127.0.0.1:9333", "BROWSER_IMAGE_RESPONSES": "allow"},
+        )
+        self.manager = McpManager(
+            self.plugins, self.plugins.extension_snapshot(), self.workspace, sandbox=False,
+            async_kernel=self.kernel, resource_registry=self.resources, browser_launch=lambda: self.launch,
+        )
+
+    def tearDown(self) -> None:
+        self.manager.close()
+        self.kernel.close()
+        self.assertEqual(self.resources.active_resources(), ())
+        self.store.close()
+        self.temporary.cleanup()
+
+    def log(self) -> list[dict[str, object]]:
+        connection = self.manager.connections[0]
+        path = connection.runtime_root / "tmp" / "browser-fixture.jsonl"
+        return [json.loads(line) for line in path.read_text().splitlines()]
+
+    def test_only_allowlisted_tools_register_with_eidos_approval_classes(self) -> None:
+        from eidos_runtime.domain.browser import BROWSER_TOOL_CLASSES, BrowserToolClass, KNOWN_BLOCKED_BROWSER_TOOLS
+
+        entries = {entry.spec.name.removeprefix("mcp__browser__"): entry for entry in self.manager.start()}
+        self.assertEqual(set(entries), set(BROWSER_TOOL_CLASSES))
+        self.assertFalse(KNOWN_BLOCKED_BROWSER_TOOLS & set(entries))
+        for name, tool_class in BROWSER_TOOL_CLASSES.items():
+            self.assertEqual(entries[name].spec.approval_required, tool_class is not BrowserToolClass.READ, name)
+        launch = self.log()[0]
+        self.assertEqual(launch["cwd"], str(self.workspace))
+        self.assertEqual(launch["launch"][:2], ["--cdp-endpoint", "http://127.0.0.1:9333"])
+        self.assertIn("--no-webmcp", launch["launch"])
+        self.assertIn("--ignore-roots", launch["launch"])
+        self.assertEqual(launch["launch"][launch["launch"].index("--image-responses") + 1], "allow")
+
+    def test_screenshot_returns_model_image_content(self) -> None:
+        import threading
+        from eidos_runtime.tools.registry import VerifiedToolOutput
+
+        entries = {entry.spec.name: entry for entry in self.manager.start()}
+        output = entries["mcp__browser__browser_take_screenshot"].adapter.execute({}, threading.Event())
+        self.assertIsInstance(output, VerifiedToolOutput)
+        self.assertEqual([item.mime for item in output.model_content.items], ["image/png"])
+        self.assertIn("Example Domain", output.result["data"]["text"])
