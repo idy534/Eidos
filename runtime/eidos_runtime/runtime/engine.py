@@ -878,6 +878,7 @@ class RuntimeEngine:
                                     return
                                 raise
                             step = step.model_copy(update={"model_attempt_id": attempt_id})
+                            self.events.deliver_pending()
                             continue
                     repair_code = _sampling_protocol_repair_code(error)
                     if repair_code is not None:

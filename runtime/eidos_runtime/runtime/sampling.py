@@ -15,6 +15,7 @@ from eidos_runtime.model.client import (
     ModelRequestError,
     ModelRequestFailure,
 )
+from eidos_runtime.domain.model_retry import classify_retry_cause
 from eidos_runtime.model.retry import RetryDecision, RetryState, retry_decision, select_retry_delay
 from eidos_runtime.model.request_scope import foreground_request
 from eidos_runtime.model.gateway_types import RetryPolicy
@@ -529,6 +530,12 @@ def _retry_decision_payload(
         "lastRetryReason": failure.last_retry_reason if failure else None,
         "lastBackoffSeconds": failure.last_backoff_seconds if failure else None,
         "retryAfterApplied": failure.retry_after_applied if failure else False,
+        "cause": classify_retry_cause(
+            failure.code if failure else None,
+            failure.reason if failure else None,
+            failure.status_code if failure else None,
+        ),
+        "httpStatus": failure.status_code if failure else None,
     }
 
 

@@ -109,6 +109,7 @@ class EventType(StrEnum):
     MCP_CONNECTION_CHANGED = "mcp.connection_changed"
     MCP_TOOL_LIST_CHANGED = "mcp_tool_list.changed"
     CONTEXT_COMPACTED = "context.compacted"
+    MODEL_RETRY_CHANGED = "model.retry_changed"
     INPUT_QUEUED = "input.queued"
     INPUT_INJECTED = "input.injected"
     MEMORY_CHANGED = "memory.changed"

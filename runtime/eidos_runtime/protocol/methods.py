@@ -17,6 +17,7 @@ from typing import ClassVar, Literal
 
 from eidos_runtime.domain.input_reference import InputReferenceId
 from eidos_runtime.domain.context_management import ContextCompactionActivity
+from eidos_runtime.domain.model_retry import ModelRetryActivity
 from eidos_runtime.model.config import CustomModelSettings
 
 from pydantic import Field, JsonValue, StrictInt, StrictStr
@@ -741,6 +742,7 @@ class SessionReadResponseDto(MethodResultDto):
     previous_item_id: StrictStr | None = Field(default=None, alias="previousItemId")
     through_event_id: StrictInt | None = Field(default=None, alias="throughEventId")
     context_compactions: list[ContextCompactionActivity] = Field(default_factory=list, alias="contextCompactions")
+    model_retries: list[ModelRetryActivity] = Field(default_factory=list, alias="modelRetries")
 
     def to_json_value(self) -> dict[str, JsonValue]:
         value = super().to_json_value()

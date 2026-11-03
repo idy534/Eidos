@@ -1746,6 +1746,8 @@ export function AppShell({ runtime }: AppShellProps) {
                   allRuns={completeSessionItems.runs}
                   onEnsureItemMounted={sessionActions.ensureItemLoaded}
                   contextCompactions={currentSnapshot.contextCompactions}
+                  modelRetries={currentSnapshot.modelRetries}
+                  onOpenModelSettings={() => { setAutomationsOpen(false); setSettingsCategory("model"); setSettingsOpen(true); setDockOpen(false); setDockExpanded(false); }}
                   runs={feedVisibleRuns}
                   models={feedModels}
                   workspaceRoot={currentSnapshot.session.workspaceRoot}

@@ -1188,6 +1188,15 @@ class SessionRepository(Repository):
             )
             if activities:
                 snapshot["contextCompactions"] = [activity.to_wire_dict() for activity in activities]
+            from eidos_runtime.persistence.model_retries import ModelRetryRepository
+            retries = ModelRetryRepository(self.database).activities(
+                session_id, tuple(dict.fromkeys(str(item["runId"]) for item in selected_items)),
+                through_event_id=through_event_id,
+                since=min(int(item["createdAt"]) for item in selected_items),
+                before=before_timestamp, byte_budget=max(0, MAX_SNAPSHOT_BYTES - _json_bytes(snapshot) - 64),
+            )
+            if retries:
+                snapshot["modelRetries"] = [activity.to_wire_dict(exclude_none=True) for activity in retries]
         return snapshot
 
     def list_events(

@@ -294,6 +294,15 @@ Token 计量优先使用 Provider 返回的实际 Usage。该值只代表对应�
 
 压缩的处理过程记录复用同一批 SQLite Event/Outbox。`ContextCompactionActivity` 是显示投影，不进入模型 Item 历史。`context/compactionUpdated` 发送开始和结果；Engine 在提交开始事件后、请求摘要模型前交付 Outbox，让 Desktop 能及时显示正在压缩。`session/read.contextCompactions` 从当前历史页对应的事件重建记录，并以原始开始时间排序。Renderer 按 Run 和 request ID 合并，使用 event ID 拒绝迟到状态，终态不会被重复开始通知覆盖。压缩行与既有工具行共用样式，但没有交互或详情区。系统没有新增数据库表或后台 Worker。
 
+### 模型重试过程显示
+
+模型请求的 Provider 重试在界面中显示为 Run 过程里的一行阶段，不再只在 Run 终止后给出一句失败提示。`model_attempts` 仍是唯一重试权威；`ModelRetryActivity` 只是显示投影，不决定是否重试。Runtime 在提交 Attempt 状态的同一事务里写入 `model.retry_changed` Event：失败 Attempt 被判定可重试时记录 `waiting`（含 `nextRetryAt`、`deadlineAt`、`retryAfterApplied`），下一次 Attempt 开始时记录 `requesting`，重试后的 Attempt 结束时记录 `recovered`，预算或恢复窗口耗尽时记录 `failed`。首次请求成功、第一次失败即不可重试（认证、参数、额度）时不产生该事件。`cause` 由稳定错误码与 HTTP 状态归类为 `connection_failed`、`timeout`、`service_unavailable`、`rate_limited`、`stream_interrupted`。Engine 在开始重试 Attempt 后立即交付 Outbox。
+
+`model/retryUpdated` 通知携带整条 Activity；`session/read.modelRetries` 从当前历史页的事件重建每个请求组的最新状态。Renderer 按 Run 和请求组合并，使用 event ID 拒绝迟到状态，倒计时由 `nextRetryAt` 在本地计算。Run 已结束而 Activity 仍是 `waiting` 或 `requesting` 时，界面按 Run 状态显示为已取消或已失败。协议修复、空回复修复和上下文压缩不属于这类事件。没有新增数据库表、Schema 版本或后台 Worker。
+
+Run 因 Provider 错误结束时，`ModelFailureNotice` 取代单行红字：认证、参数、额度、内容限制和耗尽重试各有标题、原因和芯片，认证、参数、额度与耗尽重试提供“打开模型设置”。其他失败仍使用原来的单行提示。
+
+
 `context/details` 返回计量来源、参考分项、近期请求误差样本及最近压缩记录。分项按参考词表构成分配当前总量，并明确标为估算，不冒充 Provider 的分项实测。`context/compact` 把手动请求写入既有 SQLite Event/Outbox，同 Session 的重复待处理请求会去重。Engine 在下一次安全采样前处理；终态 Run 的请求由同 Session 下一 Run 处理。请求不创建额外 Run 或 Worker。开始与结束记录包含触发原因、策略、回退原因、前后完整投影预算、耗时和摘要模型 Usage。成功摘要与成功结果在同一个事务内提交；摘要已提交、后续统计未完成时，系统仍显示成功，后预算可以为空。Runtime 中断后，未提交摘要不会重放。Desktop 会把终态 Run 的未提交记录显示为中断，并允许重新请求。以上信息复用 Event JSON，不增加 DB Schema 或第二套状态机。
 
 Compactor 只向验证层提供摘要覆盖的 ToolCall 与工作区变更来源，并按完整响应保留近期记录。摘要的 completed_actions 只记录已成功的工具结果；Assistant 的决定自述明确标记为报告，普通将来计划不会成为已完成事项。不确定工具副作用使用原始 Item/ToolCall 的短引用，系统从持久来源重建这些引用，不反复复制旧错误正文。明确的用户历史报告不会仅因模型没有选择它而被删除。摘要预算随输入窗口调整到 512～4,096 个参考 Tokens，并受 24 KiB 正文上限约束。裁剪优先保留新事实，不通过删除明确约束、未解决问题、待审批或不确定副作用来强行满足预算。关键事实放不下时，系统保留上一份摘要。持久化事务再次检查取消请求，迟到摘要不能在取消后提交。软压缩失败日志只包含 Run ID 和受控原因。

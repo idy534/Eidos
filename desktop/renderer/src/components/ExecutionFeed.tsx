@@ -45,9 +45,11 @@ import { SkillIcon, AgentIcon as SubagentToolIcon, MemoryIcon } from "./InputPic
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 import { useFeedScroll } from "./useFeedScroll.js";
 import { ContextCompactionRow } from "./ContextCompactionRow.js";
+import { ModelFailureNotice, ModelRetryRow } from "./ModelRetryRow.js";
+import { modelFailurePresentation, totalModelRetries } from "../model-retry.js";
 import { HookActivityRows } from "./HookActivityRows.js";
 import { ConversationRunRail } from "./ConversationRunRail.js";
-import type { ContextCompactionActivity } from "../../../shared/context.generated.js";
+import type { ContextCompactionActivity, ModelRetryActivity } from "../../../shared/context.generated.js";
 export { isFeedAtBottom } from "./useFeedScroll.js";
 
 
@@ -61,6 +63,8 @@ type EditResendHandler = (run: Run, editedInput: string, references?: string[]) 
 interface Props {
   searchTarget?: { itemId: string; query: string; occurrence: number; revision: number } | undefined;
   contextCompactions?: readonly ContextCompactionActivity[] | undefined;
+  modelRetries?: readonly ModelRetryActivity[] | undefined;
+  onOpenModelSettings?: (() => void) | undefined;
   items: Item[];
   resultItems?: Item[];
   runs: Run[];
@@ -94,10 +98,15 @@ interface Segment {
   user: Item | undefined;
   process: ProcessEntry[];
   response: Item[];
+  retries: readonly ModelRetryActivity[];
 }
 
-type ProcessEntry = { kind: "item"; item: Item } | { kind: "compaction"; activity: ContextCompactionActivity };
+type ProcessEntry =
+  | { kind: "item"; item: Item }
+  | { kind: "compaction"; activity: ContextCompactionActivity }
+  | { kind: "retry"; activity: ModelRetryActivity };
 const EMPTY_COMPACTIONS: readonly ContextCompactionActivity[] = [];
+const EMPTY_RETRIES: readonly ModelRetryActivity[] = [];
 const EMPTY_ITEMS: Item[] = [];
 
 function shallowEqualArray<T>(left: readonly T[], right: readonly T[]): boolean {
@@ -129,6 +138,8 @@ const NOOP_EDIT_RESEND: EditResendHandler = async () => {};
 export const ExecutionFeed = memo(function ExecutionFeed({
   searchTarget,
   contextCompactions = EMPTY_COMPACTIONS,
+  modelRetries = EMPTY_RETRIES,
+  onOpenModelSettings,
   items,
   resultItems = items,
   runs,
@@ -166,7 +177,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
     firstItemId: items[0]?.id,
   });
 
-  useLayoutEffect(scheduleFollow, [items, runs, contextCompactions, responseActionState.revisions, scheduleFollow]);
+  useLayoutEffect(scheduleFollow, [items, runs, contextCompactions, modelRetries, responseActionState.revisions, scheduleFollow]);
 
   const supersededRunIds = useMemo(
     () => new Set(responseActionState.revisions.map((revision) => revision.sourceRunId)),
@@ -195,7 +206,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   const runsById = new Map(runs.map((run) => [run.id, run]));
   const itemGroups = groupItemsByRun(items).filter(({ runId }) => (!supersededRunIds.has(runId) || items.some((item) => item.runId === runId && item.id === searchTarget?.itemId)));
   const segmentCacheRef = useRef(
-    new Map<string, { items: Item[]; compactions: readonly ContextCompactionActivity[]; segments: Segment[] }>(),
+    new Map<string, { items: Item[]; compactions: readonly ContextCompactionActivity[]; retries: readonly ModelRetryActivity[]; segments: Segment[] }>(),
   );
   const resultItemsCacheRef = useRef(new Map<string, Item[]>());
 
@@ -265,17 +276,19 @@ export const ExecutionFeed = memo(function ExecutionFeed({
             const run = runsById.get(runId);
             if (!run) return null;
             const runCompactions = contextCompactions.filter((activity) => activity.runId === runId);
+            const runRetries = modelRetries.filter((activity) => activity.runId === runId);
             const cachedSegmentEntry = segmentCacheRef.current.get(runId);
             let segments: Segment[];
             if (
               cachedSegmentEntry
               && shallowEqualArray(cachedSegmentEntry.items, runItems)
               && shallowEqualArray(cachedSegmentEntry.compactions, runCompactions)
+              && shallowEqualArray(cachedSegmentEntry.retries, runRetries)
             ) {
               segments = cachedSegmentEntry.segments;
             } else {
-              segments = splitRunIntoSegments(runItems, runCompactions);
-              segmentCacheRef.current.set(runId, { items: runItems, compactions: runCompactions, segments });
+              segments = splitRunIntoSegments(runItems, runCompactions, runRetries);
+              segmentCacheRef.current.set(runId, { items: runItems, compactions: runCompactions, retries: runRetries, segments });
             }
             const runResultItems = resultItemsByRunId.get(runId) ?? EMPTY_ITEMS;
             const canReviseRun = !run.inherited && latestVisibleRun?.id === run.id
@@ -314,7 +327,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
                     searchItemId={searchTarget?.itemId}
                   />
                 ))}
-                <RunNotice run={run} />
+                <RunNotice run={run} retry={runRetries.at(-1)} onOpenModelSettings={onOpenModelSettings} />
                 <HookActivityRows run={run} />
               </Fragment>
             );
@@ -387,7 +400,7 @@ const RunSegment = memo(function RunSegment({
 }) {
   // Hidden observations still determine which assistant messages are progress.
   const visibleProcess = segment.process.filter((entry) => {
-    if (entry.kind === "compaction") return true;
+    if (entry.kind !== "item") return true;
     const item = entry.item;
     if (!item.toolCall || !["write_stdin", "control_shell"].includes(item.toolCall.toolName)) return true;
     const data = objectField(parseObject(item.toolCall.resultJson), "data");
@@ -413,12 +426,16 @@ const RunSegment = memo(function RunSegment({
       {visibleProcess.length > 0 && (
         <ProcessGroup
           run={run}
+          retries={segment.retries}
           containsSearchTarget={searchItemId !== undefined
             && visibleProcess.some((entry) => entry.kind === "item" && entry.item.id === searchItemId)}
         >
           {groupProcessEntries(visibleProcess).map((node) => {
             if (node.kind === "compaction") {
               return <ContextCompactionRow key={`compaction:${node.activity.requestId}`} activity={node.activity} run={run} />;
+            }
+            if (node.kind === "retry") {
+              return <ModelRetryRow key={`retry:${node.activity.requestGroupId}`} activity={node.activity} run={run} />;
             }
             const renderItem = (item: Item) => (
               <ProcessItem
@@ -517,8 +534,9 @@ function useLazyDetails(initialOpen: boolean) {
   return { open, mounted, onToggle, show, close: () => setOpen(false) };
 }
 
-function ProcessGroup({ run, containsSearchTarget = false, children }: {
+function ProcessGroup({ run, retries = EMPTY_RETRIES, containsSearchTarget = false, children }: {
   run: Run;
+  retries?: readonly ModelRetryActivity[];
   containsSearchTarget?: boolean;
   children: ReactNode;
 }) {
@@ -544,7 +562,7 @@ function ProcessGroup({ run, containsSearchTarget = false, children }: {
 
   return (
     <details className="process-group" open={details.open} onToggle={details.onToggle}>
-      <summary><ProcessLabel run={run} /></summary>
+      <summary><ProcessLabel run={run} /><RetryBadge retries={retries} run={run} /></summary>
       {details.mounted && <div className="process-content">{children}</div>}
     </details>
   );
@@ -552,6 +570,7 @@ function ProcessGroup({ run, containsSearchTarget = false, children }: {
 
 type ProcessNode =
   | { kind: "compaction"; activity: ContextCompactionActivity }
+  | { kind: "retry"; activity: ModelRetryActivity }
   | { kind: "item"; item: Item }
   | { kind: "tools"; items: Item[] };
 
@@ -574,7 +593,7 @@ export function groupProcessEntries(entries: readonly ProcessEntry[]): ProcessNo
       continue;
     }
     flush();
-    nodes.push(entry.kind === "compaction" ? entry : { kind: "item", item: entry.item });
+    nodes.push(entry.kind === "item" ? { kind: "item", item: entry.item } : entry);
   }
   flush();
   return nodes;
@@ -2265,8 +2284,21 @@ function ProcessLabel({ run }: { run: Run }) {
   return <span>{prefix} {formatDuration(duration)}</span>;
 }
 
-function RunNotice({ run }: { run: Run }) {
+function RetryBadge({ retries, run }: { retries: readonly ModelRetryActivity[]; run: Run }) {
+  const count = totalModelRetries(retries);
+  if (count === 0) return null;
+  const failed = retries.some((activity) => activity.status === "failed") || (run.status === "failed" && retries.at(-1)?.status !== "recovered");
+  return <span className={`retry-pill${failed ? " retry-pill--failed" : ""}`}>重试 {count} 次</span>;
+}
+
+function RunNotice({ run, retry, onOpenModelSettings }: {
+  run: Run;
+  retry?: ModelRetryActivity | undefined;
+  onOpenModelSettings?: (() => void) | undefined;
+}) {
   if (run.status === "succeeded") return null;
+  const failure = modelFailurePresentation(run, retry);
+  if (failure) return <ModelFailureNotice presentation={failure} onOpenModelSettings={onOpenModelSettings} />;
   const presentation = terminalRunPresentation(run);
   const active = presentation ?? activeRunPresentation(run);
   if (!active || ["queued", "running", "finalizing"].includes(run.status)) return null;
@@ -2292,7 +2324,11 @@ function groupItemsByRun(items: Item[]): Array<{ runId: string; items: Item[] }>
   return groups;
 }
 
-function splitRunIntoSegments(items: Item[], activities: readonly ContextCompactionActivity[] = []): Segment[] {
+export function splitRunIntoSegments(
+  items: Item[],
+  activities: readonly ContextCompactionActivity[] = [],
+  retries: readonly ModelRetryActivity[] = EMPTY_RETRIES,
+): Segment[] {
   const sourceSegments: Item[][] = [];
   for (const item of [...items].sort((a, b) => a.ordinal - b.ordinal)) {
     if ((item.kind === "user_message" && item.ordinal <= 1) || sourceSegments.length === 0) {
@@ -2306,13 +2342,15 @@ function splitRunIntoSegments(items: Item[], activities: readonly ContextCompact
     const body = segmentItems.filter((item) => item !== user);
     const nextUserAt = sourceSegments[index + 1]?.[0]?.createdAt ?? Infinity;
     const compactions = activities.filter((activity) => activity.startedAt >= (user?.createdAt ?? 0) && activity.startedAt < nextUserAt);
+    const segmentRetries = retries.filter((activity) => activity.startedAt >= (user?.createdAt ?? 0) && activity.startedAt < nextUserAt);
     const lastCompactionAt = Math.max(-Infinity, ...compactions.map((activity) => activity.startedAt));
     const processTools = body.filter(
       (item) => item.kind !== "assistant_message" && item.toolCall?.toolName !== "write_plan",
     );
-    if (processTools.length === 0 && compactions.length === 0) {
+    if (processTools.length === 0 && compactions.length === 0 && segmentRetries.length === 0) {
       return {
         user,
+        retries: segmentRetries,
         process: [],
         response: body.filter(
           (item) => item.kind === "assistant_message" || item.toolCall?.toolName === "write_plan",
@@ -2323,12 +2361,17 @@ function splitRunIntoSegments(items: Item[], activities: readonly ContextCompact
     const inProcess = (item: Item) => item.kind !== "assistant_message" || item.ordinal <= lastProcessToolOrdinal || item.createdAt <= lastCompactionAt;
     const process: ProcessEntry[] = body.filter((item) => item.toolCall?.toolName !== "write_plan" && inProcess(item))
       .map((item) => ({ kind: "item", item }));
-    for (const activity of [...compactions].sort((a, b) => a.startedAt - b.startedAt || a.eventId - b.eventId)) {
-      const at = process.findIndex((entry) => entry.kind === "item" && entry.item.createdAt > activity.startedAt);
-      process.splice(at === -1 ? process.length : at, 0, { kind: "compaction", activity });
+    const stages: Array<Exclude<ProcessEntry, { kind: "item" }>> = [
+      ...compactions.map((activity) => ({ kind: "compaction" as const, activity })),
+      ...segmentRetries.map((activity) => ({ kind: "retry" as const, activity })),
+    ].sort((a, b) => a.activity.startedAt - b.activity.startedAt || a.activity.eventId - b.activity.eventId);
+    for (const entry of stages) {
+      const at = process.findIndex((existing) => existing.kind === "item" && existing.item.createdAt > entry.activity.startedAt);
+      process.splice(at === -1 ? process.length : at, 0, entry);
     }
     return {
       user,
+      retries: segmentRetries,
       process,
       response: body.filter(
         (item) =>

@@ -2,7 +2,7 @@ import type { ProjectDto as GeneratedProject, ProjectRootDto } from "./project-w
 import type { CustomModelSettings } from "./custom-models.js";
 import type { HookActivity, PluginCompatibility, PluginHookReview } from "./hooks.js";
 import type { PluginPresentation } from "./plugins.js";
-import type { ContextCompactionActivity } from "./context.generated.js";
+import type { ContextCompactionActivity, ModelRetryActivity } from "./context.generated.js";
 import type { SessionForkSource, InheritedHistoryEntry } from "./session-fork.generated.js";
 import type { ModelId } from "./constants.js";
 import type { RunTermination } from "./run-termination.generated.js";
@@ -390,6 +390,7 @@ export interface Item {
 
 export interface SessionSnapshot {
   contextCompactions?: ContextCompactionActivity[];
+  modelRetries?: ModelRetryActivity[];
   inheritedHistory?: InheritedHistoryEntry[];
   session: Session;
   runs: Run[];
@@ -724,6 +725,7 @@ export interface ExtensionSnapshot {
 export type RuntimeNotification =
   | { method: "memory/changed"; params: import("./memory.generated.js").MemoryChangedNotice }
   | { method: "context/compactionUpdated"; params: { sessionId: string; activity: ContextCompactionActivity } }
+  | { method: "model/retryUpdated"; params: { sessionId: string; activity: ModelRetryActivity } }
   | { method: "automation/changed"; params: { id: string } }
   | { method: "browser/grantChanged"; params: { sessionId: string; active: boolean } }
   | { method: "sidebar/pinsChanged"; params: { eventId: number } }

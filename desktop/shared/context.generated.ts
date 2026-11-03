@@ -35,13 +35,28 @@ export type Updatedat1 = number;
 export type Status1 = "running" | "succeeded" | "failed" | "canceled";
 export type Trigger1 = ("manual" | "soft_target" | "window_pressure" | "provider_limit" | "projection_limit") | null;
 export type Reason1 = string | null;
+export type Requestgroupid = string;
 export type Runid2 = string;
+export type Eventid1 = number;
+export type Startedat1 = number;
+export type Updatedat2 = number;
+export type Status2 = "waiting" | "requesting" | "recovered" | "failed";
+export type Retryindex = number;
+export type Cause = "connection_failed" | "timeout" | "service_unavailable" | "rate_limited" | "stream_interrupted";
+export type Httpstatus = number | null;
+export type Retryafterapplied = boolean;
+export type Nextretryat = number | null;
+export type Deadlineat = number | null;
+export type Providerid = string | null;
+export type Modelid = string | null;
 export type Runid3 = string;
+export type Runid4 = string;
 
 export interface ContextContract {
   details: ContextDetails;
   compaction: ContextCompactionRecord;
   activity: ContextCompactionActivity;
+  modelRetry: ModelRetryActivity;
   detailsRequest: ContextDetailsRequestDto;
   compactRequest: ContextCompactRequestDto;
 }
@@ -91,9 +106,31 @@ export interface ContextCompactionActivity {
   trigger?: Trigger1;
   reason?: Reason1;
 }
-export interface ContextDetailsRequestDto {
+/**
+ * Display projection of one provider request that is being retried.
+ *
+ * The request group is the first failed Attempt; the SQLite model_attempts rows
+ * stay the only retry authority and this model never drives retry decisions.
+ */
+export interface ModelRetryActivity {
+  requestGroupId: Requestgroupid;
   runId: Runid2;
+  eventId: Eventid1;
+  startedAt: Startedat1;
+  updatedAt: Updatedat2;
+  status: Status2;
+  retryIndex: Retryindex;
+  cause: Cause;
+  httpStatus?: Httpstatus;
+  retryAfterApplied?: Retryafterapplied;
+  nextRetryAt?: Nextretryat;
+  deadlineAt?: Deadlineat;
+  providerId?: Providerid;
+  modelId?: Modelid;
+}
+export interface ContextDetailsRequestDto {
+  runId: Runid3;
 }
 export interface ContextCompactRequestDto {
-  runId: Runid3;
+  runId: Runid4;
 }

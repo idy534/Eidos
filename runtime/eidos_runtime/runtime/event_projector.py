@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from eidos_runtime.protocol.tool_text import project_tool_text
 from eidos_runtime.domain.context_management import ContextCompactionActivity, ContextCompactionRecord
+from eidos_runtime.domain.model_retry import ModelRetryActivity
 
 
 class EventProjector:
@@ -30,6 +31,19 @@ class EventProjector:
                 compaction_notifications = (self._notification("context/compactionUpdated", {
                     "sessionId": event["sessionId"], "activity": activity.to_wire_dict(),
                 }),)
+        if (
+            event_type == "model.retry_changed"
+            and isinstance(payload, dict)
+            and isinstance(event.get("sessionId"), str)
+            and isinstance(event.get("runId"), str)
+        ):
+            activity = ModelRetryActivity.model_validate({
+                **payload, "runId": event["runId"], "eventId": event["eventId"],
+                "updatedAt": event["occurredAt"],
+            })
+            return (self._notification("model/retryUpdated", {
+                "sessionId": event["sessionId"], "activity": activity.to_wire_dict(exclude_none=True),
+            }),)
         if event_type == "run.queue_changed" and isinstance(payload, dict):
             return (self._notification("run/queueChanged", payload),)
         if event_type == "memory.changed" and isinstance(payload, dict):

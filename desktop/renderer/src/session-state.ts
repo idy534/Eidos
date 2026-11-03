@@ -9,6 +9,7 @@ import type {
 } from "./contracts.js";
 export { terminalRunPresentation, type RunStatusPresentation } from "./run-presentation.js";
 import { mergeContextCompactions } from "./context-compaction.js";
+import { mergeModelRetries } from "./model-retry.js";
 
 
 export interface ProjectSessionGroup {
@@ -260,6 +261,12 @@ export function applyNotification(
     if (!snapshot.runs.some((run) => run.id === activity.runId)
       || activity.eventId <= (snapshot.throughEventId ?? 0)) return snapshot;
     return { ...snapshot, contextCompactions: mergeContextCompactions(snapshot.contextCompactions, [activity]) };
+  }
+  if (notification.method === "model/retryUpdated") {
+    const activity = notification.params.activity;
+    if (!snapshot.runs.some((run) => run.id === activity.runId)
+      || activity.eventId <= (snapshot.throughEventId ?? 0)) return snapshot;
+    return { ...snapshot, modelRetries: mergeModelRetries(snapshot.modelRetries, [activity]) };
   }
   if (
     notification.method === "run/started"

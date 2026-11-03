@@ -1638,6 +1638,11 @@ function isNotification(value: unknown): value is RuntimeNotification {
       && typeof params.sessionId === "string"
       && isContextCompactionActivity(params.activity);
   }
+  if (value.method === "model/retryUpdated") {
+    return hasOnlyKeys(params, ["sessionId", "activity"])
+      && typeof params.sessionId === "string"
+      && isModelRetryActivity(params.activity);
+  }
   if (value.method === "item/started" || value.method === "item/completed" || value.method === "item/updated") {
     const item = params.item;
     const valid = (
@@ -2173,11 +2178,13 @@ function isSessionSnapshot(value: unknown): value is SessionSnapshot {
     isRecord(value)
     && hasOnlyKeys(value, [
       "session", "runs", "items", "stepResolutions",
-      "previousItemId", "throughEventId", "inheritedHistory", "contextCompactions",
+      "previousItemId", "throughEventId", "inheritedHistory", "contextCompactions", "modelRetries",
     ])
     && isSession(value.session)
     && (value.contextCompactions === undefined || Array.isArray(value.contextCompactions)
       && value.contextCompactions.every(isContextCompactionActivity))
+    && (value.modelRetries === undefined || Array.isArray(value.modelRetries)
+      && value.modelRetries.every(isModelRetryActivity))
     && (value.inheritedHistory === undefined || Array.isArray(value.inheritedHistory) && value.inheritedHistory.every((entry) => isInheritedHistoryEntry(entry)))
     && Array.isArray(value.runs)
     && value.runs.every(isRun)
@@ -2988,6 +2995,6 @@ function approvalRequestFrom(
   }
   return undefined;
 }
-import { isContextDetails, isContextCompactionRecord, isContextCompactionActivity } from "../shared/context-management.js";
+import { isContextDetails, isContextCompactionRecord, isContextCompactionActivity, isModelRetryActivity } from "../shared/context-management.js";
 import type { ContextDetails, ContextCompactionRecord } from "../shared/context-management.js";
 import { isResourceStatus, isResourceRetryResponse, type ResourceStatus, type ResourceRetryRequest, type ResourceRetryResponse } from "../shared/managed-resources.js";

@@ -796,3 +796,165 @@ span.tool-file-link:hover {
   .thinking-indicator { color: var(--muted); background: none; animation: none; }
   .feed { scroll-behavior: auto; }
 }
+
+/* Provider retry stage: a quiet process row while the request recovers, a failure block when it cannot. */
+.retry-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0 0.5rem;
+  border-radius: var(--radius-pill);
+  color: var(--status-warning);
+  background: var(--status-warning-bg);
+  font-size: var(--font-size-caption);
+  line-height: 1.2rem;
+}
+.retry-pill::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: 0.85; }
+.retry-pill--failed { color: var(--status-danger); background: var(--status-danger-bg); }
+.model-retry { max-width: 48rem; margin: 0 0 0.6rem; color: #7a7f7a; overflow-anchor: auto; }
+.model-retry-head { display: flex; align-items: center; flex-wrap: wrap; gap: 0.35rem; min-height: 1.75rem; }
+.model-retry-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 1.15rem;
+  height: 1.15rem;
+  color: #b08a3a;
+}
+.model-retry-icon svg { display: block; width: 0.875rem; height: 0.875rem; }
+.model-retry[data-phase="requesting"] .model-retry-icon { color: var(--accent); }
+.model-retry[data-phase="requesting"] .model-retry-icon svg { animation: spin 1s linear infinite; }
+.model-retry[data-phase="recovered"] .model-retry-icon { color: var(--accent); }
+.model-retry[data-phase="failed"] .model-retry-icon { color: var(--status-danger); }
+.model-retry[data-phase="canceled"] .model-retry-icon { color: #8a8f8b; }
+.model-retry-label { font-size: var(--font-size-body); line-height: var(--line-height-body); color: #6b706c; }
+.model-retry[data-live="true"] .model-retry-label {
+  color: transparent;
+  background: linear-gradient(90deg, #6b706c 30%, #b9beba 50%, #6b706c 70%) 0 0 / 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: tool-group-shimmer 1.8s ease-in-out infinite;
+}
+.model-retry-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 1.3rem;
+  padding: 0 0.55rem;
+  border-radius: var(--radius-pill);
+  color: var(--status-warning);
+  background: var(--status-warning-bg);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  animation: model-retry-pop 360ms var(--apple-spring);
+}
+.model-retry-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  margin: 0 0 0 1.5rem;
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.25rem;
+}
+.model-retry-count { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+button.model-retry-link {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 0.15em;
+  transition: color 120ms ease, text-decoration-color 120ms ease;
+}
+.model-retry-head > button.model-retry-link { font-size: var(--font-size-caption); }
+button.model-retry-link:hover { color: var(--text); text-decoration-color: currentColor; }
+.model-retry-rail {
+  position: relative;
+  width: min(17rem, calc(100% - 1.5rem));
+  height: 3px;
+  margin: 0.4rem 0 0 1.5rem;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+}
+.model-retry-rail > i {
+  position: absolute;
+  inset: 0;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #d9bd7c, #b08a3a);
+  transform-origin: left center;
+  animation: model-retry-drain linear forwards;
+}
+.model-retry-rail--indeterminate > i {
+  right: auto;
+  width: 38%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: model-retry-slide 1.15s ease-in-out infinite;
+}
+.model-retry-detail {
+  display: grid;
+  gap: 0.1rem;
+  margin: 0.45rem 0 0.2rem 1.5rem;
+  padding: 0.1rem 0 0.1rem 0.9rem;
+  border-left: 1px solid var(--tg-rail, rgba(0, 0, 0, 0.09));
+  font-size: var(--font-size-caption);
+  line-height: 1.2rem;
+}
+.model-retry-detail > div { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0 0.9rem; }
+.model-retry-detail dt { color: var(--text-tertiary); }
+.model-retry-detail dd { margin: 0; color: var(--text-secondary); font-family: var(--font-code); font-size: 11.5px; overflow-wrap: anywhere; }
+.model-failure {
+  max-width: 48rem;
+  margin: 0 0 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  box-shadow: var(--apple-shadow-sm);
+  overflow: hidden;
+  animation: model-retry-rise 320ms var(--apple-spring);
+}
+.model-failure-main { display: grid; grid-template-columns: 1.15rem minmax(0, 1fr); gap: 0.6rem; padding: 0.85rem 1rem 0.8rem; }
+.model-failure-icon { display: flex; padding-top: 3px; color: var(--danger); }
+.model-failure--warning .model-failure-icon { color: var(--status-warning); }
+.model-failure-icon svg { width: 1rem; height: 1rem; }
+.model-failure-title { color: var(--text); font-size: var(--font-size-body); font-weight: 600; line-height: var(--line-height-body); }
+.model-failure-body { margin: 1px 0 0; color: var(--muted); font-size: 13px; line-height: 20px; }
+.model-failure-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
+.model-failure-chips span {
+  padding: 0 0.4rem;
+  border-radius: 5px;
+  color: var(--tg-text);
+  background: var(--surface-muted);
+  font-family: var(--font-code);
+  font-size: 11px;
+  line-height: 18px;
+}
+.model-failure-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 0.55rem 1rem 0.65rem 2.75rem; border-top: 1px solid var(--line); background: #fafbfc; }
+.model-failure-actions button {
+  height: 1.85rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--primary-action-border);
+  border-radius: 8px;
+  color: var(--primary-action-text);
+  background: var(--primary-action-bg);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: background-color 120ms ease;
+}
+.model-failure-actions button:hover { background: var(--primary-action-bg-hover); }
+@keyframes model-retry-drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@keyframes model-retry-slide { from { transform: translateX(-110%); } to { transform: translateX(290%); } }
+@keyframes model-retry-pop { from { transform: scale(0.88); opacity: 0.4; } to { transform: none; opacity: 1; } }
+@keyframes model-retry-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .model-retry[data-live="true"] .model-retry-label { color: #6b706c; background: none; animation: none; }
+  .model-retry[data-phase="requesting"] .model-retry-icon svg,
+  .model-retry-rail--indeterminate > i,
+  .model-retry-chip,
+  .model-failure { animation: none; }
+}

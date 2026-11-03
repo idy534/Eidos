@@ -163,6 +163,103 @@ def _reconciliation_intent_scope(
     return "unknown"
 
 
+_TRANSPORT_TERMINAL_REASONS = frozenset({
+    "retry_window_exhausted", "retry_budget_exhausted",
+    "non_retryable_error", "unsafe_stream_progress",
+})
+
+
+def _previous_group_attempt(
+    connection: sqlite3.Connection, group_id: str, attempt_id: str,
+) -> str | None:
+    row = connection.execute(
+        "SELECT id FROM model_attempts WHERE request_group_id = ? AND id != ? "
+        "ORDER BY ordinal DESC LIMIT 1", (group_id, attempt_id),
+    ).fetchone()
+    return row["id"] if row is not None else None
+
+
+def _append_model_retry_event(
+    connection: sqlite3.Connection,
+    attempt_id: str,
+    run_id: str,
+    status: str,
+    decision: dict[str, object] | None,
+    now: int,
+    *,
+    previous_attempt_id: str | None = None,
+) -> None:
+    """Write the display event for a provider retry in the same transaction as the Attempt."""
+    row = connection.execute(
+        "SELECT a.request_group_id, a.retry_index, a.retry_deadline_at, a.model_id, "
+        "a.configured_provider_id, r.session_id FROM model_attempts a "
+        "JOIN steps s ON s.id = a.step_id JOIN runs r ON r.id = s.run_id WHERE a.id = ?",
+        (attempt_id,),
+    ).fetchone()
+    if row is None:
+        return
+    group_id = row["request_group_id"] or attempt_id
+    retry_index = int(row["retry_index"])
+    decision = decision or {}
+    payload: dict[str, object]
+    if status == "running":
+        new_status, shown_index, source = "requesting", retry_index, previous_attempt_id
+        next_retry_at = None
+    elif status == "failed" and decision.get("retry") is True and decision.get("reason") == "transport_retry":
+        new_status, shown_index, source = "waiting", retry_index + 1, attempt_id
+        next_retry_at = decision.get("nextRetryAt")
+    elif status == "failed" and decision.get("reason") in _TRANSPORT_TERMINAL_REASONS:
+        if retry_index == 0:
+            return
+        # An exhausted budget fails with the retryable cause itself; a different,
+        # non-retryable final error keeps the cause that triggered the retries.
+        exhausted = decision.get("reason") in {"retry_window_exhausted", "retry_budget_exhausted"}
+        new_status, shown_index = "failed", retry_index
+        source = attempt_id if exhausted else _previous_group_attempt(connection, group_id, attempt_id)
+        next_retry_at = None
+    elif status in {"completed", "failed"} and retry_index > 0 and decision.get("reason") != "canceled":
+        new_status, shown_index = "recovered", retry_index
+        source = _previous_group_attempt(connection, group_id, attempt_id)
+        next_retry_at = None
+    else:
+        return
+    facts = {}
+    if source is not None:
+        prior = connection.execute(
+            "SELECT retry_decision_json, http_status FROM model_attempts WHERE id = ?", (source,),
+        ).fetchone()
+        if prior is not None and prior["retry_decision_json"]:
+            facts = json.loads(prior["retry_decision_json"])
+    if new_status == "waiting" or source == attempt_id:
+        facts = decision
+    cause = facts.get("cause")
+    if not isinstance(cause, str):
+        return
+    http_status = facts.get("httpStatus")
+    started = connection.execute(
+        "SELECT started_at FROM model_attempts WHERE id = ?", (group_id,),
+    ).fetchone()
+    deadline = decision.get("deadlineAt") or facts.get("deadlineAt") or row["retry_deadline_at"]
+    payload = {
+        "requestGroupId": group_id,
+        "startedAt": started["started_at"] if started is not None else now,
+        "status": new_status,
+        "retryIndex": shown_index,
+        "cause": cause,
+        "httpStatus": http_status if isinstance(http_status, int) else None,
+        "retryAfterApplied": facts.get("retryAfterApplied") is True,
+        "nextRetryAt": next_retry_at if isinstance(next_retry_at, int) else None,
+        "deadlineAt": deadline if isinstance(deadline, int) else None,
+        "providerId": (row["configured_provider_id"] or None) and row["configured_provider_id"][:128],
+        "modelId": (row["model_id"] or None) and row["model_id"][:128],
+    }
+    append_event(
+        connection, EventType.MODEL_RETRY_CHANGED, now,
+        {key: value for key, value in payload.items() if value is not None},
+        session_id=row["session_id"], run_id=run_id,
+    )
+
+
 def _attempt_metadata(
     connection: sqlite3.Connection,
     run_id: str,
@@ -1162,6 +1259,10 @@ class ExecutionRepository(Repository):
                     attempt["id"],
                 ),
             )
+            if changed.rowcount == 1:
+                _append_model_retry_event(
+                    connection, attempt["id"], run_id, status, retry_decision, now,
+                )
         return changed.rowcount == 1
 
     def start_retry_model_attempt(
@@ -1238,6 +1339,11 @@ class ExecutionRepository(Repository):
                     group_id, retry_index, deadline,
                 ),
             )
+            if same_request:
+                _append_model_retry_event(
+                    connection, attempt_id, run_id, "running", None, now,
+                    previous_attempt_id=previous["id"],
+                )
         return attempt_id
 
     def read_model_retry_record(self, attempt_id: str) -> ModelRetryRecord:

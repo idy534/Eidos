@@ -10,6 +10,7 @@ import type {
 } from "../contracts.js";
 import { SnapshotReadCoordinator, taskStatusFromRun, upsertRun, userFacingError } from "../session-state.js";
 import { mergeContextCompactions } from "../context-compaction.js";
+import { mergeModelRetries } from "../model-retry.js";
 
 const READ_COMPLETIONS_KEY = "eidos.readCompletedSessionIds";
 
@@ -127,6 +128,7 @@ function mergeOlderHistory(current: SessionSnapshot, older: SessionSnapshot): Se
     runs: [...new Map([...older.runs, ...current.runs].map((run) => [run.id, run])).values()],
     items: [...new Map([...older.items, ...current.items].map((item) => [item.id, item])).values()],
     contextCompactions: mergeContextCompactions(older.contextCompactions, current.contextCompactions),
+    modelRetries: mergeModelRetries(older.modelRetries, current.modelRetries),
     ...(older.previousItemId ? { previousItemId: older.previousItemId } : {}),
     ...(history.length ? { inheritedHistory: history } : {}),
   };

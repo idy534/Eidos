@@ -760,3 +760,101 @@ def test_real_adapters_recover_without_sdk_retry_or_partial_tool_execution(
     finally:
         lease.close()
         kernel.close()
+
+
+def _retry_events(store, run_id):
+    return [
+        json.loads(row["payload_json"])
+        for row in store.connection.execute(
+            "SELECT payload_json FROM events WHERE run_id=? AND event_type='model.retry_changed' ORDER BY id",
+            (run_id,),
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "code,status,reason,cause",
+    [
+        ("provider_unavailable", None, None, "connection_failed"),
+        ("provider_unavailable", 503, None, "service_unavailable"),
+        ("provider_unavailable", 504, None, "timeout"),
+        ("provider_timeout", None, None, "timeout"),
+        ("rate_limited", 429, None, "rate_limited"),
+        ("provider_unavailable", None, "stream_interrupted", "stream_interrupted"),
+    ],
+)
+def test_retry_events_follow_one_request_group_and_end_recovered(runtime, code, status, reason, cause):
+    store, session, _ = runtime
+    run, _ = store.create_run(session, "retry")
+    model = Disconnected(2, code=code, status=status, reason=reason, retry_after=3 if status == 429 else None)
+    RuntimeEngine(store, model, lambda _: None).run(run["id"], threading.Event())
+    events = _retry_events(store, run["id"])
+    assert [(e["status"], e["retryIndex"]) for e in events] == [
+        ("waiting", 1), ("requesting", 1), ("waiting", 2), ("requesting", 2), ("recovered", 2),
+    ]
+    assert {e["requestGroupId"] for e in events} == {events[0]["requestGroupId"]}
+    assert {e["cause"] for e in events} == {cause}
+    assert events[0]["nextRetryAt"] >= events[0]["startedAt"]
+    assert "nextRetryAt" not in events[1] and "nextRetryAt" not in events[4]
+    assert all(e.get("httpStatus") == status for e in events)
+
+
+def test_retry_events_report_failed_when_budget_is_exhausted(runtime):
+    store, session, _ = runtime
+    run, _ = store.create_run(session, "retry")
+    RuntimeEngine(store, Disconnected(), lambda _: None).run(run["id"], threading.Event())
+    events = _retry_events(store, run["id"])
+    assert events[-1]["status"] == "failed"
+    assert events[-1]["retryIndex"] == 5
+    assert events[-1]["cause"] == "service_unavailable"
+    assert sum(e["status"] == "waiting" for e in events) == 5
+
+
+def test_first_attempt_success_and_non_retryable_first_failure_emit_no_retry_event(runtime):
+    store, session, _ = runtime
+    run, _ = store.create_run(session, "ok")
+    RuntimeEngine(store, Disconnected(0), lambda _: None).run(run["id"], threading.Event())
+    assert _retry_events(store, run["id"]) == []
+    run, _ = store.create_run(session, "auth")
+    model = Disconnected(code="authentication_failed", status=401)
+    model.complete = lambda *a, **k: (_ for _ in ()).throw(ModelRequestError(
+        ModelRequestFailure(code="authentication_failed", status_code=401, retryable=False)))
+    RuntimeEngine(store, model, lambda _: None).run(run["id"], threading.Event())
+    assert _retry_events(store, run["id"]) == []
+
+
+def test_retry_events_are_projected_and_hydrated_for_session_read(runtime):
+    store, session, _ = runtime
+    notifications = []
+    run, _ = store.create_run(session, "retry")
+    engine = RuntimeEngine(store, Disconnected(1), notifications.append)
+    engine.run(run["id"], threading.Event())
+    engine.events.deliver_pending()
+    updates = [n["params"]["activity"] for n in notifications if n["method"] == "model/retryUpdated"]
+    assert [u["status"] for u in updates] == ["waiting", "requesting", "recovered"]
+    assert all(u["runId"] == run["id"] and u["cause"] == "service_unavailable" for u in updates)
+    assert updates[0]["eventId"] < updates[-1]["eventId"]
+    snapshot = store.read_session_snapshot(session)
+    hydrated = snapshot["modelRetries"]
+    assert [h["status"] for h in hydrated] == ["recovered"]
+    assert hydrated[0]["requestGroupId"] == updates[0]["requestGroupId"]
+    assert hydrated[0]["retryIndex"] == 1
+
+
+def test_model_retry_activity_fixture_is_closed_and_classification_is_stable():
+    from pathlib import Path
+
+    from eidos_runtime.domain.model_retry import ModelRetryActivity, classify_retry_cause
+
+    fixture = json.loads((Path(__file__).resolve().parents[2] / "protocol/fixtures/context-management-v1.json").read_text())
+    ModelRetryActivity.model_validate(fixture["modelRetry"])
+    for bad in ({"rawError": "x"}, {"cause": "unknown_cause"}, {"status": "canceled"}, {"httpStatus": 99}):
+        with pytest.raises(ValueError):
+            ModelRetryActivity.model_validate({**fixture["modelRetry"], **bad})
+    assert classify_retry_cause("rate_limited", None, 429) == "rate_limited"
+    assert classify_retry_cause("provider_unavailable", "stream_interrupted", None) == "stream_interrupted"
+    assert classify_retry_cause("provider_unavailable", None, 504) == "timeout"
+    assert classify_retry_cause("provider_timeout", None, None) == "timeout"
+    assert classify_retry_cause("provider_unavailable", None, 502) == "service_unavailable"
+    assert classify_retry_cause("provider_unavailable", None, None) == "connection_failed"
+    assert classify_retry_cause("anything", None, None) == "connection_failed"
