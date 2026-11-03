@@ -710,6 +710,7 @@ export type RuntimeNotification =
   | { method: "memory/changed"; params: import("./memory.generated.js").MemoryChangedNotice }
   | { method: "context/compactionUpdated"; params: { sessionId: string; activity: ContextCompactionActivity } }
   | { method: "automation/changed"; params: { id: string } }
+  | { method: "browser/grantChanged"; params: { sessionId: string; active: boolean } }
   | { method: "sidebar/pinsChanged"; params: { eventId: number } }
   | { method: "run/queueChanged"; params: import("./queued-runs.js").QueuedRunChangeResponse }
   | { method: "workspace/changed"; params: { sessionId: string; paths: string[]; workspaceRoot?: string } }

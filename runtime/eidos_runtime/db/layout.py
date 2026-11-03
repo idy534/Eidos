@@ -14,6 +14,7 @@ from eidos_runtime.db.errors import StorageError
 from eidos_runtime.db.schema import REPOSITORY_SCHEMA_SQL
 from eidos_runtime.db.schema import (
     SCHEMA_VERSION,
+    V47_SCHEMA_VERSION,
     V46_SCHEMA_VERSION,
     V45_SCHEMA_VERSION,
     V44_SCHEMA_VERSION,
@@ -755,6 +756,7 @@ def _migrate_state_schema(state: StateDatabase) -> None:
         V44_SCHEMA_VERSION,
         V45_SCHEMA_VERSION,
         V46_SCHEMA_VERSION,
+        V47_SCHEMA_VERSION,
     }:
         raise StorageError("schema_revision_unsupported")
     try:
@@ -888,6 +890,9 @@ def _migrate_state_schema(state: StateDatabase) -> None:
             if connection.execute("PRAGMA user_version").fetchone()[0] == V46_SCHEMA_VERSION:
                 from eidos_runtime.db.worktree_git_identity_migration import migrate_worktree_git_identity
                 migrate_worktree_git_identity(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V47_SCHEMA_VERSION:
+                from eidos_runtime.db.browser_grants_migration import migrate_browser_grants
+                migrate_browser_grants(connection)
     except sqlite3.Error as error:
         try:
             state.connection().rollback()

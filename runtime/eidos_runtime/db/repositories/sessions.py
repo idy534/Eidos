@@ -778,6 +778,9 @@ class SessionRepository(Repository):
                 f"DELETE FROM durable_intents WHERE run_id IN ({run_ids})",
                 (session_id,),
             )
+            from eidos_runtime.persistence.browser_grants import delete_session_browser_grants
+
+            delete_session_browser_grants(connection, session_id)
             connection.execute(
                 f"DELETE FROM approvals WHERE run_id IN ({run_ids})", (session_id,)
             )

@@ -36,6 +36,11 @@ class SidebarPinsChangedPayload(ClosedModel):
     pass
 
 
+class BrowserGrantChangedPayload(ClosedModel):
+    session_id: str = Field(alias="sessionId")
+    active: bool
+
+
 class McpConnectionChangedPayload(ClosedModel):
     plugin_id: str = Field(alias="pluginId")
     server_id: str = Field(alias="serverId")
@@ -220,6 +225,7 @@ EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.INPUT_QUEUED: InputEventPayload,
     EventType.INPUT_INJECTED: InputEventPayload,
     EventType.MEMORY_CHANGED: MemoryChangedPayload,
+    EventType.BROWSER_GRANT_CHANGED: BrowserGrantChangedPayload,
 }
 
 

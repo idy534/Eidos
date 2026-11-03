@@ -17,6 +17,7 @@ from eidos_runtime.db.schema import (  # noqa: E402
     LEGACY_SCHEMA_VERSION,
     PREVIOUS_SCHEMA_VERSION,
     V46_SCHEMA_VERSION,
+    V47_SCHEMA_VERSION,
     SCHEMA_SQL,
     SCHEMA_VERSION,
     V9_SCHEMA_SQL,
@@ -112,6 +113,7 @@ EXPECTED_TABLES = {
     "worktrees",
     "worktree_lifecycle_operations",
     "session_handoff_operations",
+    "session_browser_grants",
     "runtime_settings",
     "worktree_snapshots",
     "run_dependency_snapshots",
@@ -493,6 +495,9 @@ class StorageSchemaTests(unittest.TestCase):
                 "scheduled_occurrences_task", "scheduled_occurrences_preparing", "automation_run_origins_task",
                 "one_pending_approval_per_item",
                 "one_pending_approval_per_run",
+                "one_active_browser_grant_per_session",
+                "session_browser_grants_by_session",
+                "session_browser_grants_source_approval",
                 "one_running_tool_attempt_per_tool_call",
                 "one_running_segment_per_run",
                 "one_active_segment_per_run",
@@ -578,9 +583,10 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 47)
+        self.assertEqual(SCHEMA_VERSION, 48)
+        self.assertEqual(V47_SCHEMA_VERSION, 47)
         self.assertEqual(V46_SCHEMA_VERSION, 46)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 46)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 47)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
@@ -722,6 +728,7 @@ class StorageSchemaTests(unittest.TestCase):
         legacy.execute("ALTER TABLE worktrees DROP COLUMN git_dir_uid")
         legacy.execute("ALTER TABLE worktrees DROP COLUMN git_dir_inode")
         legacy.execute("ALTER TABLE worktrees DROP COLUMN git_dir_dev")
+        legacy.execute("DROP TABLE session_browser_grants")
         legacy.execute("PRAGMA user_version = 45")
         legacy.commit()
         legacy.close()

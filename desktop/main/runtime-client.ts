@@ -1534,6 +1534,10 @@ function isNotification(value: unknown): value is RuntimeNotification {
   if (value.method === "automation/changed") {
     return typeof value.params.id === "string";
   }
+  if (value.method === "browser/grantChanged") {
+    return hasOnlyKeys(params, ["sessionId", "active"])
+      && typeof params.sessionId === "string" && typeof params.active === "boolean";
+  }
   if (value.method === "run/queueChanged") {
     return isQueuedRunChangeResponse(params);
   }

@@ -112,6 +112,7 @@ class EventType(StrEnum):
     INPUT_QUEUED = "input.queued"
     INPUT_INJECTED = "input.injected"
     MEMORY_CHANGED = "memory.changed"
+    BROWSER_GRANT_CHANGED = "browser.grant_changed"
 
 
 TRANSITIONS: dict[type[StrEnum], dict[StrEnum, frozenset[StrEnum]]] = {

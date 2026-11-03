@@ -6,6 +6,9 @@ not listed, including new upstream tools, are never registered.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
+
+from eidos_runtime.models import EidosFrozenStrictModel
 
 
 class BrowserToolClass(StrEnum):
@@ -52,3 +55,23 @@ KNOWN_BLOCKED_BROWSER_TOOLS = frozenset({
 
 def browser_tool_class(remote_name: str) -> BrowserToolClass | None:
     return BROWSER_TOOL_CLASSES.get(remote_name)
+
+
+BrowserGrantRevokeReason = Literal["user", "plugin_changed", "profile_cleared"]
+
+
+class BrowserGrant(EidosFrozenStrictModel):
+    """Lets one Session operate the shared Eidos Chrome profile until revoked."""
+
+    id: str
+    session_id: str
+    profile: Literal["default"] = "default"
+    access: Literal["interact"] = "interact"
+    plugin_id: str
+    plugin_version: str
+    plugin_hash: str
+    source_approval_id: str | None = None
+    status: Literal["active", "revoked"]
+    created_at: int
+    revoked_at: int | None = None
+    revoke_reason: BrowserGrantRevokeReason | None = None
