@@ -4,8 +4,15 @@ import { isRunTermination } from "./run-termination.js";
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
+// Python truncates by code point (SQLite substr / slicing), so count code points here;
+// String.length counts UTF-16 units and would reject a 2000-code-point reply containing emoji.
+function codePointLength(value: string): number {
+  let count = 0;
+  for (const _ of value) count += 1;
+  return count;
+}
 function text(value: unknown, max = 128): value is string {
-  return typeof value === "string" && value.length <= max;
+  return typeof value === "string" && value.length <= max * 2 && codePointLength(value) <= max;
 }
 function optionalText(value: unknown, max = 128): boolean {
   return value == null || text(value, max);

@@ -33,3 +33,11 @@ test("Python and Desktop agree on long messages and a 32-message batch", () => {
   tooMany.messages.push({ ...tooMany.messages[0], id: "extra-message" });
   assert.equal(isCollaborationState(tooMany), false);
 });
+
+test("agent summaries are bounded by code points, matching Python truncation", () => {
+  const state = structuredClone(fixture.result);
+  state.agents[0].result = "😀".repeat(2000);
+  assert.equal(isCollaborationState(state), true);
+  state.agents[0].result = "😀".repeat(2001);
+  assert.equal(isCollaborationState(state), false);
+});
