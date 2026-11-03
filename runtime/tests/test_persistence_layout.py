@@ -113,6 +113,11 @@ def test_history_file_io_does_not_hold_database_locks(
         committed_size = path.stat().st_size
         with path.open("ab") as stream:
             stream.write(b'{"uncommitted":true}\n')
+        history = layout.thread_history_store
+        assert history is not None
+        # Empty passes repair at most once per interval; let the next one run.
+        later = time.monotonic() + thread_history.REPAIR_INTERVAL_SECONDS
+        history._monotonic = lambda: later
         assert store.project_thread_history() == 0
         assert path.stat().st_size == committed_size
         assert checked == {"_append_at_committed_offset", "_verify_history_file", "_fsync_directory"}

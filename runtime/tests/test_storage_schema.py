@@ -534,6 +534,12 @@ class StorageSchemaTests(unittest.TestCase):
                 "agent_delegations_parent",
                 "agent_messages_recipient",
                 "run_skill_leases_skill",
+                "events_session_id",
+                "events_session_type_id",
+                "events_run_type_id",
+                "context_plans_run_id",
+                "context_snapshots_run_id",
+                "model_attempts_context_snapshot",
             },
         )
         for table, expected in EXPECTED_COLUMNS.items():
@@ -584,10 +590,10 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 48)
+        self.assertEqual(SCHEMA_VERSION, 49)
         self.assertEqual(V47_SCHEMA_VERSION, 47)
         self.assertEqual(V46_SCHEMA_VERSION, 46)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 47)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 48)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")

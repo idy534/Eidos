@@ -120,7 +120,7 @@ def test_v47_database_upgrades_to_browser_grants(tmp_path, workspace):
     store = SessionStore(data)
     store.initialize()
     try:
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 48
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         session = store.create_session(str(workspace))
         assert _grant(BrowserGrantRepository(store.database), session["id"]).value.status == "active"
     finally:

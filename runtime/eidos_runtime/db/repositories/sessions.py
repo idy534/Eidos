@@ -1165,10 +1165,19 @@ class SessionRepository(Repository):
                 snapshot["inheritedHistory"] = [history.view(record) for record in history_page.records]
             if history_page.previous_item_id:
                 snapshot["previousItemId"] = history_page.previous_item_id
-            elif not history_page.records and connection.execute(
-                "SELECT 1 FROM session_history_entries WHERE session_id=?", (session_id,),
-            ).fetchone() and selected_items:
-                snapshot["previousItemId"] = selected_items[0]["id"]
+            elif not history_page.records and selected_items:
+                with self.lock:
+                    has_history_entries = (
+                        self._connection()
+                        .execute(
+                            "SELECT 1 FROM session_history_entries WHERE session_id=? LIMIT 1",
+                            (session_id,),
+                        )
+                        .fetchone()
+                        is not None
+                    )
+                if has_history_entries:
+                    snapshot["previousItemId"] = selected_items[0]["id"]
         if selected_items:
             from eidos_runtime.persistence.context_management import ContextManagementRepository
             activities = ContextManagementRepository(self.database).activities(

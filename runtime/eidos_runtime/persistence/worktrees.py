@@ -139,22 +139,26 @@ class ProjectWorktreeRepository(Repository):
         return candidate
 
     def read_project(self, project_id: str) -> Project | None:
+        from eidos_runtime.persistence.project_workspaces import complete_project
+
         with self.lock:
-            row = self._connection().execute(
+            connection = self._connection()
+            row = connection.execute(
                 "SELECT * FROM projects WHERE id = ?", (project_id,)
             ).fetchone()
-        if row is None:
-            return None
-        from eidos_runtime.persistence.project_workspaces import complete_project
-        return complete_project(self._connection(), row)
+            if row is None:
+                return None
+            return complete_project(connection, row)
 
     def list_projects(self) -> tuple[Project, ...]:
+        from eidos_runtime.persistence.project_workspaces import complete_project
+
         with self.lock:
-            rows = self._connection().execute(
+            connection = self._connection()
+            rows = connection.execute(
                 "SELECT * FROM projects ORDER BY created_at ASC, id ASC"
             ).fetchall()
-        from eidos_runtime.persistence.project_workspaces import complete_project
-        return tuple(complete_project(self._connection(), row) for row in rows)
+            return tuple(complete_project(connection, row) for row in rows)
 
     def delete_project(
         self,

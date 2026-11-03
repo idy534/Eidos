@@ -191,7 +191,7 @@ class SessionHistoryRepository(Repository):
                 "SELECT * FROM session_history_entries WHERE session_id=? AND item_id=?",
                 (session_id, item_id),
             ).fetchone()
-        return self._record(row) if row is not None else None
+            return self._record(row) if row is not None else None
 
     def _record(self, row: sqlite3.Row) -> HistoryRecord:
         return self._redact_memory(self._stored_record(row))
