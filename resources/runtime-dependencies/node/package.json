@@ -6,6 +6,7 @@
   "dependencies": {
     "@deepseek-ai/libreoffice-kit": "0.2.3",
     "@deepseek-ai/libreoffice-kit-darwin-arm64": "0.2.3",
+    "@playwright/mcp": "0.0.84",
     "@tesseract.js-data/chi_sim": "1.0.0",
     "@tesseract.js-data/eng": "1.0.0",
     "docx": "9.7.1",

@@ -34,13 +34,16 @@ TITLES = {
     "document-python": "基础文档处理", "node": "文档 Node 解释器", "document-node": "文档 JavaScript 库",
     "office": "Office 转换与重算", "images": "图片转换", "pdf": "PDF 生成与渲染",
     "data": "表格数据分析", "ocr": "OCR 引擎", "ocr-eng": "英文 OCR", "ocr-chi-sim": "中文 OCR",
-    "fonts": "文档字体",
+    "fonts": "文档字体", "browser": "浏览器自动化",
 }
 REQUIRES = {
     "document-node": ("node",), "office": ("document-node", "fonts"),
     "images": ("document-node",), "pdf": ("document-python",), "data": ("document-python",),
     "ocr": ("document-node",), "ocr-eng": ("ocr",), "ocr-chi-sim": ("ocr",),
+    "browser": ("node",),
 }
+# Playwright MCP drives the user's installed Chrome over CDP; it ships no browser.
+BROWSER_NODE_PACKAGES = frozenset({"@playwright", "playwright", "playwright-core"})
 
 
 def digest(path: Path) -> str:
@@ -102,6 +105,8 @@ def node_group(relative: Path) -> str | None:
             return None
     if parts[0] in {"react", "react-dom", "react-icons", "scheduler"}:
         return None
+    if parts[0] in BROWSER_NODE_PACKAGES:
+        return "browser"
     if parts[0] == "@img":
         return "images"
     if parts[0] == "tesseract.js-core":
