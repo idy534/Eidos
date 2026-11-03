@@ -17,6 +17,9 @@ import threading
 import time
 from typing import Callable, cast
 
+import base64
+import binascii
+
 import anyio
 import httpx2
 from mcp import ClientSession as SdkClientSession, StdioServerParameters
@@ -28,7 +31,9 @@ from eidos_runtime.extensions.contracts import McpServerConfigV1
 from eidos_runtime.extensions.plugin_mcp import resolve_package_mcp
 from eidos_runtime.extensions.plugins import MANUAL_MCP_PLUGIN_ID, PluginCatalog, PluginImportError
 from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
-from eidos_runtime.tools.registry import ExternalToolRuntime, ToolProvenance, ToolRegistryEntry, ToolSpec
+from eidos_runtime.domain.tool_content import ToolBinaryContent, ToolContentSnapshot
+from eidos_runtime.tools.registry import ExternalToolRuntime, ToolProvenance, ToolRegistryEntry, ToolSpec, VerifiedToolOutput
+from eidos_runtime.tools.view_image import ViewImageError, detect_image_mime
 from eidos_runtime.tools.contracts import McpResultData, result_model
 from eidos_runtime.tools.json_schema import (
     BoundedJsonSchema,
@@ -57,6 +62,10 @@ MAX_LIST_PAGES = 32
 MAX_TOOLS = 512
 MAX_SCHEMA_BYTES = 256 * 1024
 MAX_RESULT_BYTES = 256 * 1024
+MAX_RESULT_IMAGES = 8
+MCP_IMAGE_MIMES = frozenset({"image/png", "image/jpeg"})
+# Verified images travel beside the canonical result and never enter its data.
+MODEL_CONTENT_KEY = "_modelContent"
 SANDBOX_EXECUTABLE = "/usr/bin/sandbox-exec"
 SANDBOX_DIR = Path(__file__).resolve().parents[1] / "sandbox"
 LAUNCHER = Path(__file__).with_name("mcp_launcher.py")
@@ -620,11 +629,12 @@ class McpToolAdapter:
 
     def execute(
         self, arguments: dict[str, object], cancel: threading.Event
-    ) -> dict[str, object]:
+    ) -> dict[str, object] | VerifiedToolOutput:
         result = dict(self.connection.call(self.remote_name, arguments, cancel))
         result["toolName"] = self.local_name
+        content = result.pop(MODEL_CONTENT_KEY, None)
         if self.output_validator is None or result.get("outcome") != "success":
-            return result
+            return _with_content(result, content)
         data = result.get("data")
         structured = (
             data.get("structuredContent") if isinstance(data, dict) else None
@@ -643,7 +653,15 @@ class McpToolAdapter:
                 "sideEffectsMayExist": True,
                 "reconciliationRequired": result.get("reconciliationRequired") is True,
             }
-        return result
+        return _with_content(result, content)
+
+
+def _with_content(
+    result: dict[str, object], content: object,
+) -> dict[str, object] | VerifiedToolOutput:
+    if isinstance(content, ToolContentSnapshot) and result.get("outcome") == "success":
+        return VerifiedToolOutput(result, model_content=content)
+    return result
 
 
 class _RejectedMcpAdapter:
@@ -886,12 +904,26 @@ async def _call_tool(
             )
         return _call_failure(command, "mcp_connection_lost")
     texts: list[str] = []
+    images: list[ToolBinaryContent] = []
     for content in result.content:
-        if not isinstance(content, mcp_types.TextContent):
+        if isinstance(content, mcp_types.TextContent):
+            texts.append(content.text)
+            continue
+        if not isinstance(content, mcp_types.ImageContent) or content.mime_type not in MCP_IMAGE_MIMES:
             return _result(
                 "error", "mcp_content_unsupported", {}, side_effects_may_exist=True
             )
-        texts.append(content.text)
+        if len(images) >= MAX_RESULT_IMAGES:
+            return _result(
+                "error", "mcp_result_too_large", {}, side_effects_may_exist=True
+            )
+        try:
+            image = _verified_image(content)
+        except ValueError as error:
+            return _result(
+                "error", str(error), {}, side_effects_may_exist=True
+            )
+        images.append(image)
     text = "\n".join(texts)
     structured = result.structured_content
     if structured is not None:
@@ -911,6 +943,21 @@ async def _call_tool(
         return _result(
             "error", "mcp_result_too_large", {}, side_effects_may_exist=True
         )
+    if images:
+        try:
+            snapshot = ToolContentSnapshot(items=tuple(images))
+        except ValueError:
+            return _result(
+                "error", "mcp_result_too_large", {}, side_effects_may_exist=True
+            )
+        value = _result(
+            "error" if result.is_error else "success",
+            "mcp_tool_error" if result.is_error else "ok",
+            data,
+            side_effects_may_exist=True,
+        )
+        value[MODEL_CONTENT_KEY] = snapshot
+        return value
     return _result(
         "error" if result.is_error else "success",
         "mcp_tool_error" if result.is_error else "ok",
@@ -1089,6 +1136,24 @@ def _result(
         "sideEffectsMayExist": side_effects_may_exist,
         "reconciliationRequired": False,
     }
+
+
+def _verified_image(content: mcp_types.ImageContent) -> ToolBinaryContent:
+    """Decode one bounded image and require its bytes to match the declared type."""
+
+    try:
+        data = base64.b64decode(content.data, validate=True)
+    except (ValueError, binascii.Error):
+        raise ValueError("mcp_image_invalid") from None
+    try:
+        mime = detect_image_mime(data)
+    except ViewImageError as error:
+        raise ValueError(
+            "mcp_result_too_large" if error.code == "image_too_large" else "mcp_image_invalid"
+        ) from None
+    if mime != content.mime_type:
+        raise ValueError("mcp_image_invalid")
+    return ToolBinaryContent.from_bytes(data, mime)
 
 
 def _uncertain(code: str) -> dict[str, object]:

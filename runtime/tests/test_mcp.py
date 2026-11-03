@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from contextlib import asynccontextmanager
 from dataclasses import replace
 import json
@@ -25,8 +26,10 @@ from eidos_runtime.extensions.mcp import (  # noqa: E402
     McpConnection,
     McpManager,
     McpShutdownTimeout,
+    MODEL_CONTENT_KEY,
     McpUnavailable,
     _tool_entry,
+    _verified_image,
 )
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
 from eidos_runtime.extensions.skills import SkillCatalog  # noqa: E402
@@ -41,7 +44,12 @@ from eidos_runtime.runtime.resource_registry import (  # noqa: E402
     RuntimeResourceKind,
 )
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher  # noqa: E402
-from eidos_runtime.tools.registry import ToolRegistry  # noqa: E402
+from eidos_runtime.tools.registry import ToolRegistry, VerifiedToolOutput  # noqa: E402
+
+
+def fixture_png() -> str:
+    source = (Path(__file__).parent / "fixtures" / "mcp_fixture.py").read_text()
+    return source.split('PNG = "', 1)[1].split('"', 1)[0]
 
 
 @pytest.mark.parametrize('annotations,required', [
@@ -265,6 +273,32 @@ class McpManagerTests(unittest.TestCase):
         ).fetchone()[0]
         self.assertNotEqual(json.loads(result)['outcome'], 'success')
         self.assertEqual(self.store.connection.execute('SELECT count(*) FROM approvals').fetchone()[0], 0)
+
+    def test_mcp_screenshot_is_saved_as_model_content_for_the_next_step(self) -> None:
+        session = self.store.create_session(str(self.workspace))
+        run, _ = self.store.create_run(
+            session["id"], "Take a screenshot", extension_snapshot=SkillCatalog(self.plugins).extension_snapshot(),
+        )
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall("shot", "mcp__fixture__screenshot", {}),)),
+            ModelResponse(text="Done."),
+        ])
+        RuntimeEngine(
+            self.store, model, lambda _message: None,
+            request_approval=lambda _request, _cancel: ApprovalDecision("approve"),
+            async_kernel=self.kernel, resource_registry=self.resources, mcp_sandbox=False,
+        ).run(run["id"], threading.Event())
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        saved = [
+            item["toolContent"] for item in model.contexts[-1]
+            if item.get("name") == "mcp__fixture__screenshot" and item.get("toolContent")
+        ]
+        self.assertEqual(len(saved), 1)
+        self.assertEqual([part["mime"] for part in saved[0]["items"]], ["image/png"])
+        result = json.loads(self.store.connection.execute(
+            "SELECT result_json FROM tool_calls WHERE tool_name='mcp__fixture__screenshot'",
+        ).fetchone()[0])
+        self.assertEqual(result["data"], {"text": "captured", "isError": False})
 
     def test_direct_mcp_call_retains_approval_and_restart_history(self) -> None:
         session = self.store.create_session(str(self.workspace))
@@ -901,22 +935,49 @@ class McpManagerTests(unittest.TestCase):
             result = connection.call("echo", {}, threading.Event())
         self.assertFalse(result["reconciliationRequired"])
 
-    def test_rejects_unsupported_content_and_cancel_never_sends(self) -> None:
+    def test_rejects_invalid_or_unsupported_content_and_cancel_never_sends(self) -> None:
         entries = self.manager.start()
         image = next(value for value in entries if value.spec.name.endswith("__image"))
+        audio = next(value for value in entries if value.spec.name.endswith("__audio"))
         echo = next(value for value in entries if value.spec.name.endswith("__echo"))
         cancel = threading.Event()
         cancel.set()
 
         image_result = image.adapter.execute({}, threading.Event())
+        audio_result = audio.adapter.execute({}, threading.Event())
         canceled = echo.adapter.execute({"message": "no"}, cancel)
 
-        self.assertEqual(image_result["code"], "mcp_content_unsupported")
+        self.assertEqual(image_result["code"], "mcp_image_invalid")
         self.assertTrue(image_result["sideEffectsMayExist"])
         self.assertFalse(image_result["reconciliationRequired"])
+        self.assertEqual(audio_result["code"], "mcp_content_unsupported")
+        self.assertTrue(audio_result["sideEffectsMayExist"])
         self.assertEqual(canceled["code"], "mcp_tool_canceled")
         self.assertFalse(canceled["sideEffectsMayExist"])
         self.assertFalse(canceled["reconciliationRequired"])
+
+    def test_verified_image_content_reaches_the_model_beside_the_result(self) -> None:
+        entries = self.manager.start()
+        tool = next(value for value in entries if value.spec.name.endswith("__screenshot"))
+
+        output = tool.adapter.execute({}, threading.Event())
+
+        self.assertIsInstance(output, VerifiedToolOutput)
+        self.assertEqual(output.result["code"], "ok")
+        self.assertEqual(output.result["data"], {"text": "captured", "isError": False})
+        self.assertNotIn(MODEL_CONTENT_KEY, output.result)
+        self.assertEqual([item.mime for item in output.model_content.items], ["image/png"])
+
+    def test_image_bytes_must_match_the_declared_type_and_bounds(self) -> None:
+        png = base64.b64decode(fixture_png())
+        declared_jpeg = mcp_types.ImageContent(type="image", data=fixture_png(), mimeType="image/jpeg")
+        with self.assertRaisesRegex(ValueError, "mcp_image_invalid"):
+            _verified_image(declared_jpeg)
+        with self.assertRaisesRegex(ValueError, "mcp_image_invalid"):
+            _verified_image(mcp_types.ImageContent(type="image", data="not base64!", mimeType="image/png"))
+        with patch("eidos_runtime.tools.view_image.MAX_VIEW_IMAGE_BYTES", len(png) - 1), \
+                self.assertRaisesRegex(ValueError, "mcp_result_too_large"):
+            _verified_image(mcp_types.ImageContent(type="image", data=fixture_png(), mimeType="image/png"))
 
     def test_stdout_pollution_keeps_a_received_result_but_closes_connection(self) -> None:
         entries = self.manager.start()

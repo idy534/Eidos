@@ -394,6 +394,14 @@ def _read_exact(file_fd: int, size: int) -> bytes:
     return b"".join(chunks)
 
 
+def detect_image_mime(data: bytes) -> str:
+    """Return the verified PNG or JPEG MIME type of in-memory image bytes."""
+
+    if not 0 < len(data) <= MAX_VIEW_IMAGE_BYTES:
+        raise ViewImageError("image_too_large" if data else "invalid_image")
+    return _detect_image_mime(data)
+
+
 def _detect_image_mime(data: bytes) -> str:
     image_format: str | None = None
     try:
