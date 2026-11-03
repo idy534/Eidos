@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserGrantIndicator } from "./BrowserGrantIndicator.js";
@@ -120,5 +120,28 @@ describe("Built-in browser sign-in and data", () => {
     render(<BuiltinPlugins onInstall={vi.fn()} onShowToast={onShowToast} />);
     await userEvent.click(await screen.findByRole("button", { name: "打开浏览器登录" }));
     await waitFor(() => expect(onShowToast).toHaveBeenCalledWith(expect.stringContaining("另一个 Chrome 窗口"), "error"));
+  });
+});
+
+describe("Choosing the user's Chrome", () => {
+  const plugin = { id: "eidos-browser", name: "eidos-browser", description: "Browser tools", version: "1.0.0", installed: true };
+
+  it("switches to the user's Chrome only after a high-risk confirmation and can switch back", async () => {
+    let target: "eidos" | "user_chrome" = "eidos";
+    const setBrowserAgentTarget = vi.fn(async (request: { target: "eidos" | "user_chrome" }) => {
+      target = request.target;
+      return { target, revokedGrants: 0 };
+    });
+    const readBrowserAgentStatus = vi.fn(async () => ({ ...status, target, attachAvailable: false }));
+    api({ builtinPlugins: vi.fn().mockResolvedValue({ plugins: [plugin] }), readBrowserAgentStatus, setBrowserAgentTarget });
+    render(<BuiltinPlugins onInstall={vi.fn()} onShowToast={vi.fn()} />);
+    await userEvent.click(await screen.findByRole("button", { name: "使用我的 Chrome" }));
+    expect(screen.getByRole("alertdialog", { name: "使用我的 Chrome" })).toHaveTextContent("所有已登录的账号");
+    expect(setBrowserAgentTarget).not.toHaveBeenCalled();
+    await userEvent.click(within(screen.getByRole("alertdialog", { name: "使用我的 Chrome" })).getByRole("button", { name: "使用我的 Chrome" }));
+    expect(setBrowserAgentTarget).toHaveBeenCalledWith({ target: "user_chrome" });
+    expect(await screen.findByText(/chrome:\/\/inspect\/#remote-debugging/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "改回 Eidos 浏览器" }));
+    expect(setBrowserAgentTarget).toHaveBeenLastCalledWith({ target: "eidos" });
   });
 });

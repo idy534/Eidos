@@ -114,6 +114,7 @@ EXPECTED_TABLES = {
     "worktree_lifecycle_operations",
     "session_handoff_operations",
     "session_browser_grants",
+    "browser_settings",
     "runtime_settings",
     "worktree_snapshots",
     "run_dependency_snapshots",
@@ -729,6 +730,7 @@ class StorageSchemaTests(unittest.TestCase):
         legacy.execute("ALTER TABLE worktrees DROP COLUMN git_dir_inode")
         legacy.execute("ALTER TABLE worktrees DROP COLUMN git_dir_dev")
         legacy.execute("DROP TABLE session_browser_grants")
+        legacy.execute("DROP TABLE browser_settings")
         legacy.execute("PRAGMA user_version = 45")
         legacy.commit()
         legacy.close()

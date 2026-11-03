@@ -33,7 +33,7 @@ void test("browser access approvals and grant notifications cross Main with clos
     "def send(message): print(json.dumps(message, separators=(',', ':')), flush=True)",
     "json.loads(sys.stdin.readline())",
     "send({'jsonrpc':'2.0','id':'client-1','result':{'protocolVersion':1,'runtimeVersion':'0.3.0','capabilities':{'runShell':True,'modelConfigured':False}}})",
-    `send({'jsonrpc':'2.0','id':'server-browser-1','method':'item/requestApproval','params':{'sessionId':'s1','runId':'r1','itemId':'i1','toolCallId':'tc1','summary':'允许本会话使用 Eidos 浏览器','kind':'browser_access','toolName':'mcp__browser__browser_navigate','arguments':{'url':'https://example.com'},'grantScope':'session','profile':'default','access':'interact','riskWarning':'shared browser','provenance':${provenance},'permissionProfile':'browser','timeoutSeconds':120,'envNames':[],'cookies':'omit'}})`,
+    `send({'jsonrpc':'2.0','id':'server-browser-1','method':'item/requestApproval','params':{'sessionId':'s1','runId':'r1','itemId':'i1','toolCallId':'tc1','summary':'允许本会话使用 Eidos 浏览器','kind':'browser_access','toolName':'mcp__browser__browser_navigate','arguments':{'url':'https://example.com'},'grantScope':'session','profile':'user','access':'interact','requiresHumanConfirmation':True,'riskWarning':'shared browser','provenance':${provenance},'permissionProfile':'browser','timeoutSeconds':120,'envNames':[],'cookies':'omit'}})`,
     "sys.stdin.readline()",
     `send({'jsonrpc':'2.0','id':'server-browser-2','method':'item/requestApproval','params':{'sessionId':'s1','runId':'r1','itemId':'i2','toolCallId':'tc2','summary':'forged','kind':'browser_access','toolName':'mcp__browser__browser_navigate','arguments':{},'grantScope':'forever','profile':'default','access':'interact','provenance':${provenance},'permissionProfile':'browser','timeoutSeconds':120}})`,
     "reply = json.loads(sys.stdin.readline())",
@@ -57,6 +57,8 @@ void test("browser access approvals and grant notifications cross Main with clos
     assert.equal(approval.kind === "browser_access" && approval.grantScope, "session");
     assert.equal((approval as unknown as Record<string, unknown>).cookies, undefined);
     assert.equal(approval.riskWarning, "shared browser");
+    assert.equal(approval.kind === "browser_access" && approval.profile, "user");
+    assert.equal(approval.requiresHumanConfirmation, true);
     assert.deepEqual(notifications.map(({ method, params }) => ({ method, params })), [
       { method: "browser/grantChanged", params: { sessionId: "forged-rejected", active: false } },
     ]);

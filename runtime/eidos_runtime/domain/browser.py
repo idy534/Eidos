@@ -58,6 +58,9 @@ def browser_tool_class(remote_name: str) -> BrowserToolClass | None:
 
 
 BrowserGrantRevokeReason = Literal["user", "plugin_changed", "profile_cleared"]
+# "default" is the Eidos Chrome profile; "user" is the user's everyday Chrome.
+BrowserProfile = Literal["default", "user"]
+BrowserTarget = Literal["eidos", "user_chrome"]
 
 
 class BrowserGrant(EidosFrozenStrictModel):
@@ -65,7 +68,7 @@ class BrowserGrant(EidosFrozenStrictModel):
 
     id: str
     session_id: str
-    profile: Literal["default"] = "default"
+    profile: BrowserProfile = "default"
     access: Literal["interact"] = "interact"
     plugin_id: str
     plugin_version: str

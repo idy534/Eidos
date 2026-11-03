@@ -166,6 +166,20 @@ export const browserSchema = {
           "title": "Resource",
           "type": "string"
         },
+        "target": {
+          "default": "eidos",
+          "enum": [
+            "eidos",
+            "user_chrome"
+          ],
+          "title": "Target",
+          "type": "string"
+        },
+        "attachAvailable": {
+          "default": false,
+          "title": "Attachavailable",
+          "type": "boolean"
+        },
         "granted": {
           "default": false,
           "title": "Granted",
@@ -202,6 +216,48 @@ export const browserSchema = {
       },
       "title": "BrowserStatusRequest",
       "type": "object"
+    },
+    "BrowserTargetRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "enum": [
+            "eidos",
+            "user_chrome"
+          ],
+          "title": "Target",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "title": "BrowserTargetRequest",
+      "type": "object"
+    },
+    "BrowserTargetResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "enum": [
+            "eidos",
+            "user_chrome"
+          ],
+          "title": "Target",
+          "type": "string"
+        },
+        "revokedGrants": {
+          "minimum": 0,
+          "title": "Revokedgrants",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "target",
+        "revokedGrants"
+      ],
+      "title": "BrowserTargetResponse",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -235,6 +291,12 @@ export const browserSchema = {
     },
     "clearResponse": {
       "$ref": "#/$defs/BrowserClearResponse"
+    },
+    "targetRequest": {
+      "$ref": "#/$defs/BrowserTargetRequest"
+    },
+    "targetResponse": {
+      "$ref": "#/$defs/BrowserTargetResponse"
     }
   },
   "required": [
@@ -247,7 +309,9 @@ export const browserSchema = {
     "openRequest",
     "openResponse",
     "clearRequest",
-    "clearResponse"
+    "clearResponse",
+    "targetRequest",
+    "targetResponse"
   ],
   "title": "BrowserContract",
   "type": "object"

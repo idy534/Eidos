@@ -8,6 +8,7 @@ export function BrowserGrantIndicator({ sessionId, onShowToast }: {
   onShowToast: (message: string, type: "success" | "info" | "error") => void;
 }) {
   const [granted, setGranted] = useState(false);
+  const [userChrome, setUserChrome] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const current = useRef(sessionId);
   current.current = sessionId;
@@ -15,7 +16,10 @@ export function BrowserGrantIndicator({ sessionId, onShowToast }: {
   const refresh = useCallback(() => {
     const requested = sessionId;
     window.eidosRuntime.readBrowserAgentStatus({ sessionId: requested }).then((status) => {
-      if (current.current === requested) setGranted(status.granted === true);
+      if (current.current === requested) {
+        setGranted(status.granted === true);
+        setUserChrome(status.target === "user_chrome");
+      }
     }).catch(() => {
       if (current.current === requested) setGranted(false);
     });
@@ -50,7 +54,7 @@ export function BrowserGrantIndicator({ sessionId, onShowToast }: {
   return (
     <div className="browser-grant-indicator" role="status">
       <GlobeIcon className="browser-grant-icon" />
-      <span className="browser-grant-label">浏览器已授权</span>
+      <span className="browser-grant-label">{userChrome ? "我的 Chrome 已授权" : "浏览器已授权"}</span>
       <Button variant="ghost" size="small" loading={revoking} disabled={revoking} onClick={() => void revoke()}
         aria-label="撤销本会话的浏览器授权">
         撤销

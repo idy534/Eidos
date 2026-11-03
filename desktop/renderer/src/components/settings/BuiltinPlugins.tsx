@@ -16,6 +16,11 @@ const BROWSER_ERRORS: Record<string, string> = {
 
 function BrowserStatusLine({ status }: { status: BrowserStatus | undefined }) {
   if (!status) return null;
+  if (status.target === "user_chrome") {
+    return <span className="builtin-plugin-status" role="status">{status.attachAvailable
+      ? "Agent 使用你日常的 Chrome · 远程调试已开启"
+      : "Agent 使用你日常的 Chrome · 请在 Chrome 打开 chrome://inspect/#remote-debugging 开启远程调试"}</span>;
+  }
   const parts = [
     status.chromeInstalled ? `Google Chrome ${status.chromeVersion ?? ""}`.trim() : "未找到 Google Chrome，请先安装",
     { ready: "资源已就绪", preparing: "正在准备资源", missing: "资源尚未下载", failed: "资源准备失败，可在资源设置中重试", unavailable: "资源不可用" }[status.resource],
@@ -34,6 +39,7 @@ export function BuiltinPlugins({ onInstall, onShowToast, catalogRevision }: {
   const [browser, setBrowser] = useState<BrowserStatus>();
   const [closing, setClosing] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [confirmTarget, setConfirmTarget] = useState(false);
   const onShowToastRef = useRef(onShowToast);
   onShowToastRef.current = onShowToast;
 
@@ -82,6 +88,22 @@ export function BuiltinPlugins({ onInstall, onShowToast, catalogRevision }: {
       }
     } catch {
       onShowToast("浏览器未能打开，请稍后重试。", "error");
+    } finally {
+      setClosing(false);
+    }
+  }
+
+  async function setTarget(target: "eidos" | "user_chrome") {
+    setConfirmTarget(false);
+    setClosing(true);
+    try {
+      await window.eidosRuntime.setBrowserAgentTarget({ target });
+      setBrowser(await window.eidosRuntime.readBrowserAgentStatus({}));
+      onShowToast(target === "user_chrome"
+        ? "之后的任务会使用你日常的 Chrome。每个会话第一次操作网页前都需要你确认。"
+        : "已改回 Eidos 浏览器，所有会话对你日常 Chrome 的授权已撤销。", "success");
+    } catch {
+      onShowToast("切换浏览器失败，请稍后重试。", "error");
     } finally {
       setClosing(false);
     }
@@ -146,7 +168,13 @@ export function BuiltinPlugins({ onInstall, onShowToast, catalogRevision }: {
               >
                 {plugin.updateAvailable ? "更新" : plugin.installed ? "已安装" : "安装"}
               </Button>
-              {plugin.id === BROWSER_PLUGIN_ID && plugin.installed && browser?.chromeInstalled && (
+              {plugin.id === BROWSER_PLUGIN_ID && plugin.installed && browser && (
+                <Button variant={browser.target === "user_chrome" ? "secondary" : "ghost"} size="small" disabled={closing}
+                  onClick={() => browser.target === "user_chrome" ? void setTarget("eidos") : setConfirmTarget(true)}>
+                  {browser.target === "user_chrome" ? "改回 Eidos 浏览器" : "使用我的 Chrome"}
+                </Button>
+              )}
+              {plugin.id === BROWSER_PLUGIN_ID && plugin.installed && browser?.chromeInstalled && browser.target !== "user_chrome" && (
                 browser.running
                   ? <Button variant="ghost" size="small" loading={closing} disabled={closing} onClick={() => void closeBrowser()}>
                     关闭浏览器
@@ -164,6 +192,15 @@ export function BuiltinPlugins({ onInstall, onShowToast, catalogRevision }: {
           />
         );
       })}
+      {confirmTarget && (
+        <div className="builtin-plugin-confirm" role="alertdialog" aria-label="使用我的 Chrome">
+          <p>Agent 将操作你日常使用的 Google Chrome，并能使用其中所有已登录的账号，包括邮箱、支付和工作账号。你需要先在 Chrome 中打开 chrome://inspect/#remote-debugging 开启远程调试；Chrome 每次连接时也会请你确认。每个会话第一次操作网页前，Eidos 会以高危操作请你确认。</p>
+          <div className="builtin-plugin-confirm-actions">
+            <Button variant="ghost" size="small" onClick={() => setConfirmTarget(false)}>取消</Button>
+            <Button variant="danger" size="small" onClick={() => void setTarget("user_chrome")}>使用我的 Chrome</Button>
+          </div>
+        </div>
+      )}
       {confirmClear && (
         <div className="builtin-plugin-confirm" role="alertdialog" aria-label="清除浏览器数据">
           <p>将关闭 Eidos 浏览器并删除其中的登录状态、Cookie 和网站数据，所有会话的浏览器授权也会撤销。此操作无法撤回。</p>

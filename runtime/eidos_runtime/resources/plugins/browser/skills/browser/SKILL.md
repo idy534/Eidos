@@ -5,7 +5,7 @@ description: Use the Eidos browser tools to open web pages, read them, click, ty
 
 # Browser
 
-The browser tools drive one Google Chrome window that Eidos opens with its own profile. Accounts the user signed into in that profile are available to you. Every Eidos task shares the same Chrome, so other tasks may have tabs open there.
+The browser tools drive one Google Chrome. By default it is a Chrome that Eidos opens with its own profile; accounts the user signed into there are available to you. If the user chose "使用我的 Chrome" in Settings, the tools drive the user's own everyday Chrome instead, with the user's personal tabs and accounts. Every Eidos task shares the same Chrome, so other tasks, or the user, may have tabs open there.
 
 ## Workflow
 

@@ -34,8 +34,10 @@ import readline from "node:readline";
 import { isMcpToolsResponse, type McpToolsRequest, type McpToolsResponse } from "../shared/mcp-details.js";
 import {
   isBrowserClearResponse, isBrowserCloseResponse, isBrowserGrantRevokeResponse, isBrowserOpenResponse, isBrowserStatus,
+  isBrowserTargetResponse,
   type BrowserClearResponse, type BrowserCloseResponse, type BrowserGrantRevokeRequest, type BrowserGrantRevokeResponse,
-  type BrowserOpenResponse, type BrowserStatus, type BrowserStatusRequest,
+  type BrowserOpenResponse, type BrowserStatus, type BrowserStatusRequest, type BrowserTargetRequest,
+  type BrowserTargetResponse,
 } from "../shared/browser.js";
 import { isBuiltinPluginsResponse, isMcpConnectionState, isRemoteMcpInfo, type BuiltinPluginRequest, type BuiltinPluginsResponse, type McpConnectionRequest, type McpConnectionState } from "../shared/mcp-connections.js";
 
@@ -1258,6 +1260,10 @@ export class RuntimeClient {
 
   clearSharedBrowserProfile(): Promise<BrowserClearResponse> {
     return this.validatedRequest("browser/clearProfile", {}, isBrowserClearResponse);
+  }
+
+  setBrowserTarget(request: BrowserTargetRequest): Promise<BrowserTargetResponse> {
+    return this.validatedRequest("browser/setTarget", { ...request }, isBrowserTargetResponse);
   }
 
   setMcpEnabled(
@@ -2842,7 +2848,7 @@ function approvalRequestFrom(
       || !isRecord(params.arguments)
       || provenance === undefined
       || params.grantScope !== "session"
-      || params.profile !== "default"
+      || (params.profile !== "default" && params.profile !== "user")
       || params.access !== "interact"
       || params.permissionProfile !== "browser"
       || !isPositiveInteger(params.timeoutSeconds)
@@ -2863,7 +2869,7 @@ function approvalRequestFrom(
       toolName: params.toolName as string,
       arguments: params.arguments as Record<string, unknown>,
       grantScope: "session",
-      profile: "default",
+      profile: params.profile,
       access: "interact",
       provenance,
       permissionProfile: "browser",

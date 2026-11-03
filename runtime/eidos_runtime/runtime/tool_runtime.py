@@ -1709,11 +1709,13 @@ class ExternalToolHandler:
         if browser.tool_class is BrowserToolClass.READ:
             return prepared, None, None
         grants = BrowserGrantRepository(self.dependencies.store.database)
-        grant = grants.active(grants.grant_session_for_run(run_id))
+        grant = grants.active(grants.grant_session_for_run(run_id), browser.launch.profile)
         if grant is not None and grant.plugin_hash == bundled_browser_plugin_hash():
             return prepared, grant, None
         return prepared.model_copy(update={
-            "approval_description": browser_access_description(call.name, call.arguments, details),
+            "approval_description": browser_access_description(
+                call.name, call.arguments, details, browser.launch.profile,
+            ),
             "approval_kind": "additional_permissions",
             "transition_reason": "browser_access_approval",
         }), None, None
@@ -1741,6 +1743,7 @@ class ExternalToolHandler:
                     session_id=grants.grant_session_for_run(run_id),
                     plugin_id=BROWSER_PLUGIN_ID, plugin_version=version, plugin_hash=plugin_hash,
                     source_approval_id=grants.approved_source(str(item["id"])),
+                    profile="user" if prepared.approval_description.get("profile") == "user" else "default",
                 )
                 if mutation.events:
                     self.dependencies.events.publish(mutation)

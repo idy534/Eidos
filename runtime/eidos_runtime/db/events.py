@@ -226,6 +226,7 @@ EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.INPUT_INJECTED: InputEventPayload,
     EventType.MEMORY_CHANGED: MemoryChangedPayload,
     EventType.BROWSER_GRANT_CHANGED: BrowserGrantChangedPayload,
+    EventType.BROWSER_SETTINGS_CHANGED: AutomationChangedPayload,
 }
 
 

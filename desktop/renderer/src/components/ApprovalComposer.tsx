@@ -261,7 +261,7 @@ function ApprovalContent({ approval }: { approval: ApprovalRequest }) {
   if (approval.kind === "browser_access") return <>
     <dl className="approval-details">
       <DetailRow label="授权范围">当前会话的后续任务，直到你撤销</DetailRow>
-      <DetailRow label="浏览器">Eidos 专用 Chrome，所有会话共用</DetailRow>
+      <DetailRow label="浏览器">{approval.profile === "user" ? "你日常使用的 Google Chrome，包含其中所有已登录的账号" : "Eidos 专用 Chrome，所有会话共用"}</DetailRow>
       <DetailRow label="首个操作">{browserToolLabel(approval.toolName)}</DetailRow>
     </dl>
     <pre className="approval-command" aria-label="操作参数">{JSON.stringify(approval.arguments, null, 2)}</pre>

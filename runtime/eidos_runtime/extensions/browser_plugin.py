@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 import threading
+from typing import Literal
 
 from eidos_runtime.infrastructure.browser_runtime import BrowserRuntime
 
@@ -53,3 +54,5 @@ class BrowserLaunch:
     ensure_browser: Callable[[threading.Event], str] | None = None
     # Cheap installation check so a missing Chrome fails before any approval.
     chrome_installed: Callable[[], bool] | None = None
+    # "default" drives the Eidos profile; "user" is the user's everyday Chrome.
+    profile: Literal["default", "user"] = "default"

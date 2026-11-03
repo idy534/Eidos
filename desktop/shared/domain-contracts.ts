@@ -583,7 +583,8 @@ export interface BrowserAccessApprovalRequest extends ApprovalRequestBase {
   toolName: string;
   arguments: Record<string, unknown>;
   grantScope: "session";
-  profile: "default";
+  /** "default" is the Eidos Chrome profile; "user" is the user's everyday Chrome. */
+  profile: "default" | "user";
   access: "interact";
   provenance: ToolProvenance;
   permissionProfile: McpPermissionProfile;

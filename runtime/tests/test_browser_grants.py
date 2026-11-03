@@ -109,7 +109,7 @@ def _downgrade_to_v47(data_directory, extra_sql: str = "") -> None:
     path = data_directory / "state.sqlite"
     connection = sqlite3.connect(path)
     connection.executescript(
-        "DROP TABLE session_browser_grants;" + extra_sql + f"PRAGMA user_version={V47_SCHEMA_VERSION};"
+        "DROP TABLE session_browser_grants; DROP TABLE browser_settings;" + extra_sql + f"PRAGMA user_version={V47_SCHEMA_VERSION};"
     )
     connection.close()
 
@@ -198,3 +198,28 @@ def test_clearing_the_profile_revokes_every_session_grant(store, workspace):
     assert response.cleared is True and response.revoked_grants == 2
     assert host.cleared == 1 and len(events.published[0].events) == 2
     assert all(repository.active(session["id"]) is None for session in sessions)
+
+
+def test_returning_to_the_eidos_browser_revokes_user_chrome_grants(store, workspace):
+    from eidos_runtime.application.browser import BrowserApplication
+    from eidos_runtime.models.browser import BrowserTargetRequest
+
+    class Events:
+        published = []
+
+        def publish(self, mutation):
+            self.published.append(mutation)
+
+    repository = BrowserGrantRepository(store.database)
+    session = store.create_session(str(workspace))
+    application = BrowserApplication(store, Events(), lambda: None, lambda: None)
+    assert repository.target() == "eidos"
+    assert application.set_target(BrowserTargetRequest(target="user_chrome")).revoked_grants == 0
+    assert repository.target() == "user_chrome"
+    repository.grant(session_id=session["id"], plugin_id="eidos-browser", plugin_version="1.0.0",
+                     plugin_hash="h", source_approval_id=None, profile="user")
+    _grant(repository, session["id"])
+    response = application.set_target(BrowserTargetRequest(target="eidos"))
+    assert response.revoked_grants == 1
+    assert repository.active(session["id"], "user") is None
+    assert repository.active(session["id"], "default") is not None

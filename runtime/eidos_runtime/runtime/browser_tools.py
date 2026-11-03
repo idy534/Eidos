@@ -25,6 +25,11 @@ BROWSER_ACCESS_WARNING = (
     "直到你撤销授权。浏览器由所有会话共用，Agent 能看到其他任务打开的页面。"
     "购买、发送、发布或删除前，Agent 仍会先询问你；上传文件每次都需要批准。"
 )
+USER_CHROME_ACCESS_WARNING = (
+    "批准后，本会话中的后续任务可以操作你日常使用的 Google Chrome，并使用其中所有已登录的账号，"
+    "包括邮箱、支付和工作账号，直到你撤销授权。Chrome 每次连接时还会请你确认。"
+    "购买、发送、发布或删除前，Agent 仍会先询问你；上传文件每次都需要批准。"
+)
 BROWSER_UPLOAD_WARNING = "批准后，这些文件会发送给当前网页所在的网站。"
 
 
@@ -106,17 +111,20 @@ def upload_paths(arguments: dict[str, object], roots: tuple[Path, ...]) -> tuple
 
 
 def browser_access_description(
-    call_name: str, arguments: dict[str, object], details: dict[str, object],
+    call_name: str, arguments: dict[str, object], details: dict[str, object], profile: str = "default",
 ) -> dict[str, object]:
+    user = profile == "user"
     return {
         "kind": "browser_access",
-        "summary": "允许本会话使用 Eidos 浏览器",
+        "summary": "允许本会话使用你的 Chrome" if user else "允许本会话使用 Eidos 浏览器",
         "toolName": call_name,
         "arguments": arguments,
         "grantScope": "session",
-        "profile": "default",
+        "profile": profile,
         "access": "interact",
-        "riskWarning": BROWSER_ACCESS_WARNING,
+        "riskWarning": USER_CHROME_ACCESS_WARNING if user else BROWSER_ACCESS_WARNING,
+        # The user's everyday accounts need the user's own decision.
+        **({"requiresHumanConfirmation": True} if user else {}),
         **details,
     }
 
@@ -142,4 +150,8 @@ _UNAVAILABLE_SUMMARIES = {
     ),
     "browser_start_failed": "The Eidos browser could not be started. Retry once; if it fails again, tell the user.",
     "browser_start_canceled": "Starting the Eidos browser was canceled.",
+    "browser_attach_unavailable": (
+        "The user's Chrome is no longer accepting remote debugging. Ask the user to keep Chrome open with "
+        "remote debugging enabled at chrome://inspect/#remote-debugging, then retry."
+    ),
 }

@@ -18,7 +18,10 @@ from eidos_runtime.models.browser import (
     BrowserGrantRevokeResponse,
     BrowserStatus,
     BrowserStatusRequest,
+    BrowserTargetRequest,
+    BrowserTargetResponse,
 )
+from eidos_runtime.infrastructure.user_chrome import user_chrome_endpoint
 from eidos_runtime.persistence.browser_grants import BrowserGrantRepository
 from eidos_runtime.runtime.events import RuntimeEvents
 
@@ -45,6 +48,7 @@ class BrowserApplication:
     def status(self, request: BrowserStatusRequest) -> BrowserStatus:
         host = self.host()
         host_status = host.status() if host is not None else None
+        target = self.grants.target()
         record = self.store.plugin_record(BROWSER_PLUGIN_ID)
         installed = record is not None and record.get("status") == "installed"
         return BrowserStatus(
@@ -54,8 +58,24 @@ class BrowserApplication:
             plugin_installed=installed,
             plugin_enabled=installed and record.get("enabled") is True,
             resource=self._resource_phase(),
-            granted=request.session_id is not None and self.grants.active(request.session_id) is not None,
+            target=target,
+            attach_available=user_chrome_endpoint() is not None,
+            granted=request.session_id is not None and self.grants.active(
+                request.session_id, "user" if target == "user_chrome" else "default",
+            ) is not None,
         )
+
+    def set_target(self, request: BrowserTargetRequest) -> BrowserTargetResponse:
+        mutation = self.grants.set_target(request.target)
+        self.events.publish(mutation)
+        revoked = 0
+        if request.target == "eidos":
+            # Returning later to the user's Chrome must ask every Session again.
+            revocation = self.grants.revoke_all("user", profile="user")
+            if revocation.events:
+                self.events.publish(revocation)
+            revoked = revocation.value
+        return BrowserTargetResponse(target=request.target, revoked_grants=revoked)
 
     def revoke(self, request: BrowserGrantRevokeRequest) -> BrowserGrantRevokeResponse:
         mutation = self.grants.revoke(request.session_id, "user")

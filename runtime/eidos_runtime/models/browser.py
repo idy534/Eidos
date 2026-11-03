@@ -18,7 +18,10 @@ class BrowserStatus(EidosFrozenStrictModel):
     plugin_installed: bool
     plugin_enabled: bool
     resource: Literal["unavailable", "missing", "preparing", "ready", "failed"]
-    # Only reported when the request names a Session.
+    target: Literal["eidos", "user_chrome"] = "eidos"
+    # The user's Chrome has remote debugging turned on at chrome://inspect.
+    attach_available: bool = False
+    # Only reported when the request names a Session; follows the current target.
     granted: bool = False
 
 
@@ -55,3 +58,12 @@ class BrowserClearResponse(EidosFrozenStrictModel):
     cleared: bool
     revoked_grants: int = Field(ge=0)
     error_code: str | None = Field(default=None, max_length=64)
+
+
+class BrowserTargetRequest(EidosFrozenStrictModel):
+    target: Literal["eidos", "user_chrome"]
+
+
+class BrowserTargetResponse(EidosFrozenStrictModel):
+    target: Literal["eidos", "user_chrome"]
+    revoked_grants: int = Field(ge=0)

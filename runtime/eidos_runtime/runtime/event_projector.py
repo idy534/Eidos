@@ -36,7 +36,7 @@ class EventProjector:
             from eidos_runtime.memory.contracts import MemoryChangedNotice
             notice = MemoryChangedNotice(scope_id=payload["scopeId"], generation=payload["generation"])
             return (self._notification("memory/changed", notice.to_wire_dict()),)
-        if event_type in {"channel.changed", "web_search.settings_changed", "shell_environment.settings_changed", "personalization.settings_changed"}:
+        if event_type in {"channel.changed", "web_search.settings_changed", "shell_environment.settings_changed", "personalization.settings_changed", "browser.settings_changed"}:
             return ()
         if event_type == "project.updated" and isinstance(payload, dict):
             return (self._notification("project/updated", {"id": payload["id"]}),)

@@ -17,6 +17,7 @@ def downgrade_project_workspaces_schema():
     """Remove v45, v47 and v48 additions before fixtures rebuild a legacy database."""
     def downgrade(connection: sqlite3.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS session_browser_grants")
+        connection.execute("DROP TABLE IF EXISTS browser_settings")
         connection.execute("DROP TABLE IF EXISTS project_roots")
         for index in ("sessions_project", "review_comments_workspace"):
             connection.execute(f"DROP INDEX IF EXISTS {index}")

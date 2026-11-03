@@ -177,6 +177,33 @@ class BrowserToolAuthorizationTests(unittest.TestCase):
         self.assertEqual(requests, [])
         self.assertEqual(results["browser_file_upload"]["outcome"], "success")
 
+    def test_user_chrome_needs_human_confirmation_and_its_own_grant(self) -> None:
+        from dataclasses import replace
+
+        session = self.store.create_session(str(self.workspace))
+        self.run_tools(session["id"], [("browser_navigate", {"url": "https://example.com"})])
+        self.launch = replace(self.launch, profile="user")
+        self.ensured.clear()
+        _, requests, results = self.run_tools(session["id"], [("browser_navigate", {"url": "https://mail.example.com"})])
+        self.assertEqual([request.get("profile") for request in requests], ["user"])
+        self.assertIs(requests[0]["requiresHumanConfirmation"], True)
+        self.assertIn("日常使用的 Google Chrome", requests[0]["riskWarning"])
+        self.assertEqual(results["browser_navigate"]["outcome"], "success")
+        grants = BrowserGrantRepository(self.store.database)
+        self.assertIsNotNone(grants.active(session["id"], "user"))
+        self.assertIsNotNone(grants.active(session["id"], "default"))
+
+    def test_auto_review_cannot_grant_the_users_chrome(self) -> None:
+        from dataclasses import replace
+
+        self.launch = replace(self.launch, profile="user")
+        session = self.store.create_session(str(self.workspace))
+        _, requests, _ = self.run_tools(
+            session["id"], [("browser_navigate", {"url": "https://mail.example.com"})], mode="auto_review",
+        )
+        # Human confirmation goes to the user even in auto_review.
+        self.assertEqual([request.get("requiresHumanConfirmation") for request in requests], [True])
+
     def test_missing_chrome_fails_before_approval(self) -> None:
         self.chrome = False
         session = self.store.create_session(str(self.workspace))
