@@ -254,7 +254,7 @@ function ApprovalContent({ approval }: { approval: ApprovalRequest }) {
       <DetailRow label="工具">{approval.toolName}</DetailRow>
       <DetailRow label="来源">{approval.provenance.serverId ?? approval.provenance.sourceId}</DetailRow>
       {approval.provenance.pluginId && <DetailRow label="插件">{approval.provenance.pluginId}</DetailRow>}
-      <DetailRow label="权限配置">{approval.permissionProfile === "workspace_read" ? "工作区只读" : "连接器"}</DetailRow>
+      <DetailRow label="权限配置">{approval.permissionProfile === "workspace_read" ? "工作区只读" : approval.permissionProfile === "browser" ? "浏览器" : "连接器"}</DetailRow>
       <DetailRow label="批准范围">仅本次工具调用</DetailRow>
     </dl>
     <pre className="approval-command" aria-label="工具参数">{JSON.stringify(approval.arguments, null, 2)}</pre>

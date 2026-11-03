@@ -214,6 +214,7 @@ import type {
   EventListResult,
   Item,
   McpListResult,
+  McpPermissionProfile,
   McpServerRecord,
   McpCreateInput,
   McpUpdateInput,
@@ -2631,6 +2632,8 @@ function isSkillListResult(value: unknown): value is { skills: SkillMetadata[] }
     && Array.isArray(value.skills) && value.skills.every(isSkillMetadata);
 }
 
+const MCP_PERMISSION_PROFILES: readonly string[] = ["connector", "workspace_read", "browser"];
+
 function isMcpServerRecord(value: unknown): value is McpServerRecord {
   return (
     isRecord(value)
@@ -2649,7 +2652,7 @@ function isMcpServerRecord(value: unknown): value is McpServerRecord {
     && (value.cwd === undefined || typeof value.cwd === "string")
     && Array.isArray(value.argv) && value.argv.every((item) => typeof item === "string")
     && Array.isArray(value.envNames) && value.envNames.every((item) => typeof item === "string")
-    && ["connector", "workspace_read"].includes(String(value.permissionProfile))
+    && MCP_PERMISSION_PROFILES.includes(String(value.permissionProfile))
     && isPositiveInteger(value.startupTimeoutSeconds)
     && isPositiveInteger(value.toolTimeoutSeconds)
     && typeof value.declaredEnabled === "boolean"
@@ -2777,7 +2780,7 @@ function approvalRequestFrom(
       typeof params.toolName !== "string"
       || !isRecord(params.arguments)
       || provenance === undefined
-      || !["connector", "workspace_read"].includes(String(params.permissionProfile))
+      || !MCP_PERMISSION_PROFILES.includes(String(params.permissionProfile))
       || !isPositiveInteger(params.timeoutSeconds)
       || !Array.isArray(params.envNames)
       || !params.envNames.every((name) => typeof name === "string")
@@ -2798,7 +2801,7 @@ function approvalRequestFrom(
       toolName: params.toolName as string,
       arguments: params.arguments as Record<string, unknown>,
       provenance,
-      permissionProfile: params.permissionProfile as "connector" | "workspace_read",
+      permissionProfile: params.permissionProfile as McpPermissionProfile,
       timeoutSeconds: params.timeoutSeconds as number,
       envNames: [...(params.envNames as string[])],
     };

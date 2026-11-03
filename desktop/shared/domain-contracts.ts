@@ -564,12 +564,15 @@ export interface CommandApprovalRequest extends ApprovalRequestBase {
   attemptOrdinal?: 0 | 1;
 }
 
+/** `browser` is reserved for the bundled browser plugin; manual servers cannot choose it. */
+export type McpPermissionProfile = "connector" | "workspace_read" | "browser";
+
 export interface ExternalToolApprovalRequest extends ApprovalRequestBase {
   kind: "external_tool";
   toolName: string;
   arguments: Record<string, unknown>;
   provenance: ToolProvenance;
-  permissionProfile: "connector" | "workspace_read";
+  permissionProfile: McpPermissionProfile;
   timeoutSeconds: number;
   envNames: string[];
 }
@@ -663,7 +666,7 @@ export interface McpServerRecord {
   cwd?: string | undefined;
   argv: string[];
   envNames: string[];
-  permissionProfile: "connector" | "workspace_read";
+  permissionProfile: McpPermissionProfile;
   startupTimeoutSeconds: number;
   toolTimeoutSeconds: number;
   declaredEnabled: boolean;

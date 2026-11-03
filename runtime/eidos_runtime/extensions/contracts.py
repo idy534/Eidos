@@ -70,7 +70,7 @@ class McpServerConfigV1(ClosedModel):
     env_names: list[StrictStr] = Field(default_factory=list, alias="envNames", max_length=64)
     env_bindings: dict[StrictStr, StrictStr] = Field(default_factory=dict, alias="envBindings",
                                                   max_length=64, exclude_if=lambda value: not value)
-    permission_profile: Literal["connector", "workspace_read"] = Field(
+    permission_profile: Literal["connector", "workspace_read", "browser"] = Field(
         alias="permissionProfile"
     )
     startup_timeout_seconds: StrictInt = Field(

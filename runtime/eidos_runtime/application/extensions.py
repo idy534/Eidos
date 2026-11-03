@@ -163,7 +163,7 @@ class McpServerRecord(EidosFrozenStrictModel):
     cwd: str | None = None
     argv: tuple[str, ...]
     env_names: tuple[str, ...]
-    permission_profile: Literal["connector", "workspace_read"]
+    permission_profile: Literal["connector", "workspace_read", "browser"]
     startup_timeout_seconds: int
     tool_timeout_seconds: int
     declared_enabled: bool

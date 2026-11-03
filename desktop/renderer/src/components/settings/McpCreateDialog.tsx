@@ -52,7 +52,8 @@ function draftFromServer(server: McpServerRecord) {
     env: envEntries as EnvRow[],
     envNames: server.envNames.length ? [...server.envNames] : [""],
     cwd: server.cwd ?? "",
-    permissionProfile: server.permissionProfile,
+    // Only manual servers are edited here; the browser profile is never manual.
+    permissionProfile: (server.permissionProfile === "workspace_read" ? "workspace_read" : "connector") as McpCreateInput["permissionProfile"],
     startupTimeoutSeconds: server.startupTimeoutSeconds,
     toolTimeoutSeconds: server.toolTimeoutSeconds,
   };

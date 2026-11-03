@@ -27,7 +27,13 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp import types as mcp_types
 
+from eidos_runtime.extensions.browser_plugin import (
+    BROWSER_PERMISSION_PROFILE,
+    BrowserLaunch,
+    is_bundled_browser_server,
+)
 from eidos_runtime.extensions.contracts import McpServerConfigV1
+from eidos_runtime.infrastructure.browser_runtime import BrowserRuntimeUnavailable
 from eidos_runtime.extensions.plugin_mcp import resolve_package_mcp
 from eidos_runtime.extensions.plugins import MANUAL_MCP_PLUGIN_ID, PluginCatalog, PluginImportError
 from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
@@ -68,6 +74,11 @@ MCP_IMAGE_MIMES = frozenset({"image/png", "image/jpeg"})
 MODEL_CONTENT_KEY = "_modelContent"
 SANDBOX_EXECUTABLE = "/usr/bin/sandbox-exec"
 SANDBOX_DIR = Path(__file__).resolve().parents[1] / "sandbox"
+SANDBOX_PROFILES = {
+    "connector": "mcp_connector.sbpl",
+    "workspace_read": "mcp_workspace_read.sbpl",
+    BROWSER_PERMISSION_PROFILE: "mcp_browser.sbpl",
+}
 LAUNCHER = Path(__file__).with_name("mcp_launcher.py")
 
 # The SDK includes the polluted stdout line in parser exception logs. Eidos maps
@@ -122,8 +133,10 @@ class McpConnection:
         resource_registry: ResourceRegistry | None = None,
         remote_client: Callable[[], httpx2.AsyncClient] | None = None,
         remote_check: Callable[[], None] | None = None,
+        browser_launch: BrowserLaunch | None = None,
     ) -> None:
         self.plugin_root = plugin_root
+        self.browser_launch = browser_launch
         self.workspace_root = workspace_root
         self.additional_workspace_roots = additional_workspace_roots
         self.workspace_check = workspace_check
@@ -531,6 +544,19 @@ class McpConnection:
         except OSError:
             raise McpUnavailable("mcp_temporary_directory_unavailable") from None
         config = resolve_package_mcp(self.config, str(self.plugin_root), str(runtime_python_executable()))
+        browser = self.config.permission_profile == BROWSER_PERMISSION_PROFILE
+        if browser:
+            if self.browser_launch is None:
+                raise McpUnavailable("browser_runtime_unavailable")
+            output = self.runtime_root / "tmp" / "browser-output"
+            config = _expand_launch_variables(config, {
+                **self.browser_launch.variables,
+                "RUNTIME_NODE": str(self.browser_launch.runtime.node),
+                "BROWSER_MCP_ENTRY": str(self.browser_launch.runtime.entry),
+                "BROWSER_OUTPUT_DIR": str(output),
+            })
+            if any("${" in value for value in (config.executable, *config.argv)):
+                raise McpUnavailable("mcp_settings_unsupported")
         executable = config.executable
         if executable in {"python", "python3"}:
             executable = str(runtime_python_executable())
@@ -548,6 +574,8 @@ class McpConnection:
         }
         Path(environment["HOME"]).mkdir(mode=0o700)
         Path(environment["TMPDIR"]).mkdir(mode=0o700)
+        if browser:
+            (Path(environment["TMPDIR"]) / "browser-output").mkdir(mode=0o700)
         inherited = sanitize_shell_environment(os.environ)
         for name in self.config.env_names:
             value = inherited.get(name)
@@ -564,11 +592,7 @@ class McpConnection:
         if self.sandbox:
             if sys.platform != "darwin" or not Path(SANDBOX_EXECUTABLE).is_file():
                 raise McpUnavailable("mcp_sandbox_unavailable")
-            profile = SANDBOX_DIR / (
-                "mcp_connector.sbpl"
-                if self.config.permission_profile == "connector"
-                else "mcp_workspace_read.sbpl"
-            )
+            profile = SANDBOX_DIR / SANDBOX_PROFILES[self.config.permission_profile]
             if self.config.permission_profile != "connector" and self.additional_workspace_roots:
                 import json
                 extra = "\n".join(
@@ -586,6 +610,13 @@ class McpConnection:
                 f"-DSANDBOX_HOME={environment['HOME']}",
                 f"-DSANDBOX_TMP={environment['TMPDIR']}",
                 *python_runtime_policy_arguments(),
+                *(
+                    (
+                        f"-DNODE_RUNTIME_ROOT={self.browser_launch.runtime.read_roots[0]}",
+                        f"-DBROWSER_RUNTIME_ROOT={self.browser_launch.runtime.read_roots[1]}",
+                    )
+                    if browser and self.browser_launch is not None else ()
+                ),
                 "--", executable, *arguments,
             ]
             executable = SANDBOX_EXECUTABLE
@@ -683,8 +714,10 @@ class McpManager:
         async_kernel: RuntimeAsyncKernel | None = None,
         sandbox: bool = True,
         resource_registry: ResourceRegistry | None = None,
+        browser_launch: Callable[[], BrowserLaunch] | None = None,
     ) -> None:
         self.plugins = plugins
+        self.browser_launch = browser_launch
         self.snapshot = snapshot
         self.workspace_root = workspace_root
         self.additional_workspace_roots = additional_workspace_roots
@@ -738,6 +771,22 @@ class McpManager:
                     server, consented=True, error_code="mcp_connection_lost"
                 )
                 continue
+            browser_launch = None
+            if config.permission_profile == BROWSER_PERMISSION_PROFILE:
+                if not is_bundled_browser_server(plugin_id, str(server["pluginHash"]), config.id):
+                    self.plugins.store.set_mcp_server_state(
+                        server, consented=True, error_code="mcp_permission_profile_unsupported"
+                    )
+                    continue
+                try:
+                    if self.browser_launch is None:
+                        raise BrowserRuntimeUnavailable("browser_runtime_unavailable")
+                    browser_launch = self.browser_launch()
+                except BrowserRuntimeUnavailable as error:
+                    self.plugins.store.set_mcp_server_state(
+                        server, consented=True, error_code=error.code
+                    )
+                    continue
             connection = None
             try:
                 connection = McpConnection(
@@ -755,6 +804,7 @@ class McpManager:
                     resource_registry=self.resources,
                     remote_client=(lambda config=config, plugin_id=plugin_id: self.plugins.connections.http_client(plugin_id, config)) if config.transport == "streamable-http" else None,
                     remote_check=self.plugins.connections.checker(plugin_id, config.id) if config.transport == "streamable-http" else None,
+                    browser_launch=browser_launch,
                 )
                 tools = connection.start()
             except McpUnavailable as error:
@@ -1136,6 +1186,18 @@ def _result(
         "sideEffectsMayExist": side_effects_may_exist,
         "reconciliationRequired": False,
     }
+
+
+def _expand_launch_variables(
+    config: McpServerConfigV1, values: dict[str, str],
+) -> McpServerConfigV1:
+    def expand(value: str) -> str:
+        for name, replacement in values.items():
+            value = value.replace("${" + name + "}", replacement)
+        return value
+    return config.model_copy(update={
+        "executable": expand(config.executable), "argv": [expand(value) for value in config.argv],
+    })
 
 
 def _verified_image(content: mcp_types.ImageContent) -> ToolBinaryContent:
