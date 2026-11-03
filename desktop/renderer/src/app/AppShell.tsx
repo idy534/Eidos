@@ -17,6 +17,7 @@ import type { ApprovalMode, ModelOption, Project, ResponseFeedbackValue, Run, Se
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import { WelcomeMessage } from "../components/WelcomeMessage.js";
+import { BrowserGrantIndicator } from "../components/BrowserGrantIndicator.js";
 import { ChatSearch } from "../components/ChatSearch.js";
 import type { SearchHit } from "../../../shared/search.js";
 import { SessionSidebar } from "../components/SessionSidebar.js";
@@ -1679,7 +1680,10 @@ export function AppShell({ runtime }: AppShellProps) {
                 </div>
               ))}
               {workspaceToggle && (
-                <div className="session-header-actions">{workspaceEnvironment}{!dockOpen && workspaceToggle}</div>
+                <div className="session-header-actions">
+                  {!isDraft && <BrowserGrantIndicator sessionId={currentSnapshot.session.id} onShowToast={showToast} />}
+                  {workspaceEnvironment}{!dockOpen && workspaceToggle}
+                </div>
               )}
             </header>
 

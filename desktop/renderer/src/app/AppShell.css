@@ -323,3 +323,17 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.browser-grant-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  padding: 0.1rem 0.15rem 0.1rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+.browser-grant-icon { width: 14px; height: 14px; flex: none; }
+.browser-grant-label { overflow: hidden; text-overflow: ellipsis; }

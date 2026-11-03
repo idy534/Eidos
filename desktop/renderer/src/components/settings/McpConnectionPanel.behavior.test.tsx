@@ -14,7 +14,16 @@ const server: McpServerRecord = {
 const initial = { pluginId: "eidos-github", serverId: "github", status: "disconnected", authType: "github-device", browserAvailable: false, updatedAt: 0 };
 const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
 afterEach(() => { cleanup(); if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor); vi.restoreAllMocks(); });
-function api(value: object) { Object.defineProperty(window, "eidosRuntime", { configurable: true, value }); }
+const browserStatus = {
+  chromeInstalled: true, chromeVersion: "156.0", running: false, pluginInstalled: false, pluginEnabled: false,
+  resource: "unavailable", granted: false,
+};
+
+function api(value: object) {
+  Object.defineProperty(window, "eidosRuntime", {
+    configurable: true, value: { readBrowserAgentStatus: vi.fn().mockResolvedValue(browserStatus), ...value },
+  });
+}
 
 describe("Remote MCP accounts", () => {
   it("connects with a password field, clears the token, and disconnects the account", async () => {
