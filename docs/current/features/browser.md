@@ -57,7 +57,7 @@ Model → ToolCallRuntime → ExternalToolHandler（浏览器授权）
 用户在插件行选择“使用我的 Chrome”并确认后，目标切换为 `user_chrome`。用户需要先在 Chrome 中打开 `chrome://inspect/#remote-debugging` 开启远程调试。Runtime 读取 Chrome 写入的 `~/Library/Application Support/Google/Chrome/DevToolsActivePort`，确认端口可用后，把浏览器 WebSocket 地址交给同一个 Playwright MCP。Chrome 会对每次连接弹窗请用户确认。
 
 - Eidos 不启动、不配置用户的 Chrome，也不为其设置下载规则。
-- 每个 Session 第一次操作时，都需要高危人工确认（`requiresHumanConfirmation`）。`auto_review` 不能代替这次确认。授权使用独立的 `user` profile，Eidos 浏览器的授权不覆盖用户的 Chrome。
+- 在 `manual` 和 `auto_review` 下，每个 Session 第一次操作时，都需要高危人工确认（`requiresHumanConfirmation`）。`auto_review` 不能代替这次确认。授权使用独立的 `user` profile，Eidos 浏览器的授权不覆盖用户的 Chrome。`full_access` 沿用现有例外，不逐次确认；选择“使用我的 Chrome”本身仍需要用户在 Desktop 中确认。
 - 改回 Eidos 浏览器时，所有 Session 对用户 Chrome 的授权都会撤销。
 - 远程调试未开启或端口失效时，该 Run 不提供浏览器工具；已启动的调用返回 `browser_attach_unavailable`。
 
