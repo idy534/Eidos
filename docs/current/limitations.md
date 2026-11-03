@@ -377,7 +377,7 @@ Run `e277e61b`（`deepseek-v4-1-flash-261017`，reasoning high）共 10 步。�
 - Custom Tool 的 input delta 在 Responses adapter 内部重组。Desktop 在完整参数通过解析并完成 Prepare 后显示持久补丁更新；它不展示尚未校验的逐 token 补丁。Prepare 完成不代表文件提交成功。
 - Add 内容会统一规范化为 LF，并按 Codex 行语义补尾部 LF。Add File 可以没有内容行；显式的 `+` 表示一条空内容行。因此空字符串、单个换行和两个换行会保持不同的解析结果。Parser 接受 CRLF 和外层空白，但不会猜测缺失的 envelope、marker 或行前缀。
 - 本地 grammar 将上游 `add_line+` 改为 `add_line*`，以对齐 Codex Rust streaming parser 的空 Add 行为。Lark 对上游零宽文本正则的写法也使用了兼容 token。其他 Workspace 边界和文件安全限制不变。
-- `apply_patch` 支持 Add、Update、Delete、Move 和多文件 Patch，但不提供通用二进制编辑、浏览器自动化或 Artifact 发布工具。
+- `apply_patch` 支持 Add、Update、Delete、Move 和多文件 Patch，但不提供通用二进制编辑或 Artifact 发布工具。浏览器操作见[浏览器操作](features/browser.md)。
 - Desktop Terminal 是用户直接操作的临时 PTY。它不属于 Agent Tool，不经过 Runtime Approval 或 Seatbelt，也不会写入 SQLite、Checkpoint、Conversation 或恢复状态。关闭 Terminal Tab、切换 Session execution binding、删除 Session、关闭窗口或退出应用都会终止对应 PTY。Review 和 Files 各只打开一个工具 Tab；Terminal 可以打开多个 Tab，Files 可以同时预览多个文件。
 - Projectless Conversation 不创建 Project，也不提供 Git status、Git diff 或 Repository Intelligence。它使用系统私有锚点作为 workspace，并提供文件工具、Shell、Skill、MCP、Plugin、Files 和网页预览。它只支持 Local execution。
 - Workspace Explorer 支持有界 UTF-8 text/code、Markdown、常见图片、PDF 和 HTML。其他二进制、Office、archive 和 database 文件不做内嵌预览。Explorer 支持已打开文本文件内查找，但不提供文件名或跨文件搜索、编辑、文件拖放、重命名或删除。当前的拖动交互只用于调整文件树与预览区的宽高。
@@ -464,7 +464,7 @@ Run `e277e61b`（`deepseek-v4-1-flash-261017`，reasoning high）共 10 步。�
 - MCP 设置页只对已启用、已授权的服务执行工具目录发现。首次查询会启动受现有 Seatbelt 控制的短连接，使用官方 SDK 初始化并取得有界目录，随后关闭连接；该入口不会调用工具。页面按 10 条分页读取 Runtime 的展示缓存。缓存最多 8 个目录，每个目录最多 512 KiB，有效期为 5 分钟，不写 SQLite，也不作为 Run 工具或授权的事实来源。Runtime 重启、缓存淘汰、配置变化或到期后，旧游标会失效，页面提示重新加载。目录描述最多展示 4096 个字符；不受支持的工具 Schema 仍可查看，但会标为不可用。设置页连接启动期限最多为 15 秒，关闭弹窗会忽略迟到结果。
 - Plugin 支持三种本地包、显式更新、旧版本保留、远程 Streamable HTTP 和独立账号连接。应用随附 GitHub 插件，用户需要主动安装和授权。GitHub 浏览器登录仍需发行方注册应用、启用 Device Flow 并配置公开 Client ID；当前仓库未填入真实标识，PAT 入口可用。Figma 未内置。当前没有远程 marketplace、Git/npm 下载器、Codex App 连接映射或动态 import 用户 Plugin。服务 ID 仍须全局唯一。详见 [docs/current/features/plugins.md](features/plugins.md)。
 - Skill Catalog 使用 `SKILL.md` frontmatter 的顶层 `name` 和 `description`。可选的 `agents/eidos.yaml` 还提供界面、资产、MCP 依赖、隐式激活策略和严格校验的 `runtimeDependencies`；这些声明不能自行授予权限或安装依赖。其他 frontmatter 字段不改变执行权限。
-- Settings 的手动 MCP 编辑器仍只支持本地 stdio。远程地址和认证方式由插件声明；用户可以通过账号面板连接。通用 OAuth 只接受公开客户端注册，或 SDK 的 DCR/CIMD，不提供机密 Client Secret 录入。远程响应上限为 2 MiB，要求不压缩传输。MCP 的 Resources、Prompts、Sampling、Tasks 和 MCP Apps 尚未提供产品入口；非文本工具内容仍遵循现有不支持规则。
+- Settings 的手动 MCP 编辑器仍只支持本地 stdio。远程地址和认证方式由插件声明；用户可以通过账号面板连接。通用 OAuth 只接受公开客户端注册，或 SDK 的 DCR/CIMD，不提供机密 Client Secret 录入。远程响应上限为 2 MiB，要求不压缩传输。MCP 的 Resources、Prompts、Sampling、Tasks 和 MCP Apps 尚未提供产品入口；工具结果支持文本和经过校验的 PNG/JPEG 图片，音频和资源内容仍不支持。
 - MCP ready connection 是长生命周期 Service，但 startup、Tool call、Tool list、cancel 和 shutdown 都有各自的有界等待。已经开始的 Tool List Changed bookkeeping callback 可能在关闭时需要等待完成。
 
 ### Observability / OpenTelemetry
@@ -539,7 +539,7 @@ Run `e277e61b`（`deepseek-v4-1-flash-261017`，reasoning high）共 10 步。�
 - 2026-10-13 修复了文本修改卡被 Git Review 可用性挡住的入口。33 项 Renderer 定向测试、Renderer 类型检查与构建通过。真实 Desktop 已使用非 Git `Office-Test` 会话验证文件名和“审核”按钮均可打开已有 Run 的持久化补丁；Git 和 Projectless 入口由自动测试覆盖，尚未补做人工验收。该次修复未运行 Full Suite，也未修改统计逻辑。2026-10-14 的后续修复在 Runtime 公共展示入口补充文件头，解决普通 Unified Diff 的路径丢失和行数未知问题；该修复不改写历史补丁，不改变大补丁分页边界。
 - “最近一轮”展示文件工具记录的补丁。Shell 的文件观察只能给出路径变化，不能证明每条变化都由该 Shell 独占造成；完整仓库差异仍在仓库范围查看。
 - 未提交文件列表为只读审查，不提供暂存、取消暂存、丢弃或按修改块操作；需要变更 Index 时使用提交弹层的暂存后提交，或在外部终端操作。
-- Browser 是用户可操作的预览面板，尚未向 Agent 注册浏览器自动化 Tool。网页面板当前不提供标注入口，也没有独立的后退和前进 IPC，所以这两个导航按钮保持不可用。地址栏使用 `tldts` 识别域名、IP 和本地地址；输入框可以在已打开页面后继续编辑，无法确认是地址时会提交 Google 搜索。
+- Workspace Dock 的 Browser 是用户可操作的预览面板，Agent 不操作它。Agent 浏览器能力由内置浏览器插件提供，范围与限制见[浏览器操作](features/browser.md)。网页面板当前不提供标注入口，也没有独立的后退和前进 IPC，所以这两个导航按钮保持不可用。地址栏使用 `tldts` 识别域名、IP 和本地地址；输入框可以在已打开页面后继续编辑，无法确认是地址时会提交 Google 搜索。
 - 本地 HTML 禁止外部网络资源、嵌套 frame 和表单提交。依赖外部资源或开发框架的页面应通过用户启动的 HTTP 开发服务预览。HTTP 页面可以按浏览器语义联网，但不能读取本地预览授权。页面权限申请、新窗口和下载尚未开放。
 - 图片/PDF 的实际 Chromium 渲染、本地网页 CSP、开发服务热更新、原生视图遮挡和生命周期仍待 Desktop 验收。Office 预览和高级发布不属于本轮前四阶段。
 

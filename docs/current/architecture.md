@@ -704,6 +704,8 @@ Skill MCP dependency 不是 Skill 安装器。RunResources 会收集 active Skil
 
 `SkillCatalog` 管理 bundled system skills、用户和 Plugin Skill。Turn 开始时，Catalog Snapshot 和 SelectedSkillSet 固化 qualified ID、source、version、source kind、content hash、canonical `file:` locator 和 implicit policy。`SkillAccess` 只从该可信 snapshot locator 激活 canonical root。模型不能通过传入任意 absolute path 扩大 Shell 权限。显式选择、成功的 `skill_read` 和已知 `scripts/` Shell invocation 都会沿 RunResources → ToolCallRuntime → Shell → Seatbelt 使用同一份 Run-scoped activation state。
 
+内置浏览器插件运行固定版本的 Playwright MCP，使用 `browser` Seatbelt 配置，并通过本机 CDP 连接由 Runtime 级 `BrowserHost` 管理的共用 Chrome。浏览器工具的分类、Session 授权（SQLite v48 `session_browser_grants`）和上传审批位于 `ExternalToolHandler`，仍沿用 Durable Intent 和结果核验。MCP 结果中的 PNG/JPEG 图片会经过校验，并作为模型内容传递。详见[浏览器操作](features/browser.md)。
+
 MCP 使用官方 Python MCP SDK 的 stdio 和 Streamable HTTP transport。手动编辑器配置本地进程，远程服务由插件包声明。`McpConnections` 用例维护独立的账号生命周期，SQLite v38 保存连接状态和凭据引用，受保护文件保存令牌。标准 OAuth 的发现、注册和 PKCE 交给 MCP SDK，令牌请求和刷新交给 Authlib。Runtime 启动恢复中断登录，Run/Hook 的目录视图不执行恢复。多个视图在同一 AnyIO 内核上共用账号版本的短期刷新锁，工具执行不持有该锁。临时回环 HTTP 只接收 OAuth 授权码，本地控制面仍为 stdio JSON-RPC。
 
 MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。两种 transport 共用统一 Tool Registry、MCP provenance、Approval、Durable Intent、timeout、结果校验和未知结果记录。远程请求前核对配置、账号版本、启用状态和 consent，凭据不进入运行快照或模型上下文。本地进程继续使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。远程服务只连接明确配置的地址，不获得本地文件能力。内置 GitHub 通过受管包安装入口进入同一链路。安装、账号连接和工具调用权限分别管理，详见 [docs/current/features/plugins.md](features/plugins.md)。

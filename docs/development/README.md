@@ -295,6 +295,18 @@ pnpm test:composer-layout
 
 `node_modules/.bin/electron scripts/test-mcp-details.cjs` 使用隔离 user-data 和生产组件，检查 320、768、1024、1440px、10→20→23 条的真实滚动追加、展开状态和焦点返回。`EIDOS_MCP_SCREENSHOT` 可以指定截图路径。该 UI 验证使用测试数据，不读取真实 MCP 配置，也不启动真实第三方服务。这些入口都不属于 Full Suite。
 
+### 浏览器操作
+
+定向入口：`uv run --locked pytest runtime/tests/test_browser_runtime.py runtime/tests/test_browser_sandbox.py runtime/tests/test_browser_mcp.py runtime/tests/test_browser_host.py runtime/tests/test_browser_grants.py runtime/tests/test_browser_tools.py runtime/tests/test_browser_context.py runtime/tests/test_user_chrome.py`。`test_browser_sandbox` 使用真实 Seatbelt；本机安装 Google Chrome 时，`test_browser_host` 会启动一次 headless Chrome。修改浏览器 DTO 后运行 `node scripts/generate-browser-contracts.mjs`。Main 入口是 `pnpm build:main` 后的 `node --test dist/main/runtime-client-browser.test.js`。
+
+端到端检查需要真实的 Playwright MCP 和 Node：
+
+```bash
+EIDOS_BROWSER_E2E_NODE=<node 可执行文件> EIDOS_BROWSER_E2E_ENTRY=<node_modules/@playwright/mcp/cli.js> uv run --locked pytest runtime/tests/test_browser_e2e.py
+```
+
+两个变量都未设置时，这个测试会跳过。它会在 `/private/tmp` 下启动 headless Chrome，并检查下载是否被拒绝。`@playwright/mcp` 的版本固定在 `resources/runtime-dependencies/node/package.json`；升级时需要同时更新锁文件、`domain/browser.py` 的工具分类和测试替身 `runtime/tests/fixtures/browser_mcp_fixture.py`。浏览器资源包随文档资源一起发布，所以资源版本变化时，维护者要先发布新的资源 Release。
+
 ## 人工验收
 
 ### Agent Shell

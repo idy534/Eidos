@@ -28,7 +28,7 @@ Runtime 创建新的扩展快照时会核验插件包内容身份。内容身份
 
 `command`、`args`、环境变量名称映射和 `disabled` 进入统一配置。Runtime 在启动时解析 `${PLUGIN_ROOT}`、`${CLAUDE_PLUGIN_ROOT}` 和 `${RUNTIME_PYTHON}`，并为 `python`/`python3` 选择随 Runtime 使用的 Python。其他命令仍须由调用环境提供；Runtime 不下载依赖。环境变量映射只保存名称，值在启动时读取。缺少引用值时，服务报告 `mcp_environment_missing`。Eidos 内部环境变量仍由现有 sanitizer 排除。
 
-`extensions.com.eidos` 可以声明现有 `permissionProfile`、`startupTimeoutSeconds` 和 `toolTimeoutSeconds`。未声明时使用 `workspace_read`、15 秒和 60 秒。`connector` 与 `workspace_read` 继续使用现有真实 Seatbelt 配置，`full_access` 沿用现有例外。MCP 的 SDK、资源所有者、超时、取消、审批、Durable Intent、结果校验和未知结果语义保持不变。
+`extensions.com.eidos` 可以声明现有 `permissionProfile`、`startupTimeoutSeconds` 和 `toolTimeoutSeconds`。未声明时使用 `workspace_read`、15 秒和 60 秒。`connector` 与 `workspace_read` 继续使用现有真实 Seatbelt 配置，`full_access` 沿用现有例外。`browser` 配置只供随应用发布、内容 Hash 一致的 `eidos-browser` 包使用，见[浏览器操作](browser.md)。MCP 的 SDK、资源所有者、超时、取消、审批、Durable Intent、结果校验和未知结果语义保持不变。
 
 内嵌环境变量值、旧 SSE transport 和暂不支持的启动设置不会注册为可调用工具。插件详情会逐项显示兼容信息。正常的 MCP 可以与这些声明共存。当前工具名称仍使用 `mcp__<serverId>__<tool>`；导入会检查手动 MCP 和其他已安装插件的服务 ID，拒绝冲突，避免工具被静默隔离。
 

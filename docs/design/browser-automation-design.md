@@ -4,6 +4,15 @@
 
 日期：2026-11-03。状态：设计方案，尚未实现。2026-11-03 用户确认三项决定：所有 Session 共用一个 Chrome，浏览器授权按 Session 有效，未安装 Chrome 时直接报错。
 
+2026-11-03 实施记录：P0–P3 已在 `feature/browser-automation` 分支实现，当前行为见[浏览器操作](../current/features/browser.md)。与本方案的差异：
+
+- P0 证实 Playwright MCP 在首次调用时才连接 CDP，因此不需要 6.3 的转发备选方案。P0 还发现 Chrome 使用显式端口时不写 `DevToolsActivePort`，所以 BrowserHost 改用私有状态文件接管重启前的 Chrome。
+- 下载拒绝需要一条常驻的 CDP 连接，因为 Chrome 会在设置方断开后恢复默认。
+- 工具白名单和风险分类由 `domain/browser.py` 在代码中维护，没有改为插件清单字段。用户插件无法借此降低审批。
+- P3 没有引入 Chrome DevTools MCP。用户的 Chrome 同样由固定版本的 Playwright MCP 连接，以避免第二套工具和默认开启的使用统计。目标由 `browser_settings` 保存；授权按 profile 区分；使用用户的 Chrome 需要每个 Session 的高危人工确认。
+- Workspace 外的文件上传直接拒绝，没有走扩权审批。不带 `paths` 的上传调用只取消文件选择框。
+- 截图缩略图、Tab 归属、来源限制授权和多 profile 尚未实现。
+
 本文说明 Agent 如何操作系统 Chrome 完成网页任务。浏览器协议、页面快照和元素定位交给成熟套件。Eidos 负责进程归属、沙盒、授权、结果投影和界面控制。整机 computer use 不在本文范围内。当前内嵌 Browser 仍是用户预览面板，见[当前限制](../current/limitations.md)。
 
 ## 1. 结论

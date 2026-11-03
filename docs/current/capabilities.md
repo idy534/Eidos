@@ -468,6 +468,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `workspace/readAsset` 每次最多读取 192 KiB，总文件上限是 32 MiB。文本资源必须完整通过敏感扫描，文本上限是 2 MiB。Main 通过短期 `eidos-preview` 授权地址提供资源，Runtime 在每次读取时重新核验 Workspace 和文件版本。
 - Review 提供“最近一轮”范围，严格按 `runId` 过滤持久化 ToolCall 文件补丁，空轮保持空，不回退到全量；“整个任务”展示本 Session 全部 Run 的补丁历史。长任务可以分页加载更早记录。文件工具在 Prepare 后提交 `item.updated` Event，并通过 Outbox 推送 `item/updated`。界面不会把准备中的补丁标记为已写入。
 - 最近一轮反馈包含 Run、ToolCall、文件、行位置和已有 Base SHA。
+- Agent 可以通过内置浏览器插件操作 Google Chrome：打开网页、读取快照、点击、输入、填写表单、切换标签页、截图，以及在每次批准后上传 Workspace 文件。所有 Session 共用 Eidos 专用 Chrome profile；用户也可以选择自己日常使用的 Chrome。页面操作按 Session 授权，下载被拒绝。详见[浏览器操作](features/browser.md)。
 - Browser 使用 Electron `WebContentsView`，支持本地 HTML、HTTP/HTTPS 页面和开发服务。网页面板提供新标签页空状态、地址输入、刷新和隔离网页预览。地址栏使用 `tldts` 识别域名、IP 和本地地址，支持完整 HTTP/HTTPS 地址和常见无协议地址；输入框保持左对齐并可在已打开页面后继续编辑，其他输入会转换为 Google 搜索。刷新只在按钮图标上播放一次逆时针半圈动画，不额外显示加载文字。一个 Workspace 可以同时打开多个独立 Browser Tab。网页面板不提供标注或开发终端按钮；开发终端仍由独立工作区工具提供，Projectless 仍不提供手动 Terminal。
 - 本地 HTML 资源仅来自当前 Workspace，页面不能访问 Eidos preload、Node 或其他文件协议。Browser 使用临时隔离分区，拒绝权限申请、新窗口和下载。窗口关闭、Session 删除、Handoff 和 Worktree Restore 会清理对应网页和预览授权。
 
