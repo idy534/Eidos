@@ -32,6 +32,15 @@ class FakeChrome:
         return self.returncode
 
 
+class FakeControl:
+    def __init__(self, port: int) -> None:
+        self.port = port
+        self.close_code = None
+
+    def close(self) -> None:
+        self.close_code = 1000
+
+
 @pytest.fixture
 def host(tmp_path, monkeypatch):
     launched: list[FakeChrome] = []
@@ -58,12 +67,21 @@ def host(tmp_path, monkeypatch):
 
     monkeypatch.setattr("eidos_runtime.infrastructure.browser_host.os.killpg", killpg)
     monkeypatch.setenv("EIDOS_INTERNAL_TOKEN", "secret")
+    controls: list[FakeControl] = []
+
+    def control(port):
+        if behaviour.get("control_error"):
+            raise OSError("control refused")
+        controls.append(FakeControl(port))
+        return controls[-1]
+
     value = BrowserHost(
         profile,
         chrome=lambda: ChromeInstallation(Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"), "156.0")
         if behaviour["chrome"] else None,
-        popen=popen, probe=probe,
+        popen=popen, probe=probe, control=control,
     )
+    value.test_controls = controls
     return value, launched, behaviour, signals
 
 
@@ -215,6 +233,7 @@ def test_real_chrome_starts_is_adopted_after_restart_and_stops(tmp_path, monkeyp
         )
         assert second.endpoint() == endpoint
         assert second.ensure(threading.Event()) == endpoint
+        assert second._control_alive()
         second.shutdown()
         assert process.wait(timeout=5) is not None
         assert not _probe_cdp(port)
@@ -237,3 +256,26 @@ def test_managed_task_cancel_stops_chrome_for_shutdown_quiescence(host):
     assert launched[0].returncode is not None
     with pytest.raises(BrowserUnavailable):
         browser.ensure(threading.Event())
+
+
+def test_downloads_stay_denied_by_a_held_control_connection(host):
+    browser, launched, behaviour, signals = host
+    browser.ensure(threading.Event())
+    assert len(browser.test_controls) == 1 and browser.test_controls[0].close_code is None
+    browser.ensure(threading.Event())
+    assert len(browser.test_controls) == 1
+    # A dropped control connection is replaced before the next tool call.
+    browser.test_controls[0].close()
+    browser.ensure(threading.Event())
+    assert len(browser.test_controls) == 2
+    browser.close_browser()
+    assert browser.test_controls[1].close_code == 1000
+
+
+def test_chrome_without_download_denial_is_stopped(host):
+    browser, launched, behaviour, signals = host
+    behaviour["control_error"] = True
+    with pytest.raises(BrowserUnavailable) as raised:
+        browser.ensure(threading.Event())
+    assert raised.value.code == "browser_start_failed"
+    assert launched[0].returncode is not None and signals

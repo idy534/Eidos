@@ -1691,7 +1691,9 @@ class ExternalToolHandler:
 
         if self.dependencies.store.read_run(run_id).get("approvalMode") == "full_access":
             return prepared, None, None
-        if browser.tool_class is BrowserToolClass.FILE:
+        # With no paths, browser_file_upload only cancels the open file chooser.
+        uploads = browser.tool_class is BrowserToolClass.FILE and bool(call.arguments.get("paths"))
+        if uploads:
             roots = (
                 Path(getattr(connection, "workspace_root")),
                 *getattr(connection, "additional_workspace_roots", ()),
@@ -1704,7 +1706,7 @@ class ExternalToolHandler:
                 "approval_description": browser_upload_description(call.name, call.arguments, paths, details),
                 "intent_preconditions": {**prepared.intent_preconditions, "uploadPaths": list(paths)},
             }), None, None
-        if browser.tool_class is not BrowserToolClass.INTERACT:
+        if browser.tool_class is BrowserToolClass.READ:
             return prepared, None, None
         grants = BrowserGrantRepository(self.dependencies.store.database)
         grant = grants.active(grants.grant_session_for_run(run_id))

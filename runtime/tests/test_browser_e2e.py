@@ -118,3 +118,19 @@ class BrowserEndToEndTests(unittest.TestCase):
         # A second Run reconnects to the same Chrome and still sees the page.
         second = self.run_calls(session["id"], [("browser_tabs", {"action": "list"})])
         self.assertIn("Eidos E2E", second["browser_tabs"]["data"]["text"])
+
+    def test_downloads_are_denied_in_the_shared_chrome(self) -> None:
+        name = f"eidos-e2e-download-{os.getpid()}.txt"
+        downloads = Path.home() / "Downloads"
+        session = self.store.create_session(str(self.workspace))
+        page = f"data:text/html,<a href='data:text/plain,probe' download='{name}'>get file</a>"
+        try:
+            results = self.run_calls(session["id"], [("browser_navigate", {"url": page}), ("browser_snapshot", {})])
+            text = str(results["browser_snapshot"]["data"]["text"])
+            target = text.split("[ref=", 1)[1].split("]", 1)[0]
+            self.run_calls(session["id"], [("browser_click", {"element": "get file link", "target": target})])
+            import time
+            time.sleep(2)
+            self.assertFalse((downloads / name).exists())
+        finally:
+            (downloads / name).unlink(missing_ok=True)

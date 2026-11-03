@@ -115,7 +115,7 @@ class BrowserToolAuthorizationTests(unittest.TestCase):
         self.assertIsNotNone(grant)
         self.assertIsNotNone(grant.source_approval_id)
         self.ensured.clear()
-        _, again, results = self.run_tools(session["id"], [("browser_click", {"ref": "e2", "element": "link"})])
+        _, again, results = self.run_tools(session["id"], [("browser_click", {"target": "e2", "element": "link"})])
         self.assertEqual(again, [])
         self.assertEqual(results["browser_click"]["outcome"], "success")
         intent = self.store.connection.execute(
@@ -124,7 +124,7 @@ class BrowserToolAuthorizationTests(unittest.TestCase):
         self.assertEqual(json.loads(intent)["authorization"], "browser_session_grant")
         other = self.store.create_session(str(self.workspace))
         self.ensured.clear()
-        _, other_requests, _ = self.run_tools(other["id"], [("browser_click", {"ref": "e2", "element": "link"})])
+        _, other_requests, _ = self.run_tools(other["id"], [("browser_click", {"target": "e2", "element": "link"})])
         self.assertEqual([request.get("kind") for request in other_requests], ["browser_access"])
 
     def test_rejected_access_creates_no_grant_and_does_not_start_chrome(self) -> None:
@@ -169,6 +169,13 @@ class BrowserToolAuthorizationTests(unittest.TestCase):
         )
         self.assertEqual(outside_requests, [])
         self.assertEqual(outside["browser_file_upload"]["code"], "browser_upload_outside_workspace")
+
+    def test_cancelling_a_file_chooser_needs_only_the_session_grant(self) -> None:
+        session = self.store.create_session(str(self.workspace))
+        self.run_tools(session["id"], [("browser_navigate", {"url": "https://example.com"})])
+        _, requests, results = self.run_tools(session["id"], [("browser_file_upload", {})])
+        self.assertEqual(requests, [])
+        self.assertEqual(results["browser_file_upload"]["outcome"], "success")
 
     def test_missing_chrome_fails_before_approval(self) -> None:
         self.chrome = False

@@ -26,8 +26,8 @@ PNG = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP8zwACTGCSAQANH
 SCHEMA = {
     "type": "object",
     "properties": {
-        "url": {"type": "string"}, "ref": {"type": "string"}, "element": {"type": "string"},
-        "text": {"type": "string"}, "action": {"type": "string"},
+        "url": {"type": "string"}, "target": {"type": "string"}, "element": {"type": "string"},
+        "text": {"type": "string"}, "action": {"type": "string"}, "index": {"type": "number"},
         "paths": {"type": "array", "items": {"type": "string"}},
     },
     "additionalProperties": False,

@@ -23,6 +23,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from typing import Protocol
 
 from eidos_runtime.sandbox.host_shell import sanitize_shell_environment
 
@@ -101,6 +102,36 @@ def _probe_cdp(port: int) -> bool:
     return isinstance(value, dict) and str(value.get("Browser", "")).startswith(("Chrome/", "HeadlessChrome/"))
 
 
+class _Closable(Protocol):
+    def close(self) -> None: ...
+
+
+def _deny_downloads(port: int) -> _Closable:
+    """Chrome resets download behavior when the client that set it disconnects."""
+
+    from websockets.sync.client import connect
+
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(f"http://127.0.0.1:{port}/json/version", timeout=2) as response:
+        url = json.loads(response.read(64 * 1024)).get("webSocketDebuggerUrl")
+    if not isinstance(url, str) or not url.startswith(f"ws://127.0.0.1:{port}/devtools/browser/"):
+        raise ValueError("browser_control_endpoint_invalid")
+    connection = connect(url, proxy=None, open_timeout=5, close_timeout=2, max_size=1024 * 1024, compression=None)
+    try:
+        connection.send(json.dumps({
+            "id": 1, "method": "Browser.setDownloadBehavior",
+            "params": {"behavior": "deny", "eventsEnabled": False},
+        }))
+        reply = json.loads(connection.recv(timeout=5))
+    except BaseException:
+        connection.close()
+        raise
+    if not isinstance(reply, dict) or reply.get("id") != 1 or "error" in reply:
+        connection.close()
+        raise RuntimeError("browser_download_policy_rejected")
+    return connection
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
@@ -124,6 +155,7 @@ class BrowserHost:
         chrome: Callable[[], ChromeInstallation | None] = find_chrome,
         popen: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
         probe: Callable[[int], bool] = _probe_cdp,
+        control: Callable[[int], _Closable] | None = None,
         clock: Callable[[], float] = time.monotonic,
         extra_arguments: Sequence[str] = (),
         idle_seconds: float = DEFAULT_IDLE_SECONDS,
@@ -132,6 +164,8 @@ class BrowserHost:
         self._chrome = chrome
         self._popen = popen
         self._probe = probe
+        self._control_factory = control or _deny_downloads
+        self._control: _Closable | None = None
         self._clock = clock
         self._extra_arguments = tuple(extra_arguments)
         self.idle_seconds = idle_seconds
@@ -171,6 +205,8 @@ class BrowserHost:
             endpoint = f"http://127.0.0.1:{port}"
             if self._running():
                 if self._probe(port):
+                    if not self._control_alive():
+                        self._attach_control(port)
                     self._last_used = self._clock()
                     return endpoint
                 # Our Chrome stopped answering CDP; replace it on the same port.
@@ -182,6 +218,7 @@ class BrowserHost:
             if owner is not None:
                 if self._probe(port):
                     self._adopted_pid = owner
+                    self._attach_control(port)
                     self._last_used = self._clock()
                     return endpoint
                 raise BrowserUnavailable("browser_profile_in_use")
@@ -237,6 +274,28 @@ class BrowserHost:
 
     # Internals --------------------------------------------------------------
 
+    def _attach_control(self, port: int) -> None:
+        """Hold the connection that keeps downloads denied; fail closed without it."""
+
+        self._close_control()
+        try:
+            self._control = self._control_factory(port)
+        except (OSError, ValueError, RuntimeError):
+            self._stop()
+            raise BrowserUnavailable("browser_start_failed") from None
+
+    def _control_alive(self) -> bool:
+        # websockets sets close_code once the connection has closed.
+        return self._control is not None and getattr(self._control, "close_code", None) is None
+
+    def _close_control(self) -> None:
+        control, self._control = self._control, None
+        if control is not None:
+            try:
+                control.close()
+            except (OSError, RuntimeError):
+                pass
+
     def _running(self) -> bool:
         if self._process is not None:
             if self._process.poll() is None:
@@ -279,6 +338,7 @@ class BrowserHost:
                 raise BrowserUnavailable("browser_start_failed")
             if self._probe(port):
                 self._write_state(port, process.pid)
+                self._attach_control(port)
                 return
             cancel.wait(0.1)
         self._stop()
@@ -360,6 +420,7 @@ class BrowserHost:
         process = self._process
         self._process = None
         self._adopted_pid = None
+        self._close_control()
         if pid is None:
             return
         self._remove_state()
