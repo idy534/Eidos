@@ -26,6 +26,10 @@
 - [内置网页搜索实现方案](web-search-implementation-design.md)：服务选择后的设置、协议、凭据与工具执行设计。
 - 服务选择前的材料见 [网页搜索调研与筛选](../research/web-search-research-and-selection.md)。
 
+## 浏览器操作
+
+- [浏览器操作能力设计方案](browser-automation-design.md)：选型、BrowserHost、沙盒、工具面、授权、上下文与分阶段实施；当前为设计方案。
+
 ## 文档资源
 
 - [文档资源裁剪与按需下载](document-resource-delivery.md)：安装包资源分类、本地复用、后台准备与现有依赖绑定的调整范围；当前为设计方案。
