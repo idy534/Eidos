@@ -877,7 +877,7 @@ def _skill_install_entry(adapter: object) -> ToolRegistryEntry:
             "description": "Install one complete public GitHub skill after network and Eidos state approval",
             "sideEffect": "eidos_state",
             "approvalRequired": True,
-            "timeoutSeconds": 120,
+            "timeoutSeconds": 300,
             "batchPolicy": "single",
             "visibility": "direct",
             "inputSchema": schema,

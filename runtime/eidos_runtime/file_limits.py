@@ -13,10 +13,14 @@ MAX_PATCH_RESULT_BYTES = MAX_PATCH_WORKING_BYTES
 INLINE_TOOL_TEXT_BYTES = 64 * 1024
 TOOL_TEXT_PAGE_CHARACTERS = 16 * 1024
 MAX_SKILL_FILE_BYTES = 4 * 1024 * 1024
-MAX_SKILL_TOTAL_BYTES = 8 * 1024 * 1024
-MAX_SKILL_FILES = 512
+MAX_SKILL_TOTAL_BYTES = 64 * 1024 * 1024
+MAX_SKILL_FILES = 20_000
+# The create tool keeps the smaller interactive budget; installed skills can
+# carry bundled assets that the model never sends as one JSON argument.
+MAX_SKILL_CREATE_TOTAL_BYTES = 8 * 1024 * 1024
+MAX_SKILL_CREATE_FILES = 512
 # Allow the complete tree plus JSON escaping and bounded path/metadata overhead.
-MAX_SKILL_ARGUMENT_BYTES = 6 * MAX_SKILL_TOTAL_BYTES + 1024 * 1024
+MAX_SKILL_ARGUMENT_BYTES = 6 * MAX_SKILL_CREATE_TOTAL_BYTES + 1024 * 1024
 
 
 def function_argument_limit(tool_name: str) -> int:

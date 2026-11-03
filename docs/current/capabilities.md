@@ -250,7 +250,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
 - 模型调用当前目录中存在但尚未激活的延迟 Tool 时，Runtime 返回 `tool_not_activated`，提示使用工具完整名称搜索激活，并在收到搜索结果后的下一 Step 重试。该调用不会执行工具、申请审批、创建 Durable Intent 或建立结果未知状态，也不会消耗协议修复次数或单独终止 Run。未知、禁用和未授权工具继续按原有检查拒绝。重复调用仍受现有 LoopGuard 限制。
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
-- `skill_create` 使用独立的参数预算，不再受普通工具的 64 KiB JSON 参数上限限制。创建、目录加载和文本资源读取共用单文件 4 MiB、整棵 Skill 8 MiB、最多 512 个文件的存储边界；512 个文件包含自动生成的 `SKILL.md`。Runtime 将 YAML、标题和正文一起计入 `SKILL.md` 大小，将文件路径、metadata 和 JSON 转义计入独立参数预算。工具可以一次提交完整文本资源，无需为了旧的 64 KiB 上限省略文件。`skill_read` 与 `skill_read_resource` 每页仍最多返回 24,000 UTF-8 bytes，offset 可以覆盖整个 4 MiB 文件。审批、Durable Intent、取消、路径保护和 Run 固定目录快照保持原有语义。
+- `skill_create` 使用独立的参数预算，不再受普通工具的 64 KiB JSON 参数上限限制。创建路径保留单文件 4 MiB、整棵 Skill 8 MiB、最多 512 个文件的边界；512 个文件包含自动生成的 `SKILL.md`。安装与目录加载允许更大的完整 Skill tree：单文件 4 MiB、整棵 64 MiB、最多 20,000 个文件。`skill_install` 的整次工具超时为 300 秒。Runtime 将 YAML、标题和正文一起计入 `SKILL.md` 大小，将文件路径、metadata 和 JSON 转义计入独立参数预算。工具可以一次提交完整文本资源，无需为了旧的 64 KiB 上限省略文件。`skill_read` 与 `skill_read_resource` 每页仍最多返回 24,000 UTF-8 bytes，offset 可以覆盖整个 4 MiB 文件。审批、Durable Intent、取消、路径保护和 Run 固定目录快照保持原有语义。
 - ToolCallRuntime 和 ToolExecutionController 会按工具类型执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。普通读取和 Shell 聚合输出不因可识别敏感内容阻断；展示层只做 best-effort 脱敏。
 - Runtime 可以在共同的工具结果提交边界保存已取得的文字和二进制内容。`view_image` 已使用该边界保存读取时的 PNG/JPEG；后续请求与重启恢复从保存的内容组装，源文件删除或替换不会触发重新读取或源文件 Hash 比对。内容快照没有新增 Hash 字段。公共 ToolResult 与 UI 契约保持不变，模型内容引用只进入内部持久投影。
 - 确定的 Tool Error 会持久化为 ToolResult，并回到模型循环。敏感或超大的结果在 projection 重建为错误时，会保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。Runtime 不会自动重放有副作用的 Tool。未知结果不会阻止成功终态。

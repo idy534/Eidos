@@ -101,6 +101,47 @@ class SkillCatalogTests(unittest.TestCase):
         self.assertEqual(name, "grilling")
         self.assertEqual(files["scripts/check.py"], b"print('ok')\n")
 
+    def test_runtime_installer_accepts_tree_above_old_file_and_size_budget(
+        self,
+    ) -> None:
+        archive = io.BytesIO()
+        payload = "x" * (15 * 1024)
+        with zipfile.ZipFile(archive, "w") as bundle:
+            bundle.writestr(
+                "skills-main/skills/productivity/grilling/SKILL.md",
+                "---\nname: grilling\ndescription: Grill a plan.\n---\nBody.\n",
+            )
+            for index in range(600):
+                bundle.writestr(
+                    "skills-main/skills/productivity/grilling/"
+                    f"references/{index}.txt",
+                    payload,
+                )
+
+        class Response:
+            def __enter__(self):
+                self.data = io.BytesIO(archive.getvalue())
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def geturl(self) -> str:
+                return "https://codeload.github.com/mattpocock/skills/zip/main"
+
+            def read(self, size: int) -> bytes:
+                return self.data.read(size)
+
+        with patch("urllib.request.OpenerDirector.open", return_value=Response()):
+            name, files = _download_github_skill(
+                "https://github.com/mattpocock/skills/tree/main/skills/productivity/grilling",
+                threading.Event(),
+            )
+
+        self.assertEqual(name, "grilling")
+        self.assertEqual(len(files), 601)
+        self.assertGreater(sum(len(value) for value in files.values()), 8 * 1024 * 1024)
+
     def test_runtime_installer_ignores_unknown_frontmatter_fields(self) -> None:
         archive = io.BytesIO()
         with zipfile.ZipFile(archive, "w") as bundle:

@@ -29,7 +29,8 @@ from pydantic import (
 from pydantic.fields import PydanticUndefined
 
 from eidos_runtime.file_limits import (
-    MAX_PATCH_BYTES, MAX_SKILL_FILE_BYTES, MAX_SKILL_FILES, MAX_SKILL_TOTAL_BYTES,
+    MAX_PATCH_BYTES, MAX_SKILL_CREATE_FILES, MAX_SKILL_CREATE_TOTAL_BYTES,
+    MAX_SKILL_FILE_BYTES,
 )
 from eidos_runtime.extensions.skill_manifest import skill_document
 from eidos_runtime.model.context_projection import without_verification_metadata
@@ -619,7 +620,9 @@ class SkillCreateInput(StrictToolModel):
     name: StrictStr = Field(min_length=1, max_length=64)
     description: StrictStr = Field(min_length=1, max_length=1024)
     instructions: StrictStr = Field(min_length=1, max_length=MAX_SKILL_FILE_BYTES)
-    files: tuple[SkillFileInput, ...] = Field(default=(), max_length=MAX_SKILL_FILES - 1)
+    files: tuple[SkillFileInput, ...] = Field(
+        default=(), max_length=MAX_SKILL_CREATE_FILES - 1
+    )
 
     @field_validator("name")
     @classmethod
@@ -669,7 +672,7 @@ class SkillCreateInput(StrictToolModel):
         total = document_bytes + sum(
             len(value.content.encode("utf-8")) for value in self.files
         )
-        if total > MAX_SKILL_TOTAL_BYTES:
+        if total > MAX_SKILL_CREATE_TOTAL_BYTES:
             raise ValueError("skill_too_large")
         return self
 
