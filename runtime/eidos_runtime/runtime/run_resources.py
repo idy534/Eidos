@@ -249,6 +249,7 @@ class RunResources:
                 "BROWSER_IMAGE_RESPONSES": "allow" if self.supports_images else "omit",
             },
             ensure_browser=host.ensure,
+            chrome_installed=lambda: host.status().chrome_installed,
         )
 
     def _set_registry(

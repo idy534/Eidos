@@ -135,3 +135,35 @@ it.each([
   expect(screen.queryByRole("textbox")).toBeNull();
   expect(screen.getAllByRole("button")).toHaveLength(2);
 });
+
+describe("Browser approvals", () => {
+  const provenance = { kind: "mcp", sourceId: "eidos-browser:browser", sourceVersion: "1.0.0", contentHash: "h", pluginId: "eidos-browser", serverId: "browser" } as const;
+
+  it("explains that browser access lasts for the Session and the browser is shared", () => {
+    const request: ApprovalRequest = {
+      ...approval, kind: "browser_access", summary: "允许本会话使用 Eidos 浏览器",
+      toolName: "mcp__browser__browser_navigate", arguments: { url: "https://example.com" },
+      grantScope: "session", profile: "default", access: "interact", provenance, permissionProfile: "browser",
+      timeoutSeconds: 120, riskWarning: "批准后，本会话中的后续任务都可以在 Eidos 浏览器里打开网页。",
+    };
+    render(<ComposerSlot run={run} approval={request} onApprove={vi.fn()} onReject={vi.fn()}><textarea /></ComposerSlot>);
+    expect(screen.getByRole("heading", { name: "允许本会话使用 Eidos 浏览器" })).toBeInTheDocument();
+    expect(screen.getByText("浏览器", { selector: ".approval-heading-badge" })).toBeInTheDocument();
+    expect(screen.getByText("当前会话的后续任务，直到你撤销")).toBeInTheDocument();
+    expect(screen.getByText("Eidos 专用 Chrome，所有会话共用")).toBeInTheDocument();
+    expect(screen.getByText("打开网页")).toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent("本会话中的后续任务");
+    expect(screen.getByRole("button", { name: "批准" })).toBeEnabled();
+  });
+
+  it("shows the upload warning on a browser file upload", () => {
+    const request: ApprovalRequest = {
+      ...approval, kind: "external_tool", summary: "向网页上传本地文件", toolName: "mcp__browser__browser_file_upload",
+      arguments: { paths: ["/workspace/report.pdf"] }, provenance, permissionProfile: "browser", timeoutSeconds: 120,
+      envNames: [], riskWarning: "批准后，这些文件会发送给当前网页所在的网站。",
+    };
+    render(<ComposerSlot run={run} approval={request} onApprove={vi.fn()} onReject={vi.fn()}><textarea /></ComposerSlot>);
+    expect(screen.getByRole("note")).toHaveTextContent("这些文件会发送给当前网页所在的网站");
+    expect(screen.getByLabelText("工具参数")).toHaveTextContent("/workspace/report.pdf");
+  });
+});

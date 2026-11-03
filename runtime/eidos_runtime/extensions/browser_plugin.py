@@ -51,3 +51,5 @@ class BrowserLaunch:
     variables: Mapping[str, str]
     # Starts or confirms the shared Chrome before a browser tool executes.
     ensure_browser: Callable[[threading.Event], str] | None = None
+    # Cheap installation check so a missing Chrome fails before any approval.
+    chrome_installed: Callable[[], bool] | None = None

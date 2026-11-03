@@ -18,6 +18,15 @@ from pydantic import BaseModel, ValidationError
 from eidos_runtime.models.mcp_details import McpToolsRequest, McpToolsResponse
 from eidos_runtime.extensions.mcp_details import McpDetails
 from eidos_runtime.models.mcp_connections import BuiltinPluginRequest, BuiltinPluginsResponse, McpConnectionRequest, McpConnectionState
+from eidos_runtime.application.browser import BrowserApplication
+from eidos_runtime.models.browser import (
+    BrowserCloseRequest,
+    BrowserCloseResponse,
+    BrowserGrantRevokeRequest,
+    BrowserGrantRevokeResponse,
+    BrowserStatus,
+    BrowserStatusRequest,
+)
 from eidos_runtime.domain.hooks import HookActivityPage, HookConfigurationRequest, HookHistoryRequest, HookSourceList
 
 from eidos_runtime import __version__
@@ -1613,6 +1622,20 @@ class RuntimeServer:
             handler=_McpToolsAdapter(self), allowed_when_draining=False,
             allowed_during_reconfiguration=False, error_mapper=_application_error_mapping,
         ))
+        for name, request_type, response_type, handler in (
+            ("browser/status", BrowserStatusRequest, BrowserStatus,
+             lambda _id, request: self._browser_application().status(request)),
+            ("browser/revokeGrant", BrowserGrantRevokeRequest, BrowserGrantRevokeResponse,
+             lambda _id, request: self._browser_application().revoke(request)),
+            ("browser/close", BrowserCloseRequest, BrowserCloseResponse,
+             lambda _id, _request: self._browser_application().close()),
+        ):
+            registry.register(MethodRegistration(
+                name=name, request_type=request_type, response_type=response_type,
+                handler=_ApplicationMethodAdapter(handler, response_type),
+                allowed_when_draining=name == "browser/status", allowed_during_reconfiguration=True,
+                error_mapper=_application_error_mapping,
+            ))
         registry.register(MethodRegistration(
             name="plugin/builtin", request_type=BuiltinPluginRequest, response_type=BuiltinPluginsResponse,
             handler=_ApplicationMethodAdapter(
@@ -2134,6 +2157,13 @@ class RuntimeServer:
         self.managed_resources.warmup()
         self._warm_browser_resources()
         self.supervisor.schedule_next()
+
+    def _browser_application(self) -> BrowserApplication:
+        self._applications_or_error()
+        return BrowserApplication(
+            self.store, self.supervisor.events, lambda: self.browser_host,
+            lambda: self.managed_resources.manager,
+        )
 
     def _builtin_plugins(self, request: BuiltinPluginRequest) -> BuiltinPluginsResponse:
         result = self._applications_or_error().extensions.builtin_plugins(request)

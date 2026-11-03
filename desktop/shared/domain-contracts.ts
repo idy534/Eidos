@@ -577,6 +577,19 @@ export interface ExternalToolApprovalRequest extends ApprovalRequestBase {
   envNames: string[];
 }
 
+/** Lets the whole Session operate the shared Eidos Chrome until the user revokes it. */
+export interface BrowserAccessApprovalRequest extends ApprovalRequestBase {
+  kind: "browser_access";
+  toolName: string;
+  arguments: Record<string, unknown>;
+  grantScope: "session";
+  profile: "default";
+  access: "interact";
+  provenance: ToolProvenance;
+  permissionProfile: McpPermissionProfile;
+  timeoutSeconds: number;
+}
+
 export interface NetworkApprovalRequest extends ApprovalRequestBase {
   kind: "network_access";
   toolName: string;
@@ -600,6 +613,7 @@ export type ApprovalRequest =
   | FileApprovalRequest
   | CommandApprovalRequest
   | ExternalToolApprovalRequest
+  | BrowserAccessApprovalRequest
   | NetworkApprovalRequest
   | PermissionApprovalRequest;
 

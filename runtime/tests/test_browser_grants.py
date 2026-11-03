@@ -144,3 +144,29 @@ def test_failed_browser_grant_migration_rolls_back_to_v47(tmp_path):
         assert columns == ["marker"]
     finally:
         connection.close()
+
+
+def test_shared_browser_fixture_matches_closed_contracts():
+    import json
+    from pathlib import Path
+
+    from pydantic import ValidationError
+
+    from eidos_runtime.db.events import BrowserGrantChangedPayload
+    from eidos_runtime.models.browser import (
+        BrowserCloseRequest, BrowserCloseResponse, BrowserGrantRevokeRequest,
+        BrowserGrantRevokeResponse, BrowserStatus, BrowserStatusRequest,
+    )
+
+    fixture = json.loads((Path(__file__).parents[2] / "protocol/fixtures/browser-v1.json").read_text())
+    BrowserStatusRequest.model_validate(fixture["statusRequest"])
+    BrowserStatus.model_validate(fixture["status"])
+    BrowserGrantRevokeRequest.model_validate(fixture["revokeRequest"])
+    BrowserGrantRevokeResponse.model_validate(fixture["revokeResponse"])
+    BrowserCloseRequest.model_validate(fixture["closeRequest"])
+    BrowserCloseResponse.model_validate(fixture["closeResponse"])
+    BrowserGrantChangedPayload.model_validate(fixture["grantChanged"])
+    with pytest.raises(ValidationError):
+        BrowserStatus.model_validate({**fixture["status"], "endpoint": "http://127.0.0.1:9222"})
+    with pytest.raises(ValidationError):
+        BrowserStatus.model_validate({**fixture["status"], "resource": "downloading"})

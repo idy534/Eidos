@@ -32,6 +32,11 @@ import readline from "node:readline";
 
 
 import { isMcpToolsResponse, type McpToolsRequest, type McpToolsResponse } from "../shared/mcp-details.js";
+import {
+  isBrowserCloseResponse, isBrowserGrantRevokeResponse, isBrowserStatus,
+  type BrowserCloseResponse, type BrowserGrantRevokeRequest, type BrowserGrantRevokeResponse,
+  type BrowserStatus, type BrowserStatusRequest,
+} from "../shared/browser.js";
 import { isBuiltinPluginsResponse, isMcpConnectionState, isRemoteMcpInfo, type BuiltinPluginRequest, type BuiltinPluginsResponse, type McpConnectionRequest, type McpConnectionState } from "../shared/mcp-connections.js";
 
 const MAX_MESSAGE_BYTES = 1024 * 1024;
@@ -1233,6 +1238,18 @@ export class RuntimeClient {
 
   readMcpTools(request: McpToolsRequest): Promise<McpToolsResponse> {
     return this.validatedRequest("mcp/tools", { ...request }, isMcpToolsResponse);
+  }
+
+  readBrowserStatus(request: BrowserStatusRequest): Promise<BrowserStatus> {
+    return this.validatedRequest("browser/status", { ...request }, isBrowserStatus);
+  }
+
+  revokeBrowserGrant(request: BrowserGrantRevokeRequest): Promise<BrowserGrantRevokeResponse> {
+    return this.validatedRequest("browser/revokeGrant", { ...request }, isBrowserGrantRevokeResponse);
+  }
+
+  closeSharedBrowser(): Promise<BrowserCloseResponse> {
+    return this.validatedRequest("browser/close", {}, isBrowserCloseResponse);
   }
 
   setMcpEnabled(
@@ -2808,6 +2825,41 @@ function approvalRequestFrom(
       permissionProfile: params.permissionProfile as McpPermissionProfile,
       timeoutSeconds: params.timeoutSeconds as number,
       envNames: [...(params.envNames as string[])],
+    };
+  }
+  if (params.kind === "browser_access") {
+    const provenance = projectApprovalToolProvenance(params.provenance);
+    if (
+      typeof params.toolName !== "string"
+      || !isRecord(params.arguments)
+      || provenance === undefined
+      || params.grantScope !== "session"
+      || params.profile !== "default"
+      || params.access !== "interact"
+      || params.permissionProfile !== "browser"
+      || !isPositiveInteger(params.timeoutSeconds)
+    ) {
+      return undefined;
+    }
+    return {
+      id: message.id,
+      sessionId: params.sessionId as string,
+      runId: params.runId as string,
+      itemId: params.itemId as string,
+      toolCallId: params.toolCallId as string,
+      kind: "browser_access",
+      reviewFallback,
+      requiresHumanConfirmation,
+      riskWarning,
+      summary: params.summary as string,
+      toolName: params.toolName as string,
+      arguments: params.arguments as Record<string, unknown>,
+      grantScope: "session",
+      profile: "default",
+      access: "interact",
+      provenance,
+      permissionProfile: "browser",
+      timeoutSeconds: params.timeoutSeconds as number,
     };
   }
   if (params.kind === "permission_request") {

@@ -435,6 +435,9 @@ const api: EidosRuntimeAPI = {
   // MCP
   listMcpServers: (): Promise<McpListResult> => ipcRenderer.invoke(IPC.MCP_LIST),
   readMcpTools: (request) => ipcRenderer.invoke(IPC.MCP_TOOLS, request),
+  readBrowserAgentStatus: (request) => ipcRenderer.invoke(IPC.BROWSER_AGENT_STATUS, request),
+  revokeBrowserAgentGrant: (request) => ipcRenderer.invoke(IPC.BROWSER_AGENT_REVOKE, request),
+  closeBrowserAgent: () => ipcRenderer.invoke(IPC.BROWSER_AGENT_CLOSE),
   setMcpEnabled: (pluginId: string, serverId: string, enabled: boolean): Promise<McpServerRecord> =>
     ipcRenderer.invoke(IPC.MCP_SET_ENABLED, pluginId, serverId, enabled),
   createMcpServer: (input: McpCreateInput): Promise<McpServerRecord> =>

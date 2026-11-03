@@ -9,6 +9,9 @@ from eidos_runtime.domain.browser import BrowserGrant, BrowserGrantRevokeReason
 from eidos_runtime.runtime.state_machine import EventType
 
 
+_TERMINAL_RUN_STATUSES = frozenset({"succeeded", "failed", "stopped", "canceled", "interrupted"})
+
+
 class BrowserGrantRepository(Repository):
     """Session browser grants; creation and revocation commit with their Event."""
 
@@ -20,6 +23,37 @@ class BrowserGrantRepository(Repository):
                 (session_id,),
             ).fetchone()
         return _grant(row) if row is not None else None
+
+    def grant_session_for_run(self, run_id: str) -> str:
+        """A child task uses its parent Session's grant while the parent Run is active."""
+
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT r.session_id AS own, parent.session_id AS parent, parent.status AS parent_status
+                FROM runs AS r
+                LEFT JOIN agent_delegations AS d ON d.child_session_id = r.session_id
+                LEFT JOIN runs AS parent ON parent.id = d.parent_run_id
+                WHERE r.id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError("run_not_found")
+        if row["parent"] is not None and row["parent_status"] not in _TERMINAL_RUN_STATUSES:
+            return str(row["parent"])
+        return str(row["own"])
+
+    def approved_source(self, item_id: str) -> str | None:
+        """The approval that just authorized this tool item becomes the grant source."""
+
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT id FROM approvals WHERE item_id = ? AND status = 'approved' "
+                "ORDER BY creation_seq DESC LIMIT 1",
+                (item_id,),
+            ).fetchone()
+        return str(row["id"]) if row is not None else None
 
     def grant(
         self,
