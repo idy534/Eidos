@@ -94,7 +94,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 
 ## Model
 
-- 普通采样和无工具收尾调用会把敏感扫描已释放的文本写入同一个 `in_progress` Assistant Item，并通过 SQLite Event/Outbox 和 JSON-RPC `item/delta` 更新界面。完整响应校验成功后，Runtime 才确认该 Item。失败草稿使用现有 incomplete 状态，并从模型上下文排除。
+- 普通采样和无工具收尾调用会把敏感扫描已释放的文本写入同一个 `in_progress` Assistant Item，并通过 SQLite Event/Outbox 和 JSON-RPC `item/delta` 更新界面；首段文本立即显示，之后按 100 ms 或 4 KiB 批量更新。完整响应校验成功后，Runtime 才确认该 Item。失败草稿使用现有 incomplete 状态，并从模型上下文排除。
 - 新 `item/delta` Event 包含 UTF-16 文本偏移 `offset`。Renderer 只在本地内容长度与偏移一致时追加，避免重复投递和已含增量的快照造成重复文字。旧 Event 没有 offset 时仍按原协议读取。Run 结束后，现有 Session 快照刷新负责校正缺失内容。Desktop 和 Runtime 应一起更新。
 
 - `models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。内置 Catalog 提供 DeepSeek、MiniMax、Kimi 和火山引擎 Agent Plan 的十一个推荐模型预设模板，不再强制全等校验。已有模型配置缺少思考档位时，`model/list` 会回退到对应 Catalog 档位，不会改写 `models.json`；已有非空档位仍优先。

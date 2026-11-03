@@ -855,7 +855,7 @@ Adapter 的成功和失败出口都通过现有 `canonical_tool_result` 封装�
 
 ### 回答流式输出
 
-普通采样和 RunFinalizer 复用 `ModelRunner → StreamingSensitiveScanner → AssistantStreamWriter → SQLite Event/Outbox → item/delta → Main → typed IPC → Renderer`。Writer 立即刷新扫描器释放的安全文本块，并把大文本拆成有界片段。Writer 保留未闭合的尖括号尾部，并阻止已识别的 Provider 控制标记；完整响应校验仍由原有 Runtime 链路负责。正常完成复用当前 Item，不再把整个回答重复写入。校验失败或断流会结束当前草稿；取消和重启沿用已有 Item 终态与恢复规则。Context Repository 排除 in-progress 和 incomplete Assistant Item。
+普通采样和 RunFinalizer 复用 `ModelRunner → StreamingSensitiveScanner → AssistantStreamWriter → SQLite Event/Outbox → item/delta → Main → typed IPC → Renderer`。Writer 立即发布首段安全文本，之后按 100 ms 或 4 KiB 批量刷新，每批合并为一个 `item.delta` 事件，避免每行都触发 state 提交、历史 fsync 和通知；批内尾段由下一段文本、完整响应、断流或中止时刷新。Writer 把大文本拆成有界片段。Writer 保留未闭合的尖括号尾部，并阻止已识别的 Provider 控制标记；完整响应校验仍由原有 Runtime 链路负责。正常完成复用当前 Item，不再把整个回答重复写入。校验失败或断流会结束当前草稿；取消和重启沿用已有 Item 终态与恢复规则。Context Repository 排除 in-progress 和 incomplete Assistant Item。
 
 新 delta 的 `offset` 在追加内容的同一 SQLite 事务内计算，单位为 UTF-16 code unit，与 JavaScript 字符串长度一致。该字段只扩展 Event payload 和 Notification，不增加 DB 列或第二套状态。Renderer 对已有 Item 的 started 重投不再覆盖本地内容，并拒绝重复或有缺口的 offset。Run 结束时的持久快照刷新负责最终内容校正。旧 Event 不带 offset，继续兼容读取。旧 Desktop 的严格通知校验不接受新增字段，所以 Desktop 与 Runtime 必须一起更新。
 

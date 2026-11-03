@@ -9,7 +9,7 @@ from eidos_runtime.model.replay import ModelResponseReplay
 
 from eidos_runtime.memory.context import context_epochs
 from eidos_runtime.memory.repository import MemoryRejected
-from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.db.storage import InvalidRunStateError, SessionStore
 from eidos_runtime.model.client import (
     ModelClient,
     ModelRequestError,
@@ -173,6 +173,12 @@ class SamplingRuntime:
                 tool_definitions=frozen.tool_definitions,
             )
         except ModelStreamInterrupted as interrupted:
+            # Batched safe text belongs to the interrupted Item, as it did when
+            # every line was flushed immediately.
+            try:
+                writer.flush()
+            except InvalidRunStateError:
+                pass
             had_progress = bool(provisional_text or interrupted.text)
             partial_text = "".join((*provisional_text, interrupted.text))
             response_text_bytes, response_text_sha256 = response_text_metrics(
