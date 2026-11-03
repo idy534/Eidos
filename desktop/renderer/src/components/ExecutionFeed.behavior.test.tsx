@@ -1985,3 +1985,30 @@ describe("ExecutionFeed user message collapsing", () => {
     }
   });
 });
+
+describe("Browser tool rows", () => {
+  function browserItem(toolName: string, args: object, status: Item["status"] = "completed", text = "- Page URL: https://shop.example.com/cart\n") {
+    return shellItem({ kind: "tool_call", status, toolCall: {
+      ...shellItem().toolCall!, toolName: `mcp__browser__${toolName}`, status: status === "in_progress" ? "running" : "completed",
+      argumentsJson: JSON.stringify(args),
+      provenance: { kind: "mcp", sourceId: "eidos-browser:browser", sourceVersion: "1.0.0", contentHash: "hash" },
+      resultJson: status === "in_progress" ? undefined : JSON.stringify({ outcome: "success", code: "ok", summary: "MCP tool completed", data: { text, isError: false } }),
+    } });
+  }
+
+  it("names the action, element and page host instead of the raw MCP tool", () => {
+    renderFeed(browserItem("browser_click", { target: "e12", element: "登录按钮" }));
+    expect(screen.getByText("点击 · 登录按钮 · shop.example.com")).toBeInTheDocument();
+    expect(screen.queryByText("MCP tool completed")).not.toBeInTheDocument();
+    expect(screen.queryByText(/mcp__browser__/)).not.toBeInTheDocument();
+  });
+
+  it("shows navigation targets, uploads and running state", () => {
+    const { rerender } = renderFeed(browserItem("browser_navigate", { url: "https://docs.example.org/start" }));
+    expect(screen.getByText("打开网页 · docs.example.org")).toBeInTheDocument();
+    rerender(<ExecutionFeed items={[browserItem("browser_file_upload", { paths: ["/workspace/report.pdf"] })]} runs={[baseRun]} approvals={[]} />);
+    expect(screen.getByText("上传文件 · report.pdf · shop.example.com")).toBeInTheDocument();
+    rerender(<ExecutionFeed items={[browserItem("browser_snapshot", {}, "in_progress")]} runs={[baseRun]} approvals={[]} />);
+    expect(screen.getByText("正在读取页面")).toBeInTheDocument();
+  });
+});

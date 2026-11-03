@@ -33,7 +33,7 @@ import { terminalRunPresentation } from "../session-state.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
 import { DropdownMenu } from "./DropdownMenu.js";
-import { CopyIcon, CheckmarkIcon, AutomationsIcon, CloseIcon, ChevronDownIcon } from "./MenuIcons.js";
+import { CopyIcon, CheckmarkIcon, AutomationsIcon, CloseIcon, ChevronDownIcon, GlobeIcon } from "./MenuIcons.js";
 import { ForkIcon } from "./ForkIcon.js";
 import { TurnResults } from "./TurnResults.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
@@ -1919,6 +1919,7 @@ function ToolItem({
       /^Success\.\s*Updated the following files:/i.test(summary)
       || summary === "File change committed"
       || (isViewImage && summary === "Image loaded")
+      || (Boolean(browserToolName(toolCall.toolName)) && summary === "MCP tool completed")
     ),
   );
   const showSummary = (!isDeclareOutputs || isError) && !isRedundantFileSummary;
@@ -2348,7 +2349,51 @@ function subagentActionLabel(
   return status === "in_progress" ? (runningLabels[toolName] ?? `正在运行 ${toolName}`) : base;
 }
 
+const BROWSER_ACTIONS: Record<string, string> = {
+  browser_navigate: "打开网页", browser_navigate_back: "返回上一页", browser_snapshot: "读取页面",
+  browser_take_screenshot: "截图", browser_find: "查找页面内容", browser_console_messages: "读取控制台",
+  browser_network_requests: "读取网络请求", browser_network_request: "读取网络请求", browser_wait_for: "等待页面",
+  browser_click: "点击", browser_type: "输入", browser_fill_form: "填写表单", browser_select_option: "选择",
+  browser_press_key: "按键", browser_hover: "悬停", browser_drag: "拖动", browser_drop: "放下",
+  browser_tabs: "管理标签页", browser_handle_dialog: "处理对话框", browser_resize: "调整窗口",
+  browser_close: "关闭页面", browser_file_upload: "上传文件",
+};
+
+function browserToolName(name: string): string | undefined {
+  const match = /^mcp__browser__(browser_\w+)$/.exec(name);
+  return match && BROWSER_ACTIONS[match[1]!] ? match[1] : undefined;
+}
+
+function pageHost(text: string): string {
+  const url = /Page URL: (\S+)/.exec(text)?.[1];
+  if (!url) return "";
+  try { return new URL(url).host || ""; } catch { return ""; }
+}
+
+/** "点击 · 登录按钮 · example.com" for the bundled browser tools. */
+function browserToolSummary(toolCall: ToolCall, status: Item["status"], tool: string): string {
+  const args = parseObject(toolCall.argumentsJson);
+  const data = objectField(parseObject(toolCall.resultJson), "data");
+  const action = BROWSER_ACTIONS[tool]!;
+  let subject = stringField(args, "element");
+  if (tool === "browser_navigate") {
+    try { subject = new URL(stringField(args, "url")).host; } catch { subject = stringField(args, "url"); }
+  } else if (tool === "browser_type") subject = subject || stringField(args, "text");
+  else if (tool === "browser_press_key") subject = stringField(args, "key");
+  else if (tool === "browser_tabs") subject = { new: "新建", list: "列出", select: "切换", close: "关闭" }[stringField(args, "action")] ?? "";
+  else if (tool === "browser_file_upload") {
+    const paths = Array.isArray(args.paths) ? args.paths.filter((value): value is string => typeof value === "string") : [];
+    subject = paths.length ? paths.map(pathBasename).join("、") : "取消选择";
+  }
+  const host = tool === "browser_navigate" ? "" : pageHost(stringField(data, "text"));
+  const label = [action, subject.slice(0, 60), host].filter(Boolean).join(" · ");
+  if (status === "in_progress") return `正在${label}`;
+  return status === "completed" ? label : `${statusLabel(status)} ${label}`;
+}
+
 function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentSummary[]): string {
+  const browserTool = browserToolName(toolCall.toolName);
+  if (browserTool) return browserToolSummary(toolCall, status, browserTool);
   const args = parseObject(toolCall.argumentsJson);
   const taskName = stringField(args, "name") || stringField(objectField(args, "changes"), "name");
   const result = parseObject(toolCall.resultJson);
@@ -2620,6 +2665,7 @@ function toolIcon(name: string): ReactNode {
     return <SubagentToolIcon />;
   }
   if (name.startsWith("skill_")) return <SkillIcon />;
+  if (browserToolName(name)) return <GlobeIcon />;
   if (name.startsWith("mcp") || name.includes("__")) return <McpIcon />;
   return <DefaultToolIcon />;
 }
