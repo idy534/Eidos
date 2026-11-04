@@ -2024,7 +2024,9 @@ describe("Browser tool rows", () => {
     rerender(<ExecutionFeed items={[browserItem("browser_file_upload", { paths: ["/workspace/report.pdf"] })]} runs={[baseRun]} approvals={[]} />);
     expect(screen.getByText("上传文件 · report.pdf · shop.example.com")).toBeInTheDocument();
     rerender(<ExecutionFeed items={[browserItem("browser_snapshot", {}, "in_progress")]} runs={[baseRun]} approvals={[]} />);
+    // The standalone row names its own action; the live line must not repeat it.
     expect(screen.getByText("正在读取页面")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("正在执行");
   });
 });
 

@@ -17,6 +17,7 @@
 @import "./components/ProjectPicker.css";
 @import "./components/ProjectDialogs.css";
 @import "./components/ExecutionFeed.css";
+@import "./components/LiveActivityLine.css";
 @import "./components/MarkdownContent.css";
 @import "./components/MarkdownEditor.css";
 @import "./components/CodeBlock.css";

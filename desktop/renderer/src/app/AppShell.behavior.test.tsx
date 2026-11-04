@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ApprovalMode, Item, Run, SessionSnapshot } from "../contracts.js";
+import type { ApprovalMode, Item, Run, RuntimeNotification, SessionSnapshot } from "../contracts.js";
 import { deriveRuntimePresentation } from "../session-state.js";
 import { AppShell } from "./AppShell.js";
 import { isQueuedRunListRequest } from "../../../shared/queued-runs.js";
@@ -15,7 +15,8 @@ const fixture = vi.hoisted(() => ({
 vi.mock("./useSessionController.js", () => ({
   useSessionController: () => [{
     snapshot: fixture.snapshot, draft: fixture.draft, projects: [], sessions: [], pending: {},
-  }, { loadProjects: vi.fn(), loadSessions: vi.fn(), forkSession: fixture.forkSession, startDraft: fixture.startDraft }],
+  }, { loadProjects: vi.fn(), loadSessions: vi.fn(), forkSession: fixture.forkSession, startDraft: fixture.startDraft,
+    handleRunNotification: vi.fn(), setSnapshot: vi.fn(), refreshCompletedSession: vi.fn(), handleTitleNotification: vi.fn() }],
 }));
 vi.mock("./useRunController.js", () => ({
   useRunController: () => [{ composerMode: "idle", input: "", references: [], draftReady: false }, { reviseRun: fixture.reviseRun }],
@@ -32,11 +33,11 @@ vi.mock("./useModelController.js", () => ({
 vi.mock("./useExtensionController.js", () => ({
   useExtensionController: () => [{ plugins: [], skills: [], pendingSkillIds: new Set(), mcpServers: [], pendingAction: {} }, { load: vi.fn() }],
 }));
-vi.mock("./useGitReviewController.js", () => ({ useGitReviewController: () => [{}, {}] }));
+vi.mock("./useGitReviewController.js", () => ({ useGitReviewController: () => [{}, { handleNotification: vi.fn() }] }));
 vi.mock("./useResponseActionController.js", () => ({
   useResponseActionController: () => [{}, { load: vi.fn() }],
 }));
-vi.mock("./useContextUsageController.js", () => ({ useContextUsageController: () => [{}, {}] }));
+vi.mock("./useContextUsageController.js", () => ({ useContextUsageController: () => [{}, { handleNotification: vi.fn() }] }));
 vi.mock("./usePlanningState.js", () => ({ usePlanningState: () => ({}) }));
 vi.mock("../components/AgentPanel.js", () => ({ useAgentState: () => ({}) }));
 vi.mock("../components/SessionSidebar.js", () => ({
@@ -64,11 +65,12 @@ vi.mock("../components/InputContext.js", () => ({
 vi.mock("../components/ExecutionFeed.js", async () => {
   const { MarkdownContent } = await import("../components/MarkdownContent.js");
   const { TurnResults } = await import("../components/TurnResults.js");
-  return { ExecutionFeed: ({ runs, items, onFork, onRegenerate, onEditResend }: {
-    runs: Run[]; items: Item[]; onFork?: (item: Item) => void;
+  return { ExecutionFeed: ({ runs, items, liveThinking, onFork, onRegenerate, onEditResend }: {
+    runs: Run[]; items: Item[]; liveThinking?: Record<string, { title: string }>; onFork?: (item: Item) => void;
     onRegenerate?: (run: Run) => void;
     onEditResend?: (run: Run, input: string) => void;
   }) => <>
+    {Object.entries(liveThinking ?? {}).map(([runId, value]) => <p key={runId} data-testid="live-thinking">{`${runId}:${value.title}`}</p>)}
     {runs.map((run) => <div key={run.id}>
       <button onClick={() => onRegenerate?.(run)}>重新回答</button>
       <button onClick={() => onEditResend?.(run, "edited question")}>编辑并重新发送</button>
@@ -470,5 +472,35 @@ describe("AppShell startup draft", () => {
     await act(async () => {});
     expect(fixture.startDraft).toHaveBeenCalledExactlyOnceWith(null);
     expect(screen.queryByRole("button", { name: "新建会话" })).not.toBeInTheDocument();
+  });
+});
+
+describe("AppShell live thinking", () => {
+  it("passes a streamed summary to the Feed and drops it, with late ones, when the Run ends", () => {
+    let notify: ((notification: RuntimeNotification) => void) | undefined;
+    window.eidosRuntime.onNotification = vi.fn((callback: (notification: RuntimeNotification) => void) => {
+      notify = callback;
+      return () => undefined;
+    }) as typeof window.eidosRuntime.onNotification;
+    const snapshot = fixture.snapshot!;
+    const run: Run = {
+      id: "live-run", sessionId: snapshot.session.id, status: "running", modelId: "test-model",
+      modelStepCount: 1, createdAt: 1, updatedAt: 1, startedAt: 1,
+    };
+    snapshot.runs = [run];
+    renderShell();
+    expect(screen.queryByTestId("live-thinking")).not.toBeInTheDocument();
+
+    const thinking = (summaryId: string, title: string): RuntimeNotification => ({
+      method: "run/thinking",
+      params: { sessionId: snapshot.session.id, runId: run.id, summaryId, title },
+    });
+    act(() => notify!(thinking("rs:0", "确认技能目录")));
+    expect(screen.getByTestId("live-thinking")).toHaveTextContent("live-run:确认技能目录");
+
+    act(() => notify!({ method: "run/updated", params: { sessionId: snapshot.session.id, run: { ...run, status: "failed", completedAt: 2 } } }));
+    expect(screen.queryByTestId("live-thinking")).not.toBeInTheDocument();
+    act(() => notify!(thinking("rs:1", "迟到的摘要")));
+    expect(screen.queryByTestId("live-thinking")).not.toBeInTheDocument();
   });
 });

@@ -215,20 +215,6 @@
   background: var(--accent);
   animation: blink 1s steps(1) infinite;
 }
-.thinking-indicator {
-  width: fit-content;
-  margin: 0 0 1.25rem;
-  color: transparent;
-  background: linear-gradient(100deg, #737a75 12%, #cbd7cf 36%, #315f4a 50%, #d8e1db 64%, #737a75 88%);
-  background-size: 240% 100%;
-  background-clip: text;
-  -webkit-background-clip: text;
-  font-size: var(--font-size-body);
-  line-height: var(--line-height-body);
-  animation: liquid-thinking 1.8s ease-in-out infinite;
-  overflow-anchor: none;
-}
-.thinking-indicator::after { content: "…"; }
 .process-group {
   max-width: 48rem;
   margin: 0 0 1.25rem;
@@ -770,11 +756,6 @@ span.tool-file-link:hover {
 .tool-group-list .shell-command { font-size: 12px; line-height: 18px; }
 .tool-group-list .tool-body { padding-left: 0.4rem; }
 @keyframes blink { 50% { opacity: 0; } }
-@keyframes liquid-thinking {
-  0% { background-position: 100% 50%; filter: blur(0); }
-  50% { filter: blur(0.12px); }
-  100% { background-position: -100% 50%; filter: blur(0); }
-}
 @media (max-width: 760px) {
   .feed { padding: 1.25rem 1rem; }
 }
@@ -793,7 +774,6 @@ span.tool-file-link:hover {
     animation: none;
   }
   .streaming::after { animation: none; }
-  .thinking-indicator { color: var(--muted); background: none; animation: none; }
   .feed { scroll-behavior: auto; }
 }
 
