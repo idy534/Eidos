@@ -1073,6 +1073,7 @@ def _tool_entry(
             "contentHash": content_hash,
             "pluginId": server["pluginId"],
             "serverId": server["serverId"],
+            **({"displayTitle": title} if (title := _display_title(tool)) else {}),
         }),
         adapter=McpToolAdapter(
             connection, tool.name, name, input_validator, output_validator
@@ -1081,6 +1082,16 @@ def _tool_entry(
         input_schema_validator=input_validator,
         output_schema_validator=output_validator,
     )
+
+
+def _display_title(tool: mcp_types.Tool) -> str | None:
+    """The server's human title for the feed, bounded and single-line."""
+    for value in (tool.title, tool.annotations.title if tool.annotations is not None else None):
+        if isinstance(value, str):
+            title = " ".join(value.split())[:120]
+            if title:
+                return title
+    return None
 
 
 def _normalize_mcp_schema(schema: dict[str, object]) -> dict[str, object]:

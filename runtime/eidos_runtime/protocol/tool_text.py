@@ -9,6 +9,8 @@ from unidiff import PatchSet, UnidiffParseError
 from eidos_runtime.file_limits import INLINE_TOOL_TEXT_BYTES
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 
+SUMMARY_VIEW_BYTES = 16 * 1024
+
 
 _DISPLAY_ARGUMENT_FIELDS = {
     "run_shell": ("command", "cwd"),
@@ -85,13 +87,22 @@ def project_tool_text(item: dict[str, object]) -> dict[str, object]:
             projected[field] = ""
         else:
             result = json.loads(content)
-            projected[field] = json.dumps({
+            truncated: dict[str, object] = {
                 "outcome": result.get("outcome"), "code": result.get("code"),
                 "summary": str(result.get("summary", ""))[:1024],
                 "sideEffectsMayExist": result.get("sideEffectsMayExist", False),
                 "reconciliationRequired": result.get("reconciliationRequired", False),
                 "data": {"truncated": True},
-            }, ensure_ascii=False)
+            }
+            # Image metadata and the browser page facts are small and bounded;
+            # the feed still renders them when the full text is paged.
+            if isinstance(result.get("attachments"), list):
+                truncated["attachments"] = result["attachments"][:32]
+            data = result.get("data")
+            view = data.get("browser") if isinstance(data, dict) else None
+            if isinstance(view, dict) and len(json.dumps(view, ensure_ascii=False).encode("utf-8")) <= SUMMARY_VIEW_BYTES:
+                truncated["data"] = {"truncated": True, "browser": view}
+            projected[field] = json.dumps(truncated, ensure_ascii=False)
     return {**item, "toolCall": projected}
 
 

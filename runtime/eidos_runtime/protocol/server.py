@@ -1119,6 +1119,12 @@ class RuntimeServer:
                 lambda _id, request: self._applications_or_error().sessions.read_tool_text(request),
             ),
             (
+                "toolCall/readContent",
+                method_dtos.ToolContentReadRequestDto,
+                method_dtos.ToolContentReadResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.read_tool_content(request),
+            ),
+            (
                 "search/sessions", search_dtos.SearchRequest, search_dtos.SearchResponse,
                 lambda _id, request: self._applications_or_error().search.search(request),
             ),
@@ -2026,7 +2032,7 @@ class RuntimeServer:
                     lambda: self.plugins, self._required_async_kernel, self.supervisor.resources,
                     browser_launch=lambda: resolve_browser_launch(
                         self.store, self.browser_host, self.runtime_dependency_catalog,
-                        supports_images=False, discovery=True,
+                        discovery=True,
                     ),
                 ),
             ),

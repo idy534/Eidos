@@ -25,7 +25,7 @@ from eidos_runtime.runtime.run_resources import RunResources
 FIXTURE = Path(__file__).parent / "fixtures" / "browser_mcp_fixture.py"
 
 
-class BrowserToolAuthorizationTests(unittest.TestCase):
+class _BrowserToolCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="eidos-browser-tools-")
         root = Path(self.temporary.name).resolve()
@@ -101,6 +101,8 @@ class BrowserToolAuthorizationTests(unittest.TestCase):
         }
         return run, requests, results
 
+
+class BrowserToolAuthorizationTests(_BrowserToolCase):
     def test_interaction_asks_once_per_session_and_reads_never_ask(self) -> None:
         session = self.store.create_session(str(self.workspace))
         _, requests, results = self.run_tools(session["id"], [
@@ -218,3 +220,89 @@ class BrowserToolAuthorizationTests(unittest.TestCase):
         _, _, results = self.run_tools(session["id"], [("browser_snapshot", {})])
         self.assertEqual(results["browser_snapshot"]["code"], "browser_profile_in_use")
         self.assertFalse(results["browser_snapshot"]["reconciliationRequired"])
+
+
+class BrowserScreenshotDisplayTests(_BrowserToolCase):
+    def screenshot_row(self, session_id: str):
+        run, _, results = self.run_tools(session_id, [("browser_take_screenshot", {})])
+        row = self.store.connection.execute(
+            "SELECT tool_calls.id, tool_calls.ui_result_json, tool_calls.model_result_json FROM tool_calls "
+            "JOIN items ON items.id = tool_calls.item_id WHERE items.run_id = ?", (run["id"],),
+        ).fetchone()
+        return row, results["browser_take_screenshot"]
+
+    def test_screenshot_is_kept_for_display_when_the_model_cannot_see_images(self) -> None:
+        import base64
+
+        from eidos_runtime.db.errors import InvalidCursorError, ResourceNotFoundError
+
+        session = self.store.create_session(str(self.workspace))
+        row, canonical = self.screenshot_row(session["id"])
+        visible = json.loads(row["ui_result_json"])
+        self.assertEqual(visible["attachments"], [{"index": 0, "kind": "image", "mime": "image/png", "bytes": 73}])
+        self.assertIn("modelContentSnapshot", json.loads(row["model_result_json"]))
+        # Canonical text is unchanged; the model and the feed never see the private output path.
+        self.assertIn("browser-output", canonical["data"]["text"])
+        self.assertNotIn("browser-output", row["model_result_json"])
+        self.assertNotIn("browser-output", row["ui_result_json"])
+        self.assertIn("Screenshot of viewport (attached to this result)", visible["data"]["text"])
+        self.assertEqual(visible["data"]["browser"]["page"], {"url": "https://example.com/", "title": "Example Domain"})
+
+        chunk = self.store.read_tool_content(session["id"], row["id"], 0, 0, None)
+        self.assertEqual(chunk.mime_type, "image/png")
+        self.assertTrue(chunk.complete)
+        self.assertEqual(base64.b64decode(chunk.data)[:8], b"\x89PNG\r\n\x1a\n")
+        self.assertEqual(chunk.size_bytes, 73)
+        with self.assertRaises(InvalidCursorError):
+            self.store.read_tool_content(session["id"], row["id"], 0, 0, "0" * 64)
+        with self.assertRaises(ResourceNotFoundError):
+            self.store.read_tool_content(session["id"], row["id"], 1, 0, None)
+        other = self.store.create_session(str(self.workspace))
+        with self.assertRaises(ResourceNotFoundError):
+            self.store.read_tool_content(other["id"], row["id"], 0, 0, None)
+        # A missing Blob file is reported as unavailable, not as an internal error.
+        reference = json.loads(json.loads(row["model_result_json"])["modelContentSnapshot"])["$eidosBlob"]
+        (self.data / "blobs" / reference["relativePath"]).unlink()
+        with self.assertRaises(ResourceNotFoundError):
+            self.store.read_tool_content(session["id"], row["id"], 0, 0, None)
+
+    def test_large_images_are_read_in_bounded_chunks(self) -> None:
+        import base64
+
+        from eidos_runtime.domain.tool_content import ToolBinaryContent, ToolContentSnapshot
+        from eidos_runtime.models.tool_text import TOOL_CONTENT_CHUNK_BYTES
+
+        session = self.store.create_session(str(self.workspace))
+        row, _ = self.screenshot_row(session["id"])
+        payload = b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 4096
+        reference = self.store.database.json_blobs.put_json(
+            "tool-result-content",
+            ToolContentSnapshot(items=(ToolBinaryContent.from_bytes(payload, "image/png"),)).model_dump_json(by_alias=True),
+        )
+        stored = json.loads(row["model_result_json"])
+        stored["modelContentSnapshot"] = reference
+        with self.store.database.transaction() as connection:
+            connection.execute("UPDATE tool_calls SET model_result_json=? WHERE id=?", (json.dumps(stored), row["id"]))
+        received, offset, digest = b"", 0, None
+        while True:
+            chunk = self.store.read_tool_content(session["id"], row["id"], 0, offset, digest)
+            digest = chunk.sha256
+            data = base64.b64decode(chunk.data)
+            self.assertLessEqual(len(data), TOOL_CONTENT_CHUNK_BYTES)
+            self.assertLess(len(chunk.model_dump_json()), 1024 * 1024)
+            received += data
+            offset = chunk.next_offset
+            if chunk.complete:
+                break
+        self.assertEqual(received, payload)
+
+    def test_screenshots_saved_before_attachments_still_show(self) -> None:
+        session = self.store.create_session(str(self.workspace))
+        row, _ = self.screenshot_row(session["id"])
+        legacy = json.loads(row["ui_result_json"])
+        legacy.pop("attachments")
+        with self.store.database.transaction() as connection:
+            connection.execute("UPDATE tool_calls SET ui_result_json=? WHERE id=?", (json.dumps(legacy), row["id"]))
+        items = self.store.read_session_snapshot(session["id"], item_limit=50, before_item_id=None)["items"]
+        call = next(item["toolCall"] for item in items if item.get("toolCall", {}).get("id") == row["id"])
+        self.assertEqual(json.loads(call["resultJson"])["attachments"], [{"index": 0, "kind": "image"}])

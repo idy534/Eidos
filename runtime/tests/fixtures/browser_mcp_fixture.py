@@ -71,5 +71,9 @@ for line in sys.stdin:
                     "### Snapshot\n```yaml\n- heading \"Example Domain\" [ref=e2]\n```",
         }]
         if name == "browser_take_screenshot":
+            content[0]["text"] = (
+                "### Result\n- [Screenshot of viewport](../../../../private/tmp/eidos-mcp-x/tmp/browser-output/page-1.png)\n"
+                + str(content[0]["text"]).split("\n", 2)[2]
+            )
             content.append({"type": "image", "data": PNG, "mimeType": "image/png"})
         send({"jsonrpc": "2.0", "id": message["id"], "result": {"content": content, "isError": False}})

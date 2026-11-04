@@ -102,6 +102,8 @@ class ToolProvenance(ClosedModel):
     plugin_id: StrictStr | None = Field(default=None, alias="pluginId")
     server_id: StrictStr | None = Field(default=None, alias="serverId")
     skill_id: StrictStr | None = Field(default=None, alias="skillId")
+    # Display only: the MCP tool's human title. It never affects authorization.
+    display_title: StrictStr | None = Field(default=None, alias="displayTitle", min_length=1, max_length=120)
 
     @field_validator("content_hash")
     @classmethod

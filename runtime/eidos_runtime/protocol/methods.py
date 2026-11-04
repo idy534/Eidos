@@ -218,6 +218,15 @@ class ToolTextReadRequestDto(_CanonicalIdRequest):
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id", "tool_call_id")
 
 
+class ToolContentReadRequestDto(_CanonicalIdRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    tool_call_id: StrictStr = Field(alias="toolCallId")
+    index: StrictInt = Field(ge=0, le=31)
+    sha256: StrictStr | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    offset: StrictInt = Field(default=0, ge=0, le=10 * 1024 * 1024)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id", "tool_call_id")
+
+
 class SessionGitStatusRequestDto(_GitRootRequest, _ProjectBoundSessionRequest):
     pass
 
@@ -730,6 +739,15 @@ class ToolTextReadResponseDto(MethodResultDto):
     content: StrictStr
     next_offset: StrictInt = Field(alias="nextOffset", ge=0, le=9_007_199_254_740_991)
     total_characters: StrictInt = Field(alias="totalCharacters", ge=0, le=9_007_199_254_740_991)
+    sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ToolContentReadResponseDto(MethodResultDto):
+    data: StrictStr
+    mime_type: StrictStr = Field(alias="mimeType", pattern=r"^image/(png|jpeg)$")
+    size_bytes: StrictInt = Field(alias="sizeBytes", ge=1, le=10 * 1024 * 1024)
+    next_offset: StrictInt = Field(alias="nextOffset", ge=0, le=10 * 1024 * 1024)
+    complete: bool
     sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 
 

@@ -1837,6 +1837,12 @@ class ExecutionRepository(Repository):
                         "tool-result-content", model_content.model_dump_json(by_alias=True)
                     )
                     model_result_json = json.dumps(projected, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+                    visible = json.loads(ui_result_json or result_json)
+                    attachments = model_content.display_attachments()
+                    if attachments and isinstance(visible, dict):
+                        # Desktop reads the bytes through the model snapshot reference.
+                        visible["attachments"] = attachments
+                        ui_result_json = json.dumps(visible, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
             tool_update = connection.execute(
                 """
                 UPDATE tool_calls

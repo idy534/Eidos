@@ -11,6 +11,7 @@ from eidos_runtime.models import EidosFrozenStrictModel
 
 MAX_TOOL_CONTENT_BYTES = 10 * 1024 * 1024
 MAX_CONTEXT_CONTENT_BYTES = 16 * 1024 * 1024
+DISPLAY_IMAGE_MIMES = frozenset({"image/png", "image/jpeg"})
 
 
 class ToolTextContent(EidosFrozenStrictModel):
@@ -47,6 +48,14 @@ ToolContentItem = Annotated[ToolTextContent | ToolBinaryContent, Field(discrimin
 class ToolContentSnapshot(EidosFrozenStrictModel):
     schema_version: Literal[1] = 1
     items: tuple[ToolContentItem, ...] = Field(min_length=1, max_length=32)
+
+    def display_attachments(self) -> list[dict[str, object]]:
+        """Bounded image metadata the Desktop feed renders; bytes stay in the Blob."""
+        return [
+            {"index": index, "kind": "image", "mime": item.mime, "bytes": len(base64.b64decode(item.data))}
+            for index, item in enumerate(self.items)
+            if isinstance(item, ToolBinaryContent) and item.mime in DISPLAY_IMAGE_MIMES
+        ]
 
     @model_validator(mode="after")
     def validate_total_size(self) -> ToolContentSnapshot:
