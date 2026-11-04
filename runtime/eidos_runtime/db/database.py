@@ -87,6 +87,8 @@ DATABASE_NAME = STATE_DATABASE_NAME
 LOCK_NAME = "runtime.lock"
 RESERVE_NAME = "emergency.reserve"
 RESERVE_BYTES = 1024 * 1024
+INTEGRITY_STAMP_NAME = "integrity.stamp"
+FULL_INTEGRITY_INTERVAL_SECONDS = 7 * 24 * 60 * 60
 
 T = TypeVar("T")
 
@@ -543,13 +545,35 @@ class Database:
                     migrate_event_query_indexes(connection)
                 except sqlite3.Error as error:
                     raise StorageError("schema_migration_failed") from error
-            _verify_integrity(connection)
+            self._verify_startup_integrity(
+                connection,
+                data_directory / INTEGRITY_STAMP_NAME,
+                force_full=revision != SCHEMA_VERSION,
+            )
             self._connection = connection
             self.health_state = "ready"
             self.health_code = None
         except Exception:
             connection.close()
             raise
+
+    @staticmethod
+    def _verify_startup_integrity(
+        connection: sqlite3.Connection, stamp: Path, *, force_full: bool,
+    ) -> None:
+        """Run the full scan only when needed; otherwise a cheap structural check.
+
+        A full ``integrity_check`` is O(database size). It runs for new or
+        migrated databases, when the last passing full check is missing, unreadable
+        or older than the interval, and whenever ``quick_check`` reports anything.
+        """
+        if not force_full and _full_check_is_fresh(stamp):
+            if connection.execute("PRAGMA quick_check").fetchone()[0] == "ok":
+                if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                    raise StorageError("foreign_key_violation")
+                return
+        _verify_integrity(connection)
+        _write_integrity_stamp(stamp)
 
     def connection(self) -> sqlite3.Connection:
         if self._connection is None:
@@ -1115,6 +1139,30 @@ def _verify_pragmas(connection: sqlite3.Connection) -> None:
     busy_timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
     if foreign_keys != 1 or str(journal_mode).lower() != "wal" or busy_timeout < 5000:
         raise StorageError("storage_pragmas_invalid")
+
+
+def _full_check_is_fresh(stamp: Path) -> bool:
+    try:
+        if stamp.is_symlink():
+            return False
+        checked_at = int(stamp.read_text(encoding="ascii").strip())
+    except (OSError, ValueError):
+        return False
+    age = time.time() - checked_at
+    return 0 <= age < FULL_INTEGRITY_INTERVAL_SECONDS
+
+
+def _write_integrity_stamp(stamp: Path) -> None:
+    """Best-effort cache of the last passing full check; failure only costs a rescan."""
+    try:
+        if stamp.is_symlink():
+            stamp.unlink()
+        temporary = stamp.with_name(stamp.name + ".tmp")
+        temporary.write_text(str(int(time.time())), encoding="ascii")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, stamp)
+    except OSError:
+        pass
 
 
 def _verify_integrity(connection: sqlite3.Connection) -> None:

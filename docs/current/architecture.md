@@ -535,7 +535,7 @@ Workspace Explorer 复用 `RepositoryWatchController`。Watcher 事件只产生 
 
 `ThreadHistoryStore` 在读取主库和历史库时，分别持有对应连接所有者的数据库锁，锁覆盖查询执行和结果读取。投影文件锁只负责串行处理历史 JSONL，不能替代数据库锁。系统在释放数据库锁后执行 JSONL 写入、校验、截断和 fsync，避免文件 IO 长时间占用主库。Outbox 每批处理已提交事件后只推进一次历史投影；批次中途失败时，已经处理的部分仍会推进投影，未投递事件保留并按原顺序重试。历史投影失败后，下一次投递会重试，Runtime 重启时也会补齐。队列查询继续使用已有主库锁，系统不增加跨 Run 执行门或全局并发配额。历史投影保留原有事件顺序、提交偏移、启动恢复和已删除会话清理。
 
-Runtime 启动仍执行主库及历史、日志辅助库完整性检查、Schema 迁移、历史投影和业务恢复。v40 已移除旧记忆辅助库；启动清理标记负责删除旧文件，当前记忆元数据归主库管理。仓库索引库只在启动检查路径、权限、版本和必要表，不执行全库扫描或旧库 auto-vacuum 转换。历史快照外置检查按每批 256 条读取 ID 与 payload，取消逐条 SELECT 和全量 ID 列表。Runtime 会跳过已撤销快照，不再把已清空的内容重新保存为 Blob；未撤销快照仍检查 Blob 引用，并保留逐记录提交和中断后重试。旧 Schema 尚无撤销列时，Runtime 继续执行原有迁移路径。
+Runtime 启动对主库先做结构性 `quick_check` 和 `foreign_key_check`；完整 `integrity_check` 只在新建库、本次启动发生 Schema 迁移、数据目录中的 `integrity.stamp` 缺失、无法读取或超过 7 天，以及 `quick_check` 报告异常时执行，通过后重写该时间戳。时间戳只是缓存，写入失败只会让下次启动重新全量检查，损坏仍 fail closed 为 `database_corrupt`。历史、日志辅助库完整性检查、Schema 迁移、历史投影和业务恢复。v40 已移除旧记忆辅助库；启动清理标记负责删除旧文件，当前记忆元数据归主库管理。仓库索引库只在启动检查路径、权限、版本和必要表，不执行全库扫描或旧库 auto-vacuum 转换。历史快照外置检查按每批 256 条读取 ID 与 payload，取消逐条 SELECT 和全量 ID 列表。Runtime 会跳过已撤销快照，不再把已清空的内容重新保存为 Blob；未撤销快照仍检查 Blob 引用，并保留逐记录提交和中断后重试。旧 Schema 尚无撤销列时，Runtime 继续执行原有迁移路径。
 
 普通启动不主动执行 Blob 全量 GC。Runtime 通过 Supervisor 管理的 `StorageMaintenance` 执行存储清理：任务创建至少 60 秒后，且 Runtime 已初始化、控制状态为 running、没有活动 Run 时，执行一次定期 GC；后续间隔为一小时。该受管任务通过独立只读连接执行仓库库完整性和外键检查，不长时间占用索引查询锁。支持 incremental auto-vacuum 的缓存每次回收最多 1024 个空闲页。旧缓存不自动执行整库 VACUUM 转换。SQLite progress handler 响应取消。GC 从 SQLite 流式读取引用，持有原有 State/Blob 锁，在删除前完整解析 Context 清单并保留共享块、输入引用、手工 MCP 环境和 ModelAttempt 回放。GC 在取消时停止；引用扫描未完成时不删除文件。清理失败会记录本地日志，并按一小时间隔重试。Session 删除和真实隐私撤销仍执行原有即时清理；启动时若存在尚未清理的真实撤销，也会触发该清理。
 
