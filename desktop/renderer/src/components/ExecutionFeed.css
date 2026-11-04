@@ -993,23 +993,35 @@ button.model-retry-link:hover { color: var(--text); text-decoration-color: curre
 .mcp-error { display: flex; flex-direction: column; gap: 0.3rem; }
 .mcp-error-detail .mcp-text { color: var(--danger); }
 .tool-body p.mcp-warning { color: var(--status-warning); }
-.mcp-structured > summary { cursor: pointer; color: var(--muted); font-size: var(--font-size-caption); }
-.mcp-structured[open] > summary { margin-bottom: 0.3rem; }
-.mcp-structured > .mcp-text + .mcp-text { margin-top: 0.3rem; }
 .mcp-images { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-.tool-body p.tool-provenance { color: var(--text-tertiary); }
 .tool-body p.browser-action { color: var(--text-secondary); }
-.browser-page-card {
+.tool-body p.browser-page {
   display: flex;
-  flex-direction: column;
-  max-width: 36rem;
-  padding: 0.35rem 0.6rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface-raised);
+  align-items: baseline;
+  gap: 0.5rem;
   min-width: 0;
+  max-width: 40rem;
 }
-.browser-page-card__title { color: var(--text); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.browser-page-card__url { color: var(--text-tertiary); font-size: var(--font-size-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-page__title { flex: 0 1 auto; min-width: 0; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-page__url { flex: 1 1 0; min-width: 0; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+}
+.mcp-meta__warning { color: var(--status-warning); }
+.mcp-meta__toggle {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-tertiary);
+  font: inherit;
+  cursor: pointer;
+}
+.mcp-meta__toggle:hover, .mcp-meta__toggle:focus-visible, .mcp-meta__toggle[aria-expanded="true"] { color: var(--text); }
 .tool-body ul.browser-tabs { margin: 0; }
 .browser-tabs__current { color: var(--text-secondary); }

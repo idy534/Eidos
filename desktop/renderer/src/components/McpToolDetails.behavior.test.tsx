@@ -53,12 +53,13 @@ describe("third-party MCP rows", () => {
     expect(screen.getByText("GitHub · Create issue · idy534/Eidos")).toBeInTheDocument();
     await expandDetails();
     expect(screen.getByText("Created #42")).toBeInTheDocument();
-    expect(screen.getByText("结构化结果")).toBeInTheDocument();
     expect(screen.getByText("repo")).toBeInTheDocument();
     expect(screen.getByText("Fix login")).toBeInTheDocument();
-    const footer = screen.getByText("GitHub（插件）");
-    expect(footer).toHaveAttribute("title", "插件 github · 服务器 github · 工具 create_issue");
-    expect(screen.queryByText(/MCP tool completed|Plugin github|ms$/)).not.toBeInTheDocument();
+    // Structured content is one click away; nothing repeats the source or shows short durations.
+    expect(screen.queryByText(/"number": 42/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "结构化结果" }));
+    expect(screen.getByText(/"number": 42/)).toBeInTheDocument();
+    expect(screen.queryByText(/GitHub（插件）|耗时|MCP tool completed|Plugin github|ms$/)).not.toBeInTheDocument();
   });
 
   it("shows the server's own error text and long durations in seconds", async () => {
@@ -69,7 +70,7 @@ describe("third-party MCP rows", () => {
     await expandDetails();
     expect(screen.getByText("MCP 服务器报告了错误")).toBeInTheDocument();
     expect(screen.getByText('Validation failed: label "p0" does not exist')).toBeInTheDocument();
-    expect(screen.getByText("GitHub（插件） · 耗时 3.3 秒")).toBeInTheDocument();
+    expect(screen.getByText("耗时 3.3 秒")).toBeInTheDocument();
     expect(screen.queryByText("mcp_tool_error")).not.toBeInTheDocument();
   });
 
@@ -100,7 +101,8 @@ describe("browser rows", () => {
     fireEvent.click(thumbnail);
     expect(screen.getByRole("dialog", { name: "截图预览" })).toBeInTheDocument();
     expect(screen.getByText("bilibili")).toBeInTheDocument();
-    expect(screen.queryByText(/Plugin eidos-browser/)).not.toBeInTheDocument();
+    expect(screen.getByText("www.bilibili.com/zh-Hans")).toBeInTheDocument();
+    expect(screen.queryByText(/Plugin eidos-browser|浏览器（内置）|技术详情|原始输出/)).not.toBeInTheDocument();
   });
 
   it("offers a retry when the screenshot cannot be loaded", async () => {
@@ -112,19 +114,32 @@ describe("browser rows", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "放大查看截图" })).toBeInTheDocument());
   });
 
-  it("describes clicks with the page card and tucks Playwright code away", async () => {
+  it("describes clicks with the page and keeps raw output one click away", async () => {
     renderItem(mcpItem(browserCall("browser_click", { target: "e12", element: "登录" }, {
-      text: "### Ran Playwright code\n```js\nawait page.click()\n```",
-      browser: { page: { url: "https://www.bilibili.com/zh-Hans", title: "bilibili" }, code: "await page.getByRole('link').click();", console: { errors: 2, warnings: 0 } },
-    })));
+      text: "### Ran Playwright code\n```js\nawait page.getByRole('link').click();\n```",
+      browser: { page: { url: "https://www.bilibili.com/zh-Hans", title: "bilibili" }, console: { errors: 2, warnings: 0 } },
+    }), "completed"));
     expect(screen.getByText("点击 · 登录 · www.bilibili.com")).toBeInTheDocument();
     await expandDetails(document.body, "details.tool-item");
-    expect(screen.getByText("点击「登录」")).toBeInTheDocument();
-    expect(screen.getByText("https://www.bilibili.com/zh-Hans")).toBeInTheDocument();
-    expect(screen.getByText("控制台有 2 个错误")).toBeInTheDocument();
-    expect(screen.getByText("浏览器（内置）")).toBeInTheDocument();
-    const technical = screen.getByText("技术详情").closest("details")!;
-    expect(technical).not.toHaveAttribute("open");
+    // The title already names the click; the body does not repeat it.
+    expect(screen.queryByText("点击「登录」")).not.toBeInTheDocument();
+    expect(screen.getByText("www.bilibili.com/zh-Hans")).toBeInTheDocument();
+    expect(screen.getByText("控制台 2 个错误")).toBeInTheDocument();
+    expect(screen.queryByText(/page.getByRole/)).not.toBeInTheDocument();
+    const raw = screen.getByRole("button", { name: "原始输出" });
+    fireEvent.click(raw);
+    expect(screen.getByText(/page.getByRole/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "收起原始输出" }));
+    expect(screen.queryByText(/page.getByRole/)).not.toBeInTheDocument();
+  });
+
+  it("shows no meta line when there is nothing worth saying", async () => {
+    const { container } = renderItem(mcpItem(browserCall("browser_navigate", { url: "https://www.bilibili.com/" }, {
+      browser: { page: { url: "https://www.bilibili.com/", title: "bilibili" } },
+    })));
+    await expandDetails(document.body, "details.tool-item");
+    expect(screen.getByText("bilibili")).toBeInTheDocument();
+    expect(container.querySelector(".mcp-meta")).toBeNull();
   });
 
   it("masks text typed into password fields", async () => {

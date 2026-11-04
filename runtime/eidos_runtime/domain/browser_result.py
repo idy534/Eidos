@@ -95,9 +95,6 @@ def browser_view(text: str) -> dict[str, object] | None:
     result = sections.get("Result")
     if result:
         view["result"] = _bounded(clean_browser_text(result.strip()))
-    code = sections.get("Ran Playwright code")
-    if code:
-        view["code"] = _bounded(clean_browser_text(_fenced(code)))
     snapshot = sections.get("Snapshot")
     if snapshot and snapshot.lstrip().startswith("```"):
         view["snapshotLines"] = len(_fenced(snapshot).splitlines())

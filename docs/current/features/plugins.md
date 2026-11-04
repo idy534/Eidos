@@ -36,7 +36,7 @@ Runtime 创建新的扩展快照时会核验插件包内容身份。内容身份
 
 MCP 工具行标题为“插件名 · 工具标题 · 第一个字符串参数”，例如“GitHub · Create issue · idy534/Eidos”。插件名来自已安装插件列表，内置浏览器显示为“浏览器”；找不到时使用服务 ID。工具标题来自 MCP Tool 的 `title` 或 `annotations.title`，Runtime 写入 `ToolProvenance.displayTitle`（单行，最多 120 字符，只用于展示）；没有标题时显示去掉 `mcp__<serverId>__` 前缀的工具名。
 
-展开后依次显示：错误（Eidos 错误码的中文说明；服务端 `isError` 时显示服务端文本，默认 6 行）、图片附件、文本结果（默认 12 行，可展开）、折叠的“结构化结果”、参数（默认 4 项，可显示完整 JSON），以及页脚。页脚只写来源和“耗时 N 秒”（2 秒及以上才显示）；结果不确定时显示“结果未知：操作可能已执行”。插件 ID、服务器 ID 和原始工具名放在页脚的悬停提示中。实现见 `desktop/renderer/src/components/McpToolDetails.tsx`。
+展开后依次显示：错误（Eidos 错误码的中文说明；服务端 `isError` 时显示服务端文本，默认 6 行）、图片附件、文本结果（默认 12 行，可展开）、参数（默认 4 项，可显示完整 JSON），以及一行弱化的附加信息。附加信息只在有内容时出现：“耗时 N 秒”（2 秒及以上）和“结构化结果”切换按钮。来源已在标题中，不再重复显示；插件 ID 和服务器 ID 在设置页查看。结果不确定时另起一行显示“结果未知：操作可能已执行”。实现见 `desktop/renderer/src/components/McpToolDetails.tsx`。
 
 
 远程服务声明示例：

@@ -54,7 +54,7 @@ def test_private_output_links_become_plain_notes():
     assert "path: '(attached to this result)'" in cleaned
 
 
-def test_view_extracts_page_tabs_console_and_code():
+def test_view_extracts_page_tabs_and_console():
     view = browser_view(TYPE)
     assert view["page"] == {"url": "https://www.google.com/search?q=bili", "title": "哔哩哔哩 - Google 搜索"}
     assert view["console"] == {"errors": 1, "warnings": 0}
@@ -62,7 +62,7 @@ def test_view_extracts_page_tabs_console_and_code():
         {"index": 0, "current": False, "title": "", "url": "about:blank"},
         {"index": 1, "current": True, "title": "哔哩哔哩 - Google 搜索", "url": "https://www.google.com/search?q=bili"},
     ]
-    assert view["code"].startswith("await page.getByRole('combobox'")
+    assert "code" not in view
     assert "snapshotLines" not in view
 
 

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { Item, ToolAttachment, ToolCall } from "../../../shared/index.js";
 import { CloseIcon } from "./MenuIcons.js";
@@ -81,11 +81,6 @@ export function toolAttachments(result: Record<string, unknown>): ToolAttachment
 }
 
 /** "浏览器" for the bundled plugin, its installed name otherwise, then the raw server id. */
-export function useMcpSourceName(toolCall: ToolCall): string {
-  const names = useContext(McpPluginNamesContext);
-  return mcpSourceName(toolCall, names);
-}
-
 export function mcpSourceName(toolCall: ToolCall, names: ReadonlyMap<string, string>): string {
   const provenance = toolCall.provenance;
   if (provenance?.pluginId === BUNDLED_BROWSER_PLUGIN) return "浏览器";
@@ -261,30 +256,47 @@ export function McpErrorNotice({ code, detail }: { code: string; detail?: string
   );
 }
 
-/** Source, duration and uncertainty; the internal ids stay in the tooltip. */
-export function McpFooter({ toolCall, result }: { toolCall: ToolCall; result: Record<string, unknown> }) {
-  const source = useMcpSourceName(toolCall);
-  const bundled = toolCall.provenance?.pluginId === BUNDLED_BROWSER_PLUGIN;
+interface MetaPanel {
+  label: string;
+  content: ReactNode;
+}
+
+/**
+ * One quiet line under a row, shown only when it has something to say:
+ * console errors, a duration of 2 s or more, and toggles for raw output.
+ * The source is already in the row title, so it is not repeated here.
+ */
+export function McpMeta({ toolCall, result, notes = [], panels = [] }: {
+  toolCall: ToolCall;
+  result: Record<string, unknown>;
+  notes?: readonly string[];
+  panels?: readonly MetaPanel[];
+}) {
+  const [open, setOpen] = useState<string>();
   const duration = toolCall.completedAt === undefined ? undefined : Math.max(0, toolCall.completedAt - toolCall.startedAt);
   const uncertain = result.reconciliationRequired === true || result.outcome === "interrupted";
-  const parts = [
-    `${source}（${bundled ? "内置" : "插件"}）`,
-    duration !== undefined && duration >= SHOW_DURATION_FROM_MS ? `耗时 ${formatSeconds(duration)}` : "",
-  ].filter(Boolean);
-  const ids = [
-    toolCall.provenance?.pluginId && `插件 ${toolCall.provenance.pluginId}`,
-    toolCall.provenance?.serverId && `服务器 ${toolCall.provenance.serverId}`,
-    `工具 ${mcpToolName(toolCall)}`,
-  ].filter(Boolean).join(" · ");
+  const facts = [...notes, duration !== undefined && duration >= SHOW_DURATION_FROM_MS ? `耗时 ${formatSeconds(duration)}` : ""].filter(Boolean);
+  const active = panels.find((panel) => panel.label === open);
   return (
     <>
       {uncertain && <p className="mcp-warning" role="status">结果未知：操作可能已执行</p>}
-      <p className="tool-provenance" title={ids}>{parts.join(" · ")}</p>
+      {(facts.length > 0 || panels.length > 0) && (
+        <div className="mcp-meta">
+          {facts.map((fact) => <span key={fact} className={fact.startsWith("控制台") ? "mcp-meta__warning" : undefined}>{fact}</span>)}
+          {panels.map((panel) => (
+            <button key={panel.label} type="button" className="mcp-meta__toggle" aria-expanded={open === panel.label}
+              onClick={() => setOpen((current) => current === panel.label ? undefined : panel.label)}>
+              {open === panel.label ? `收起${panel.label}` : panel.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {active && <div className="mcp-meta__panel">{active.content}</div>}
     </>
   );
 }
 
-/** Generic MCP body: result first, then arguments, then a quiet footer. */
+/** Generic MCP body: result first, then arguments, then an optional quiet meta line. */
 export function McpToolBody({ item, toolCall, isError }: { item: Item; toolCall: ToolCall; isError: boolean }) {
   const result = parseObject(toolCall.resultJson);
   const data = record(result.data);
@@ -298,18 +310,14 @@ export function McpToolBody({ item, toolCall, isError }: { item: Item; toolCall:
       {isError && code && code !== "ok" && <McpErrorNotice code={serverError ? "mcp_tool_error" : code} detail={serverText || undefined} />}
       {!isError && <ToolImages item={item} toolCall={toolCall} attachments={attachments} name="图像" />}
       {!isError && serverText && <ExpandableText value={serverText} lines={TEXT_PREVIEW_LINES} />}
-      {structured !== undefined && (
-        <details className="mcp-structured">
-          <summary>结构化结果</summary>
-          <pre className="mcp-text">{JSON.stringify(structured, null, 2)}</pre>
-        </details>
-      )}
       {toolCall.resultHash && toolCall.resultBytes !== undefined && (
         <ToolTextView key={toolCall.resultHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="result"
           sha256={toolCall.resultHash} totalBytes={toolCall.resultBytes} />
       )}
       <McpArguments toolCall={toolCall} />
-      <McpFooter toolCall={toolCall} result={result} />
+      <McpMeta toolCall={toolCall} result={result} panels={structured === undefined ? [] : [{
+        label: "结构化结果", content: <pre className="mcp-text">{JSON.stringify(structured, null, 2)}</pre>,
+      }]} />
     </div>
   );
 }
@@ -318,7 +326,6 @@ interface BrowserView {
   page?: { url?: string | undefined; title?: string | undefined };
   tabs?: Array<{ index: number; current: boolean; title: string; url: string }>;
   result?: string;
-  code?: string;
   snapshotLines?: number;
   console?: { errors: number; warnings: number };
   error?: string;
@@ -336,7 +343,6 @@ export function browserView(result: Record<string, unknown>): BrowserView {
       })),
     } : {}),
     ...(text(view.result) ? { result: text(view.result) } : {}),
-    ...(text(view.code) ? { code: text(view.code) } : {}),
     ...(typeof view.snapshotLines === "number" ? { snapshotLines: view.snapshotLines } : {}),
     ...(typeof consoleCounts.errors === "number" ? { console: { errors: consoleCounts.errors, warnings: Number(consoleCounts.warnings) || 0 } } : {}),
     ...(text(view.error) ? { error: text(view.error) } : {}),
@@ -350,13 +356,25 @@ export function browserPageHost(result: Record<string, unknown>): string {
   try { return new URL(url).host || ""; } catch { return ""; }
 }
 
-function PageCard({ page }: { page: NonNullable<BrowserView["page"]> }) {
+function shortUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (!/^https?:$/.test(parsed.protocol)) return url;
+    const path = parsed.pathname === "/" ? "" : parsed.pathname;
+    return `${parsed.host}${path}${parsed.search ? "?…" : ""}`;
+  } catch {
+    return url;
+  }
+}
+
+/** The page the action ended on: title, then a muted short address. */
+function PageLine({ page }: { page: NonNullable<BrowserView["page"]> }) {
   if (!page.url && !page.title) return null;
   return (
-    <div className="browser-page-card" title={page.url}>
-      <span className="browser-page-card__title">{page.title || page.url}</span>
-      {page.url && page.title && <span className="browser-page-card__url">{page.url}</span>}
-    </div>
+    <p className="browser-page" title={page.url}>
+      <span className="browser-page__title">{page.title || shortUrl(page.url ?? "")}</span>
+      {page.url && page.title && <span className="browser-page__url">{shortUrl(page.url)}</span>}
+    </p>
   );
 }
 
@@ -364,11 +382,10 @@ function masked(field: string, value: string): string {
   return SECRET_FIELD.test(field) ? "••••" : value;
 }
 
+/** Details the row title cannot hold; clicks, hovers, keys and waits are already fully named there. */
 function browserAction(tool: string, args: Record<string, unknown>): string {
   const element = text(args.element);
   switch (tool) {
-    case "browser_click": return element ? `点击「${element}」` : "";
-    case "browser_hover": return element ? `悬停在「${element}」` : "";
     case "browser_select_option": {
       const values = Array.isArray(args.values) ? args.values.filter((value): value is string => typeof value === "string") : [];
       return element ? `在「${element}」选择 ${values.join("、")}` : "";
@@ -377,17 +394,7 @@ function browserAction(tool: string, args: Record<string, unknown>): string {
       const typed = masked(element, text(args.text));
       return element ? `在「${element}」输入「${typed}」${args.submit === true ? "并提交" : ""}` : "";
     }
-    case "browser_press_key": return text(args.key) ? `按下 ${text(args.key)}` : "";
     case "browser_drag": return `从「${text(args.startElement)}」拖到「${text(args.endElement)}」`;
-    case "browser_wait_for":
-      if (typeof args.time === "number") return `等待 ${args.time} 秒`;
-      if (text(args.text)) return `等待「${text(args.text)}」出现`;
-      if (text(args.textGone)) return `等待「${text(args.textGone)}」消失`;
-      return "";
-    case "browser_file_upload": {
-      const paths = Array.isArray(args.paths) ? args.paths.filter((value): value is string => typeof value === "string") : [];
-      return paths.length ? `上传 ${paths.map((path) => path.split("/").at(-1)).join("、")}` : "取消选择文件";
-    }
     case "browser_handle_dialog": return args.accept === true ? "接受对话框" : "关闭对话框";
     case "browser_resize": return typeof args.width === "number" ? `调整窗口为 ${args.width}×${String(args.height)}` : "";
     default: return "";
@@ -407,7 +414,7 @@ function FormFields({ args }: { args: Record<string, unknown> }) {
   );
 }
 
-/** Browser tools: what happened, on which page, with raw Playwright output tucked away. */
+/** Browser tools: what happened and on which page; Playwright's raw output is one click away. */
 export function BrowserToolBody({ item, toolCall, tool, isError }: {
   item: Item; toolCall: ToolCall; tool: string; isError: boolean;
 }) {
@@ -437,20 +444,19 @@ export function BrowserToolBody({ item, toolCall, tool, isError }: {
           ))}
         </ul>
       )}
-      {view.page && <PageCard page={view.page} />}
-      {view.console && view.console.errors > 0 && <p className="mcp-warning">控制台有 {view.console.errors} 个错误</p>}
-      {(view.code || rawText) && (
-        <details className="mcp-structured">
-          <summary>技术详情</summary>
-          {view.code && <pre className="mcp-text">{view.code}</pre>}
-          {rawText && <pre className="mcp-text">{rawText}</pre>}
-          {toolCall.resultHash && toolCall.resultBytes !== undefined && (
-            <ToolTextView key={toolCall.resultHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="result"
+      {view.page && <PageLine page={view.page} />}
+      <McpMeta
+        toolCall={toolCall}
+        result={result}
+        notes={view.console && view.console.errors > 0 ? [`控制台 ${view.console.errors} 个错误`] : []}
+        panels={(rawText || toolCall.resultHash) && tool !== "browser_take_screenshot" ? [{
+          label: "原始输出",
+          content: toolCall.resultHash && toolCall.resultBytes !== undefined
+            ? <ToolTextView key={toolCall.resultHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="result"
               sha256={toolCall.resultHash} totalBytes={toolCall.resultBytes} />
-          )}
-        </details>
-      )}
-      <McpFooter toolCall={toolCall} result={result} />
+            : <pre className="mcp-text">{rawText}</pre>,
+        }] : []}
+      />
     </div>
   );
 }

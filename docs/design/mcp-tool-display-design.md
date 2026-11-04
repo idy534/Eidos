@@ -238,3 +238,13 @@ P1 修复的是缺陷，可以单独发版；P2 和 P3 是体验改进。按 `AG
 - Main：`runtime-client-tool-content.test.ts`（共享 Fixture `protocol/fixtures/tool-content-v1.json`）、`runtime-client-capacity`、`runtime-client-browser`、`workspace-preview`。
 - Renderer：`McpToolDetails.behavior.test.tsx`、`ExecutionFeed.behavior.test.tsx`、`ExecutionFeed.test.tsx`、`ApprovalComposer.behavior.test.tsx`。
 - 未运行 Full Suite、Electron smoke 和真实 Chrome 端到端测试；界面没有在运行中的 App 里人工验收。
+
+### 展示精简（2026-11-04，实施后调整）
+
+在样例中查看后，原来的页脚和“技术详情”在每行都会出现，但信息量不大，因此做了以下调整：
+
+- 去掉来源行（“浏览器（内置）”“GitHub（插件）”）：行标题已经写明来源。不再在悬停提示里放内部 ID。
+- 页脚改为一行弱化的附加信息，只在有内容时出现：控制台错误数、2 秒及以上的耗时，以及“原始输出”或“结构化结果”切换按钮。点击后在下方展开，按钮变为“收起…”。
+- 去掉“技术详情”折叠框和单独的 Playwright 代码字段（Runtime 不再生成 `data.browser.code`），代码仍在原始输出中。截图行不提供原始输出。
+- 页面卡片改为单行：页面标题加去掉协议的短地址，不加边框。
+- 点击、悬停、按键和等待的动作描述与标题重复，已删除；输入、选择、拖动和表单字段仍然显示。
