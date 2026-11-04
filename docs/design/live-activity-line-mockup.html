@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eidos · 实时活动行设计稿</title>
+<style>
+  /* Tokens copied from desktop/renderer/src/styles/tokens.css */
+  :root {
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+    --font-code: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "PingFang SC", monospace;
+    --surface: #f8f9fb; --surface-raised: #fff; --surface-muted: #f0f2f5;
+    --text: #1d1d1f; --text-secondary: #48484a; --muted: #6e6e73; --text-tertiary: #86868b;
+    --line: rgba(0,0,0,.07);
+    --accent: #2e624c; --accent-soft: #e5ede8;
+    --radius: 10px; --radius-md: 8px; --radius-pill: 9999px;
+    --apple-spring: cubic-bezier(.16,1,.3,1);
+    --apple-shadow-sm: 0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.02);
+    --apple-shadow-md: 0 6px 20px -3px rgba(0,0,0,.07), 0 2px 6px rgba(0,0,0,.03);
+    --shadow-popover: 0 .7rem 2rem rgb(25 30 26 / 16%);
+    --tg-text: #6b706c; --tg-text-strong: #3d423e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #e9ebef; font-family: var(--font-ui); color: var(--text); -webkit-font-smoothing: antialiased; }
+  .page { max-width: 1120px; margin: 0 auto; padding: 32px 24px 64px; display: grid; grid-template-columns: minmax(0, 46rem) minmax(0, 1fr); gap: 28px; align-items: start; }
+  @media (max-width: 960px) { .page { grid-template-columns: 1fr; } }
+
+  .window { background: var(--surface); border-radius: 14px; box-shadow: var(--apple-shadow-md), 0 0 0 .5px rgba(0,0,0,.08); overflow: hidden; }
+  .titlebar { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; border-bottom: 1px solid var(--line); font-size: 13px; font-weight: 600; }
+  .seg { display: inline-flex; background: var(--surface-muted); border-radius: 8px; padding: 2px; gap: 2px; }
+  .seg button { font: inherit; font-size: 12px; font-weight: 500; border: 0; background: transparent; color: var(--muted); padding: 3px 10px; border-radius: 6px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: #fff; color: var(--text); box-shadow: var(--apple-shadow-sm); }
+  .feed { padding: 22px 28px 30px; font-size: 14px; line-height: 22px; min-height: 420px; }
+
+  .user { margin: 0 0 22px auto; width: fit-content; max-width: 82%; background: var(--surface-muted); border: 1px solid rgba(0,0,0,.05); border-radius: var(--radius); padding: 10px 16px; }
+  .prose { margin: 0 0 14px; color: var(--text); }
+
+  /* ===== existing process group header ===== */
+  .pg-head { display: flex; gap: .4rem; align-items: center; padding: 0 0 .65rem; border-bottom: 1px solid #e5e4df; color: #737873; margin-bottom: .75rem; }
+  .pg-head::after { content: ""; width: .38rem; height: .38rem; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg) translate(-.08rem, -.08rem); }
+  .process-text { margin: 0 0 .75rem; color: var(--text); }
+
+  /* ===== existing tool group (collapsed) ===== */
+  .tg { margin: 0 0 .45rem; color: var(--tg-text); }
+  .tg-head { display: inline-flex; align-items: center; gap: .45rem; margin-left: -.5rem; padding: .1rem .5rem; border-radius: var(--radius-md); }
+  .tg-head::after { content: ""; width: .38rem; height: .38rem; border-right: 1.5px solid #9a9f9b; border-bottom: 1.5px solid #9a9f9b; transform: rotate(-45deg); }
+  .tg-lead { width: 1rem; height: 1rem; display: inline-grid; place-items: center; color: #8a8f8b; }
+
+  /* ===== NEW: live activity line ===== */
+  .live-wrap { position: relative; margin: .25rem 0 1.25rem; min-height: 26px; }
+  .live {
+    display: inline-flex; align-items: center; gap: .45rem; max-width: 100%;
+    margin-left: -.5rem; padding: .1rem .5rem; border: 0; border-radius: var(--radius-md);
+    background: transparent; color: var(--tg-text); font: inherit; font-size: 14px; line-height: 22px; text-align: left;
+    cursor: default; transition: background-color 120ms ease, color 120ms ease;
+    animation: live-in 260ms var(--apple-spring) both;
+  }
+  button.live { cursor: pointer; }
+  button.live:hover, button.live[aria-expanded="true"] { background: rgba(0,0,0,.045); color: var(--tg-text-strong); }
+  .live-lead { flex: none; width: 1rem; height: 1rem; display: inline-grid; place-items: center; color: var(--accent); }
+  .live-lead svg { width: 15px; height: 15px; overflow: visible; }
+  .trace-track { stroke: currentColor; opacity: .2; }
+  .trace-run { stroke: currentColor; stroke-dasharray: 26 74; stroke-linecap: round; animation: trace 1.7s linear infinite; }
+  .live-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: transparent;
+    background: linear-gradient(90deg, #6b706c 30%, #b9beba 50%, #6b706c 70%) 0 0 / 220% 100%;
+    -webkit-background-clip: text; background-clip: text;
+    animation: shimmer 1.8s ease-in-out infinite; }
+  .live-text.swap { animation: shimmer 1.8s ease-in-out infinite, text-in 300ms var(--apple-spring); }
+  .live-more { flex: none; width: .38rem; height: .38rem; border-right: 1.5px solid #9a9f9b; border-bottom: 1.5px solid #9a9f9b; transform: rotate(-135deg) translate(-.05rem, -.05rem); opacity: 0; transition: opacity 120ms ease, transform 220ms var(--apple-spring); }
+  button.live:hover .live-more, button.live[aria-expanded="true"] .live-more { opacity: 1; }
+  .live[data-leaving="true"] { animation: live-out 180ms ease forwards; }
+
+  @keyframes trace { to { stroke-dashoffset: -100; } }
+  @keyframes shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+  @keyframes live-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+  @keyframes live-out { to { opacity: 0; transform: translateY(-2px); } }
+  @keyframes text-in { from { opacity: 0; transform: translateY(5px); filter: blur(1.5px); } to { opacity: 1; transform: none; filter: none; } }
+
+  /* popover: opens upward, never pushes the feed */
+  .pop { position: absolute; left: -8px; bottom: calc(100% + 6px); z-index: 5; width: min(27rem, calc(100% + 8px));
+    background: var(--surface-raised); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-popover);
+    padding: 12px 14px 12px; transform-origin: 18px 100%; animation: pop-in 180ms var(--apple-spring) both; }
+  .pop[hidden] { display: none; }
+  @keyframes pop-in { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
+  .pop-cap { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: 12px; line-height: 18px; color: var(--text-tertiary); }
+  .pop-cap::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+  .pop-title { margin: 0 0 4px; font-size: 13px; line-height: 20px; font-weight: 600; color: var(--text); }
+  .pop-body { margin: 0; max-height: 8.75rem; overflow: auto; font-size: 13px; line-height: 20px; color: var(--text-secondary); overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(106,111,103,.28) transparent; }
+  .pop-prev { margin: 10px 0 0; padding: 8px 0 0; border-top: 1px solid var(--line); list-style: none; }
+  .pop-prev li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; line-height: 20px; color: var(--text-tertiary); padding-left: 11px; position: relative; }
+  .pop-prev li::before { content: ""; position: absolute; left: 1px; top: 9px; width: 3px; height: 3px; border-radius: 50%; background: #b4b8b4; }
+
+  .done-head { color: #737873; }
+  .final { margin: 0; color: var(--text); }
+  .cursor::after { content: ""; display: inline-block; width: .45rem; height: 1em; margin-left: .25rem; vertical-align: -.15rem; background: var(--accent); animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ===== notes column ===== */
+  .notes { display: grid; gap: 16px; }
+  .card { background: #fff; border-radius: 12px; box-shadow: var(--apple-shadow-sm), 0 0 0 .5px rgba(0,0,0,.06); padding: 16px 18px; font-size: 13px; line-height: 20px; color: var(--text-secondary); }
+  .card h3 { margin: 0 0 8px; font-size: 13px; color: var(--text); }
+  .card p { margin: 0 0 8px; } .card p:last-child { margin: 0; }
+  .card ol, .card ul { margin: 0; padding-left: 18px; } .card li { margin: 0 0 4px; }
+  .card code { font-family: var(--font-code); font-size: 12px; background: #eef0f2; padding: 1px 5px; border-radius: 4px; }
+  .steps { display: grid; gap: 6px; }
+  .steps button { display: flex; align-items: center; gap: 8px; width: 100%; font: inherit; font-size: 12.5px; text-align: left; border: 0; border-radius: 8px; padding: 6px 10px; background: var(--surface-muted); color: var(--text-secondary); cursor: pointer; transition: background-color 120ms ease; }
+  .steps button:hover { background: var(--surface-selected, #e5e8ec); }
+  .steps button[aria-pressed="true"] { background: var(--accent-soft); color: #204535; }
+  .steps .tag { margin-left: auto; font-size: 11px; color: var(--text-tertiary); }
+  .gallery { display: grid; gap: 10px; }
+  .gallery .g { background: var(--surface); border-radius: 8px; padding: 6px 12px; }
+  .gallery .g small { display: block; font-size: 11px; color: var(--text-tertiary); margin: 0 0 1px; }
+  .gallery .live { animation: none; }
+  .gallery .g.narrow { max-width: 15rem; }
+  .gallery .live-wrap { margin: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  td, th { text-align: left; padding: 5px 8px 5px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; color: var(--text); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .trace-run { animation: none; }
+    .live-text { animation: none !important; color: var(--tg-text); background: none; }
+    .live, .pop { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div>
+    <div class="window">
+      <div class="titlebar"><span>Eidos · 实时活动行</span>
+        <span class="seg" role="group" aria-label="播放方式"><button id="auto" aria-pressed="true">自动播放</button><button id="manual" aria-pressed="false">手动</button></span>
+      </div>
+      <div class="feed" id="feed"></div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div class="card">
+      <h3>场景（点击切换）</h3>
+      <div class="steps" id="steps"></div>
+    </div>
+    <div class="card">
+      <h3>设计要点</h3>
+      <ol>
+        <li><b>只有一个会动的东西。</b>实时行出现后，工具组行回到静态的叠层图标，不再同时转圈。</li>
+        <li><b>左侧 Mark 描边。</b>图标沿 Eidos 切角方块的轮廓走一圈亮线，强调色 <code>--accent</code>，15px。</li>
+        <li><b>一行、不换行。</b>文字沿用工具组运行态的 shimmer，超出省略。没有计时（上方“正在处理 Ns”已有）。</li>
+        <li><b>有内容才可点。</b>有思考摘要时整行是按钮，点击在上方弹出气泡，不推动 Feed；没有摘要时它只是状态，不是按钮。</li>
+        <li><b>run 结束即消失。</b>不留历史，不写入 SQLite。</li>
+      </ol>
+    </div>
+    <div class="card">
+      <h3>文字来源（从高到低）</h3>
+      <table>
+        <tr><th>来源</th><th>示例</th></tr>
+        <tr><td>模型思考摘要的标题</td><td>确认本地技能目录里…</td></tr>
+        <tr><td>正在执行的工具</td><td>正在运行 ls ~/.eidos/skills</td></tr>
+        <tr><td>兜底</td><td>正在思考</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>样例</h3>
+      <div class="gallery" id="gallery"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const TRACE = `<svg viewBox="0 0 16 16" fill="none" stroke-width="1.5" aria-hidden="true"><path class="trace-track" pathLength="100" d="M5 2.5H11A2.5 2.5 0 0 1 13.5 5V10L10 13.5H5A2.5 2.5 0 0 1 2.5 11V5A2.5 2.5 0 0 1 5 2.5Z"/><path class="trace-run" pathLength="100" d="M5 2.5H11A2.5 2.5 0 0 1 13.5 5V10L10 13.5H5A2.5 2.5 0 0 1 2.5 11V5A2.5 2.5 0 0 1 5 2.5Z"/></svg>`;
+const STACK = `<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5 13.5 5.5 8 8.5 2.5 5.5zM2.5 8.5 8 11.5l5.5-3M2.5 11 8 14l5.5-3"/></svg>`;
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+const scenes = [
+  { id: "think", name: "刚开始 · 兜底文案", tag: "无摘要", text: "正在思考", cmds: 0 },
+  { id: "sum1", name: "有思考摘要（中文）", tag: "可点击", text: "确认本地技能目录里“获取技能”对应的技能",
+    body: "用户问的是“获取技能的 skillmd 是哪个技能”。先列出本地技能目录，再按名称和描述匹配；如果有多个相近的技能，需要对比它们的 SKILL.md 说明，确认哪一个负责“获取技能”。",
+    prev: [], cmds: 0 },
+  { id: "tool", name: "工具执行 · 无摘要", tag: "无摘要", text: "正在运行 ls ~/.eidos/skills", cmds: 1 },
+  { id: "sum2", name: "有思考摘要（英文）", tag: "可点击", text: "Running the prepared MCP launch command by hand to capture its error output",
+    body: "The MCP server exited before the handshake. I will run the prepared launch command manually so the stderr output is captured, then compare it against the sandbox profile to see whether the failure is a missing path or a denied read.",
+    prev: ["确认本地技能目录里“获取技能”对应的技能", "对比两个相近技能的 SKILL.md"], cmds: 2 },
+  { id: "fin", name: "整理回复", tag: "无摘要", text: "正在整理回复", cmds: 2 },
+  { id: "done", name: "回复流式输出 · 行消失", tag: "结束", cmds: 2 },
+];
+let cur = 0, timer = null, auto = true, startedAt = Date.now(), tick = null, popOpen = false;
+
+function liveHTML(s, opts = {}) {
+  const more = !!s.body;
+  const tagName = more ? "button" : "div";
+  const attrs = more ? ` aria-expanded="${popOpen}" aria-haspopup="dialog"` : "";
+  const pop = more ? `<div class="pop" role="dialog" aria-label="思考摘要" ${popOpen ? "" : "hidden"}>
+      <p class="pop-cap">思考摘要 · 仅本次运行</p>
+      <p class="pop-title">${esc(s.text)}</p>
+      <p class="pop-body">${esc(s.body)}</p>
+      ${s.prev && s.prev.length ? `<ul class="pop-prev">${s.prev.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
+    </div>` : "";
+  return `<div class="live-wrap">${pop}<${tagName} class="live" role="${more ? "button" : "status"}"${attrs}>
+    <span class="live-lead">${TRACE}</span><span class="live-text ${opts.swap ? "swap" : ""}" title="${esc(s.text)}">${esc(s.text)}</span>${more ? '<span class="live-more"></span>' : ""}
+  </${tagName}></div>`;
+}
+
+function render(swap) {
+  const s = scenes[cur];
+  const done = s.id === "done";
+  const secs = done ? 18 : Math.floor((Date.now() - startedAt) / 1000) + 6;
+  const cmds = s.cmds || 0;
+  const group = cmds ? `<div class="tg"><span class="tg-head"><span class="tg-lead">${STACK}</span>运行 ${cmds} 条命令</span></div>` : "";
+  document.getElementById("feed").innerHTML = `
+    <div class="user">获取技能的 skillmd 是哪个技能</div>
+    <div class="pg-head ${done ? "done-head" : ""}">${done ? "已处理" : "正在处理"} ${secs}s</div>
+    <p class="process-text">我先确认一下本地技能目录里“获取技能”对应的是哪个技能。</p>
+    ${group}
+    ${done ? `<p class="final cursor">“获取技能”对应的是 <b>skill-installer</b>，它的 SKILL.md 说明了从目录安装技能的流程。</p>` : liveHTML(s, { swap })}
+  `;
+  const btn = document.querySelector("button.live");
+  if (btn) btn.addEventListener("click", (e) => { e.stopPropagation(); popOpen = !popOpen; render(false); });
+  document.querySelectorAll("#steps button").forEach((b, i) => b.setAttribute("aria-pressed", String(i === cur)));
+}
+
+function go(i, swap = true) {
+  cur = i; popOpen = false; clearTimeout(timer);
+  if (i === 0) startedAt = Date.now();
+  render(swap);
+  if (auto) timer = setTimeout(() => go(cur === scenes.length - 1 ? 0 : cur + 1), cur === scenes.length - 1 ? 3200 : 3600);
+}
+
+document.getElementById("steps").innerHTML = scenes.map((s, i) => `<button data-i="${i}" aria-pressed="false">${s.name}<span class="tag">${s.tag}</span></button>`).join("");
+document.getElementById("steps").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) go(+b.dataset.i); });
+document.addEventListener("click", () => { if (popOpen) { popOpen = false; render(false); } });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && popOpen) { popOpen = false; render(false); } });
+for (const [id, v] of [["auto", true], ["manual", false]]) document.getElementById(id).addEventListener("click", () => {
+  auto = v; document.getElementById("auto").setAttribute("aria-pressed", String(v)); document.getElementById("manual").setAttribute("aria-pressed", String(!v)); go(cur, false);
+});
+tick = setInterval(() => { if (scenes[cur].id !== "done" && !popOpen) { const h = document.querySelector(".pg-head"); if (h) h.textContent = `正在处理 ${Math.floor((Date.now() - startedAt) / 1000) + 6}s`; } }, 1000);
+
+const samples = [
+  { l: "兜底", s: { text: "正在思考" } },
+  { l: "思考摘要（可点击，悬停显示箭头）", s: scenes[1] },
+  { l: "工具执行", s: { text: "正在运行 pnpm test:affected desktop/renderer/src/components/ExecutionFeed.test.tsx" } },
+  { l: "窄窗口：一行省略", s: scenes[3], narrow: true },
+];
+document.getElementById("gallery").innerHTML = samples.map((x) =>
+  `<div class="g ${x.narrow ? "narrow" : ""}"><small>${x.l}</small>${liveHTML({ ...x.s, body: undefined })}</div>`).join("");
+
+go(1, false);
+</script>
+</body>
+</html>
