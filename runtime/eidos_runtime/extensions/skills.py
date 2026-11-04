@@ -130,6 +130,9 @@ class _CodeloadRedirectHandler(urllib.request.HTTPRedirectHandler):
         )
 
 
+TreeHashMode = Literal["full", "cached", "none"]
+
+
 @dataclass(frozen=True)
 class _SkillSource:
     qualified_id: str
@@ -222,7 +225,7 @@ class SkillCatalog:
             ]
         entries: list[dict[str, object]] = []
         used_bytes = 2
-        sources = self._sources(snapshot)
+        sources = self._sources(snapshot, hash_mode="cached")
         expected_hash = snapshot.get("skillCatalogHash")
         legacy_empty = not sources and expected_hash == "0" * 64
         if not legacy_empty and _catalog_hash(tuple(
@@ -281,7 +284,7 @@ class SkillCatalog:
                 self._pinned_sources[catalog.catalog_hash] = tuple(sources)
                 self._pinned_skill_content[catalog.catalog_hash] = content_by_id
             return catalog
-        sources = self._sources(snapshot)
+        sources = self._sources(snapshot, hash_mode="cached")
         entries = tuple(_catalog_entry(source) for source in sources)
         expected_hash = snapshot.get("skillCatalogHash")
         catalog_hash = _catalog_hash(entries)
@@ -392,7 +395,7 @@ class SkillCatalog:
             state.qualified_id for state in self.plugins.store.skill_states()
             if not state.enabled or state.removed
         ]
-        entries = tuple(_catalog_entry(source) for source in self._sources(snapshot))
+        entries = tuple(_catalog_entry(source) for source in self._sources(snapshot, hash_mode="cached"))
         snapshot["skillCatalogHash"] = _catalog_hash(entries)
         snapshot["skillCatalogIds"] = sorted(entry.qualified_id for entry in entries)
         snapshot["skillLeaseVersion"] = 1
@@ -495,7 +498,7 @@ class SkillCatalog:
         sources = (
             self._pinned_sources.get(snapshot.catalog_hash, ())
             if isinstance(snapshot, SkillCatalogSnapshot)
-            else self._sources(snapshot)
+            else self._sources(snapshot, hash_mode="cached")
         )
         for source in sources:
             if source.qualified_id == qualified_id:
@@ -514,7 +517,10 @@ class SkillCatalog:
                     })
                 source = _source(
                     qualified_id[:-len(entry.name)], root, entry.source_identity, entry.source_version,
-                    entry.source_hash if entry.source_kind == 'plugin' else None,
+                    # A personal Skill directory is writable by its own scripts
+                    # (caches, outputs). Its tree hash is recorded provenance; the
+                    # instruction identity is the SKILL.md content hash below.
+                    entry.source_hash if entry.source_kind in {'plugin', 'user'} else None,
                     private=entry.source_kind == 'system', owned=entry.source_kind != 'system', source_kind=entry.source_kind,
                 )
                 if _catalog_entry(source) != entry:
@@ -522,7 +528,9 @@ class SkillCatalog:
                 return metadata, source
         raise SkillReadError("skill_unavailable")
 
-    def _sources(self, snapshot: dict[str, object]) -> list[_SkillSource]:
+    def _sources(
+        self, snapshot: dict[str, object], *, hash_mode: TreeHashMode = "full",
+    ) -> list[_SkillSource]:
         sources: list[_SkillSource] = []
         for plugin in _snapshot_plugins(snapshot):
             plugin_id = str(plugin["id"])
@@ -543,10 +551,12 @@ class SkillCatalog:
             skills_root / ".system", "system", "eidos-system", "builtin",
             strict=True,
             source_kind="system",
+            hash_mode=hash_mode,
         ))
         sources.extend(_directory_sources(
             skills_root, "user", "eidos-user", "local",
             source_kind="user",
+            hash_mode=hash_mode,
         ))
         excluded = snapshot.get("excludedSkillIds", [])
         ordered = sorted(
@@ -1162,6 +1172,7 @@ def _source(
     private: bool = False,
     owned: bool = False,
     source_kind: SkillSourceKind = "user",
+    hash_mode: TreeHashMode = "full",
 ) -> _SkillSource:
     content = _read_text(root / "SKILL.md", MAX_SKILL_BYTES)
     try:
@@ -1172,13 +1183,20 @@ def _source(
     if root.name != name:
         raise SkillReadError("skill_metadata_invalid")
     content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    resolved_source_hash = source_hash or _tree_hash(
-        _read_tree(
-            root,
-            private=private,
-            owned=owned,
+    if source_hash:
+        resolved_source_hash = source_hash
+    elif hash_mode == "none":
+        resolved_source_hash = ""
+    elif hash_mode == "cached":
+        resolved_source_hash = _cached_tree_hash(root, private=private, owned=owned)
+    else:
+        resolved_source_hash = _tree_hash(
+            _read_tree(
+                root,
+                private=private,
+                owned=owned,
+            )
         )
-    )
     return _SkillSource(
         f"{prefix}{name}", name, description, root,
         source_id, source_version, resolved_source_hash, content_hash,
@@ -1195,6 +1213,7 @@ def _directory_sources(
     *,
     strict: bool = False,
     source_kind: SkillSourceKind = "user",
+    hash_mode: TreeHashMode = "full",
 ) -> list[_SkillSource]:
     if not root.exists():
         return []
@@ -1226,6 +1245,7 @@ def _directory_sources(
                 private=strict,
                 owned=True,
                 source_kind=source_kind,
+                hash_mode=hash_mode,
             ))
         except (OSError, SkillReadError):
             if strict:
@@ -1455,6 +1475,63 @@ def _read_tree(
                 raise SkillReadError("system_skills_unavailable")
     files.executable_paths = frozenset(executable_paths)
     return files
+
+
+_TREE_HASH_CACHE: dict[tuple[str, bool, bool], tuple[str, str]] = {}
+_TREE_HASH_CACHE_LOCK = threading.Lock()
+_TREE_HASH_CACHE_LIMIT = 256
+
+
+def _tree_fingerprint(root: Path) -> str | None:
+    """Cheap identity of a tree from metadata only; None when it cannot be read."""
+
+    digest = hashlib.sha256()
+    lines: list[str] = []
+
+    def walk(directory: str) -> None:
+        with os.scandir(directory) as scanner:
+            entries = sorted(scanner, key=lambda value: value.name)
+        for entry in entries:
+            entry_stat = entry.stat(follow_symlinks=False)
+            lines.append(
+                f"{entry.path}\0{entry_stat.st_mode}\0{entry_stat.st_size}\0{entry_stat.st_mtime_ns}"
+                f"\0{entry_stat.st_ino}\0{entry_stat.st_dev}\0{entry_stat.st_uid}\n"
+            )
+            if stat.S_ISDIR(entry_stat.st_mode):
+                walk(entry.path)
+
+    try:
+        top = root.lstat()
+        lines.append(f"{top.st_mode}\0{top.st_mtime_ns}\0{top.st_ino}\0{top.st_dev}\0{top.st_uid}\n")
+        walk(str(root))
+    except (OSError, RecursionError):
+        return None
+    digest.update("".join(lines).encode("utf-8", "surrogateescape"))
+    return digest.hexdigest()
+
+
+def _cached_tree_hash(root: Path, *, private: bool, owned: bool) -> str:
+    """Tree hash for management views, reused while file metadata is unchanged.
+
+    Used only to display provenance. A miss performs the full validated read, so
+    the first value is as strict as `_tree_hash(_read_tree(...))`.
+    """
+    fingerprint = _tree_fingerprint(root)
+    key = (str(root), private, owned)
+    if fingerprint is not None:
+        with _TREE_HASH_CACHE_LOCK:
+            hit = _TREE_HASH_CACHE.get(key)
+        if hit is not None and hit[0] == fingerprint:
+            return hit[1]
+    value = _tree_hash(_read_tree(root, private=private, owned=owned))
+    if fingerprint is not None:
+        with _TREE_HASH_CACHE_LOCK:
+            if len(_TREE_HASH_CACHE) >= _TREE_HASH_CACHE_LIMIT:
+                _TREE_HASH_CACHE.clear()
+            # The fingerprint predates the read, so a concurrent write only causes a
+            # harmless recompute on the next call.
+            _TREE_HASH_CACHE[key] = (fingerprint, value)
+    return value
 
 
 def _tree_hash(files: dict[str, bytes]) -> str:

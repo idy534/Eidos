@@ -23,7 +23,7 @@ function BrowserStatusLine({ status }: { status: BrowserStatus | undefined }) {
   }
   const parts = [
     status.chromeInstalled ? `Google Chrome ${status.chromeVersion ?? ""}`.trim() : "未找到 Google Chrome，请先安装",
-    { ready: "资源已就绪", preparing: "正在准备资源", missing: "资源尚未下载", failed: "资源准备失败，可在资源设置中重试", unavailable: "资源不可用" }[status.resource],
+    { ready: "资源已就绪", preparing: "正在准备资源", missing: "资源尚未下载", failed: "资源准备失败", unavailable: "资源不可用" }[status.resource],
     status.running ? "浏览器运行中" : undefined,
   ].filter(Boolean);
   return <span className="builtin-plugin-status" role="status">{parts.join(" · ")}</span>;
@@ -109,6 +109,17 @@ export function BuiltinPlugins({ onInstall, onShowToast, catalogRevision }: {
     }
   }
 
+  async function retryResources() {
+    try {
+      const response = await window.eidosRuntime.retryResource({ packId: "browser" });
+      if (!response.accepted) throw new Error("not accepted");
+      setBrowser((current) => current && { ...current, resource: "preparing" });
+      onShowToast("正在准备浏览器资源，完成后新的任务即可使用浏览器。", "info");
+    } catch {
+      onShowToast("浏览器资源暂时无法下载，请检查网络后重试。", "error");
+    }
+  }
+
   async function clearProfile() {
     setConfirmClear(false);
     setClosing(true);
@@ -182,6 +193,11 @@ export function BuiltinPlugins({ onInstall, onShowToast, catalogRevision }: {
                   : <Button variant="ghost" size="small" loading={closing} disabled={closing} onClick={() => void openBrowser()}>
                     打开浏览器登录
                   </Button>
+              )}
+              {plugin.id === BROWSER_PLUGIN_ID && plugin.installed && (browser?.resource === "failed" || browser?.resource === "missing") && (
+                <Button variant="secondary" size="small" disabled={closing} onClick={() => void retryResources()}>
+                  {browser.resource === "failed" ? "重试下载" : "下载资源"}
+                </Button>
               )}
               {plugin.id === BROWSER_PLUGIN_ID && plugin.installed && (
                 <Button variant="ghost" size="small" disabled={closing} onClick={() => setConfirmClear(true)}>

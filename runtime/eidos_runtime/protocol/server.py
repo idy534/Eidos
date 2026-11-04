@@ -130,6 +130,7 @@ from eidos_runtime.model.pydantic_ai_client import (
 from eidos_runtime.application.memory import MEMORY_METHODS, MemoryApplication
 from eidos_runtime.db.maintenance import StorageMaintenance
 from eidos_runtime.infrastructure.browser_host import BrowserHost
+from eidos_runtime.runtime.browser_launch import resolve_browser_launch
 from eidos_runtime.telemetry.tracing import startup_phase
 from eidos_runtime.telemetry.logging import configure_stderr_logging
 from eidos_runtime.model.gateway import ModelGateway
@@ -2021,7 +2022,13 @@ class RuntimeServer:
             extensions=ExtensionApplication(
                 store=self.store,
                 plugins=lambda: self.plugins,
-                mcp_details=McpDetails(lambda: self.plugins, self._required_async_kernel, self.supervisor.resources),
+                mcp_details=McpDetails(
+                    lambda: self.plugins, self._required_async_kernel, self.supervisor.resources,
+                    browser_launch=lambda: resolve_browser_launch(
+                        self.store, self.browser_host, self.runtime_dependency_catalog,
+                        supports_images=False, discovery=True,
+                    ),
+                ),
             ),
             repository_factory=self.repository_factory,
             repository_runtime=self.repository_runtime,

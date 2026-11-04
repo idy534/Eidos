@@ -305,7 +305,7 @@ pnpm test:composer-layout
 EIDOS_BROWSER_E2E_NODE=<node 可执行文件> EIDOS_BROWSER_E2E_ENTRY=<node_modules/@playwright/mcp/cli.js> uv run --locked pytest runtime/tests/test_browser_e2e.py
 ```
 
-两个变量都未设置时，这个测试会跳过。它会在 `/private/tmp` 下启动 headless Chrome，并检查下载是否被拒绝。`@playwright/mcp` 的版本固定在 `resources/runtime-dependencies/node/package.json`；升级时需要同时更新锁文件、`domain/browser.py` 的工具分类和测试替身 `runtime/tests/fixtures/browser_mcp_fixture.py`。浏览器资源包随文档资源一起发布，所以资源版本变化时，维护者要先发布新的资源 Release。
+两个变量都未设置时，这个测试会跳过。它会在 `/private/tmp` 下启动 headless Chrome，并检查下载是否被拒绝。`@playwright/mcp` 的版本固定在 `resources/runtime-dependencies/node/package.json`；升级时需要同时更新锁文件、`domain/browser.py` 的工具分类和测试替身 `runtime/tests/fixtures/browser_mcp_fixture.py`。浏览器资源包随文档资源一起发布，所以资源版本变化时，维护者要先发布新的资源 Release。发布 App 前运行 `pnpm verify:resources`（默认检查 `build/macos-runtime/resource-index.json`，也可传入 App 内的索引路径；`--full` 会下载并核对 SHA-256），确认每个资源包都可以下载。`scripts/package-macos.sh` 在打包结束时会自动执行这项检查。
 
 ## 人工验收
 

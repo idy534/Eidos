@@ -145,3 +145,22 @@ describe("Choosing the user's Chrome", () => {
     expect(setBrowserAgentTarget).toHaveBeenLastCalledWith({ target: "eidos" });
   });
 });
+
+describe("Browser resource retry", () => {
+  const plugin = { id: "eidos-browser", name: "eidos-browser", description: "Browser tools", version: "1.0.0", installed: true };
+
+  it("retries a failed browser resource download from the plugin row", async () => {
+    const retryResource = vi.fn().mockResolvedValue({ accepted: true });
+    const onShowToast = vi.fn();
+    api({
+      builtinPlugins: vi.fn().mockResolvedValue({ plugins: [plugin] }),
+      readBrowserAgentStatus: vi.fn().mockResolvedValue({ ...status, resource: "failed" }),
+      retryResource,
+    });
+    render(<BuiltinPlugins onInstall={vi.fn()} onShowToast={onShowToast} />);
+    await userEvent.click(await screen.findByRole("button", { name: "重试下载" }));
+    expect(retryResource).toHaveBeenCalledWith({ packId: "browser" });
+    expect(await screen.findByText(/正在准备资源/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重试下载" })).toBeNull();
+  });
+});

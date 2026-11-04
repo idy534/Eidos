@@ -10,7 +10,7 @@ import shutil
 import stat
 
 from eidos_runtime.extensions.skills import (
-    MAX_SKILL_BYTES, SkillCatalog, SkillReadError, _SkillSource,
+    MAX_SKILL_BYTES, SkillCatalog, SkillReadError, TreeHashMode, _SkillSource,
     _read_text, _read_tree, _scan, _tree_hash,
 )
 from eidos_runtime.extensions.skill_manifest import parse_skill_manifest
@@ -56,15 +56,16 @@ class SkillManagement:
         self.catalog = catalog
         self.store = catalog.plugins.store
 
-    def _sources(self) -> list[_SkillSource]:
+    def _sources(self, hash_mode: TreeHashMode = "full") -> list[_SkillSource]:
         return self.catalog._sources(
-            self.catalog.plugins.extension_snapshot(include_disabled=True)
+            self.catalog.plugins.extension_snapshot(include_disabled=True),
+            hash_mode=hash_mode,
         )
 
-    def _source(self, qualified_id: str) -> _SkillSource:
+    def _source(self, qualified_id: str, hash_mode: TreeHashMode = "full") -> _SkillSource:
         if any(s.qualified_id == qualified_id and s.removed for s in self.store.skill_states()):
             raise SkillReadError("skill_unavailable")
-        for source in self._sources():
+        for source in self._sources(hash_mode):
             if source.qualified_id == qualified_id:
                 return source
         raise SkillReadError("skill_unavailable")
@@ -75,7 +76,7 @@ class SkillManagement:
         Existing Runs retain their frozen catalog and personal directories.
         Users can explicitly re-enable their personal copy in settings.
         """
-        sources = {source.qualified_id: source for source in self._sources()}
+        sources = {source.qualified_id: source for source in self._sources("none")}
         states = {state.qualified_id: state for state in self.store.skill_states()}
         for name in BUILTIN_DOCUMENT_SKILLS:
             system_id, user_id = f"system:{name}", f"user:{name}"
@@ -104,7 +105,7 @@ class SkillManagement:
             if plugin["enabled"]
         }
         result = []
-        for source in self._sources():
+        for source in self._sources("cached"):
             state = states.get(source.qualified_id)
             if state and state.removed:
                 continue
@@ -121,7 +122,7 @@ class SkillManagement:
         return tuple(result)
 
     def detail(self, qualified_id: str) -> SkillDetail:
-        source = self._source(qualified_id)
+        source = self._source(qualified_id, "none")
         content = _scan(_read_text(source.root / "SKILL.md", MAX_SKILL_BYTES))
         # Use the already validated frontmatter delimiter, preserving the raw file for copying.
         lines = content.splitlines(keepends=True)
@@ -137,7 +138,7 @@ class SkillManagement:
         )
 
     def set_enabled(self, qualified_id: str, enabled: bool) -> ManagedSkill:
-        source = self._source(qualified_id)
+        source = self._source(qualified_id, "none")
         self.store.save_skill_state(SkillState(
             qualified_id=qualified_id, enabled=enabled, source_kind=source.source_kind,
             directory_name=source.root.name if source.source_kind == "user" else None,

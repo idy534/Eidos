@@ -6,7 +6,7 @@
 
 浏览器能力由内置插件 `eidos-browser`（`runtime/eidos_runtime/resources/plugins/browser/`）提供。用户在 Settings → Plugins 的内置插件中安装并启用插件，再在插件资源中授权其 MCP 服务。插件行显示 Google Chrome 检测结果、资源包状态，以及浏览器是否正在运行。
 
-- 浏览器工具由固定版本的 `@playwright/mcp@0.0.84` 执行。它和依赖位于 `browser` 资源包，并依赖已有的托管 Node（`node` 资源包）。安装或启用插件时，以及 Runtime 启动时插件已启用的情况下，资源包都在后台准备。Run 启动不会下载资源；未就绪时，该 Run 不提供浏览器工具。
+- 浏览器工具由固定版本的 `@playwright/mcp@0.0.84` 执行。它和依赖位于 `browser` 资源包，并依赖已有的托管 Node（`node` 资源包）。安装或启用插件时，以及 Runtime 启动时插件已启用的情况下，资源包都在后台准备。Run 启动不会下载资源；未就绪时，该 Run 不提供浏览器工具；插件行显示资源状态，下载失败或缺失时提供“重试下载”或“下载资源”按钮。插件资源中的工具列表与 Run 使用同一套启动参数，资源未就绪时显示具体原因（如 `browser_runtime_not_ready`），不会显示笼统的 `mcp_protocol_error`。启动命令显示为“Eidos 托管 Node · Playwright MCP”，不显示内部占位变量。
 - Eidos 不随包提供浏览器，需要用户已安装 Google Chrome（`/Applications` 或 `~/Applications`）。未安装时，浏览器工具在审批前返回 `browser_unavailable`，Run 不会终止。Eidos 不下载 Chrome for Testing，也不改用其他浏览器。
 - 插件行提供“打开浏览器登录”（只启动 Chrome，不连接 Agent）、“关闭浏览器”、“清除浏览器数据”（需要确认），以及“使用我的 Chrome”（需要高危确认）。
 
@@ -80,7 +80,7 @@ Model → ToolCallRuntime → ExternalToolHandler（浏览器授权）
 - 授权不按来源网站限制，也不提供多个 Eidos profile。
 - 下载被拒绝，`browser_evaluate` 被屏蔽。
 - Feed 不显示截图缩略图。显示缩略图需要新的有界工具内容读取接口。
-- 浏览器资源包使用新的发布版本 `2026.11.03.1`。维护者需要先发布该 Release，再发布使用该索引的 App。
+- 资源包与 App 分开发布。0.5.5 发布时遗漏了资源 Release `document-resources-2026.11.03.1`，导致浏览器和文档资源下载 404；该 Release 已于 2026-11-04 补发。打包脚本现在会检查资源索引中的每个下载地址：Release 模式下不可下载会失败，本地模式会输出警告。
 - 未验证：
   - 打包后的 App 中的完整流程；
   - Runtime 启动 Chrome 时，macOS 是否弹出本地网络权限提示；

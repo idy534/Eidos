@@ -30,6 +30,7 @@
     "test:release": "pnpm package:mac:release",
     "lint:python": "uv run --locked ruff check runtime/eidos_runtime runtime/tests scripts/test-seatbelt-native.py",
     "deps:python": "uv run --locked deptry runtime/eidos_runtime",
+    "verify:resources": "python3 scripts/verify-resource-release.py",
     "audit:python": "scripts/audit-python.sh && pnpm audit:runtime-node",
     "audit:runtime-node": "pnpm --dir resources/runtime-dependencies/node audit --prod --audit-level high",
     "check:python:static": "pnpm lint:python && pnpm deps:python && pnpm audit:python",
