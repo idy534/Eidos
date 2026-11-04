@@ -257,3 +257,18 @@ def test_project_binding_preserves_direct_workspace_tools(setup, tmp_path):
     with RunResources(store, run["id"], extensions) as resources:
         assert "read_file" in resources.registry.snapshot().available_names
         assert "tool_search" not in resources.registry.names
+
+
+def test_steering_after_skill_document_change_does_not_fail_the_run(setup):
+    store, session, _ = setup
+    run, _ = store.create_run(session.id, "Plain request")
+    extensions = SkillCatalog(PluginCatalog(store)).extension_snapshot()
+    skill = store.data_directory / "skills" / "nebula"
+    with RunResources(store, run["id"], extensions) as resources:
+        # A script rewrote SKILL.md after the Run fixed its catalog, and the user steers.
+        (skill / "SKILL.md").write_text(
+            "---\nname: nebula\ndescription: Build galacticstar presentations.\n---\nChanged instructions.\n"
+        )
+        (skill / "output.txt").write_text("generated")
+        resources.refresh(("Please use @user:nebula",))
+        assert resources.selected_skill_context == ()

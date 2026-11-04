@@ -334,15 +334,25 @@ class RunResources:
             )))
         for qualified_id in selected.selected_qualified_ids:
             self._acquire_skill_lease(qualified_id)
-        self.selected_skill_context = (
-            self.skills.render_selected(self.skill_catalog_snapshot, selected)
-            if selected.selected_qualified_ids
-            else ()
-        )
-        if self.skill_access is not None:
-            for qualified_id in selected.selected_qualified_ids:
-                self.skill_access.activate_explicit(qualified_id)
-                self._bind_skill(qualified_id)
+        sections: list[RetainedContextSection] = []
+        for qualified_id in selected.selected_qualified_ids:
+            try:
+                rendered = self.skills.render_selected(
+                    self.skill_catalog_snapshot,
+                    SelectedSkillSet(turn_id=turn_id, selected_qualified_ids=(qualified_id,)),
+                )
+                if self.skill_access is not None:
+                    self.skill_access.activate_explicit(qualified_id)
+                sections.extend(rendered)
+            except (SkillReadError, SkillAccessError) as error:
+                if isinstance(error, SkillReadError) and str(error) != "skill_snapshot_invalid":
+                    raise
+                # SKILL.md changed after the Run fixed its catalog. The selected
+                # instructions are not injected, but the Run continues; skill_read
+                # reports the change to the model and the next Run snapshots it.
+                continue
+            self._bind_skill(qualified_id)
+        self.selected_skill_context = tuple(sections)
 
     def activate_skill_model_read(self, qualified_id: str):
         if self.skill_access is None:
