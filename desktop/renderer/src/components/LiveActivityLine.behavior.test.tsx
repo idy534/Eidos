@@ -19,7 +19,7 @@ describe("LiveActivityLine", () => {
     expect(row).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(row);
     expect(row).toHaveAttribute("aria-expanded", "true");
-    const dialog = screen.getByRole("dialog", { name: "思考摘要" });
+    const dialog = screen.getByRole("dialog", { name: "思考过程" });
     expect(dialog).toHaveTextContent("先列出目录，再按名称匹配。");
     expect(dialog).toHaveTextContent("上一步");
     fireEvent.keyDown(document, { key: "Escape" });

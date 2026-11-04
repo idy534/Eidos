@@ -23,13 +23,44 @@ MAX_TITLE_CHARS = 80
 MAX_BODY_CHARS = 600
 MIN_PUBLISH_INTERVAL_SECONDS = 0.25
 _BOLD_TITLE = re.compile(r"^\s*\*\*(.+?)\*\*", re.DOTALL)
+# End of a first sentence in raw reasoning; "." only counts before whitespace so
+# file names and decimals such as "a.ts" or "1.5" do not end it.
+_SENTENCE_END = re.compile(r"[。！？!?；;\n]|\.(?=\s)")
 
 
-def split_summary(text: str, *, final: bool) -> tuple[str, str] | None:
+def _split_raw(text: str, *, final: bool) -> tuple[str, str] | None:
+    """Raw reasoning has no title: the first sentence is the title, the rest the body."""
+    match = _SENTENCE_END.search(text)
+    if match is not None and match.start() < MAX_TITLE_CHARS:
+        title, rest = text[:match.end()], text[match.end():]
+    elif len(text) > MAX_TITLE_CHARS:
+        title, rest = text[:MAX_TITLE_CHARS], text[MAX_TITLE_CHARS:]
+    elif final:
+        title, rest = text, ""
+    else:
+        return None
+    return _finish(title.rstrip("。.;；"), rest)
+
+
+def _finish(title: str, rest: str) -> tuple[str, str] | None:
+    title = " ".join(title.replace("#", " ").replace("*", " ").split())
+    if not title:
+        return None
+    if len(title) > MAX_TITLE_CHARS:
+        title = title[:MAX_TITLE_CHARS - 1].rstrip() + "…"
+    body = rest.strip()
+    if len(body) > MAX_BODY_CHARS:
+        body = body[:MAX_BODY_CHARS - 1].rstrip() + "…"
+    return title, body
+
+
+def split_summary(text: str, *, final: bool, raw: bool = False) -> tuple[str, str] | None:
     """Return (title, body), or None while the title is still being written."""
     text = text.strip()
     if not text:
         return None
+    if raw:
+        return _split_raw(text, final=final)
     bold = _BOLD_TITLE.match(text)
     if bold is not None:
         title, rest = bold.group(1), text[bold.end():]
@@ -42,15 +73,7 @@ def split_summary(text: str, *, final: bool) -> tuple[str, str] | None:
         if not newline and not final:
             return None
         title = first
-    title = " ".join(title.replace("#", " ").replace("*", " ").split())
-    if not title:
-        return None
-    if len(title) > MAX_TITLE_CHARS:
-        title = title[:MAX_TITLE_CHARS - 1].rstrip() + "…"
-    body = rest.strip()
-    if len(body) > MAX_BODY_CHARS:
-        body = body[:MAX_BODY_CHARS - 1].rstrip() + "…"
-    return title, body
+    return _finish(title, rest)
 
 
 class ThinkingSummaryNotifier:
@@ -73,14 +96,14 @@ class ThinkingSummaryNotifier:
         self._last_published: float | None = None
         self._last_params: tuple[str, str, str] | None = None
 
-    def receive(self, summary_id: str, text: str, final: bool) -> None:
+    def receive(self, summary_id: str, text: str, final: bool, raw: bool = False) -> None:
         try:
-            self._receive(summary_id, text[:MAX_SUMMARY_SOURCE_CHARS], final)
+            self._receive(summary_id, text[:MAX_SUMMARY_SOURCE_CHARS], final, raw)
         except Exception:
             # Presentation only: a failure here must never affect the model request.
             logger.warning("Thinking summary was not published", exc_info=True)
 
-    def _receive(self, summary_id: str, text: str, final: bool) -> None:
+    def _receive(self, summary_id: str, text: str, final: bool, raw: bool) -> None:
         # Decide on throttling before any parsing or redaction: deltas arrive far
         # faster than notifications are published.
         with self._lock:
@@ -94,7 +117,7 @@ class ThinkingSummaryNotifier:
                 and now - self._last_published < MIN_PUBLISH_INTERVAL_SECONDS
             ):
                 return
-        parts = split_summary(text, final=final)
+        parts = split_summary(text, final=final, raw=raw)
         if parts is None:
             return
         title, body = parts

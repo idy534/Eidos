@@ -100,8 +100,8 @@ export function LiveActivityLine({ text, thinking }: { text: string; thinking?: 
         <div className="live-activity-row">{label}</div>
       )}
       {expandable && open && thinking && (
-        <div className="live-activity-popover" id={popoverId} role="dialog" aria-label="思考摘要">
-          <p className="live-activity-popover-caption">思考摘要 · 仅本次运行</p>
+        <div className="live-activity-popover" id={popoverId} role="dialog" aria-label="思考过程">
+          <p className="live-activity-popover-caption">思考过程 · 仅本次运行</p>
           <p className="live-activity-popover-title">{thinking.title}</p>
           <p className="live-activity-popover-body">{body}</p>
           {thinking.previous.length > 0 && (

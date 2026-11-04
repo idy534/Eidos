@@ -84,7 +84,7 @@ Esc、点击外部、Run 结束时关闭。样式使用 `--shadow-popover`、`--
 
 - 摘要在其后有工具完成时视为过期（以 Renderer 收到的时间比较），避免一个早期摘要在整个 Run 里一直显示；独立工具行（未折叠进工具组）已显示自己的动作，实时行此时显示“正在执行”，避免重复。
 
-- 摘要只在 Responses API 的自定义模型上出现：请求带思考强度（非 `none`）时附带 `reasoning.summary: "auto"`。Chat Completions 的思考内容是原始思考链，不展示。Responses 客户端目前只对自定义模型发送思考强度，内置模型没有摘要，显示工具文案或“正在思考”。
+- 最初只转发 Responses API 的服务商摘要（请求带思考强度且非 `none` 时附带 `reasoning.summary: "auto"`）。随后按用户要求，Chat Completions 的原始思考文本也转发：取第一句作标题，点击查看其余部分。原始思考可能包含文件内容，已经过与摘要相同的脱敏、限长和不持久化处理；用户可见的内容只在本机界面显示。
 - 瞬时通知名为 `run/thinking`，由 `RuntimeEvents.publish_transient` 发送；`ModelClient.complete` 签名不变，摘要通过 ContextVar 传给 Sampling。
 - 部分自定义网关可能拒绝 `summary` 字段；此时模型请求会失败，需要在该模型的设置中改用不带思考强度的配置。这一点未对真实网关验证。
 

@@ -98,7 +98,7 @@ def test_sink_is_scoped_and_absent_sinks_are_ignored():
     with reasoning_summary_sink(lambda *args: seen.append(args)):
         emit_reasoning_summary("a", "kept", final=True)
     emit_reasoning_summary("a", "ignored")
-    assert seen == [("a", "kept", True)]
+    assert seen == [("a", "kept", True, False)]
 
 
 def _client(create, effort: str | None):
@@ -170,9 +170,9 @@ def test_responses_stream_forwards_only_summary_events_to_the_sink():
         client.close()
         kernel.close()
     assert seen == [
-        ("rs_1:0", "**Check ", False),
-        ("rs_1:0", "**Check skills**", False),
-        ("rs_1:0", "**Check skills**\n\nList first.", True),
+        ("rs_1:0", "**Check ", False, False),
+        ("rs_1:0", "**Check skills**", False, False),
+        ("rs_1:0", "**Check skills**\n\nList first.", True, False),
     ]
     assert "".join(text) == "answer"
 
@@ -211,3 +211,33 @@ def test_engine_publishes_summary_live_and_persists_nothing(tmp_path):
         assert "Check skills" not in repr(store.read_session_snapshot(session["id"]))
     finally:
         store.close()
+
+
+def test_raw_reasoning_uses_its_first_sentence_as_the_title():
+    assert split_summary("先看看技能目录。再对比", final=False, raw=True) == ("先看看技能目录", "再对比")
+    assert split_summary("Look at a.ts first. Then compare", final=False, raw=True) == ("Look at a.ts first", "Then compare")
+    # No sentence end yet: wait, but never wait past the title limit.
+    assert split_summary("先看看技能", final=False, raw=True) is None
+    assert split_summary("先看看技能", final=True, raw=True) == ("先看看技能", "")
+    title, body = split_summary("x" * 200, final=False, raw=True)
+    assert len(title) <= MAX_TITLE_CHARS and body
+
+
+def test_chat_completions_reasoning_reaches_the_sink_as_raw_text_and_stays_out_of_the_response():
+    from pydantic_ai.messages import (
+        PartDeltaEvent, PartStartEvent, TextPart, ThinkingPart, ThinkingPartDelta,
+    )
+    from eidos_runtime.model.pydantic_ai_client import _RawThinkingForwarder
+
+    forwarder = _RawThinkingForwarder()
+    first = forwarder.observe(PartStartEvent(index=0, part=ThinkingPart("先看目录。")))
+    assert first and first[0][1] == "先看目录。"
+    # Within the interval nothing is offered, but the text keeps accumulating.
+    assert forwarder.observe(PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="再比较"))) == []
+    assert forwarder.observe(PartStartEvent(index=1, part=TextPart("answer"))) == []
+    final = forwarder.finish()
+    assert [text for _, text in final] == ["先看目录。再比较"]
+    seen: list[tuple[str, str, bool, bool]] = []
+    with reasoning_summary_sink(lambda *args: seen.append(args)):
+        forwarder.emit(final, True)
+    assert seen == [(final[0][0], "先看目录。再比较", True, True)]
