@@ -7,6 +7,7 @@ import test from "node:test";
 import { RuntimeClient } from "./runtime-client.js";
 import {
   isBrowserCloseResponse, isBrowserGrantRevokeRequest, isBrowserGrantRevokeResponse, isBrowserStatus, isBrowserStatusRequest,
+  isBrowserExtensionTokenRequest, isBrowserExtensionTokenResponse, isBrowserTargetRequest, isBrowserTargetResponse,
 } from "../shared/browser.js";
 import type { ApprovalRequest, RuntimeNotification } from "../shared/index.js";
 
@@ -20,6 +21,13 @@ void test("shared browser fixture satisfies the generated Main validators", asyn
   assert.ok(isBrowserGrantRevokeResponse(fixture.revokeResponse));
   assert.ok(isBrowserCloseResponse(fixture.closeResponse));
   assert.equal(isBrowserStatus({ ...(fixture.status as object), endpoint: "http://127.0.0.1:9222" }), false);
+  assert.ok(isBrowserTargetRequest(fixture.targetRequest));
+  assert.ok(isBrowserTargetResponse(fixture.targetResponse));
+  assert.ok(isBrowserExtensionTokenRequest(fixture.extensionTokenRequest));
+  assert.ok(isBrowserExtensionTokenResponse(fixture.extensionTokenResponse));
+  // The status reports whether a token is saved, never the token.
+  assert.equal(isBrowserStatus({ ...(fixture.status as object), extensionToken: "x" }), false);
+  assert.equal(isBrowserExtensionTokenResponse({ ...(fixture.extensionTokenResponse as object), token: "x" }), false);
 });
 
 void test("browser access approvals and grant notifications cross Main with closed fields", async () => {

@@ -60,6 +60,48 @@ export const browserSchema = {
       "title": "BrowserCloseResponse",
       "type": "object"
     },
+    "BrowserExtensionTokenClearRequest": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "BrowserExtensionTokenClearRequest",
+      "type": "object"
+    },
+    "BrowserExtensionTokenRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "token": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Token",
+          "type": "string"
+        }
+      },
+      "required": [
+        "token"
+      ],
+      "title": "BrowserExtensionTokenRequest",
+      "type": "object"
+    },
+    "BrowserExtensionTokenResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "configured": {
+          "title": "Configured",
+          "type": "boolean"
+        },
+        "revokedGrants": {
+          "minimum": 0,
+          "title": "Revokedgrants",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "configured",
+        "revokedGrants"
+      ],
+      "title": "BrowserExtensionTokenResponse",
+      "type": "object"
+    },
     "BrowserGrantRevokeRequest": {
       "additionalProperties": false,
       "properties": {
@@ -167,18 +209,44 @@ export const browserSchema = {
           "type": "string"
         },
         "target": {
+          "default": "chrome_extension",
+          "enum": [
+            "eidos",
+            "user_chrome",
+            "chrome_extension"
+          ],
+          "title": "Target",
+          "type": "string"
+        },
+        "effectiveTarget": {
           "default": "eidos",
           "enum": [
             "eidos",
-            "user_chrome"
+            "user_chrome",
+            "chrome_extension"
           ],
-          "title": "Target",
+          "title": "Effectivetarget",
           "type": "string"
         },
         "attachAvailable": {
           "default": false,
           "title": "Attachavailable",
           "type": "boolean"
+        },
+        "extensionConfigured": {
+          "default": false,
+          "title": "Extensionconfigured",
+          "type": "boolean"
+        },
+        "extensionPresence": {
+          "default": "unknown",
+          "enum": [
+            "installed",
+            "missing",
+            "unknown"
+          ],
+          "title": "Extensionpresence",
+          "type": "string"
         },
         "granted": {
           "default": false,
@@ -223,7 +291,8 @@ export const browserSchema = {
         "target": {
           "enum": [
             "eidos",
-            "user_chrome"
+            "user_chrome",
+            "chrome_extension"
           ],
           "title": "Target",
           "type": "string"
@@ -241,7 +310,8 @@ export const browserSchema = {
         "target": {
           "enum": [
             "eidos",
-            "user_chrome"
+            "user_chrome",
+            "chrome_extension"
           ],
           "title": "Target",
           "type": "string"
@@ -297,6 +367,15 @@ export const browserSchema = {
     },
     "targetResponse": {
       "$ref": "#/$defs/BrowserTargetResponse"
+    },
+    "extensionTokenRequest": {
+      "$ref": "#/$defs/BrowserExtensionTokenRequest"
+    },
+    "extensionTokenResponse": {
+      "$ref": "#/$defs/BrowserExtensionTokenResponse"
+    },
+    "extensionTokenClearRequest": {
+      "$ref": "#/$defs/BrowserExtensionTokenClearRequest"
     }
   },
   "required": [
@@ -311,7 +390,10 @@ export const browserSchema = {
     "clearRequest",
     "clearResponse",
     "targetRequest",
-    "targetResponse"
+    "targetResponse",
+    "extensionTokenRequest",
+    "extensionTokenResponse",
+    "extensionTokenClearRequest"
   ],
   "title": "BrowserContract",
   "type": "object"

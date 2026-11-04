@@ -34,10 +34,10 @@ import readline from "node:readline";
 import { isMcpToolsResponse, type McpToolsRequest, type McpToolsResponse } from "../shared/mcp-details.js";
 import {
   isBrowserClearResponse, isBrowserCloseResponse, isBrowserGrantRevokeResponse, isBrowserOpenResponse, isBrowserStatus,
-  isBrowserTargetResponse,
+  isBrowserTargetResponse, isBrowserExtensionTokenResponse,
   type BrowserClearResponse, type BrowserCloseResponse, type BrowserGrantRevokeRequest, type BrowserGrantRevokeResponse,
   type BrowserOpenResponse, type BrowserStatus, type BrowserStatusRequest, type BrowserTargetRequest,
-  type BrowserTargetResponse,
+  type BrowserTargetResponse, type BrowserExtensionTokenRequest, type BrowserExtensionTokenResponse,
 } from "../shared/browser.js";
 import { isBuiltinPluginsResponse, isMcpConnectionState, isRemoteMcpInfo, type BuiltinPluginRequest, type BuiltinPluginsResponse, type McpConnectionRequest, type McpConnectionState } from "../shared/mcp-connections.js";
 
@@ -209,6 +209,7 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "MCP_TOKEN_REQUIRED",
   "MCP_AUTH_INVALID",
   "GITHUB_CLIENT_ID_REQUIRED",
+  "BROWSER_EXTENSION_TOKEN_INVALID",
 ]);
 
 import type {
@@ -1275,6 +1276,15 @@ export class RuntimeClient {
 
   setBrowserTarget(request: BrowserTargetRequest): Promise<BrowserTargetResponse> {
     return this.validatedRequest("browser/setTarget", { ...request }, isBrowserTargetResponse);
+  }
+
+  /** Saves the Playwright Extension token; the token is never returned or logged. */
+  setBrowserExtensionToken(request: BrowserExtensionTokenRequest): Promise<BrowserExtensionTokenResponse> {
+    return this.validatedRequest("browser/setExtensionToken", { token: request.token }, isBrowserExtensionTokenResponse);
+  }
+
+  clearBrowserExtensionToken(): Promise<BrowserExtensionTokenResponse> {
+    return this.validatedRequest("browser/clearExtensionToken", {}, isBrowserExtensionTokenResponse);
   }
 
   setMcpEnabled(
