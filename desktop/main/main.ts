@@ -26,7 +26,10 @@ import * as nodePty from "node-pty";
 
 import { RuntimeClient } from "./runtime-client.js";
 import { isMcpToolsRequest } from "../shared/mcp-details.js";
-import { isBrowserGrantRevokeRequest, isBrowserStatusRequest, isBrowserTargetRequest } from "../shared/browser.js";
+import {
+  PLAYWRIGHT_EXTENSION_STORE_URL, isBrowserExtensionTokenRequest, isBrowserGrantRevokeRequest, isBrowserStatusRequest,
+  isBrowserTargetRequest,
+} from "../shared/browser.js";
 import { isBuiltinPluginRequest, isMcpConnectionRequest } from "../shared/mcp-connections.js";
 import { isAutomationRequest, isAutomationHistoryRequest, isAutomationRunNowRequest } from "../shared/automation.js";
 import { resolveRuntimePaths } from "./runtime-paths.js";
@@ -1602,6 +1605,15 @@ ipcMain.handle(IPC.BROWSER_AGENT_CLEAR, () => clientOrThrow().clearSharedBrowser
 ipcMain.handle(IPC.BROWSER_AGENT_TARGET, (_event, request: unknown) => {
   if (!isBrowserTargetRequest(request)) throw new Error("INVALID_PARAMS");
   return clientOrThrow().setBrowserTarget(request);
+});
+ipcMain.handle(IPC.BROWSER_AGENT_EXTENSION_TOKEN, (_event, request: unknown) => {
+  if (!isBrowserExtensionTokenRequest(request)) throw new Error("INVALID_PARAMS");
+  return clientOrThrow().setBrowserExtensionToken(request);
+});
+ipcMain.handle(IPC.BROWSER_AGENT_EXTENSION_CLEAR, () => clientOrThrow().clearBrowserExtensionToken());
+ipcMain.handle(IPC.BROWSER_AGENT_EXTENSION_STORE, (event) => {
+  previewOwner(event);
+  return electronShell.openExternal(PLAYWRIGHT_EXTENSION_STORE_URL);
 });
 ipcMain.handle(IPC.EXTENSION_READ, () => clientOrThrow().readExtensions());
 ipcMain.handle(IPC.EXTENSION_READ_EVENTS, (_event, afterEventId: unknown) => {

@@ -18,7 +18,9 @@ export function BrowserGrantIndicator({ sessionId, onShowToast }: {
     window.eidosRuntime.readBrowserAgentStatus({ sessionId: requested }).then((status) => {
       if (current.current === requested) {
         setGranted(status.granted === true);
-        setUserChrome(status.target === "user_chrome");
+        // The Playwright Extension also drives the user's own Chrome.
+        const effective = status.effectiveTarget ?? status.target;
+        setUserChrome(effective === "user_chrome" || effective === "chrome_extension");
       }
     }).catch(() => {
       if (current.current === requested) setGranted(false);

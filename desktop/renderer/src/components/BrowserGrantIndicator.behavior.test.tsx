@@ -46,6 +46,16 @@ describe("Browser grant indicator", () => {
     expect(onShowToast).toHaveBeenCalledWith(expect.stringContaining("已撤销"), "success");
   });
 
+  it("names the user's own Chrome when the extension is in effect, and the Eidos browser after fallback", async () => {
+    api({ readBrowserAgentStatus: vi.fn().mockResolvedValue({ ...status, target: "chrome_extension", effectiveTarget: "chrome_extension" }) });
+    const { unmount } = render(<BrowserGrantIndicator sessionId="s1" onShowToast={vi.fn()} />);
+    expect(await screen.findByRole("status")).toHaveTextContent("我的 Chrome 已授权");
+    unmount();
+    api({ readBrowserAgentStatus: vi.fn().mockResolvedValue({ ...status, target: "chrome_extension", effectiveTarget: "eidos" }) });
+    render(<BrowserGrantIndicator sessionId="s1" onShowToast={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/^浏览器已授权/));
+  });
+
   it("stays hidden without a grant", async () => {
     const readBrowserAgentStatus = vi.fn().mockResolvedValue({ ...status, granted: false });
     api({ readBrowserAgentStatus });
@@ -67,7 +77,7 @@ describe("Built-in browser plugin row", () => {
       closeBrowserAgent,
     });
     render(<BuiltinPlugins onInstall={vi.fn()} onShowToast={onShowToast} />);
-    expect(await screen.findByText("Google Chrome 156.0 · 资源已就绪 · 浏览器运行中")).toBeInTheDocument();
+    expect(await screen.findByText("使用 Eidos 浏览器 · Google Chrome 156.0 · 资源已就绪 · 浏览器运行中")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "关闭浏览器" }));
     expect(closeBrowserAgent).toHaveBeenCalledOnce();
     expect(onShowToast).toHaveBeenCalledWith(expect.stringContaining("已关闭 Eidos 浏览器"), "success");
@@ -80,7 +90,7 @@ describe("Built-in browser plugin row", () => {
       readBrowserAgentStatus: vi.fn().mockResolvedValue({ ...status, chromeInstalled: false, chromeVersion: null, resource: "preparing" }),
     });
     render(<BuiltinPlugins onInstall={vi.fn()} onShowToast={vi.fn()} />);
-    expect(await screen.findByText("未找到 Google Chrome，请先安装 · 正在准备资源")).toBeInTheDocument();
+    expect(await screen.findByText("使用 Eidos 浏览器 · 未找到 Google Chrome，请先安装 · 正在准备资源")).toBeInTheDocument();
   });
 });
 
@@ -123,26 +133,125 @@ describe("Built-in browser sign-in and data", () => {
   });
 });
 
-describe("Choosing the user's Chrome", () => {
+describe("Choosing which Chrome the Agent uses", () => {
   const plugin = { id: "eidos-browser", name: "eidos-browser", description: "Browser tools", version: "1.0.0", installed: true };
+  type Target = "eidos" | "user_chrome" | "chrome_extension";
 
-  it("switches to the user's Chrome only after a high-risk confirmation and can switch back", async () => {
-    let target: "eidos" | "user_chrome" = "eidos";
-    const setBrowserAgentTarget = vi.fn(async (request: { target: "eidos" | "user_chrome" }) => {
-      target = request.target;
-      return { target, revokedGrants: 0 };
+  function runtime(initial: { target?: Target; configured?: boolean; presence?: "installed" | "missing" | "unknown" } = {}) {
+    let target: Target = initial.target ?? "chrome_extension";
+    let configured = initial.configured ?? false;
+    const presence = initial.presence ?? "installed";
+    const effective = () => target === "chrome_extension" && (!configured || presence === "missing") ? "eidos" : target;
+    const calls = {
+      setBrowserAgentTarget: vi.fn(async (request: { target: Target }) => { target = request.target; return { target, revokedGrants: 1 }; }),
+      setBrowserAgentExtensionToken: vi.fn(async (request: { token: string }) => {
+        if (!request.token.includes("TOKEN")) throw new Error("Error invoking remote method: BROWSER_EXTENSION_TOKEN_INVALID");
+        configured = true;
+        return { configured: true, revokedGrants: 0 };
+      }),
+      clearBrowserAgentExtensionToken: vi.fn(async () => { configured = false; return { configured: false, revokedGrants: 1 }; }),
+      openBrowserExtensionStore: vi.fn(async () => undefined),
+    };
+    api({
+      builtinPlugins: vi.fn().mockResolvedValue({ plugins: [plugin] }),
+      readBrowserAgentStatus: vi.fn(async () => ({
+        ...status, target, effectiveTarget: effective(), extensionConfigured: configured, extensionPresence: presence, attachAvailable: false,
+      })),
+      ...calls,
     });
-    const readBrowserAgentStatus = vi.fn(async () => ({ ...status, target, attachAvailable: false }));
-    api({ builtinPlugins: vi.fn().mockResolvedValue({ plugins: [plugin] }), readBrowserAgentStatus, setBrowserAgentTarget });
+    return calls;
+  }
+
+  it("recommends the tab-group mode and falls back to the Eidos browser until it is set up", async () => {
+    runtime();
     render(<BuiltinPlugins onInstall={vi.fn()} onShowToast={vi.fn()} />);
-    await userEvent.click(await screen.findByRole("button", { name: "使用我的 Chrome" }));
-    expect(screen.getByRole("alertdialog", { name: "使用我的 Chrome" })).toHaveTextContent("所有已登录的账号");
-    expect(setBrowserAgentTarget).not.toHaveBeenCalled();
-    await userEvent.click(within(screen.getByRole("alertdialog", { name: "使用我的 Chrome" })).getByRole("button", { name: "使用我的 Chrome" }));
-    expect(setBrowserAgentTarget).toHaveBeenCalledWith({ target: "user_chrome" });
+    const recommended = await screen.findByRole("radio", { name: "我的 Chrome（标签组）" });
+    expect(recommended).toHaveAccessibleDescription(/Agent 只操作自己的标签组/);
+    expect(recommended).toBeChecked();
+    expect(screen.getByText("推荐")).toBeInTheDocument();
+    expect(screen.getByText("设置完成前，新任务使用 Eidos 浏览器。")).toBeInTheDocument();
+    expect(screen.getByText("已在 Chrome 中检测到扩展")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "打开 Chrome 应用商店 ↗" })).toBeNull();
+    // The Eidos browser is still the one in use, so its controls stay available.
+    expect(screen.getByRole("button", { name: "打开浏览器登录" })).toBeInTheDocument();
+  });
+
+  it("links to the Chrome Web Store when the extension is not found", async () => {
+    const calls = runtime({ presence: "missing" });
+    render(<BuiltinPlugins onInstall={vi.fn()} onShowToast={vi.fn()} />);
+    expect(await screen.findByText("未在 Chrome 中检测到扩展")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "打开 Chrome 应用商店 ↗" }));
+    expect(calls.openBrowserExtensionStore).toHaveBeenCalledOnce();
+  });
+
+  it("saves the token only after a high-risk confirmation, then can remove it", async () => {
+    const calls = runtime();
+    const onShowToast = vi.fn();
+    render(<BuiltinPlugins onInstall={vi.fn()} onShowToast={onShowToast} />);
+    const input = await screen.findByLabelText("Playwright Extension 令牌");
+    expect(input).toHaveAttribute("type", "password");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("请先粘贴令牌");
+    await userEvent.type(input, "PLAYWRIGHT_MCP_EXTENSION_TOKEN=abc");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    const confirm = screen.getByRole("alertdialog", { name: "启用我的 Chrome" });
+    expect(confirm).toHaveTextContent("不隔离账号");
+    expect(confirm).toHaveTextContent("Cookie");
+    expect(calls.setBrowserAgentExtensionToken).not.toHaveBeenCalled();
+    await userEvent.click(within(confirm).getByRole("button", { name: "保存并启用" }));
+    expect(calls.setBrowserAgentExtensionToken).toHaveBeenCalledWith({ token: "PLAYWRIGHT_MCP_EXTENSION_TOKEN=abc" });
+    expect(await screen.findByText("令牌已保存")).toBeInTheDocument();
+    expect(screen.getByText(/已启用。新任务会在你的 Chrome 中创建「Playwright · Eidos · 会话名」标签组/)).toBeInTheDocument();
+    expect(screen.getByText(/使用你的 Chrome（标签组）/)).toBeInTheDocument();
+    // Opening and clearing the Eidos browser no longer apply.
+    expect(screen.queryByRole("button", { name: "打开浏览器登录" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "清除浏览器数据" })).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "移除" }));
+    expect(calls.clearBrowserAgentExtensionToken).toHaveBeenCalledOnce();
+    expect(await screen.findByText("设置完成前，新任务使用 Eidos 浏览器。")).toBeInTheDocument();
+    expect(onShowToast).toHaveBeenLastCalledWith(expect.stringContaining("已移除令牌"), "success");
+  });
+
+  it("does not report a saved token as failed when only the status refresh fails", async () => {
+    const calls = runtime();
+    const read = window.eidosRuntime.readBrowserAgentStatus as ReturnType<typeof vi.fn>;
+    const onShowToast = vi.fn();
+    render(<BuiltinPlugins onInstall={vi.fn()} onShowToast={onShowToast} />);
+    await userEvent.type(await screen.findByLabelText("Playwright Extension 令牌"), "PLAYWRIGHT_MCP_EXTENSION_TOKEN=abc");
+    read.mockRejectedValueOnce(new Error("Runtime busy"));
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await userEvent.click(within(screen.getByRole("alertdialog", { name: "启用我的 Chrome" })).getByRole("button", { name: "保存并启用" }));
+    expect(calls.setBrowserAgentExtensionToken).toHaveBeenCalledOnce();
+    await waitFor(() => expect(onShowToast).toHaveBeenCalledWith(expect.stringContaining("令牌已保存"), "success"));
+    expect(screen.queryByText("令牌保存失败，请稍后重试。")).toBeNull();
+  });
+
+  it("explains an invalid token next to the field", async () => {
+    runtime();
+    render(<BuiltinPlugins onInstall={vi.fn()} onShowToast={vi.fn()} />);
+    await userEvent.type(await screen.findByLabelText("Playwright Extension 令牌"), "nope");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await userEvent.click(within(screen.getByRole("alertdialog", { name: "启用我的 Chrome" })).getByRole("button", { name: "保存并启用" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("令牌格式不正确");
+    expect(screen.queryByText("令牌已保存")).toBeNull();
+  });
+
+  it("uses remote debugging only after its own confirmation, and switches back by choice", async () => {
+    const calls = runtime({ target: "eidos" });
+    render(<BuiltinPlugins onInstall={vi.fn()} onShowToast={vi.fn()} />);
+    await userEvent.click(await screen.findByRole("radio", { name: "我的 Chrome（远程调试）" }));
+    const confirm = screen.getByRole("alertdialog", { name: "使用我的 Chrome（远程调试）" });
+    expect(confirm).toHaveTextContent("所有已登录的账号");
+    // Choosing the option again is not a confirmation.
+    await userEvent.click(screen.getByRole("radio", { name: "我的 Chrome（远程调试）" }));
+    expect(calls.setBrowserAgentTarget).not.toHaveBeenCalled();
+    await userEvent.click(within(confirm).getByRole("button", { name: "使用我的 Chrome" }));
+    expect(calls.setBrowserAgentTarget).toHaveBeenCalledWith({ target: "user_chrome" });
     expect(await screen.findByText(/chrome:\/\/inspect\/#remote-debugging/)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "改回 Eidos 浏览器" }));
-    expect(setBrowserAgentTarget).toHaveBeenLastCalledWith({ target: "eidos" });
+    await userEvent.click(screen.getByRole("radio", { name: "Eidos 浏览器" }));
+    expect(calls.setBrowserAgentTarget).toHaveBeenLastCalledWith({ target: "eidos" });
+    expect(screen.queryByLabelText("Playwright Extension 令牌")).toBeNull();
   });
 });
 
