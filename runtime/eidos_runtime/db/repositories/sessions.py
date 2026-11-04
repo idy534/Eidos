@@ -27,7 +27,7 @@ from eidos_runtime.db.mappers import (
     _snapshot_item,
 )
 from eidos_runtime.file_limits import TOOL_TEXT_PAGE_CHARACTERS
-from eidos_runtime.models.tool_text import ToolTextPage
+from eidos_runtime.models.tool_text import TOOL_CONTENT_CHUNK_BYTES, ToolContentChunk, ToolTextPage
 from eidos_runtime.domain.project_workspace import SessionRoot
 from eidos_runtime.domain.session import (
     DeletedSession,
@@ -1030,6 +1030,62 @@ class SessionRepository(Repository):
         end = min(len(content), offset + TOOL_TEXT_PAGE_CHARACTERS)
         return ToolTextPage(content=content[offset:end], next_offset=end,
                             total_characters=len(content), sha256=digest)
+
+    def read_tool_content(
+        self, session_id: str, tool_call_id: str, index: int, offset: int, sha256: str | None,
+    ) -> ToolContentChunk:
+        """Read one saved image of a tool result in this Session; sources are never reopened."""
+        from eidos_runtime.domain.tool_content import DISPLAY_IMAGE_MIMES, ToolBinaryContent
+        from eidos_runtime.persistence.tool_content import ToolContentRepository
+
+        if index < 0 or offset < 0:
+            raise InvalidCursorError("invalid tool content cursor")
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT tool_calls.model_result_json FROM tool_calls JOIN items ON items.id = tool_calls.item_id "
+                "WHERE tool_calls.id = ? AND items.session_id = ?",
+                (tool_call_id, session_id),
+            ).fetchone()
+        stored = row["model_result_json"] if row is not None else None
+        if row is None:
+            from eidos_runtime.persistence.session_history import SessionHistoryRepository
+            historical = SessionHistoryRepository(self.database).tool_record(session_id, tool_call_id)
+            if historical is None:
+                raise ResourceNotFoundError("tool call not found in session")
+            stored = historical.model_result_json
+        try:
+            reference = json.loads(stored).get("modelContentSnapshot") if stored else None
+        except ValueError:
+            reference = None
+        if not isinstance(reference, str):
+            raise ResourceNotFoundError("tool content unavailable")
+        from eidos_runtime.db.json_blobs import JsonBlobReference
+
+        blob = JsonBlobReference.from_json(reference)
+        if blob is None:
+            raise ResourceNotFoundError("tool content unavailable")
+        digest = blob.sha256
+        if sha256 is not None and digest != sha256:
+            raise InvalidCursorError("tool content changed; reload the session before reading")
+        from eidos_runtime.db.json_blobs import JsonBlobCorruptionError
+
+        try:
+            snapshot = ToolContentRepository(self.database).read(reference)
+        except (JsonBlobCorruptionError, ValueError):
+            raise ResourceNotFoundError("tool content unavailable") from None
+        if index >= len(snapshot.items):
+            raise ResourceNotFoundError("tool content unavailable")
+        item = snapshot.items[index]
+        if not isinstance(item, ToolBinaryContent) or item.mime not in DISPLAY_IMAGE_MIMES:
+            raise ResourceNotFoundError("tool content unavailable")
+        data = base64.b64decode(item.data)
+        if offset > len(data):
+            raise InvalidCursorError("tool content offset exceeds content")
+        end = min(len(data), offset + TOOL_CONTENT_CHUNK_BYTES)
+        return ToolContentChunk(
+            data=base64.b64encode(data[offset:end]).decode("ascii"), mime_type=item.mime,
+            size_bytes=len(data), next_offset=end, complete=end == len(data), sha256=digest,
+        )
 
     def read_session_snapshot(
         self,

@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from eidos_runtime.application.automations import AutomationApplication
 
-from eidos_runtime.models.tool_text import ToolTextPage
+from eidos_runtime.models.tool_text import ToolContentChunk, ToolTextPage
 from eidos_runtime.models.skill_settings import SkillState
 from eidos_runtime.context.facts import CompactSummary, ContextFacts
 from eidos_runtime.model.replay import ModelResponseReplay
@@ -809,6 +809,13 @@ class SessionStore:
     ) -> ToolTextPage:
         return self._repository(self._sessions).read_tool_text(
             session_id, tool_call_id, field, sha256, offset,
+        )
+
+    def read_tool_content(
+        self, session_id: str, tool_call_id: str, index: int, offset: int, sha256: str | None,
+    ) -> ToolContentChunk:
+        return self._repository(self._sessions).read_tool_content(
+            session_id, tool_call_id, index, offset, sha256,
         )
 
     def read_session_snapshot(

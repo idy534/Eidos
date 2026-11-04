@@ -20,7 +20,15 @@ interface InputPreviewGrant {
   owner: number;
   id: string;
 }
-type PreviewGrant = WorkspacePreviewGrant | InputPreviewGrant;
+interface ToolContentPreviewGrant {
+  kind: "toolContent";
+  owner: number;
+  sessionId: string;
+  toolCallId: string;
+  index: number;
+  sha256: string;
+}
+type PreviewGrant = WorkspacePreviewGrant | InputPreviewGrant | ToolContentPreviewGrant;
 interface BrowserEntry { owner: number; sessionId: string; browserId: string; root: string; view: WebContentsView; error?: string | undefined; token?: string | undefined }
 
 /** Desktop views own no file authority: every resource is read through Runtime. */
@@ -88,6 +96,16 @@ export class ArtifactPreviewManager {
     return `eidos-preview://${token}/input/${encodeURIComponent(id)}`;
   }
 
+  /** A saved tool image, pinned to the snapshot it was first read from. */
+  async prepareToolContent(owner: WebContents, sessionId: string, toolCallId: string, index: number): Promise<string> {
+    if (this.grants.size >= 256) throw new Error("打开的预览过多，请先关闭部分文件。");
+    const first = await this.client().readToolContent(sessionId, toolCallId, index, 0);
+    if (owner.isDestroyed()) throw new Error("窗口已关闭。");
+    const token = randomUUID();
+    this.grants.set(token, { kind: "toolContent", owner: owner.id, sessionId, toolCallId, index, sha256: first.sha256 });
+    return `eidos-preview://${token}/tool/${index}.${first.mimeType === "image/jpeg" ? "jpg" : "png"}`;
+  }
+
   release(owner: WebContents, url: string): void {
     const token = new URL(url).hostname;
     if (this.grants.get(token)?.owner === owner.id) this.grants.delete(token);
@@ -108,6 +126,30 @@ export class ArtifactPreviewManager {
         });
       }
       if (!grant || (allowedToken && allowedToken !== url.hostname) || request.method !== "GET") return new Response(null, { status: 403 });
+      if (grant.kind === "toolContent") {
+        if (executable) return new Response(null, { status: 403 });
+        let chunk = await this.client().readToolContent(grant.sessionId, grant.toolCallId, grant.index, 0, grant.sha256);
+        let done = false;
+        const stream = new ReadableStream<Uint8Array>({
+          pull: async (controller) => {
+            if (done || request.signal.aborted || !this.grants.has(url.hostname)) { controller.close(); return; }
+            try {
+              controller.enqueue(Buffer.from(chunk.data, "base64"));
+              if (chunk.complete) { done = true; controller.close(); return; }
+              chunk = await this.client().readToolContent(grant.sessionId, grant.toolCallId, grant.index, chunk.nextOffset, grant.sha256);
+            } catch (error) { done = true; controller.error(error); }
+          },
+          cancel: () => { done = true; },
+        });
+        return new Response(stream, { headers: {
+          "Content-Type": chunk.mimeType,
+          "Content-Length": String(chunk.sizeBytes),
+          "Cache-Control": "no-store",
+          "Access-Control-Allow-Origin": "*",
+          "X-Content-Type-Options": "nosniff",
+          "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox",
+        } });
+      }
       if (grant.kind === "input") {
         if (executable) return new Response(null, { status: 403 });
         let chunk = await this.client().readInputAsset(grant.id, 0);

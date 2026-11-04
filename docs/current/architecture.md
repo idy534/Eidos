@@ -409,6 +409,8 @@ Shell 参数通过 Pydantic `AliasChoices` 兼容 Codex 拼写。`run_shell` 接
 
 大文本的持久事实和 UI 消息分别处理。`protocol/tool_text.py` 为超过 64 KiB 的 Diff、结果生成内容哈希和字节数，通知及 Session 快照只携带引用和摘要。完整 Diff 继续存放在 `tool_calls.approval_diff`，完整 UI 结果继续存放在 `ui_result_json`；Runtime 内部的原始 Item 不受显示投影影响。审批指纹仍覆盖原始 Diff、路径、版本和权限，审批记录以 Diff 引用避免重复存储大文本，路径和指纹仍保留。Desktop 通过 typed preload IPC、Main RuntimeClient、`toolCall/readText` 和 SessionApplication 读取每页最多 16,384 个 Unicode 字符。Repository 从同一 Session 的 ToolCall 读取文本并核对 SHA-256，拒绝过期引用和越界偏移。接口不执行文件工具，不改变审批，也不引入新表或第二份业务状态。当前分页每次读取并校验整段有界文本；性能优化留待测量，不提前增加缓存或持久索引。
 
+工具图片使用同一思路：`toolCall/readContent` 从同一 Session 的 ToolCall（或 Fork 继承的历史记录）读取 `modelContentSnapshot` 引用的 Blob，按 512 KiB 原始字节分块返回并附带 Blob SHA-256。Main 的 `eidos-preview` 协议以 `toolContent` 授权把这些分块流式交给 `<img>`，Renderer 不获得文件或 Blob 访问能力。`ui_result_json.attachments` 只保存序号、MIME 和字节数。
+
 `apply_patch.lark` 的语法来源是 `openai/codex` 的 `codex-rs/core/assets/tools/apply_patch.lark`。本地 grammar 将上游的 `add_line+` 改为 `add_line*`，因为 Codex Rust streaming parser 允许没有内容行的 Add File；显式的 `+` 仍表示一条空内容行。上游 grammar 中的部分空行正则不能直接交给 Lark，所以本地 grammar 也对这些 token 做了 Lark 兼容适配。Parser 可以规范化 CRLF 和外层空白，也支持首个 Update 片段不带 `@@`。Parser 不会猜测缺失的 `*** Begin Patch`、`*** End Patch` 或 `+`/`-` 前缀。Function 使用 `{ "patch": "..." }` 包装，Custom 不使用 JSON 包装。
 
 Tool Result 的 `reconciliationRequired` 只记录本次执行的未知结果。`sideEffectsMayExist` 保留可能副作用的证据。系统不会用这两个字段阻止后续工具、正常完成或取消。系统保留原始事实，不猜测成功，也不自动重放可能已执行的操作。

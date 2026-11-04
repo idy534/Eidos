@@ -364,7 +364,7 @@ def _item_from_row(
             else tool_row["result_json"]
         )
         if public_result is not None:
-            tool_call["resultJson"] = public_result
+            tool_call["resultJson"] = _with_legacy_screenshot(tool_row, public_result)
         if tool_row["completed_at"] is not None:
             tool_call["completedAt"] = tool_row["completed_at"]
         if tool_row["approval_status"] is not None:
@@ -385,6 +385,30 @@ def _item_from_row(
             tool_call["toolSetHash"] = tool_row["tool_set_hash"]
         item["toolCall"] = tool_call
     return ItemDto.model_validate(item).to_json_value()
+
+
+LEGACY_SCREENSHOT_TOOL = "mcp__browser__browser_take_screenshot"
+
+
+def _with_legacy_screenshot(tool_row: sqlite3.Row, public_result: str) -> str:
+    """Screenshots saved before display attachments existed still show in the feed.
+
+    Their bytes were always kept beside the model result; a Playwright
+    screenshot result carries exactly one image.
+    """
+    if tool_row["tool_name"] != LEGACY_SCREENSHOT_TOOL or "model_result_json" not in tool_row.keys():
+        return public_result
+    stored = tool_row["model_result_json"]
+    if not stored or '"modelContentSnapshot"' not in stored or '"attachments"' in public_result:
+        return public_result
+    try:
+        visible = json.loads(public_result)
+    except ValueError:
+        return public_result
+    if not isinstance(visible, dict) or visible.get("outcome") != "success":
+        return public_result
+    visible["attachments"] = [{"index": 0, "kind": "image"}]
+    return json.dumps(visible, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
 def _json_bytes(value: object) -> int:

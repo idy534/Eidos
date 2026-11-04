@@ -266,6 +266,7 @@ import type {
   SessionListResult,
   SessionSnapshot,
   ToolTextPage,
+  ToolContentChunk,
   SkillListResult,
   SkillDetail,
   SkillRemoval,
@@ -1001,6 +1002,16 @@ export class RuntimeClient {
   readInput(id: string): Promise<InputPreview> {
     return this.validatedRequest("input/read", { id }, isInputPreview);
   }
+  readToolContent(sessionId: string, toolCallId: string, index: number, offset = 0, sha256?: string): Promise<ToolContentChunk> {
+    return this.validatedRequest(
+      "toolCall/readContent",
+      { sessionId, toolCallId, index, offset, ...(sha256 ? { sha256 } : {}) },
+      (value): value is ToolContentChunk => isToolContentChunk(value) && (!sha256 || value.sha256 === sha256)
+        && value.nextOffset >= offset && value.nextOffset <= value.sizeBytes
+        && (value.nextOffset > offset || value.complete),
+    );
+  }
+
   readInputAsset(id: string, offset = 0): Promise<InputAssetChunk> {
     return this.validatedRequest("input/readAsset", { id, offset }, isInputAssetChunk);
   }
@@ -2472,6 +2483,17 @@ function isItem(value: unknown): value is Item {
     : value.toolCall === undefined;
 }
 
+function isToolContentChunk(value: unknown): value is ToolContentChunk {
+  return isRecord(value)
+    && hasOnlyKeys(value, ["data", "mimeType", "sizeBytes", "nextOffset", "complete", "sha256"])
+    && typeof value.data === "string"
+    && (value.mimeType === "image/png" || value.mimeType === "image/jpeg")
+    && Number.isSafeInteger(value.sizeBytes) && (value.sizeBytes as number) > 0
+    && Number.isSafeInteger(value.nextOffset) && (value.nextOffset as number) >= 0
+    && typeof value.complete === "boolean"
+    && typeof value.sha256 === "string" && /^[0-9a-f]{64}$/.test(value.sha256);
+}
+
 function isToolTextPage(value: unknown): value is ToolTextPage {
   return isRecord(value)
     && hasOnlyKeys(value, ["content", "nextOffset", "totalCharacters", "sha256"])
@@ -2545,7 +2567,7 @@ function isToolProvenance(value: unknown): value is ToolProvenance {
     isRecord(value)
     && hasOnlyKeys(value, [
       "kind", "sourceId", "sourceVersion", "contentHash",
-      "pluginId", "serverId", "skillId",
+      "pluginId", "serverId", "skillId", "displayTitle",
     ])
     && ["builtin", "skill", "mcp"].includes(String(value.kind))
     && typeof value.sourceId === "string"
@@ -2554,6 +2576,7 @@ function isToolProvenance(value: unknown): value is ToolProvenance {
     && (value.pluginId === undefined || typeof value.pluginId === "string")
     && (value.serverId === undefined || typeof value.serverId === "string")
     && (value.skillId === undefined || typeof value.skillId === "string")
+    && (value.displayTitle === undefined || typeof value.displayTitle === "string")
   );
 }
 
@@ -2569,6 +2592,7 @@ function projectApprovalToolProvenance(
     || (value.pluginId !== undefined && typeof value.pluginId !== "string")
     || (value.serverId !== undefined && typeof value.serverId !== "string")
     || (value.skillId !== undefined && typeof value.skillId !== "string")
+    || (value.displayTitle !== undefined && typeof value.displayTitle !== "string")
   ) {
     return undefined;
   }
@@ -2580,6 +2604,7 @@ function projectApprovalToolProvenance(
     ...(value.pluginId !== undefined ? { pluginId: value.pluginId } : {}),
     ...(value.serverId !== undefined ? { serverId: value.serverId } : {}),
     ...(value.skillId !== undefined ? { skillId: value.skillId } : {}),
+    ...(value.displayTitle !== undefined ? { displayTitle: value.displayTitle } : {}),
   };
 }
 

@@ -231,7 +231,7 @@ class RunResources:
     def _browser_launch(self) -> BrowserLaunch:
         """Resolve verified Playwright MCP inputs and the shared Chrome endpoint."""
         return resolve_browser_launch(
-            self.store, self.browser_host, self.runtime_dependency_catalog, supports_images=self.supports_images,
+            self.store, self.browser_host, self.runtime_dependency_catalog,
         )
 
     def _set_registry(

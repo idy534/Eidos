@@ -200,7 +200,7 @@ test("shows a thinking indicator before the first model item", () => {
   assert.match(html, /正在思考/);
 });
 
-test("shows safe MCP provenance and duration without internal diagnostics", () => {
+test("names MCP tools readably without internal ids or diagnostics", () => {
   const html = renderToStaticMarkup(
     <ExecutionFeed
       items={[
@@ -225,8 +225,8 @@ test("shows safe MCP provenance and duration without internal diagnostics", () =
     />,
   );
 
-  assert.match(html, /已运行 mcp__fixture__echo/);
-  assert.match(html, /Plugin demo · Server fixture · 250ms/);
+  assert.match(html, /fixture · echo · hello/);
+  assert.doesNotMatch(html, /mcp__fixture__echo|Plugin demo|250ms/);
   assert.doesNotMatch(html, /stderr|internal path|SECRET_VALUE/);
 });
 
