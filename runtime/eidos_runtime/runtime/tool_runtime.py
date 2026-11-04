@@ -1714,7 +1714,7 @@ class ExternalToolHandler:
             return prepared, grant, None
         return prepared.model_copy(update={
             "approval_description": browser_access_description(
-                call.name, call.arguments, details, browser.launch.profile,
+                call.name, call.arguments, details, browser.launch.profile, browser.launch.mode,
             ),
             "approval_kind": "additional_permissions",
             "transition_reason": "browser_access_approval",

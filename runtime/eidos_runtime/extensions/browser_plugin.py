@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 import threading
@@ -56,3 +56,10 @@ class BrowserLaunch:
     chrome_installed: Callable[[], bool] | None = None
     # "default" drives the Eidos profile; "user" is the user's everyday Chrome.
     profile: Literal["default", "user"] = "default"
+    # "extension" reaches the user's Chrome through the Playwright Extension
+    # instead of a CDP endpoint (see infrastructure/chrome_extension.py).
+    mode: Literal["cdp", "extension"] = "cdp"
+    # Extra server environment; may hold the extension token, never logged.
+    environment: Mapping[str, str] = field(default_factory=dict, repr=False)
+    # MCP client name; the extension shows it in the tab group title.
+    client_name: str | None = None

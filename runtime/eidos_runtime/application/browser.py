@@ -13,6 +13,9 @@ from eidos_runtime.infrastructure.managed_resources import ManagedResourceManage
 from eidos_runtime.models.browser import (
     BrowserClearResponse,
     BrowserCloseResponse,
+    BrowserExtensionTokenClearRequest,
+    BrowserExtensionTokenRequest,
+    BrowserExtensionTokenResponse,
     BrowserOpenResponse,
     BrowserGrantRevokeRequest,
     BrowserGrantRevokeResponse,
@@ -21,8 +24,13 @@ from eidos_runtime.models.browser import (
     BrowserTargetRequest,
     BrowserTargetResponse,
 )
+from eidos_runtime.application.errors import ApplicationInvalidParamsError
+from eidos_runtime.infrastructure.chrome_extension import (
+    ExtensionPresence, ExtensionTokenInvalid, extension_presence, normalize_extension_token,
+)
 from eidos_runtime.infrastructure.user_chrome import user_chrome_endpoint
 from eidos_runtime.persistence.browser_grants import BrowserGrantRepository
+from eidos_runtime.runtime.browser_launch import browser_secrets, extension_token
 from eidos_runtime.runtime.events import RuntimeEvents
 
 _RESOURCE_PHASES = {
@@ -38,7 +46,9 @@ class BrowserApplication:
         events: RuntimeEvents,
         host: Callable[[], BrowserHost | None],
         resources: Callable[[], ManagedResourceManager | None],
+        presence: Callable[[], ExtensionPresence] = extension_presence,
     ) -> None:
+        self.presence = presence
         self.store = store
         self.events = events
         self.host = host
@@ -49,6 +59,11 @@ class BrowserApplication:
         host = self.host()
         host_status = host.status() if host is not None else None
         target = self.grants.target()
+        configured = extension_token(self.store) is not None
+        presence = self.presence() if target == "chrome_extension" else "unknown"
+        effective = (
+            "eidos" if target == "chrome_extension" and (not configured or presence == "missing") else target
+        )
         record = self.store.plugin_record(BROWSER_PLUGIN_ID)
         installed = record is not None and record.get("status") == "installed"
         return BrowserStatus(
@@ -59,23 +74,55 @@ class BrowserApplication:
             plugin_enabled=installed and record.get("enabled") is True,
             resource=self._resource_phase(),
             target=target,
+            effective_target=effective,
             attach_available=user_chrome_endpoint() is not None,
+            extension_configured=configured,
+            extension_presence=presence,
             granted=request.session_id is not None and self.grants.active(
-                request.session_id, "user" if target == "user_chrome" else "default",
+                request.session_id, "default" if effective == "eidos" else "user",
             ) is not None,
         )
 
     def set_target(self, request: BrowserTargetRequest) -> BrowserTargetResponse:
+        previous = self.grants.target()
         mutation = self.grants.set_target(request.target)
         self.events.publish(mutation)
-        revoked = 0
-        if request.target == "eidos":
-            # Returning later to the user's Chrome must ask every Session again.
-            revocation = self.grants.revoke_all("user", profile="user")
-            if revocation.events:
-                self.events.publish(revocation)
-            revoked = revocation.value
+        # Every way of reaching the user's Chrome asks each Session again.
+        revoked = self._revoke_user_grants() if previous != request.target else 0
         return BrowserTargetResponse(target=request.target, revoked_grants=revoked)
+
+    def set_extension_token(self, request: BrowserExtensionTokenRequest) -> BrowserExtensionTokenResponse:
+        try:
+            token = normalize_extension_token(request.token)
+        except ExtensionTokenInvalid:
+            raise ApplicationInvalidParamsError("BROWSER_EXTENSION_TOKEN_INVALID") from None
+        secrets = browser_secrets(self.store)
+        if secrets is None:
+            raise ApplicationInvalidParamsError("BROWSER_EXTENSION_TOKEN_INVALID")
+        reference = secrets.write(token)
+        try:
+            mutation = self.grants.set_extension_credential(reference)
+        except BaseException:
+            secrets.prune(lambda identifier: identifier != reference)
+            raise
+        self.events.publish(mutation)
+        secrets.prune(lambda identifier: identifier == reference)
+        # A new pairing with the user's Chrome is confirmed again per Session.
+        return BrowserExtensionTokenResponse(configured=True, revoked_grants=self._revoke_user_grants())
+
+    def clear_extension_token(self, _request: BrowserExtensionTokenClearRequest) -> BrowserExtensionTokenResponse:
+        mutation = self.grants.set_extension_credential(None)
+        self.events.publish(mutation)
+        secrets = browser_secrets(self.store)
+        if secrets is not None:
+            secrets.prune(lambda _identifier: False)
+        return BrowserExtensionTokenResponse(configured=False, revoked_grants=self._revoke_user_grants())
+
+    def _revoke_user_grants(self) -> int:
+        revocation = self.grants.revoke_all("user", profile="user")
+        if revocation.events:
+            self.events.publish(revocation)
+        return revocation.value
 
     def revoke(self, request: BrowserGrantRevokeRequest) -> BrowserGrantRevokeResponse:
         mutation = self.grants.revoke(request.session_id, "user")

@@ -154,8 +154,10 @@ def test_shared_browser_fixture_matches_closed_contracts():
 
     from eidos_runtime.db.events import BrowserGrantChangedPayload
     from eidos_runtime.models.browser import (
-        BrowserCloseRequest, BrowserCloseResponse, BrowserGrantRevokeRequest,
-        BrowserGrantRevokeResponse, BrowserStatus, BrowserStatusRequest,
+        BrowserCloseRequest, BrowserCloseResponse, BrowserExtensionTokenClearRequest,
+        BrowserExtensionTokenRequest, BrowserExtensionTokenResponse, BrowserGrantRevokeRequest,
+        BrowserGrantRevokeResponse, BrowserStatus, BrowserStatusRequest, BrowserTargetRequest,
+        BrowserTargetResponse,
     )
 
     fixture = json.loads((Path(__file__).parents[2] / "protocol/fixtures/browser-v1.json").read_text())
@@ -166,6 +168,11 @@ def test_shared_browser_fixture_matches_closed_contracts():
     BrowserCloseRequest.model_validate(fixture["closeRequest"])
     BrowserCloseResponse.model_validate(fixture["closeResponse"])
     BrowserGrantChangedPayload.model_validate(fixture["grantChanged"])
+    BrowserTargetRequest.model_validate(fixture["targetRequest"])
+    BrowserTargetResponse.model_validate(fixture["targetResponse"])
+    BrowserExtensionTokenRequest.model_validate(fixture["extensionTokenRequest"])
+    BrowserExtensionTokenResponse.model_validate(fixture["extensionTokenResponse"])
+    BrowserExtensionTokenClearRequest.model_validate(fixture["extensionTokenClearRequest"])
     with pytest.raises(ValidationError):
         BrowserStatus.model_validate({**fixture["status"], "endpoint": "http://127.0.0.1:9222"})
     with pytest.raises(ValidationError):
@@ -213,7 +220,8 @@ def test_returning_to_the_eidos_browser_revokes_user_chrome_grants(store, worksp
     repository = BrowserGrantRepository(store.database)
     session = store.create_session(str(workspace))
     application = BrowserApplication(store, Events(), lambda: None, lambda: None)
-    assert repository.target() == "eidos"
+    # The recommended target is the default until the user picks another.
+    assert repository.target() == "chrome_extension"
     assert application.set_target(BrowserTargetRequest(target="user_chrome")).revoked_grants == 0
     assert repository.target() == "user_chrome"
     repository.grant(session_id=session["id"], plugin_id="eidos-browser", plugin_version="1.0.0",

@@ -9,6 +9,7 @@ from eidos_runtime.domain.agents import AgentDefinition, definition_version
 from eidos_runtime.domain.personalization import PersonalizationPreferences
 from eidos_runtime.model.prompts import (
     AGENT_CATALOG_INSTRUCTIONS,
+    BROWSER_ACCOUNT_INSTRUCTIONS,
     BASE_AGENT_INSTRUCTIONS,
     EXECUTION_MODE_INSTRUCTIONS,
     GIT_REPOSITORY_INSTRUCTIONS,
@@ -34,6 +35,8 @@ if TYPE_CHECKING:
     from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
 
 
+# Bundled browser tools; the account rules apply whenever a Run has them.
+BROWSER_TOOL_PREFIX = "mcp__browser__browser_"
 SYSTEM_SAFETY_AUTHORITY = 500
 RUNTIME_AUTHORITY = 400
 PROJECT_RULE_AUTHORITY = 200
@@ -266,6 +269,11 @@ class InstructionResolver:
                 content=SKILLS_INSTRUCTIONS + (
                     "\n" + skill_catalog_context.content if skill_catalog_context is not None else ""
                 ),
+            ))
+        if any(name.startswith(BROWSER_TOOL_PREFIX) for name in available):
+            layers.append(InstructionLayer.create(
+                id="browser-accounts", authority=RUNTIME_AUTHORITY, role="developer",
+                source="eidos:browser-accounts", content=BROWSER_ACCOUNT_INSTRUCTIONS,
             ))
         if agent_catalog:
             layers.append(InstructionLayer.create(

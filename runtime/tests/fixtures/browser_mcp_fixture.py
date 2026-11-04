@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 READ_ONLY = {
@@ -39,9 +40,23 @@ TOOLS = [
     }
     for name in NAMES
 ]
-LOG = Path(os.environ["TMPDIR"]) / "browser-fixture.jsonl"
+# Tests may keep the log outside the connection directory, which is removed on close.
+LOG = Path(os.environ.get("BROWSER_FIXTURE_LOG") or Path(os.environ["TMPDIR"]) / "browser-fixture.jsonl")
+EXTENSION = os.environ.get("PLAYWRIGHT_MCP_EXTENSION") == "1"
+RELAY = "ws%3A%2F%2F127.0.0.1%3A50123%2Fextension%2F5733f635-0f0a-41ef-9972-305b283803db"
 with LOG.open("a", encoding="utf-8") as stream:
-    stream.write(json.dumps({"launch": sys.argv[1:], "cwd": os.getcwd()}) + "\n")
+    stream.write(json.dumps({"launch": sys.argv[1:], "cwd": os.getcwd(), "extension": EXTENSION and {
+        # Names and shapes only; the token value is never recorded.
+        "token": bool(os.environ.get("PLAYWRIGHT_MCP_EXTENSION_TOKEN")),
+        "helper": os.access(os.environ.get("PLAYWRIGHT_MCP_EXECUTABLE_PATH", ""), os.X_OK),
+        "preload": os.environ.get("NODE_OPTIONS", "").startswith("--require "),
+    }}) + "\n")
+
+
+def open_connect_page(url: str) -> None:
+    """What Playwright's relay does: run the configured "browser" with the page URL."""
+    subprocess.run([os.environ["PLAYWRIGHT_MCP_EXECUTABLE_PATH"], "--profile-directory=Default", url],
+                   check=False, timeout=10)
 
 
 def send(value: dict[str, object]) -> None:
@@ -53,6 +68,8 @@ for line in sys.stdin:
     message = json.loads(line)
     method = message.get("method")
     if method == "initialize":
+        with LOG.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps({"client": message["params"].get("clientInfo", {}).get("name")}) + "\n")
         send({"jsonrpc": "2.0", "id": message["id"], "result": {
             "protocolVersion": message["params"]["protocolVersion"],
             "capabilities": {"tools": {}},
@@ -65,6 +82,17 @@ for line in sys.stdin:
         arguments = message["params"].get("arguments", {})
         with LOG.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps({"call": name, "arguments": arguments}) + "\n")
+        if EXTENSION and arguments.get("url") == "https://connect.test/":
+            open_connect_page("https://evil.test/connect.html")
+            open_connect_page(
+                f"chrome-extension://mmlmfjhmonkocbjadbfplnigmagldckm/connect.html?mcpRelayUrl={RELAY}"
+                "&client=%7B%22name%22%3A%22Eidos+%C2%B7+t%22%7D&protocolVersion=2&token=secret-token"
+            )
+        if EXTENSION and arguments.get("url") == "https://unpaired.test/":
+            send({"jsonrpc": "2.0", "id": message["id"], "result": {"content": [{"type": "text", "text": (
+                "### Error\nError: Playwright extension did not connect within 30s after opening the connect page."
+            )}], "isError": True}})
+            continue
         content: list[dict[str, object]] = [{
             "type": "text",
             "text": f"### Result\nran {name}\n### Page state\n- Page URL: https://example.com/\n- Page Title: Example Domain\n"

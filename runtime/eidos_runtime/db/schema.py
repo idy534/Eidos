@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from eidos_runtime.db.browser_grants_migration import BROWSER_GRANTS_SCHEMA_SQL
 from eidos_runtime.db.event_query_migration import EVENT_QUERY_INDEX_SQL
+from eidos_runtime.db.browser_extension_migration import BROWSER_EXTENSION_SCHEMA_SQL
 from eidos_runtime.db.project_binding_migration import PROJECT_BINDING_SCHEMA_SQL
 from eidos_runtime.db.worktree_git_identity_migration import (
     WORKTREE_GIT_IDENTITY_SCHEMA_SQL,
@@ -35,7 +36,8 @@ from eidos_runtime.memory.flow_migration import MEMORY_FLOW_SQL
 from eidos_runtime.db.personalization_migration import PERSONALIZATION_SCHEMA_SQL
 
 
-SCHEMA_VERSION = 49
+SCHEMA_VERSION = 50
+V49_SCHEMA_VERSION = 49
 V48_SCHEMA_VERSION = 48
 V47_SCHEMA_VERSION = 47
 V46_SCHEMA_VERSION = 46
@@ -80,7 +82,7 @@ V8_SCHEMA_VERSION = 8
 V7_SCHEMA_VERSION = 7
 V6_SCHEMA_VERSION = 6
 V5_SCHEMA_VERSION = 5
-PREVIOUS_SCHEMA_VERSION = V48_SCHEMA_VERSION
+PREVIOUS_SCHEMA_VERSION = V49_SCHEMA_VERSION
 LEGACY_SCHEMA_VERSION = 1
 
 TOOL_CALL_PAYLOAD_KIND_COLUMN = (
@@ -1596,7 +1598,8 @@ V45_SCHEMA_SQL = V44_SCHEMA_SQL + PROJECT_WORKSPACES_SCHEMA_SQL
 V46_SCHEMA_SQL = V45_SCHEMA_SQL + PROJECT_BINDING_SCHEMA_SQL
 V47_SCHEMA_SQL = V46_SCHEMA_SQL + WORKTREE_GIT_IDENTITY_SCHEMA_SQL
 V48_SCHEMA_SQL = V47_SCHEMA_SQL + BROWSER_GRANTS_SCHEMA_SQL
-SCHEMA_SQL = V48_SCHEMA_SQL + EVENT_QUERY_INDEX_SQL
+V49_SCHEMA_SQL = V48_SCHEMA_SQL + EVENT_QUERY_INDEX_SQL
+SCHEMA_SQL = V49_SCHEMA_SQL + BROWSER_EXTENSION_SCHEMA_SQL
 
 # Test/upgrade fixture for schema v5. Schema v5 still kept the rebuildable
 # repository index in the state database.

@@ -306,3 +306,92 @@ class BrowserScreenshotDisplayTests(_BrowserToolCase):
         items = self.store.read_session_snapshot(session["id"], item_limit=50, before_item_id=None)["items"]
         call = next(item["toolCall"] for item in items if item.get("toolCall", {}).get("id") == row["id"])
         self.assertEqual(json.loads(call["resultJson"])["attachments"], [{"index": 0, "kind": "image"}])
+
+
+class BrowserExtensionModeTests(_BrowserToolCase):
+    """The user's Chrome through the Playwright Extension, against the fixture server."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        from dataclasses import replace
+
+        from eidos_runtime.extensions import mcp as mcp_module
+        from eidos_runtime.infrastructure.chrome_extension import ConnectPageBroker
+
+        self.opened: list[str] = []
+        opened = self.opened
+
+        class RecordingBroker(ConnectPageBroker):
+            def __init__(self) -> None:
+                async def record(url: str) -> None:
+                    opened.append(url)
+                super().__init__(record)
+
+        self.broker_patch = patch.object(mcp_module, "ConnectPageBroker", RecordingBroker)
+        self.broker_patch.start()
+        self.launch = replace(
+            self.launch, variables={"BROWSER_CDP_ENDPOINT": "", "BROWSER_IMAGE_RESPONSES": "allow"},
+            ensure_browser=None, profile="user", mode="extension",
+            environment={"PLAYWRIGHT_MCP_EXTENSION_TOKEN": "t" * 43}, client_name="Eidos · 修复登录",
+        )
+
+    def tearDown(self) -> None:
+        self.broker_patch.stop()
+        super().tearDown()
+
+    def run_logged(self, session_id: str, calls, **options):
+        """Run tools and keep the fixture's log and environment past connection close."""
+        from eidos_runtime.extensions.mcp import McpConnection
+
+        original = McpConnection._prepare_parameters
+        log = Path(self.temporary.name) / f"fixture-{len(self.opened)}-{session_id}.jsonl"
+        environments: list[dict[str, str]] = []
+
+        def prepare(connection):
+            parameters = original(connection)
+            environments.append(dict(parameters.env))
+            return parameters.model_copy(update={"env": {**parameters.env, "BROWSER_FIXTURE_LOG": str(log)}})
+
+        with patch.object(McpConnection, "_prepare_parameters", prepare):
+            outcome = self.run_tools(session_id, calls, **options)
+        entries = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+        return outcome, entries, environments
+
+    def test_extension_run_pairs_through_the_broker_and_confirms_with_the_user(self) -> None:
+        session = self.store.create_session(str(self.workspace))
+        (_, requests, results), log, environments = self.run_logged(
+            session["id"], [("browser_navigate", {"url": "https://connect.test/"})],
+        )
+        env = environments[0]
+        self.assertEqual(env["PLAYWRIGHT_MCP_EXTENSION"], "1")
+        self.assertTrue(env["NODE_OPTIONS"].startswith('--require "'))
+        self.assertEqual([request.get("requiresHumanConfirmation") for request in requests], [True])
+        self.assertIn("标签组", requests[0]["riskWarning"])
+        self.assertIn("Cookie", requests[0]["riskWarning"])
+        self.assertEqual(results["browser_navigate"]["outcome"], "success")
+        self.assertEqual(next(entry["client"] for entry in log if "client" in entry), "Eidos · 修复登录")
+        launch = next(entry for entry in log if "launch" in entry)
+        self.assertEqual(launch["extension"], {"token": True, "helper": True, "preload": True})
+        self.assertEqual(launch["launch"][launch["launch"].index("--cdp-endpoint") + 1], "")
+        # The forged page was refused; only the extension's connect page reached Chrome.
+        self.assertEqual(len(self.opened), 1)
+        self.assertTrue(self.opened[0].startswith("chrome-extension://mmlmfjhmonkocbjadbfplnigmagldckm/connect.html?"))
+        grants = BrowserGrantRepository(self.store.database)
+        self.assertIsNotNone(grants.active(session["id"], "user"))
+        self.assertIsNone(grants.active(session["id"], "default"))
+
+    def test_network_request_details_are_not_offered_for_the_users_chrome(self) -> None:
+        session = self.store.create_session(str(self.workspace))
+        (_, _, results), log, _ = self.run_logged(session["id"], [("browser_network_request", {"index": 1})])
+        self.assertNotEqual(results.get("browser_network_request", {}).get("outcome"), "success")
+        self.assertTrue(any("launch" in entry for entry in log))
+        self.assertFalse(any(entry.get("call") == "browser_network_request" for entry in log))
+
+    def test_unpaired_extension_is_a_stable_error_with_guidance(self) -> None:
+        session = self.store.create_session(str(self.workspace))
+        _, _, results = self.run_tools(
+            session["id"], [("browser_navigate", {"url": "https://unpaired.test/"})], mode="full_access",
+        )
+        result = results["browser_navigate"]
+        self.assertEqual(result["code"], "browser_extension_not_connected")
+        self.assertIn("Do not switch to another browser", result["summary"])
