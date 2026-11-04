@@ -479,7 +479,9 @@ class McpConnection:
             ):
                 self.error_code = "mcp_startup_timeout"
                 raise McpUnavailable(self.error_code) from None
-            self.error_code = self.error_code or (
+            # A launch refused before the process starts (for example missing
+            # browser resources) keeps its own code instead of a generic one.
+            self.error_code = self.error_code or _unavailable_code(error) or (
                 "mcp_startup_timeout"
                 if (
                     (startup_scope is not None and startup_scope.cancel_called)
@@ -1178,6 +1180,17 @@ def _snapshot_has_plugin(snapshot: dict[str, object], plugin_id: str, content_ha
         and value.get("contentHash") == content_hash
         for value in plugins
     )
+
+
+def _unavailable_code(error: BaseException) -> str | None:
+    if isinstance(error, McpUnavailable):
+        return str(error)
+    if isinstance(error, BaseExceptionGroup):
+        for child in error.exceptions:
+            code = _unavailable_code(child)
+            if code is not None:
+                return code
+    return None
 
 
 def _exception_contains(error: BaseException, kind: type[BaseException]) -> bool:

@@ -8,10 +8,8 @@ from typing import TYPE_CHECKING
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.browser_plugin import BrowserLaunch
-from eidos_runtime.infrastructure.browser_host import BrowserHost, BrowserUnavailable
-from eidos_runtime.infrastructure.browser_runtime import BrowserRuntimeUnavailable, resolve_browser_runtime
-from eidos_runtime.infrastructure.user_chrome import user_chrome_endpoint
-from eidos_runtime.persistence.browser_grants import BrowserGrantRepository
+from eidos_runtime.infrastructure.browser_host import BrowserHost
+from eidos_runtime.runtime.browser_launch import resolve_browser_launch
 from eidos_runtime.extensions.mcp import McpManager
 from eidos_runtime.extensions.plugins import PluginCatalog
 from eidos_runtime.extensions.skill_dependencies import (
@@ -232,43 +230,8 @@ class RunResources:
 
     def _browser_launch(self) -> BrowserLaunch:
         """Resolve verified Playwright MCP inputs and the shared Chrome endpoint."""
-        from eidos_runtime.infrastructure.managed_resource_catalog import ManagedResourceCatalog
-
-        host = self.browser_host
-        if host is None:
-            raise BrowserRuntimeUnavailable("browser_runtime_unavailable")
-        catalog = self.runtime_dependency_catalog
-        manager = catalog.resources if isinstance(catalog, ManagedResourceCatalog) else None
-        runtime = resolve_browser_runtime(manager)
-        images = "allow" if self.supports_images else "omit"
-        if BrowserGrantRepository(self.store.database).target() == "user_chrome":
-            # The user opted in to their everyday Chrome; Eidos never launches it.
-            endpoint = user_chrome_endpoint()
-            if endpoint is None:
-                raise BrowserRuntimeUnavailable("browser_attach_unavailable")
-
-            def attached(_cancel: object) -> str:
-                if user_chrome_endpoint() != endpoint:
-                    raise BrowserUnavailable("browser_attach_unavailable")
-                return endpoint
-
-            return BrowserLaunch(
-                runtime=runtime,
-                variables={"BROWSER_CDP_ENDPOINT": endpoint, "BROWSER_IMAGE_RESPONSES": images},
-                ensure_browser=attached, chrome_installed=lambda: True, profile="user",
-            )
-        try:
-            endpoint = host.endpoint()
-        except BrowserUnavailable as error:
-            raise BrowserRuntimeUnavailable(error.code) from None
-        return BrowserLaunch(
-            runtime=runtime,
-            variables={
-                "BROWSER_CDP_ENDPOINT": endpoint,
-                "BROWSER_IMAGE_RESPONSES": images,
-            },
-            ensure_browser=host.ensure,
-            chrome_installed=lambda: host.status().chrome_installed,
+        return resolve_browser_launch(
+            self.store, self.browser_host, self.runtime_dependency_catalog, supports_images=self.supports_images,
         )
 
     def _set_registry(

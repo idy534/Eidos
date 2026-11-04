@@ -215,3 +215,64 @@ class BundledBrowserPluginTests(unittest.TestCase):
         self.assertIsInstance(output, VerifiedToolOutput)
         self.assertEqual([item.mime for item in output.model_content.items], ["image/png"])
         self.assertIn("Example Domain", output.result["data"]["text"])
+
+
+class BrowserToolDetailsTests(BundledBrowserPluginTests):
+    """Settings' tool list uses the same launch inputs as a Run."""
+
+    def details(self, launch):
+        from eidos_runtime.extensions.mcp_details import McpDetails
+
+        return McpDetails(
+            lambda: self.plugins, lambda: self.kernel, self.resources, sandbox=False, browser_launch=launch,
+        )
+
+    def read(self, details):
+        import threading
+        from eidos_runtime.models.mcp_details import McpToolsRequest
+
+        return details.read(McpToolsRequest(plugin_id="eidos-browser", server_id="browser"), threading.Event())
+
+    def test_lists_browser_tools_and_marks_blocked_ones_unavailable(self) -> None:
+        response = self.read(self.details(lambda: self.launch))
+        self.assertEqual(response.state, "ready")
+        self.assertEqual(response.total, 25)
+        page = {tool.name: tool.available for tool in response.tools}
+        self.assertIs(page.get("browser_click"), True)
+        import threading
+        from eidos_runtime.models.mcp_details import McpToolsRequest
+
+        found = self.details(lambda: self.launch).read(McpToolsRequest(
+            plugin_id="eidos-browser", server_id="browser", query="browser_evaluate",
+        ), threading.Event())
+        self.assertEqual([(tool.name, tool.available) for tool in found.tools], [("browser_evaluate", False)])
+
+    def test_reports_why_browser_resources_are_missing(self) -> None:
+        from eidos_runtime.infrastructure.browser_runtime import BrowserRuntimeUnavailable
+
+        def not_ready():
+            raise BrowserRuntimeUnavailable("browser_runtime_not_ready")
+
+        response = self.read(self.details(not_ready))
+        self.assertEqual((response.state, response.error_code), ("error", "browser_runtime_not_ready"))
+
+    def test_startup_without_launch_inputs_keeps_its_code(self) -> None:
+        manager = McpManager(
+            self.plugins, self.plugins.extension_snapshot(), self.workspace, sandbox=False,
+            async_kernel=self.kernel, resource_registry=self.resources,
+        )
+        self.assertEqual(manager.start(), ())
+        manager.close()
+        server = next(value for value in self.plugins.list_mcp_servers() if value["serverId"] == "browser")
+        self.assertEqual(server.get("errorCode"), "browser_runtime_unavailable")
+        config = next(item for item in self.plugins.manifest("eidos-browser").mcp_servers if item.id == "browser")
+        connection = McpConnection(
+            plugin_root=self.workspace, workspace_root=self.workspace, config=config,
+            on_list_changed=lambda: None, async_kernel=self.kernel, sandbox=False, resource_registry=self.resources,
+        )
+        try:
+            with self.assertRaises(McpUnavailable) as raised:
+                connection.start()
+            self.assertEqual(str(raised.exception), "browser_runtime_unavailable")
+        finally:
+            connection.close()

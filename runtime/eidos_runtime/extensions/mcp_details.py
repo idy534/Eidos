@@ -14,7 +14,10 @@ from typing import cast
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.application.extensions import McpServerRecord
 from eidos_runtime.db.database import canonical_hash, now_ms
+from eidos_runtime.domain.browser import browser_tool_class
+from eidos_runtime.extensions.browser_plugin import BROWSER_PERMISSION_PROFILE, BrowserLaunch, is_bundled_browser_server
 from eidos_runtime.extensions.mcp import McpConnection, McpUnavailable, _tool_entry
+from eidos_runtime.infrastructure.browser_runtime import BrowserRuntimeUnavailable
 from eidos_runtime.extensions.contracts import McpServerConfigV1
 from eidos_runtime.extensions.plugins import MANUAL_MCP_PLUGIN_ID, PluginCatalog
 from eidos_runtime.models.mcp_details import McpToolDetail, McpToolsRequest, McpToolsResponse
@@ -34,8 +37,9 @@ class _Catalog:
 class McpDetails:
     def __init__(self, plugins: Callable[[], PluginCatalog | None],
                  kernel: Callable[[], RuntimeAsyncKernel], resources: ResourceRegistry,
-                 *, sandbox: bool = True) -> None:
+                 *, sandbox: bool = True, browser_launch: Callable[[], BrowserLaunch] | None = None) -> None:
         self._plugins = plugins
+        self._browser_launch = browser_launch
         self._kernel = kernel
         self._resources = resources
         self._sandbox = sandbox
@@ -114,11 +118,22 @@ class McpDetails:
             root = plugins.installed_root(plugin_id)
         # Discovery must finish before the Desktop's ordinary RPC deadline.
         config = config.model_copy(update={"startup_timeout_seconds": min(config.startup_timeout_seconds, 15)})
+        browser_launch = None
+        if config.permission_profile == BROWSER_PERMISSION_PROFILE:
+            if not is_bundled_browser_server(plugin_id, server.plugin_hash, server_id):
+                raise McpUnavailable("mcp_permission_profile_unsupported")
+            try:
+                if self._browser_launch is None:
+                    raise BrowserRuntimeUnavailable("browser_runtime_unavailable")
+                browser_launch = self._browser_launch()
+            except BrowserRuntimeUnavailable as error:
+                raise McpUnavailable(error.code) from None
         connection = McpConnection(
             plugin_root=root, workspace_root=root, config=config, env_values=env,
             on_list_changed=lambda: None, async_kernel=self._kernel(),
             sandbox=self._sandbox, resource_registry=self._resources,
             remote_client=(lambda: plugins.connections.http_client(plugin_id, config)) if config.transport == "streamable-http" else None,
+            browser_launch=browser_launch,
         )
         try:
             raw_tools = connection.start()
@@ -126,7 +141,8 @@ class McpDetails:
                 raise ApplicationError("RUNTIME_DRAINING")
             tools = []
             for tool in raw_tools:
-                available = True
+                # Blocked browser tools are listed but never registered for a Run.
+                available = browser_launch is None or browser_tool_class(tool.name) is not None
                 try:
                     _tool_entry(connection, tool, server.to_wire_dict())
                 except (TypeError, ValueError):
