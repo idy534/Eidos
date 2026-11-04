@@ -958,3 +958,58 @@ button.model-retry-link:hover { color: var(--text); text-decoration-color: curre
   .model-retry-chip,
   .model-failure { animation: none; }
 }
+/* MCP and browser tool rows */
+.mcp-body { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+.mcp-text {
+  margin: 0;
+  max-height: 22rem;
+  overflow: auto;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font: var(--font-size-code)/1.5 var(--font-code);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.mcp-inline-action {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.mcp-inline-action:hover, .mcp-inline-action:focus-visible { color: var(--text); }
+.mcp-section { display: flex; flex-direction: column; gap: 0.25rem; }
+.tool-body p.mcp-section-label { color: var(--text-tertiary); }
+.mcp-arguments { display: grid; gap: 0.15rem; margin: 0; font-size: var(--font-size-caption); }
+.mcp-arguments > div { display: grid; grid-template-columns: minmax(4rem, max-content) minmax(0, 1fr); gap: 0.75rem; }
+.mcp-arguments dt { color: var(--text-tertiary); }
+.mcp-arguments dd { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.mcp-error { display: flex; flex-direction: column; gap: 0.3rem; }
+.mcp-error-detail .mcp-text { color: var(--danger); }
+.tool-body p.mcp-warning { color: var(--status-warning); }
+.mcp-structured > summary { cursor: pointer; color: var(--muted); font-size: var(--font-size-caption); }
+.mcp-structured[open] > summary { margin-bottom: 0.3rem; }
+.mcp-structured > .mcp-text + .mcp-text { margin-top: 0.3rem; }
+.mcp-images { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.tool-body p.tool-provenance { color: var(--text-tertiary); }
+.tool-body p.browser-action { color: var(--text-secondary); }
+.browser-page-card {
+  display: flex;
+  flex-direction: column;
+  max-width: 36rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  min-width: 0;
+}
+.browser-page-card__title { color: var(--text); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-page-card__url { color: var(--text-tertiary); font-size: var(--font-size-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-body ul.browser-tabs { margin: 0; }
+.browser-tabs__current { color: var(--text-secondary); }

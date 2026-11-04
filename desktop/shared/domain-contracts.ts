@@ -334,6 +334,25 @@ export interface ToolProvenance {
   pluginId?: string;
   serverId?: string;
   skillId?: string;
+  /** MCP tool's human title; display only. */
+  displayTitle?: string;
+}
+
+/** A saved tool image the feed can show; bytes are read through Runtime. */
+export interface ToolAttachment {
+  index: number;
+  kind: "image";
+  mime?: string;
+  bytes?: number;
+}
+
+export interface ToolContentChunk {
+  data: string;
+  mimeType: string;
+  sizeBytes: number;
+  nextOffset: number;
+  complete: boolean;
+  sha256: string;
 }
 
 export interface ToolCall {
