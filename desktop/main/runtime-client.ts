@@ -1659,6 +1659,14 @@ function isNotification(value: unknown): value is RuntimeNotification {
       && typeof params.sessionId === "string"
       && isContextCompactionActivity(params.activity);
   }
+  if (value.method === "run/thinking") {
+    return hasOnlyKeys(params, ["sessionId", "runId", "summaryId", "title", "body"])
+      && typeof params.sessionId === "string"
+      && typeof params.runId === "string"
+      && typeof params.summaryId === "string" && params.summaryId.length > 0 && params.summaryId.length <= 256
+      && typeof params.title === "string" && params.title.length > 0 && params.title.length <= 200
+      && (params.body === undefined || (typeof params.body === "string" && params.body.length <= 2000));
+  }
   if (value.method === "model/retryUpdated") {
     return hasOnlyKeys(params, ["sessionId", "activity"])
       && typeof params.sessionId === "string"

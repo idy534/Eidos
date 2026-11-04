@@ -88,6 +88,24 @@ class RuntimeEvents:
             ),
         )
 
+    def publish_transient(self, method: str, params: dict[str, object]) -> None:
+        """Send a live-only notification that is not an Event and is never replayed."""
+        try:
+            self._notify({"jsonrpc": "2.0", "method": method, "params": params})
+        except (
+            BrokenPipeError,
+            ConnectionError,
+            RuntimeOutputClosedError,
+            OSError,
+        ) as error:
+            logger.warning(
+                "Transient notification delivery failed",
+                extra={
+                    "notification_method": method,
+                    "delivery_error_type": type(error).__name__,
+                },
+            )
+
     def publish_event(
         self,
         event: dict[str, object],
