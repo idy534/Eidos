@@ -32,6 +32,13 @@ Runtime 创建新的扩展快照时会核验插件包内容身份。内容身份
 
 内嵌环境变量值、旧 SSE transport 和暂不支持的启动设置不会注册为可调用工具。插件详情会逐项显示兼容信息。正常的 MCP 可以与这些声明共存。当前工具名称仍使用 `mcp__<serverId>__<tool>`；导入会检查手动 MCP 和其他已安装插件的服务 ID，拒绝冲突，避免工具被静默隔离。
 
+### Feed 展示
+
+MCP 工具行标题为“插件名 · 工具标题 · 第一个字符串参数”，例如“GitHub · Create issue · idy534/Eidos”。插件名来自已安装插件列表，内置浏览器显示为“浏览器”；找不到时使用服务 ID。工具标题来自 MCP Tool 的 `title` 或 `annotations.title`，Runtime 写入 `ToolProvenance.displayTitle`（单行，最多 120 字符，只用于展示）；没有标题时显示去掉 `mcp__<serverId>__` 前缀的工具名。
+
+展开后依次显示：错误（Eidos 错误码的中文说明；服务端 `isError` 时显示服务端文本，默认 6 行）、图片附件、文本结果（默认 12 行，可展开）、折叠的“结构化结果”、参数（默认 4 项，可显示完整 JSON），以及页脚。页脚只写来源和“耗时 N 秒”（2 秒及以上才显示）；结果不确定时显示“结果未知：操作可能已执行”。插件 ID、服务器 ID 和原始工具名放在页脚的悬停提示中。实现见 `desktop/renderer/src/components/McpToolDetails.tsx`。
+
+
 远程服务声明示例：
 
 ```json
