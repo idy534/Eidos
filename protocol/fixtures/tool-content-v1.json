@@ -1,0 +1,49 @@
+{
+  "item": {
+    "id": "3a8e1f6c-9d2b-4c7e-b5a1-6f0e4d3c2b13",
+    "sessionId": "5f0f3b1e-6a43-4c41-9d3a-2b7f0c8e1a01",
+    "runId": "9b4c2e7a-5f1d-4a8b-c3e6-1d0f7a2b5c14",
+    "ordinal": 3,
+    "kind": "tool_call",
+    "status": "completed",
+    "createdAt": 1000,
+    "completedAt": 1418,
+    "toolCall": {
+      "id": "7c2d9e4a-1b5f-4e8a-a6c3-0d9f2e7b4c12",
+      "itemId": "3a8e1f6c-9d2b-4c7e-b5a1-6f0e4d3c2b13",
+      "modelStepIndex": 1,
+      "batchOrder": 0,
+      "providerCallId": "call-shot",
+      "toolName": "mcp__browser__browser_take_screenshot",
+      "status": "completed",
+      "payloadKind": "function",
+      "argumentsJson": "{}",
+      "resultJson": "{\"attachments\":[{\"bytes\":73,\"index\":0,\"kind\":\"image\",\"mime\":\"image/png\"}],\"code\":\"ok\",\"data\":{\"browser\":{\"page\":{\"title\":\"bilibili\",\"url\":\"https://www.bilibili.com/zh-Hans\"}},\"isError\":false,\"text\":\"### Result\\n- Screenshot of viewport (attached to this result)\"},\"outcome\":\"success\",\"reconciliationRequired\":false,\"schemaVersion\":1,\"sideEffectsMayExist\":true,\"summary\":\"MCP tool completed\",\"toolName\":\"mcp__browser__browser_take_screenshot\"}",
+      "provenance": {
+        "kind": "mcp",
+        "sourceId": "eidos-browser:browser",
+        "sourceVersion": "1.0.0",
+        "contentHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "pluginId": "eidos-browser",
+        "serverId": "browser",
+        "displayTitle": "Take a screenshot"
+      },
+      "startedAt": 1000,
+      "completedAt": 1418
+    }
+  },
+  "contentRequest": {
+    "sessionId": "5f0f3b1e-6a43-4c41-9d3a-2b7f0c8e1a01",
+    "toolCallId": "7c2d9e4a-1b5f-4e8a-a6c3-0d9f2e7b4c12",
+    "index": 0,
+    "offset": 0
+  },
+  "content": {
+    "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP8zwACTGCSAQANHQEDgslx/wAAAABJRU5ErkJggg==",
+    "mimeType": "image/png",
+    "sizeBytes": 73,
+    "nextOffset": 73,
+    "complete": true,
+    "sha256": "e88336f2bd647922ae968f8d8248b6c0b791ba7c8e4ddbfafcbc41b2afd62e2d"
+  }
+}

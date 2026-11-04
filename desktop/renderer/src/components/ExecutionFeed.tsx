@@ -12,6 +12,7 @@ import {
 } from "./InputContext.js";
 import { InlineRichEditor } from "./InlineRichEditor.js";
 import { ToolTextView } from "./ToolTextView.js";
+import { BrowserToolBody, McpPluginNamesContext, McpToolBody, browserPageHost, mcpToolTitle } from "./McpToolDetails.js";
 import { toolFilePaths } from "./ResultFiles.js";
 import { createContext, Fragment, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { SyntheticEvent } from "react";
@@ -651,6 +652,7 @@ const ToolGroup = memo(function ToolGroup({
 }) {
   const forceOpen = needsApproval || containsSearchTarget;
   const details = useLazyDetails(forceOpen);
+  const mcpNames = useContext(McpPluginNamesContext);
   const [forcedBy, setForcedBy] = useState(forceOpen);
   // An approval prompt or a chat-search hit must be visible, and the body has
   // to mount in the same render because search locates targets by DOM id.
@@ -665,7 +667,7 @@ const ToolGroup = memo(function ToolGroup({
     ? active.toolCall.toolName === "run_shell"
       ? shellSummary("in_progress", stringField(parseObject(active.toolCall.argumentsJson), "command")
         || stringArrayField(parseObject(active.toolCall.argumentsJson), "argv").join(" ") || "Shell 命令")
-      : toolSummary(active.toolCall, "in_progress", agents)
+      : toolSummary(active.toolCall, "in_progress", agents, mcpNames)
     : undefined;
   const label = activeText ?? summary.parts.map((part) => part.text).join(" · ");
   const failedLabel = !active && summary.failed > 0 ? `${summary.failed} 失败` : undefined;
@@ -1934,6 +1936,7 @@ const ToolItem = memo(function ToolItem({
   onOpenSubagent?: ((target?: { id?: string | undefined; taskName?: string | undefined }) => void) | undefined;
 }) {
   const details = useLazyDetails(false);
+  const mcpNames = useContext(McpPluginNamesContext);
 
   if (isSubagentTool(toolCall.toolName)) {
     const { id: agentId, name: agentName } = extractSubagentInfo(toolCall, agents);
@@ -2188,10 +2191,10 @@ const ToolItem = memo(function ToolItem({
       /^Success\.\s*Updated the following files:/i.test(summary)
       || summary === "File change committed"
       || (isViewImage && summary === "Image loaded")
-      || (Boolean(browserToolName(toolCall.toolName)) && summary === "MCP tool completed")
     ),
   );
   const showSummary = (!isDeclareOutputs || isError) && !isRedundantFileSummary;
+  const browserTool = browserToolName(toolCall.toolName);
   const filePaths = toolFilePaths(toolCall);
   const patchFileHeader = toolCall.toolName === "apply_patch" && item.kind === "file_change"
     && Boolean(toolCall.changeDiff || toolCall.changeDiffHash);
@@ -2200,7 +2203,7 @@ const ToolItem = memo(function ToolItem({
     <details className="tool-item" open={details.open} onToggle={details.onToggle}>
       <summary>
         <span className="tool-icon" aria-hidden="true">{toolIcon(toolCall.toolName)}</span>
-        <span>{toolSummary(toolCall, item.status, agents)}</span>
+        <span>{toolSummary(toolCall, item.status, agents, mcpNames)}</span>
       </summary>
       {details.mounted && <div className="tool-body">
         {isViewImage ? (
@@ -2224,6 +2227,10 @@ const ToolItem = memo(function ToolItem({
             isError={isError}
             errorSummary={isError ? summary : undefined}
           />
+        ) : browserTool ? (
+          <BrowserToolBody item={item} toolCall={toolCall} tool={browserTool} isError={isError} />
+        ) : isMcpTool(toolCall) ? (
+          <McpToolBody item={item} toolCall={toolCall} isError={isError} />
         ) : (
           <>
             {showSummary && summary && (
@@ -2262,12 +2269,6 @@ const ToolItem = memo(function ToolItem({
               </>
             )}
             {toolCall.resultHash && <ToolTextView key={toolCall.resultHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="result" sha256={toolCall.resultHash} totalBytes={toolCall.resultBytes!} />}
-            {toolCall.provenance?.kind === "mcp" && (
-              <p className="tool-provenance">
-                Plugin {toolCall.provenance.pluginId} · Server {toolCall.provenance.serverId}
-                {toolCall.completedAt && ` · ${Math.max(0, toolCall.completedAt - toolCall.startedAt)}ms`}
-              </p>
-            )}
           </>
         )}
       </div>}
@@ -2657,36 +2658,43 @@ function browserToolName(name: string): string | undefined {
   return match && BROWSER_ACTIONS[match[1]!] ? match[1] : undefined;
 }
 
-function pageHost(text: string): string {
-  const url = /Page URL: (\S+)/.exec(text)?.[1];
-  if (!url) return "";
-  try { return new URL(url).host || ""; } catch { return ""; }
-}
-
 /** "点击 · 登录按钮 · example.com" for the bundled browser tools. */
 function browserToolSummary(toolCall: ToolCall, status: Item["status"], tool: string): string {
   const args = parseObject(toolCall.argumentsJson);
-  const data = objectField(parseObject(toolCall.resultJson), "data");
+  const result = parseObject(toolCall.resultJson);
   const action = BROWSER_ACTIONS[tool]!;
   let subject = stringField(args, "element");
   if (tool === "browser_navigate") {
     try { subject = new URL(stringField(args, "url")).host; } catch { subject = stringField(args, "url"); }
   } else if (tool === "browser_type") subject = subject || stringField(args, "text");
   else if (tool === "browser_press_key") subject = stringField(args, "key");
+  else if (tool === "browser_wait_for") {
+    subject = typeof args.time === "number" ? `${args.time} 秒` : stringField(args, "text") || stringField(args, "textGone");
+  }
   else if (tool === "browser_tabs") subject = { new: "新建", list: "列出", select: "切换", close: "关闭" }[stringField(args, "action")] ?? "";
   else if (tool === "browser_file_upload") {
     const paths = Array.isArray(args.paths) ? args.paths.filter((value): value is string => typeof value === "string") : [];
     subject = paths.length ? paths.map(pathBasename).join("、") : "取消选择";
   }
-  const host = tool === "browser_navigate" ? "" : pageHost(stringField(data, "text"));
+  const host = tool === "browser_navigate" ? "" : browserPageHost(result);
   const label = [action, subject.slice(0, 60), host].filter(Boolean).join(" · ");
   if (status === "in_progress") return `正在${label}`;
   return status === "completed" ? label : `${statusLabel(status)} ${label}`;
 }
 
-function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentSummary[]): string {
+function isMcpTool(toolCall: ToolCall): boolean {
+  return toolCall.provenance?.kind === "mcp" || toolCall.toolName.startsWith("mcp__");
+}
+
+function toolSummary(
+  toolCall: ToolCall, status: Item["status"], agents?: AgentSummary[], mcpNames: ReadonlyMap<string, string> = new Map(),
+): string {
   const browserTool = browserToolName(toolCall.toolName);
   if (browserTool) return browserToolSummary(toolCall, status, browserTool);
+  if (isMcpTool(toolCall)) {
+    const label = mcpToolTitle(toolCall, mcpNames, status);
+    return status === "completed" || status === "in_progress" ? label : `${statusLabel(status)} ${label}`;
+  }
   const args = parseObject(toolCall.argumentsJson);
   const taskName = stringField(args, "name") || stringField(objectField(args, "changes"), "name");
   const result = parseObject(toolCall.resultJson);

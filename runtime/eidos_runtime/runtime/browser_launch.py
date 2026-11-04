@@ -18,7 +18,6 @@ def resolve_browser_launch(
     host: BrowserHost | None,
     catalog: RuntimeDependencyCatalog | None,
     *,
-    supports_images: bool,
     discovery: bool = False,
 ) -> BrowserLaunch:
     """Verified Playwright MCP inputs plus the Chrome endpoint for the current target."""
@@ -28,7 +27,9 @@ def resolve_browser_launch(
         raise BrowserRuntimeUnavailable("browser_runtime_unavailable")
     manager = catalog.resources if isinstance(catalog, ManagedResourceCatalog) else None
     runtime = resolve_browser_runtime(manager)
-    images = "allow" if supports_images else "omit"
+    # Screenshots are always kept for the feed. Whether the model may see them is
+    # decided per request from its declared capability (model/tool_content.py).
+    images = "allow"
     if discovery:
         return BrowserLaunch(
             runtime=runtime,

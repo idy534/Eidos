@@ -287,6 +287,8 @@ export interface EidosRuntimeAPI {
   prepareInput(request: InputPrepareRequest): Promise<InputReference>;
   readInput(id: string): Promise<InputPreview>;
   prepareInputPreview(id: string): Promise<string>;
+  /** A preview URL for one saved tool image; release it with releaseInputPreview. */
+  prepareToolContentPreview(sessionId: string, toolCallId: string, index: number): Promise<string>;
   releaseInputPreview(url: string): Promise<void>;
   pasteInputImage(): Promise<InputReference | null>;
   readInputDraft(key: string): Promise<InputDraft>;

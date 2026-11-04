@@ -344,6 +344,8 @@ const api: EidosRuntimeAPI = {
   prepareInput: (request: InputPrepareRequest) => ipcRenderer.invoke(IPC.INPUT_PREPARE, request),
   readInput: (id: string) => ipcRenderer.invoke(IPC.INPUT_READ, id),
   prepareInputPreview: (id: string) => ipcRenderer.invoke(IPC.INPUT_PREVIEW_URL, id),
+  prepareToolContentPreview: (sessionId: string, toolCallId: string, index: number) =>
+    ipcRenderer.invoke(IPC.TOOL_CONTENT_PREVIEW_URL, sessionId, toolCallId, index),
   releaseInputPreview: (url: string) => ipcRenderer.invoke(IPC.WORKSPACE_RELEASE_PREVIEW, url),
   pasteInputImage: () => ipcRenderer.invoke(IPC.INPUT_PASTE_IMAGE),
   readInputDraft: (key: string) => ipcRenderer.invoke(IPC.INPUT_DRAFT_READ, key),

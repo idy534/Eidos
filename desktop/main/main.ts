@@ -1268,6 +1268,14 @@ ipcMain.handle(IPC.INPUT_READ, (event, id: unknown) => {
   inputOwner(event);
   return clientOrThrow().readInput(inputKey(id));
 });
+ipcMain.handle(IPC.TOOL_CONTENT_PREVIEW_URL, (event, sessionId: unknown, toolCallId: unknown, index: unknown) => {
+  if (typeof sessionId !== "string" || !sessionId || sessionId.length > 256
+    || typeof toolCallId !== "string" || !toolCallId || toolCallId.length > 256
+    || typeof index !== "number" || !Number.isSafeInteger(index) || index < 0 || index > 31) {
+    throw new Error("图像参数无效。");
+  }
+  return artifactPreview.prepareToolContent(previewOwner(event), sessionId, toolCallId, index);
+});
 ipcMain.handle(IPC.INPUT_PREVIEW_URL, (event, id: unknown) => {
   return artifactPreview.prepareInput(previewOwner(event), inputKey(id));
 });

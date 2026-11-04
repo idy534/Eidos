@@ -63,9 +63,14 @@ Model → ToolCallRuntime → ExternalToolHandler（浏览器授权）
 
 ## 结果与上下文
 
-- MCP 适配器支持 PNG/JPEG `ImageContent`。图片按 `view_image` 的规则校验格式、大小和像素，并作为 `model_content` 交给支持图片的模型。不支持图片的模型启动时使用 `--image-responses omit`。无效图片返回 `mcp_image_invalid`；音频和资源内容仍返回 `mcp_content_unsupported`。这条规则适用于所有 MCP。
-- 较早的成功浏览器结果会参与已有的旧结果清理，只保留状态、512 字符页面预览和 `read_tool_output` 回读入口。每次请求只保留最近两张浏览器截图。SQLite 中的原始结果不变。
-- Feed 把浏览器工具显示为动作行，例如“点击 · 登录按钮 · example.com”，并隐藏“MCP tool completed”。
+- MCP 适配器支持 PNG/JPEG `ImageContent`。图片按 `view_image` 的规则校验格式、大小和像素，存入 `tool-result-content` Blob，`model_result_json.modelContentSnapshot` 保存引用。无效图片返回 `mcp_image_invalid`；音频和资源内容仍返回 `mcp_content_unsupported`。这条规则适用于所有 MCP。
+- 内置浏览器始终以 `--image-responses allow` 启动，截图与模型能力无关地保存。模型请求按当前模型能力编码：不支持图片的模型只收到“已省略图片”的文字说明（`model/tool_content.py`）。
+- 结果提交时，`ui_result_json.attachments` 记录每张图片的序号、MIME 和字节数，不复制图片字节。2026-11-04 之前保存的截图没有该字段；读取 `browser_take_screenshot` 行时，若模型结果带图片引用，映射层补出 `[{index: 0, kind: "image"}]`。
+- `toolCall/readContent` 按 Session、工具调用和序号分块读取图片（每块 512 KiB 原始字节，base64 后单条回复小于 1 MiB），返回 Blob 的 SHA-256；带 `sha256` 的后续读取在内容变化时返回 `INVALID_CURSOR`。实时行与 Fork 继承的历史行都可读取。Main 的 `eidos-preview` 协议新增 `toolContent` 授权，Renderer 通过 `prepareToolContentPreview` 取得一次性 URL，与输入引用共用释放入口。
+- Playwright 把截图、快照和控制台日志写入私有 `--output-dir`，连接关闭后即删除。Runtime 的结果投影（`domain/browser_result.py`）把这些链接替换为说明文字，例如“Screenshot of viewport (attached to this result)”、“Snapshot (not retained; call browser_snapshot to read the page)”。模型和 Feed 都不再看到沙盒路径；`result_json` 保留原文。
+- 同一投影为 Feed 生成 `ui_result_json.data.browser`：页面 URL 与标题、标签页、控制台错误数、`### Result` 文本和内联快照行数，各字段有长度上限。解析失败时不写该字段。结果超过 64 KiB 被分页时，`attachments` 和不超过 16 KiB 的 `browser` 视图仍保留在摘要中。
+- 较早的成功浏览器结果会参与已有的旧结果清理，只保留状态、512 字符页面预览和 `read_tool_output` 回读入口。每次请求只保留最近两张浏览器截图。SQLite 中的原始结果和 Feed 中的截图不受影响。
+- Feed 把浏览器工具显示为动作行，例如“点击 · 登录按钮 · example.com”、“等待页面 · 25 秒 · bilibili.com”。展开后只显示标题容纳不下的内容：错误；输入、选择、拖动和表单字段（字段名含密码、token 等词时显示为 `••••`）；截图缩略图（点击放大，失败可重试）；页面行（标题加去掉协议的短地址）。点击、悬停、按键和等待已由标题完整描述，不再重复。最后是一行弱化的附加信息，只在有内容时出现：控制台错误数、“耗时 N 秒”（2 秒及以上）和“原始输出”切换按钮（截图行没有）。不显示来源行。第三方 MCP 的展示见[插件](plugins.md#feed-展示)。
 
 ## 数据与协议
 
@@ -79,7 +84,8 @@ Model → ToolCallRuntime → ExternalToolHandler（浏览器授权）
 - 不同 Session 共用 Chrome，Tab 互相可见。目前只有 Skill 要求模型在自己的 Tab 中工作，Eidos 没有记录 Tab 归属。
 - 授权不按来源网站限制，也不提供多个 Eidos profile。
 - 下载被拒绝，`browser_evaluate` 被屏蔽。
-- Feed 不显示截图缩略图。显示缩略图需要新的有界工具内容读取接口。
+- Playwright 0.0.84 在点击、输入等操作后把页面快照写入文件而不是内联返回，模型需要再调用 `browser_snapshot` 才能读取新页面。
+- 页面行只显示，不能点击切换 Chrome 的标签页。
 - 资源包与 App 分开发布。0.5.5 发布时遗漏了资源 Release `document-resources-2026.11.03.1`，导致浏览器和文档资源下载 404；该 Release 已于 2026-11-04 补发。打包脚本现在会检查资源索引中的每个下载地址：Release 模式下不可下载会失败，本地模式会输出警告。
 - 未验证：
   - 打包后的 App 中的完整流程；

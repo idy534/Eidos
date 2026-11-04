@@ -63,6 +63,7 @@ import { useResponseActionController } from "./useResponseActionController.js";
 import { useContextUsageController } from "./useContextUsageController.js";
 import { resolveSessionRun } from "./session-model-resolver.js";
 import { useExtensionController } from "./useExtensionController.js";
+import { McpPluginNamesContext } from "../components/McpToolDetails.js";
 import { useGitReviewController } from "./useGitReviewController.js";
 import { applyNotification, applyQueuedRunChange, isQueuedMessage, userFacingError } from "../session-state.js";
 import { IPC } from "../../../shared/ipc-channels.js";
@@ -1528,9 +1529,14 @@ export function AppShell({ runtime }: AppShellProps) {
       showTrafficSpacer={true}
     />
   ), [sidebarOpen, canGoBack, canGoForward, toggleSidebar, sidebarHandlers]);
+  const mcpPluginNames = useMemo(
+    () => new Map(extensionState.plugins.map((plugin) => [plugin.id, plugin.name] as const)),
+    [extensionState.plugins],
+  );
 
 
   return (
+    <McpPluginNamesContext.Provider value={mcpPluginNames}>
     <ArtifactProvider value={currentSnapshot ? {
       sessionId: currentSnapshot.session.id,
       roots: currentSnapshot.session.roots,
@@ -2183,6 +2189,7 @@ export function AppShell({ runtime }: AppShellProps) {
     </main>
     </InputContextProvider>
     </ArtifactProvider>
+    </McpPluginNamesContext.Provider>
   );
 }
 

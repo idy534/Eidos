@@ -32,6 +32,7 @@ from eidos_runtime.file_limits import (
     MAX_PATCH_BYTES, MAX_SKILL_CREATE_FILES, MAX_SKILL_CREATE_TOTAL_BYTES,
     MAX_SKILL_FILE_BYTES,
 )
+from eidos_runtime.domain.browser_result import BUNDLED_BROWSER_TOOL_PREFIX, browser_view, clean_browser_text
 from eidos_runtime.extensions.skill_manifest import skill_document
 from eidos_runtime.model.context_projection import without_verification_metadata
 from eidos_runtime.memory.tool_projection import MEMORY_TOOL_NAMES, project_memory_tool_result
@@ -1246,6 +1247,12 @@ def _project_tool_result(
 ) -> ToolResultProjection:
     data = canonical_result.get("data")
     safe_data = dict(data) if isinstance(data, dict) else {}
+    ui_data = safe_data
+    if tool_name.startswith(BUNDLED_BROWSER_TOOL_PREFIX) and isinstance(safe_data.get("text"), str):
+        raw_text = str(safe_data["text"])
+        safe_data["text"] = clean_browser_text(raw_text)
+        view = browser_view(raw_text)
+        ui_data = {**safe_data, "browser": view} if view is not None else safe_data
     model_data = without_verification_metadata(safe_data)
     assert isinstance(model_data, dict)
     if tool_name in MEMORY_TOOL_NAMES:
@@ -1329,7 +1336,7 @@ def _project_tool_result(
             "outcome": str(canonical_result.get("outcome", "error")),
             "code": str(canonical_result.get("code", "unknown")),
             "summary": str(canonical_result.get("summary", "")),
-            "data": safe_data,
+            "data": ui_data,
             "sideEffectsMayExist": canonical_result.get(
                 "sideEffectsMayExist", False
             ),
