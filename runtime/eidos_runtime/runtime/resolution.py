@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
 from eidos_runtime.domain.project_workspace import DirectoryIdentity
 from eidos_runtime.domain.approval_policy import ApprovalMode, FULL_ACCESS_WARNING_VERSION
@@ -23,6 +23,15 @@ from eidos_runtime.sandbox.permissions import (
     with_project_metadata_paths,
 )
 from eidos_runtime.sandbox.seatbelt_policy import BASE_POLICY_PATH
+
+
+# Snapshots built by create() hash values computed a moment earlier, so their
+# consistency checks only matter when a stored snapshot is loaded again.
+TRUSTED_CREATE_CONTEXT: dict[str, object] = {"trusted_create": True}
+
+
+def _trusted(info: ValidationInfo) -> bool:
+    return bool(info.context and info.context.get("trusted_create"))
 
 
 def canonical_json(value: object) -> str:
@@ -133,10 +142,15 @@ class RuleResolutionSnapshot(_FrozenModel):
             "warnings": [warning.model_dump(mode="json") for warning in warnings],
         }
         digest = canonical_sha256(payload)
-        return cls(id=f"rule_{digest}", snapshot_hash=digest, **values)
+        return cls.model_validate(
+            {"id": f"rule_{digest}", "snapshot_hash": digest, **values},
+            context=TRUSTED_CREATE_CONTEXT,
+        )
 
     @model_validator(mode="after")
-    def validate_hash(self) -> Self:
+    def validate_hash(self, info: ValidationInfo) -> Self:
+        if _trusted(info):
+            return self
         payload = self.model_dump(
             mode="json",
             exclude={"id", "snapshot_hash"},
@@ -175,10 +189,15 @@ class RunResolutionSnapshot(_FrozenModel):
     def create(cls, **values: object) -> Self:
         payload = {"schema_version": 1, **values}
         digest = canonical_sha256(_json_value(payload))
-        return cls(id=f"run_{digest}", snapshot_hash=digest, **payload)
+        return cls.model_validate(
+            {"id": f"run_{digest}", "snapshot_hash": digest, **payload},
+            context=TRUSTED_CREATE_CONTEXT,
+        )
 
     @model_validator(mode="after")
-    def validate_hash(self) -> Self:
+    def validate_hash(self, info: ValidationInfo) -> Self:
+        if _trusted(info):
+            return self
         payload = self.model_dump(
             mode="json",
             exclude={"id", "snapshot_hash"},
@@ -230,10 +249,15 @@ class StepResolutionSnapshot(_FrozenModel):
     def create(cls, **values: object) -> Self:
         payload = {"schema_version": 1, **values}
         digest = canonical_sha256(_json_value(payload))
-        return cls(id=f"step_{digest}", snapshot_hash=digest, **payload)
+        return cls.model_validate(
+            {"id": f"step_{digest}", "snapshot_hash": digest, **payload},
+            context=TRUSTED_CREATE_CONTEXT,
+        )
 
     @model_validator(mode="after")
-    def validate_hashes(self) -> Self:
+    def validate_hashes(self, info: ValidationInfo) -> Self:
+        if _trusted(info):
+            return self
         payload = self.model_dump(
             mode="json",
             exclude={"id", "snapshot_hash"},

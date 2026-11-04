@@ -4,7 +4,7 @@ import hashlib
 import json
 import time
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationInfo, model_validator
 
 from eidos_runtime.context.budget import ContextBudget
 from eidos_runtime.context.tokens import TOKEN_ESTIMATOR
@@ -15,7 +15,7 @@ from eidos_runtime.model.client import (
 )
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 from eidos_runtime.repo_intelligence.retrieval import RepositoryEvidence
-from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
+from eidos_runtime.runtime.resolution import TRUSTED_CREATE_CONTEXT, RuleResolutionSnapshot
 
 
 class ContextPlan(EidosFrozenStrictModel):
@@ -40,7 +40,9 @@ class ContextPlan(EidosFrozenStrictModel):
     snapshot_hash: str = Field(min_length=64, max_length=64)
 
     @model_validator(mode="after")
-    def verify_hash(self) -> ContextPlan:
+    def verify_hash(self, info: ValidationInfo) -> ContextPlan:
+        if info.context and info.context.get("trusted_create"):
+            return self
         payload = self.model_dump(
             mode="json", exclude={"plan_id", "snapshot_hash", "created_at_ms"}
         )
@@ -76,23 +78,23 @@ class ContextPlan(EidosFrozenStrictModel):
             "retrieval_snapshot_id": self.retrieval_snapshot_id,
         }
         digest = _hash(payload)
-        return ContextSnapshot(
-            schema_version=2,
-            model_attempt_id=model_attempt_id,
-            plan_id=self.plan_id,
-            plan_hash=self.snapshot_hash,
-            plan=self,
-            model_context=model_context,
-            instructions=instructions,
-            tool_definitions=tool_definitions,
-            inventory_snapshot_id=self.inventory_snapshot_id,
-            index_snapshot_id=self.index_snapshot_id,
-            repository_map_snapshot_id=self.repository_map_snapshot_id,
-            retrieval_snapshot_id=self.retrieval_snapshot_id,
-            snapshot_id=f"context_{digest}",
-            snapshot_hash=digest,
-            created_at_ms=int(time.time() * 1000),
-        )
+        return ContextSnapshot.model_validate({
+            "schema_version": 2,
+            "model_attempt_id": model_attempt_id,
+            "plan_id": self.plan_id,
+            "plan_hash": self.snapshot_hash,
+            "plan": self,
+            "model_context": model_context,
+            "instructions": instructions,
+            "tool_definitions": tool_definitions,
+            "inventory_snapshot_id": self.inventory_snapshot_id,
+            "index_snapshot_id": self.index_snapshot_id,
+            "repository_map_snapshot_id": self.repository_map_snapshot_id,
+            "retrieval_snapshot_id": self.retrieval_snapshot_id,
+            "snapshot_id": f"context_{digest}",
+            "snapshot_hash": digest,
+            "created_at_ms": int(time.time() * 1000),
+        }, context=TRUSTED_CREATE_CONTEXT)
 
 
 class ContextSnapshot(EidosFrozenStrictModel):
@@ -115,7 +117,9 @@ class ContextSnapshot(EidosFrozenStrictModel):
     created_at_ms: JsonSafeInt
 
     @model_validator(mode="after")
-    def verify_hash(self) -> ContextSnapshot:
+    def verify_hash(self, info: ValidationInfo) -> ContextSnapshot:
+        if info.context and info.context.get("trusted_create"):
+            return self
         payload = {
             "schema_version": self.schema_version,
             "model_attempt_id": self.model_attempt_id,
@@ -183,12 +187,13 @@ class ContextPlanner:
             "diagnostics": (f"token-estimator:{TOKEN_ESTIMATOR}",),
         }
         digest = _hash(payload)
-        return ContextPlan(
-            **{**payload, "token_budget": token_budget},
-            plan_id=f"plan_{digest}",
-            created_at_ms=int(time.time() * 1000),
-            snapshot_hash=digest,
-        )
+        return ContextPlan.model_validate({
+            **payload,
+            "token_budget": token_budget,
+            "plan_id": f"plan_{digest}",
+            "created_at_ms": int(time.time() * 1000),
+            "snapshot_hash": digest,
+        }, context=TRUSTED_CREATE_CONTEXT)
 
 
 def _request_payload(

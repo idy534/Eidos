@@ -225,7 +225,7 @@ class SkillCatalog:
             ]
         entries: list[dict[str, object]] = []
         used_bytes = 2
-        sources = self._sources(snapshot)
+        sources = self._sources(snapshot, hash_mode="cached")
         expected_hash = snapshot.get("skillCatalogHash")
         legacy_empty = not sources and expected_hash == "0" * 64
         if not legacy_empty and _catalog_hash(tuple(
@@ -284,7 +284,7 @@ class SkillCatalog:
                 self._pinned_sources[catalog.catalog_hash] = tuple(sources)
                 self._pinned_skill_content[catalog.catalog_hash] = content_by_id
             return catalog
-        sources = self._sources(snapshot)
+        sources = self._sources(snapshot, hash_mode="cached")
         entries = tuple(_catalog_entry(source) for source in sources)
         expected_hash = snapshot.get("skillCatalogHash")
         catalog_hash = _catalog_hash(entries)
@@ -395,7 +395,7 @@ class SkillCatalog:
             state.qualified_id for state in self.plugins.store.skill_states()
             if not state.enabled or state.removed
         ]
-        entries = tuple(_catalog_entry(source) for source in self._sources(snapshot))
+        entries = tuple(_catalog_entry(source) for source in self._sources(snapshot, hash_mode="cached"))
         snapshot["skillCatalogHash"] = _catalog_hash(entries)
         snapshot["skillCatalogIds"] = sorted(entry.qualified_id for entry in entries)
         snapshot["skillLeaseVersion"] = 1
@@ -498,7 +498,7 @@ class SkillCatalog:
         sources = (
             self._pinned_sources.get(snapshot.catalog_hash, ())
             if isinstance(snapshot, SkillCatalogSnapshot)
-            else self._sources(snapshot)
+            else self._sources(snapshot, hash_mode="cached")
         )
         for source in sources:
             if source.qualified_id == qualified_id:

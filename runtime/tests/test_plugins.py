@@ -54,6 +54,22 @@ class PluginCatalogTests(unittest.TestCase):
         self.store.close()
         self.temporary.cleanup()
 
+    def test_extension_snapshot_reads_each_plugin_package_once(self) -> None:
+        self.catalog.import_directory(self.source)
+        self.catalog.set_enabled("demo", True)
+        original = PluginCatalog.package
+        calls: list[str] = []
+
+        def counted(catalog, plugin_id, **kwargs):
+            calls.append(plugin_id)
+            return original(catalog, plugin_id, **kwargs)
+
+        with patch.object(PluginCatalog, "package", counted):
+            snapshot = self.catalog.extension_snapshot()
+
+        self.assertEqual([plugin["id"] for plugin in snapshot["plugins"]], ["demo"])
+        self.assertEqual(calls, ["demo"])
+
     def test_blank_manual_cwd_creates_and_reuses_private_service_directory(self) -> None:
         home = Path(self.temporary.name).resolve()
         expected = home / "Eidos" / "eidos-mcp" / "local"

@@ -200,15 +200,28 @@ class PluginCatalog:
         plugins: list[dict[str, object]] = []
         skills: list[dict[str, object]] = []
         servers: list[dict[str, object]] = []
-        for record in self.list_plugins():
+        # Each package is read and hashed at most once for this snapshot. The
+        # presentation fields list_plugins() adds are not part of a snapshot.
+        records = self.store.list_plugin_records()
+        packages: dict[str, PluginPackage | None] = {}
+
+        def load_package(plugin_id: str) -> PluginPackage | None:
+            if plugin_id not in packages:
+                try:
+                    packages[plugin_id] = self.package(plugin_id)
+                except PluginImportError:
+                    packages[plugin_id] = None
+            return packages[plugin_id]
+
+        for record in records:
             if not include_disabled and not record["enabled"]:
                 continue
-            try:
-                manifest = self.manifest(str(record["id"]))
-            except PluginImportError:
+            package = load_package(str(record["id"]))
+            if package is None:
                 # A broken package must not prevent healthy extensions from
                 # entering the next Run snapshot. Its contents stay unavailable.
                 continue
+            manifest = package.manifest
             plugins.append({
                 "id": record["id"],
                 "version": record["version"],
@@ -263,12 +276,12 @@ class PluginCatalog:
         }
         hooks = []
         repository = HookRepository(self.store.database)
-        for record in self.list_plugins():
+        for record in records:
             if record["enabled"] and repository.trusted(str(record["id"]), str(record["contentHash"])):
-                try:
-                    definitions = self.package(str(record["id"])).hooks
-                except PluginImportError:
+                package = load_package(str(record["id"]))
+                if package is None:
                     continue
+                definitions = package.hooks
                 hooks.extend(HookBinding(plugin_id=str(record["id"]), plugin_hash=str(record["contentHash"]), definition=hook).to_wire_dict()
                              for hook in definitions if hook.supported)
         if hooks:

@@ -257,3 +257,49 @@ def test_context_snapshot_without_repository_lineage_round_trips_sqlite(
             repository.read_latest_budget_for_run("run")
     finally:
         reopened.close()
+
+
+def test_created_snapshots_skip_self_hash_checks_but_loading_still_verifies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from eidos_runtime.context import plan as plan_module
+    from eidos_runtime.runtime import resolution
+
+    calls = {"resolution": 0, "plan": 0}
+    original_resolution = resolution.canonical_sha256
+    original_plan = plan_module._hash
+
+    def count_resolution(*args, **kwargs):
+        calls["resolution"] += 1
+        return original_resolution(*args, **kwargs)
+
+    def count_plan(value):
+        calls["plan"] += 1
+        return original_plan(value)
+
+    monkeypatch.setattr(resolution, "canonical_sha256", count_resolution)
+    monkeypatch.setattr(plan_module, "_hash", count_plan)
+
+    rules = RuleResolutionSnapshot.create(
+        workspace_root=str(tmp_path), cwd=str(tmp_path), budget_bytes=1024,
+        used_bytes=0, rules=(), shadowed=(), warnings=(),
+    )
+    assert calls["resolution"] == 1  # only the digest itself, no re-check
+
+    context = ({"type": "user", "content": "goal"},)
+    budget = estimate_context_budget(
+        context, context_window_tokens=4096, request_max_output_tokens=512,
+        message_count=1, tool_call_count=0, tool_result_count=0,
+    )
+    plan = ContextPlanner().capture(
+        model_profile=_profile(), rule_snapshot=rules, model_context=context,
+        instructions="", tool_definitions=(), token_budget=budget,
+    )
+    plan.for_model_attempt("attempt-1", model_context=context, instructions="", tool_definitions=())
+    # profile, request, plan digest, request check, snapshot digest: none repeated by validators.
+    assert calls["plan"] == 5
+
+    stored = rules.model_dump_json()
+    assert RuleResolutionSnapshot.model_validate_json(stored) == rules
+    with pytest.raises(ValidationError):
+        RuleResolutionSnapshot.model_validate_json(stored.replace('"used_bytes":0', '"used_bytes":7'))

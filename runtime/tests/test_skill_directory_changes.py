@@ -82,6 +82,15 @@ class SkillDirectoryChangeTests(unittest.TestCase):
 
         self.assertIn("Use scripts/run.py", detail.body)
 
+    def test_run_snapshots_reuse_tree_hash_until_files_change(self) -> None:
+        first = self._run_snapshot()
+        with patch.object(skills_module, "_read_tree", side_effect=AssertionError("tree read")):
+            second = self._run_snapshot()
+        self.assertEqual(first["skillCatalogHash"], second["skillCatalogHash"])
+
+        (self.skill / "scripts" / "run.py").write_text("print('changed')\n", encoding="utf-8")
+        self.assertNotEqual(first["skillCatalogHash"], self._run_snapshot()["skillCatalogHash"])
+
     def test_list_reuses_tree_hash_until_files_change(self) -> None:
         manager = SkillManagement(self._catalog())
         first = {skill.qualified_id: skill for skill in manager.list()}["user:deck"]
