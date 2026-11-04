@@ -194,6 +194,17 @@ APP_ABSOLUTE_PATH="$(cd -- "$(dirname -- "$APP_PATH")" && pwd -P)/$(basename -- 
 DMG_ABSOLUTE_PATH="$(cd -- "$(dirname -- "$DMG_PATH")" && pwd -P)/$(basename -- "$DMG_PATH")"
 DMG_SIZE="$(stat -f '%z' "$DMG_PATH")"
 log "Eidos macOS package complete"
+RESOURCE_INDEX="$APP_PATH/Contents/Resources/runtime/resource-index.json"
+if [[ -f "$RESOURCE_INDEX" ]]; then
+  log "checking that the App's resource Release is published"
+  if ! python3 "$ROOT_DIR/scripts/verify-resource-release.py" "$RESOURCE_INDEX"; then
+    if [[ "$MODE" == "release" ]]; then
+      fail "resource packs referenced by this App are not downloadable; publish the resource Release first"
+    fi
+    log "WARNING: this App's resource packs are not published yet; do not distribute it until they are"
+  fi
+fi
+
 log "Mode: $MODE"
 log "Architecture: arm64"
 log "Version: $VERSION"
