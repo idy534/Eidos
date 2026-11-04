@@ -1,0 +1,18 @@
+{
+  "notification": {
+    "jsonrpc": "2.0",
+    "method": "run/thinking",
+    "params": {
+      "sessionId": "session-1",
+      "runId": "run-1",
+      "summaryId": "rs_1:0",
+      "title": "Check skills",
+      "body": "List the directory first."
+    }
+  },
+  "titleOnlyNotification": {
+    "jsonrpc": "2.0",
+    "method": "run/thinking",
+    "params": { "sessionId": "session-1", "runId": "run-1", "summaryId": "rs_1:1", "title": "Compare candidates" }
+  }
+}

@@ -5,7 +5,9 @@ import uuid
 
 from eidos_runtime.db.database import CommittedMutation, Repository, now_ms
 from eidos_runtime.db.events import append_event
-from eidos_runtime.domain.browser import BrowserGrant, BrowserGrantRevokeReason, BrowserProfile, BrowserTarget
+from eidos_runtime.domain.browser import (
+    DEFAULT_BROWSER_TARGET, BrowserGrant, BrowserGrantRevokeReason, BrowserProfile, BrowserTarget,
+)
 from eidos_runtime.runtime.state_machine import EventType
 
 
@@ -27,7 +29,18 @@ class BrowserGrantRepository(Repository):
     def target(self) -> BrowserTarget:
         with self.lock:
             row = self._connection().execute("SELECT target FROM browser_settings WHERE id = 1").fetchone()
-        return "user_chrome" if row is not None and row["target"] == "user_chrome" else "eidos"
+        if row is not None and row["target"] in ("eidos", "user_chrome", "chrome_extension"):
+            return row["target"]
+        return DEFAULT_BROWSER_TARGET
+
+    def extension_credential(self) -> str | None:
+        """Reference to the saved Playwright Extension token; never the token."""
+
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT extension_credential FROM browser_settings WHERE id = 1",
+            ).fetchone()
+        return row["extension_credential"] if row is not None else None
 
     def set_target(self, target: BrowserTarget) -> CommittedMutation[BrowserTarget]:
         """Switching Chrome targets is a user decision recorded with its Event."""
@@ -41,6 +54,27 @@ class BrowserGrantRepository(Repository):
             )
             event = append_event(connection, EventType.BROWSER_SETTINGS_CHANGED, now, {"id": "browser"})
             return CommittedMutation(target, (event,))
+
+        with self.database.transaction() as connection:
+            return write(connection)
+
+    def set_extension_credential(self, credential: str | None) -> CommittedMutation[str | None]:
+        """Save or forget the extension token reference; the previous one is returned."""
+
+        def write(connection: sqlite3.Connection) -> CommittedMutation[str | None]:
+            now = now_ms()
+            row = connection.execute(
+                "SELECT target, extension_credential FROM browser_settings WHERE id = 1",
+            ).fetchone()
+            previous = row["extension_credential"] if row is not None else None
+            connection.execute(
+                "INSERT INTO browser_settings (id, target, extension_credential, updated_at) VALUES (1, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET extension_credential = excluded.extension_credential, "
+                "updated_at = excluded.updated_at",
+                (row["target"] if row is not None else DEFAULT_BROWSER_TARGET, credential, now),
+            )
+            event = append_event(connection, EventType.BROWSER_SETTINGS_CHANGED, now, {"id": "browser"})
+            return CommittedMutation(previous, (event,))
 
         with self.database.transaction() as connection:
             return write(connection)

@@ -2,11 +2,18 @@
   "statusRequest": { "sessionId": "00000000-0000-4000-8000-000000000001" },
   "status": {
     "chromeInstalled": true, "chromeVersion": "156.0.8078.76", "running": false,
-    "pluginInstalled": true, "pluginEnabled": true, "resource": "ready", "granted": true
+    "pluginInstalled": true, "pluginEnabled": true, "resource": "ready", "granted": true,
+    "target": "chrome_extension", "effectiveTarget": "chrome_extension", "attachAvailable": false,
+    "extensionConfigured": true, "extensionPresence": "installed"
   },
   "revokeRequest": { "sessionId": "00000000-0000-4000-8000-000000000001" },
   "revokeResponse": { "revoked": true },
   "closeRequest": {},
   "closeResponse": { "closed": false },
-  "grantChanged": { "sessionId": "00000000-0000-4000-8000-000000000001", "active": false }
+  "grantChanged": { "sessionId": "00000000-0000-4000-8000-000000000001", "active": false },
+  "targetRequest": { "target": "chrome_extension" },
+  "targetResponse": { "target": "chrome_extension", "revokedGrants": 0 },
+  "extensionTokenRequest": { "token": "PLAYWRIGHT_MCP_EXTENSION_TOKEN=Abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE" },
+  "extensionTokenResponse": { "configured": true, "revokedGrants": 1 },
+  "extensionTokenClearRequest": {}
 }

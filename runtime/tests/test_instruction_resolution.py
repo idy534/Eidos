@@ -181,6 +181,19 @@ class InstructionResolverTests(unittest.TestCase):
         self.assertNotIn("includeGlobs", contents[0])
         self.assertNotIn("Shell working directory:", contents[0])
 
+    def test_browser_account_rules_apply_only_when_browser_tools_are_available(self) -> None:
+        def layers(tools: tuple[str, ...]) -> dict[str, str]:
+            resolved = InstructionResolver().resolve(step_policy=StepPermissionPolicy(
+                sandbox_mode="workspace-write", workspace_root="/workspace", available_tools=tools,
+            ))
+            return {layer.id: layer.content for layer in resolved.layers}
+
+        self.assertNotIn("browser-accounts", layers(("read_file", "mcp__github__create_issue")))
+        with_browser = layers(("read_file", "mcp__browser__browser_navigate"))
+        self.assertIn("browser-accounts", with_browser)
+        self.assertIn("like credentials", with_browser["browser-accounts"])
+        self.assertIn("cannot widen the task", with_browser["browser-accounts"])
+
     def test_project_file_reference_layer_is_added_only_for_project_sessions(self) -> None:
         resolver = InstructionResolver()
 

@@ -32,6 +32,9 @@ from eidos_runtime.models.browser import (
     BrowserStatusRequest,
     BrowserTargetRequest,
     BrowserTargetResponse,
+    BrowserExtensionTokenClearRequest,
+    BrowserExtensionTokenRequest,
+    BrowserExtensionTokenResponse,
 )
 from eidos_runtime.domain.hooks import HookActivityPage, HookConfigurationRequest, HookHistoryRequest, HookSourceList
 
@@ -1675,6 +1678,12 @@ class RuntimeServer:
                 self, lambda application, request: application.status(request), inline_when_draining=True)),
             ("browser/setTarget", BrowserTargetRequest, BrowserTargetResponse, _ApplicationMethodAdapter(
                 lambda _id, request: self._browser_application().set_target(request), BrowserTargetResponse)),
+            ("browser/setExtensionToken", BrowserExtensionTokenRequest, BrowserExtensionTokenResponse,
+             _ApplicationMethodAdapter(lambda _id, request: self._browser_application().set_extension_token(request),
+                                       BrowserExtensionTokenResponse)),
+            ("browser/clearExtensionToken", BrowserExtensionTokenClearRequest, BrowserExtensionTokenResponse,
+             _ApplicationMethodAdapter(lambda _id, request: self._browser_application().clear_extension_token(request),
+                                       BrowserExtensionTokenResponse)),
             ("browser/revokeGrant", BrowserGrantRevokeRequest, BrowserGrantRevokeResponse, _ApplicationMethodAdapter(
                 lambda _id, request: self._browser_application().revoke(request), BrowserGrantRevokeResponse)),
             ("browser/close", BrowserCloseRequest, BrowserCloseResponse,

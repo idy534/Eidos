@@ -110,6 +110,26 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.addCleanup(client.close)
         return client
 
+    def test_forwards_streamed_thinking_to_the_live_sink_without_changing_the_response(self) -> None:
+        from eidos_runtime.model.reasoning_summary import reasoning_summary_sink
+
+        async def stream(_messages, _info):
+            yield {0: DeltaThinkingPart(content="先看目录。")}
+            yield {0: DeltaThinkingPart(content="再比较两个技能")}
+            yield "Hello"
+
+        seen: list[tuple[str, str, bool, bool]] = []
+        with reasoning_summary_sink(lambda *args: seen.append(args)):
+            response = self.client(stream).complete(
+                ({"type": "user", "content": "hi"},), threading.Event(), lambda _: None,
+                instructions=TEST_INSTRUCTIONS,
+            )
+
+        self.assertEqual(response.text, "Hello")
+        self.assertEqual(len({part_id for part_id, *_ in seen}), 1)
+        self.assertEqual(seen[-1][1:], ("先看目录。再比较两个技能", True, True))
+        self.assertTrue(all(raw for *_, raw in seen))
+
     def test_streams_multiple_text_deltas_and_ignores_thinking(self) -> None:
         async def stream(_messages, _info):
             yield {0: DeltaThinkingPart(content="private")}

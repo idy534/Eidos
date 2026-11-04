@@ -53,14 +53,24 @@ KNOWN_BLOCKED_BROWSER_TOOLS = frozenset({
 })
 
 
+# Not registered while the tools drive the user's own Chrome: the full request
+# and response headers and bodies carry session cookies and bearer tokens.
+USER_CHROME_BLOCKED_BROWSER_TOOLS = frozenset({"browser_network_request"})
+
+
 def browser_tool_class(remote_name: str) -> BrowserToolClass | None:
     return BROWSER_TOOL_CLASSES.get(remote_name)
 
 
 BrowserGrantRevokeReason = Literal["user", "plugin_changed", "profile_cleared"]
-# "default" is the Eidos Chrome profile; "user" is the user's everyday Chrome.
+# "default" is the Eidos Chrome profile; "user" is the user's everyday Chrome,
+# whether reached through remote debugging or the Playwright Extension.
 BrowserProfile = Literal["default", "user"]
-BrowserTarget = Literal["eidos", "user_chrome"]
+# chrome_extension is recommended and the default: it drives the user's Chrome
+# through the Playwright Extension once a token is saved, and otherwise falls
+# back to the Eidos browser when a Run starts.
+BrowserTarget = Literal["eidos", "user_chrome", "chrome_extension"]
+DEFAULT_BROWSER_TARGET: BrowserTarget = "chrome_extension"
 
 
 class BrowserGrant(EidosFrozenStrictModel):

@@ -52,6 +52,7 @@ from eidos_runtime.model.retry_transport import (
     RetryTracker,
     RetryTransportClient,
 )
+from eidos_runtime.model.reasoning_summary import emit_reasoning_summary
 from eidos_runtime.model.request_scope import run_model_request
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 
@@ -358,6 +359,10 @@ def map_responses_response(
     )
 
 
+MAX_REASONING_SUMMARY_CHARS = 4096
+MAX_REASONING_SUMMARY_PARTS = 64
+
+
 class OpenAIResponsesModelClient:
     """ModelClient for the Responses wire, including native Custom tools."""
 
@@ -511,7 +516,11 @@ class OpenAIResponsesModelClient:
         if self._parallel_tool_calls is not None:
             request_kwargs["parallel_tool_calls"] = self._parallel_tool_calls
         if self._reasoning_effort is not None:
-            request_kwargs["reasoning"] = {"effort": self._reasoning_effort}
+            reasoning_request: dict[str, str] = {"effort": self._reasoning_effort}
+            if self._reasoning_effort != "none":
+                # A summary is the only reasoning text the live Feed may show.
+                reasoning_request["summary"] = "auto"
+            request_kwargs["reasoning"] = reasoning_request
         retry_scope = (
             self._retry_transport.request_scope(cancel, retry_tracker)
             if self._retry_transport is not None else nullcontext()
@@ -545,6 +554,7 @@ class OpenAIResponsesModelClient:
         function_parts: dict[str, list[str]] = {}
         function_bytes: dict[str, int] = {}
         final_response: object | None = None
+        summary_text: dict[tuple[str, int], str] = {}
         iterator = stream.__aiter__()  # type: ignore[attr-defined]
         stream_closed = False
 
@@ -609,6 +619,27 @@ class OpenAIResponsesModelClient:
                     delta = _field(event, "delta")
                     if isinstance(delta, str) and delta:
                         await anyio.to_thread.run_sync(on_text_delta, delta)
+                elif event_type in {
+                    "response.reasoning_summary_text.delta",
+                    "response.reasoning_summary_text.done",
+                }:
+                    item_id = _field(event, "item_id")
+                    index = _field(event, "summary_index")
+                    done = event_type.endswith(".done")
+                    chunk = _field(event, "text" if done else "delta")
+                    key = (item_id, index)
+                    if (
+                        isinstance(item_id, str) and isinstance(index, int)
+                        and isinstance(chunk, str)
+                        and (key in summary_text or len(summary_text) < MAX_REASONING_SUMMARY_PARTS)
+                    ):
+                        text = chunk if done else summary_text.get(key, "") + chunk
+                        summary_text[key] = text[:MAX_REASONING_SUMMARY_CHARS]
+                        await anyio.to_thread.run_sync(
+                            lambda: emit_reasoning_summary(
+                                f"{item_id}:{index}", summary_text[key], final=done
+                            )
+                        )
                 elif event_type == "response.custom_tool_call_input.delta":
                     item_id = _field(event, "item_id")
                     delta = _field(event, "delta")

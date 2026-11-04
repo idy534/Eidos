@@ -13,7 +13,9 @@ import json
 import logging
 import re
 import threading
+import time
 from typing import Any, Callable
+from uuid import uuid4
 
 import anyio
 import httpx2 as httpx
@@ -35,6 +37,7 @@ from pydantic_ai.messages import (
     TextPart,
     TextPartDelta,
     ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -47,6 +50,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
+from eidos_runtime.model.reasoning_summary import emit_reasoning_summary
 from eidos_runtime.model.client import (
     CustomToolDefinition,
     FunctionToolDefinition,
@@ -410,8 +414,12 @@ class PydanticAIModelClient:
                     instrument=_model_instrumentation(),
                 ) as stream:
                     stream_ref[0] = stream
+                    thinking = _RawThinkingForwarder()
                     try:
                         async for event in stream:
+                            raw_thinking = thinking.observe(event)
+                            if raw_thinking:
+                                await anyio.to_thread.run_sync(thinking.emit, raw_thinking)
                             if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
                                 if event.part.content:
                                     await anyio.to_thread.run_sync(
@@ -424,6 +432,9 @@ class PydanticAIModelClient:
                                     await anyio.to_thread.run_sync(
                                         on_text_delta, event.delta.content_delta
                                     )
+                        final_thinking = thinking.finish()
+                        if final_thinking:
+                            await anyio.to_thread.run_sync(thinking.emit, final_thinking, True)
                         return stream.get()
                     finally:
                         stream_ref[0] = None
@@ -455,6 +466,53 @@ class PydanticAIModelClient:
             self._async_kernel.call(_close_provider_client, provider_client)
         with self._lock:
             self._closed = True
+
+
+class _RawThinkingForwarder:
+    """Offers streamed Chat Completions reasoning text to the live activity line.
+
+    Throttled here, before any thread hop: raw reasoning arrives a few tokens at
+    a time. Text is forwarded as ``raw``; the notifier titles, bounds and
+    redacts it. Nothing here touches the stored response or its replay.
+    """
+
+    MAX_PARTS = 16
+    MAX_CHARS = 4096
+    INTERVAL_SECONDS = 0.25
+
+    def __init__(self) -> None:
+        self._prefix = uuid4().hex[:8]
+        self._text: dict[int, str] = {}
+        self._last = 0.0
+
+    def observe(self, event: object) -> list[tuple[str, str]]:
+        if isinstance(event, PartStartEvent) and isinstance(event.part, ThinkingPart):
+            index, chunk = event.index, event.part.content
+        elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, ThinkingPartDelta):
+            index, chunk = event.index, event.delta.content_delta or ""
+        else:
+            return []
+        if index not in self._text and len(self._text) >= self.MAX_PARTS:
+            return []
+        self._text[index] = (self._text.get(index, "") + chunk)[:self.MAX_CHARS]
+        now = time.monotonic()
+        if now - self._last < self.INTERVAL_SECONDS:
+            return []
+        self._last = now
+        return [(f"{self._prefix}:{index}", self._text[index])]
+
+    def finish(self) -> list[tuple[str, str]]:
+        # Only the newest part: re-sending an older one would make it current again.
+        if not self._text:
+            return []
+        index = max(self._text)
+        text = self._text[index]
+        return [(f"{self._prefix}:{index}", text)] if text.strip() else []
+
+    @staticmethod
+    def emit(parts: list[tuple[str, str]], final: bool = False) -> None:
+        for part_id, text in parts:
+            emit_reasoning_summary(part_id, text, final=final, raw=True)
 
 
 class ModelClientLease:

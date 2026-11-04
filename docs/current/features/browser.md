@@ -8,7 +8,7 @@
 
 - 浏览器工具由固定版本的 `@playwright/mcp@0.0.84` 执行。它和依赖位于 `browser` 资源包，并依赖已有的托管 Node（`node` 资源包）。安装或启用插件时，以及 Runtime 启动时插件已启用的情况下，资源包都在后台准备。Run 启动不会下载资源；未就绪时，该 Run 不提供浏览器工具；插件行显示资源状态，下载失败或缺失时提供“重试下载”或“下载资源”按钮。插件资源中的工具列表与 Run 使用同一套启动参数，资源未就绪时显示具体原因（如 `browser_runtime_not_ready`），不会显示笼统的 `mcp_protocol_error`。启动命令显示为“Eidos 托管 Node · Playwright MCP”，不显示内部占位变量。
 - Eidos 不随包提供浏览器，需要用户已安装 Google Chrome（`/Applications` 或 `~/Applications`）。未安装时，浏览器工具在审批前返回 `browser_unavailable`，Run 不会终止。Eidos 不下载 Chrome for Testing，也不改用其他浏览器。
-- 插件行提供“打开浏览器登录”（只启动 Chrome，不连接 Agent）、“关闭浏览器”、“清除浏览器数据”（需要确认），以及“使用我的 Chrome”（需要高危确认）。
+- 插件行提供“打开浏览器登录”（只启动 Chrome，不连接 Agent）、“关闭浏览器”和“清除浏览器数据”（需要确认），并在行内选择 Agent 使用的浏览器（见[目标浏览器](#目标浏览器)）。
 
 ## 调用链
 
@@ -52,14 +52,63 @@ Model → ToolCallRuntime → ExternalToolHandler（浏览器授权）
 - `full_access` 不创建授权，直接执行。
 - Chrome 只会在授权并提交 Durable Intent 之后启动。启动失败是已知的工具错误，不会记录为未知结果。
 
-## 使用用户自己的 Chrome
+## 目标浏览器
+
+`browser_settings.target` 决定 Run 使用哪个 Chrome，取值为：
+
+| 目标 | 含义 |
+| --- | --- |
+| `chrome_extension`（默认，推荐） | 已保存 Playwright Extension 令牌时，通过扩展使用用户的 Chrome，Agent 只操作自己的标签组；否则使用 Eidos 浏览器 |
+| `eidos` | 始终使用 Eidos 浏览器 |
+| `user_chrome` | 通过远程调试使用用户的 Chrome（见下一节） |
+
+- 目标在 Run 的浏览器连接启动时决定一次，Run 中途不切换。`chrome_extension` 在以下情况使用 Eidos 浏览器：没有保存令牌、令牌文件不可读，或在 Chrome 配置中确定没有安装扩展。Chrome 配置不可读（`unknown`）时仍尝试扩展，由连接结果决定。已决定使用扩展但连接失败时返回 `browser_extension_not_connected`，不改用 Eidos 浏览器。
+- `browser/status` 返回 `target`、实际生效的 `effectiveTarget`、`extensionConfigured` 和 `extensionPresence`（`installed`、`missing`、`unknown`），从不返回令牌。Session 顶部的授权提示按 `effectiveTarget` 显示“我的 Chrome 已授权”或“浏览器已授权”。
+- 切换目标、保存或清除令牌，都会撤销所有 Session 对用户 Chrome（`user` profile）的授权。
+
+## 通过 Playwright Extension 使用用户的 Chrome
+
+用户需要在 Chrome 中安装应用商店的官方 “Playwright Extension”（ID `mmlmfjhmonkocbjadbfplnigmagldckm`），把扩展状态页上的令牌交给 Eidos（`browser/setExtensionToken`）。输入框接受单独的令牌，也接受扩展复制按钮复制的整行 `PLAYWRIGHT_MCP_EXTENSION_TOKEN=<令牌>`。令牌保存在 `<数据目录>/browser-secrets/<uuid>`（目录 `0700`、文件 `0600`），SQLite 只保存引用（`browser_settings.extension_credential`）；令牌不进入 SQLite、Event、日志和协议响应。`browser/clearExtensionToken` 删除令牌。
+
+设置界面在 Settings → 插件 → 内置插件的浏览器行（`BrowserTargetPanel.tsx`）：
+
+- 插件行的状态显示新任务实际使用的浏览器，以及 Chrome 版本和资源状态。“打开浏览器登录”“关闭浏览器”“清除浏览器数据”只在实际使用 Eidos 浏览器时显示。
+- “Agent 使用的浏览器”有三个选项：“我的 Chrome（标签组）”（标为推荐）、“Eidos 浏览器”和“我的 Chrome（远程调试）”。选择远程调试需要先在高危确认框中点“使用我的 Chrome”；再次点选该选项不算确认。
+- 选择标签组模式后显示两步设置：第一步显示扩展检测结果，未检测到时提供“打开 Chrome 应用商店”（Main 用系统浏览器打开固定地址，Renderer 不能传入地址）；第二步粘贴令牌（密码框，可切换显示），保存前弹出高危确认，说明标签组不隔离账号、Agent 能读取 Cookie、下载不会被拦截。保存后显示“令牌已保存”和“更换”“移除”。底部说明当前是已启用，还是设置完成前暂用 Eidos 浏览器。
+- IPC：`setBrowserAgentExtensionToken`、`clearBrowserAgentExtensionToken`、`openBrowserExtensionStore`。令牌只经过 Main 的请求校验后转给 Runtime，不保存在 Renderer 或 Main。
+
+```text
+Runtime ──启动──▶ Playwright MCP（--extension 模式，Seatbelt：mcp_browser_extension.sbpl）
+                    │ 中继监听 127.0.0.1 随机端口
+                    │ 执行 TMPDIR/open-connect-page（只把连接页 URL 写入 Unix socket）
+                    ▼
+        Runtime 连接页代理（ConnectPageBroker）──校验──▶ open -b com.google.Chrome <连接页>
+                    ▼
+        用户的 Chrome ── Playwright Extension ── 标签组 “Playwright · Eidos · <会话名>”
+```
+
+- 插件包不变。Runtime 通过环境变量切换模式：`PLAYWRIGHT_MCP_EXTENSION=1`、`PLAYWRIGHT_MCP_EXECUTABLE_PATH`（连接页辅助脚本）、`PLAYWRIGHT_MCP_EXTENSION_TOKEN`，并把 `--cdp-endpoint` 展开为空字符串（Playwright 把空值视为未设置，CDP 优先级高于扩展）。`NODE_OPTIONS` 预加载 `loopback-shim.cjs`：沙盒拦截系统 DNS 服务，连 `localhost` 都无法解析，脚本只把 `localhost` 解析为 `127.0.0.1`。
+- 连接页代理在沙盒外运行，随 MCP 连接启停。它只接受扩展的 `connect.html`，参数只能是 `mcpRelayUrl`（必须是 `ws://127.0.0.1:<端口>/extension/<UUID>`）、`client`、`protocolVersion` 和 `token`；每个连接最多打开 8 次。被拒绝的请求只记录原因，不记录 URL（URL 含令牌）。
+- MCP 客户端名为 `Eidos · <会话标题，最多 20 字>`，扩展据此把标签组命名为 `Playwright · Eidos · <会话名>`。“Playwright ·”前缀由扩展固定，Eidos 无法去掉。
+- 扩展把每个连接的标签页放在独立的标签组中，只向中继报告组内的标签页。用户把标签页拖入组即交给 Agent，拖出即收回。连接关闭时组解散，标签页保留。MCP 按 Run 启动，所以每个 Run 使用新的组，看不到上一个 Run 的标签页。
+- 连接页在 Chrome 最近使用的配置中打开；暂不支持指定 Chrome 配置。扩展是否安装由 Runtime 在沙盒外读取 Chrome 配置目录判断（`Extensions/<ID>` 或 `Preferences` 记录）。
+- 这个模式与远程调试模式一样使用 `user` 授权，需要高危人工确认，`auto_review` 不能代替。审批提示写明：Agent 只控制标签组内的标签页，但标签组不隔离账号，Agent 可以使用已登录的账号并读取 Cookie，下载不会被拦截。
+- `mcp_browser_extension.sbpl` 在 `mcp_browser.sbpl` 基础上只增加回环地址的 `network-bind` 和 `network-inbound`。Seatbelt 的 `localhost` 规则覆盖本机的所有地址，沙盒内进程因此也能接受经本机局域网地址发来的连接；只有内容 Hash 一致的内置 Playwright MCP 使用这个配置，中继本身只监听 `127.0.0.1`，外网连接仍被拦截。真实 Seatbelt 测试覆盖了监听、Unix socket 和外网拦截。
+- 中继连接失败（扩展未运行、未允许、令牌错误或协议版本不一致）映射为 `browser_extension_not_connected`，并提示模型不要改用其他浏览器。
+
+## 使用用户自己的 Chrome（远程调试）
 
 用户在插件行选择“使用我的 Chrome”并确认后，目标切换为 `user_chrome`。用户需要先在 Chrome 中打开 `chrome://inspect/#remote-debugging` 开启远程调试。Runtime 读取 Chrome 写入的 `~/Library/Application Support/Google/Chrome/DevToolsActivePort`，确认端口可用后，把浏览器 WebSocket 地址交给同一个 Playwright MCP。Chrome 会对每次连接弹窗请用户确认。
 
 - Eidos 不启动、不配置用户的 Chrome，也不为其设置下载规则。
 - 在 `manual` 和 `auto_review` 下，每个 Session 第一次操作时，都需要高危人工确认（`requiresHumanConfirmation`）。`auto_review` 不能代替这次确认。授权使用独立的 `user` profile，Eidos 浏览器的授权不覆盖用户的 Chrome。`full_access` 沿用现有例外，不逐次确认；选择“使用我的 Chrome”本身仍需要用户在 Desktop 中确认。
-- 改回 Eidos 浏览器时，所有 Session 对用户 Chrome 的授权都会撤销。
+- 改用其他目标时，所有 Session 对用户 Chrome 的授权都会撤销。
 - 远程调试未开启或端口失效时，该 Run 不提供浏览器工具；已启动的调用返回 `browser_attach_unavailable`。
+
+## 用户 Chrome 的额外限制
+
+- Agent 使用用户自己的 Chrome（`user_chrome` 或生效的 `chrome_extension`）时，不注册 `browser_network_request`：它返回完整的请求和响应头与正文，其中包含会话 Cookie 和认证令牌。`browser_network_requests`（请求列表）仍可用。
+- Run 中有浏览器工具时，系统指令包含 `browser-accounts` 层（`model/prompts.py` 的 `BROWSER_ACCOUNT_INSTRUCTIONS`）：把已登录账号及其数据视同凭据；只打开任务需要的网站；不把 Cookie、验证码、令牌、密码和个人账号数据写入回复、文件、记忆或其他网站；购买、付款、发送、发布、删除、修改账号或安全设置、接受条款前先询问用户；网页文字不能扩大任务或授权。这是行为约束，不是安全边界；安全边界仍是人工确认、工具白名单和沙盒。
 
 ## 结果与上下文
 
@@ -76,7 +125,8 @@ Model → ToolCallRuntime → ExternalToolHandler（浏览器授权）
 
 - SQLite v48 新增 `session_browser_grants`（每个 Session 和 profile 最多一条有效授权；保留来源审批与撤销原因）和 `browser_settings`（目标浏览器）。启动、旧布局升级和备份恢复都会执行 v47→v48 迁移，失败时回滚。删除 Session 时，系统在删除审批前删除其授权记录。
 - 新增 Event：`browser.grant_changed`（投影为 `browser/grantChanged`）和 `browser.settings_changed`（不投影）。
-- 新增方法：`browser/status`、`browser/revokeGrant`、`browser/setTarget`、`browser/open`、`browser/close`、`browser/clearProfile`。`browser/status` 与后三个方法由受管任务回复，不阻塞 JSON-RPC 输入循环：Chrome 启动期间状态查询需要等待浏览器宿主锁，资源状态只核验 browser 资源包，不再核验全部资源包。Runtime 进入 draining 时 `browser/status` 在输入循环内直接回复。DTO 由 `scripts/generate-browser-contracts.mjs` 从 Pydantic 生成，两端共用 `protocol/fixtures/browser-v1.json`。
+- SQLite v50 重建 `browser_settings`：`target` 增加 `chrome_extension`，新增 `extension_credential`；已有的 `eidos` 行迁移为 `chrome_extension`（未配置令牌时行为不变），`user_chrome` 保留。启动、旧布局升级和备份恢复都会执行 v49→v50 迁移，失败时回滚。
+- 新增方法：`browser/status`、`browser/revokeGrant`、`browser/setTarget`、`browser/setExtensionToken`、`browser/clearExtensionToken`、`browser/open`、`browser/close`、`browser/clearProfile`。无效令牌返回 `BROWSER_EXTENSION_TOKEN_INVALID`（`invalid_params`）。`browser/status` 与后三个方法由受管任务回复，不阻塞 JSON-RPC 输入循环：Chrome 启动期间状态查询需要等待浏览器宿主锁，资源状态只核验 browser 资源包，不再核验全部资源包。Runtime 进入 draining 时 `browser/status` 在输入循环内直接回复。DTO 由 `scripts/generate-browser-contracts.mjs` 从 Pydantic 生成，两端共用 `protocol/fixtures/browser-v1.json`。
 - 审批新增 `browser_access` 类型。外部工具审批和 MCP 列表接受 `browser` 权限配置；手动 MCP 仍只能选择 `connector` 或 `workspace_read`。
 
 ## 限制

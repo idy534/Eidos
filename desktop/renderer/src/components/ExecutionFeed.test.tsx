@@ -196,8 +196,45 @@ test("shows a thinking indicator before the first model item", () => {
     />,
   );
 
-  assert.match(html, /class="thinking-indicator"/);
-  assert.match(html, /正在思考/);
+  assert.match(html, /class="live-activity"/);
+  assert.match(html, /<span class="live-activity-text"[^>]*>正在思考<\/span>/);
+  assert.doesNotMatch(html, /thinking-indicator/);
+});
+
+test("the live line shows the reasoning summary title and only runs for a working Run", () => {
+  const user = item({ id: "user", ordinal: 1, kind: "user_message", content: "开始任务" });
+  const thinking = { "run-1": { summaryId: "rs:0", title: "确认技能目录", body: "先列目录", receivedAt: 1, previous: ["上一步"] } };
+  const render = (status: Run["status"], extra: Record<string, unknown> = {}) => renderToStaticMarkup(
+    <ExecutionFeed items={[user]} runs={[{ ...run, id: "run-1", status }]} approvals={[]} liveThinking={thinking} {...extra} />,
+  );
+  const working = render("running");
+  assert.match(working, /<button[^>]*class="live-activity-row"[^>]*aria-expanded="false"/);
+  assert.match(working, /确认技能目录/);
+  assert.match(render("finalizing"), /确认技能目录/);
+  for (const status of ["waiting_approval", "waiting_input", "waiting_agents", "succeeded", "failed"] as const) {
+    assert.doesNotMatch(render(status), /live-activity/, status);
+  }
+  // Without body text the row is only a status, never a button.
+  const titleOnly = renderToStaticMarkup(
+    <ExecutionFeed items={[user]} runs={[{ ...run, id: "run-1", status: "running" }]} approvals={[]}
+      liveThinking={{ "run-1": { summaryId: "rs:0", title: "只有标题", receivedAt: 1, previous: [] } }} />,
+  );
+  assert.match(titleOnly, /<div class="live-activity-row">/);
+  assert.doesNotMatch(titleOnly, /<button[^>]*live-activity-row/);
+});
+
+test("a summary is superseded once a later tool finishes", () => {
+  const user = item({ id: "user", ordinal: 1, kind: "user_message", content: "开始任务" });
+  const thinking = { "run-1": { summaryId: "rs:0", title: "确认技能目录", receivedAt: 1_000, previous: [] } };
+  const render = (tool: Item) => renderToStaticMarkup(
+    <ExecutionFeed items={[user, tool]} runs={[{ ...run, status: "running" }]} approvals={[]} liveThinking={thinking} />,
+  );
+  const running = groupToolItem("a", 2, "read_file", { path: "a.ts" }, "in_progress");
+  assert.match(render(running), /确认技能目录/);
+  const finished = { ...groupToolItem("a", 2, "read_file", { path: "a.ts" }), completedAt: 2_000 };
+  const html = render(finished);
+  assert.doesNotMatch(html, /确认技能目录/);
+  assert.match(html, /<span class="live-activity-text"[^>]*>正在思考<\/span>/);
 });
 
 test("names MCP tools readably without internal ids or diagnostics", () => {
@@ -2305,6 +2342,23 @@ test("renders a collapsed tool group summary and a live action while running", (
       approvals={[]}
     />,
   );
-  assert.match(running, /data-running="true"/);
-  assert.match(running, /<span class="tool-group-label">正在运行 pnpm test<\/span>/);
+  // The live line carries the motion; the group stays a static summary.
+  assert.doesNotMatch(running, /data-running/);
+  assert.match(running, /<span class="tool-group-label">读取 1 个文件 · 运行 1 条命令<\/span>/);
+  assert.match(running, /<span class="live-activity-text"[^>]*>正在运行 pnpm test<\/span>/);
+
+  // While an approval or question owns the run, the group shows the running action again.
+  const waiting = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        groupToolItem("a", 1, "read_file", { path: "a.ts" }),
+        groupToolItem("b", 2, "run_shell", { command: "pnpm test" }, "in_progress"),
+      ]}
+      runs={[{ ...run, status: "waiting_approval" }]}
+      approvals={[]}
+    />,
+  );
+  assert.match(waiting, /data-running="true"/);
+  assert.match(waiting, /<span class="tool-group-label">正在运行 pnpm test<\/span>/);
+  assert.doesNotMatch(waiting, /live-activity/);
 });

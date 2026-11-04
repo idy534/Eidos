@@ -20,6 +20,8 @@ from eidos_runtime.model.retry import RetryDecision, RetryState, retry_decision,
 from eidos_runtime.model.request_scope import foreground_request
 from eidos_runtime.model.gateway_types import RetryPolicy
 from eidos_runtime.runtime.assistant_stream import AssistantStreamWriter
+from eidos_runtime.runtime.thinking_notifier import ThinkingSummaryNotifier
+from eidos_runtime.model.reasoning_summary import reasoning_summary_sink
 from eidos_runtime.runtime.contracts import SamplingOutcome, StepContext, ToolBatchOutcome
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.model_runner import ModelRunner, ModelStreamInterrupted
@@ -101,6 +103,7 @@ class SamplingRuntime:
     ) -> None:
         self.store = store
         self.runner = ModelRunner(model, sensitive)
+        self._sensitive = sensitive
         self.events = events
         self._writer: AssistantStreamWriter | None = None
 
@@ -166,13 +169,17 @@ class SamplingRuntime:
             bound = self.store.context_snapshot_repository().read_for_model_attempt(step.model_attempt_id)
             if frozen is None or bound is None or frozen.snapshot_id != bound.snapshot_id:
                 raise RuntimeError("running model attempt context snapshot is required")
-            result = self.runner.run(
-                frozen.model_context,
-                cancel,
-                on_text,
-                instructions=frozen.instructions,
-                tool_definitions=frozen.tool_definitions,
+            thinking = ThinkingSummaryNotifier(
+                self.events, self._sensitive, step.session_id, step.run_id
             )
+            with reasoning_summary_sink(thinking.receive):
+                result = self.runner.run(
+                    frozen.model_context,
+                    cancel,
+                    on_text,
+                    instructions=frozen.instructions,
+                    tool_definitions=frozen.tool_definitions,
+                )
         except ModelStreamInterrupted as interrupted:
             # Batched safe text belongs to the interrupted Item, as it did when
             # every line was flushed immediately.

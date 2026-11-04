@@ -32,7 +32,11 @@ from eidos_runtime.extensions.browser_plugin import (
     BrowserLaunch,
     is_bundled_browser_server,
 )
-from eidos_runtime.domain.browser import BrowserToolClass, browser_tool_class
+from eidos_runtime.domain.browser import USER_CHROME_BLOCKED_BROWSER_TOOLS, BrowserToolClass, browser_tool_class
+from eidos_runtime.infrastructure.chrome_extension import (
+    BROKER_SOCKET_NAME, CONNECT_HELPER_NAME, CONNECT_HELPER_SCRIPT, LOOPBACK_SHIM_NAME, LOOPBACK_SHIM_SCRIPT,
+    ConnectPageBroker,
+)
 from eidos_runtime.extensions.contracts import McpServerConfigV1
 from eidos_runtime.infrastructure.browser_runtime import BrowserRuntimeUnavailable
 from eidos_runtime.extensions.plugin_mcp import resolve_package_mcp
@@ -80,6 +84,8 @@ SANDBOX_PROFILES = {
     "workspace_read": "mcp_workspace_read.sbpl",
     BROWSER_PERMISSION_PROFILE: "mcp_browser.sbpl",
 }
+# The browser profile in Playwright Extension mode also lets the relay listen.
+BROWSER_EXTENSION_SANDBOX_PROFILE = "mcp_browser_extension.sbpl"
 LAUNCHER = Path(__file__).with_name("mcp_launcher.py")
 
 # The SDK includes the polluted stdout line in parser exception logs. Eidos maps
@@ -424,9 +430,15 @@ class McpConnection:
                         streams = await stack.enter_async_context(streamable_http_client(str(self.config.url), http_client=client))
                     else:
                         parameters = await anyio.to_thread.run_sync(self._prepare_parameters)
+                        if self.browser_launch is not None and self.browser_launch.mode == "extension":
+                            await self._start_connect_broker(stack)
                         error_log = stack.enter_context(open(os.devnull, "w", encoding="utf-8"))
                         streams = await stack.enter_async_context(stdio_client(parameters, errlog=error_log))
-                    session = await stack.enter_async_context(ClientSession(streams[0], streams[1], message_handler=message_handler))
+                    client_name = self.browser_launch.client_name if self.browser_launch is not None else None
+                    session = await stack.enter_async_context(ClientSession(
+                        streams[0], streams[1], message_handler=message_handler,
+                        **({"client_info": mcp_types.Implementation(name=client_name, version="1")} if client_name else {}),
+                    ))
                     initialized = await session.initialize()
                     self.description = initialized.server_info.description
                     tools = await _discover_tools(session)
@@ -577,8 +589,12 @@ class McpConnection:
         }
         Path(environment["HOME"]).mkdir(mode=0o700)
         Path(environment["TMPDIR"]).mkdir(mode=0o700)
+        extension = browser and self.browser_launch is not None and self.browser_launch.mode == "extension"
         if browser:
             (Path(environment["TMPDIR"]) / "browser-output").mkdir(mode=0o700)
+        if extension:
+            _write_private(Path(environment["TMPDIR"]) / CONNECT_HELPER_NAME, CONNECT_HELPER_SCRIPT, 0o700)
+            _write_private(Path(environment["TMPDIR"]) / LOOPBACK_SHIM_NAME, LOOPBACK_SHIM_SCRIPT, 0o600)
         inherited = sanitize_shell_environment(os.environ)
         for name in self.config.env_names:
             value = inherited.get(name)
@@ -592,10 +608,21 @@ class McpConnection:
             environment[target] = value
         environment.update(sanitize_shell_environment(self.env_values))
         environment = sanitize_shell_environment(environment)
+        if extension and self.browser_launch is not None:
+            # Playwright reads its extension settings from the environment.
+            tmp = Path(environment["TMPDIR"])
+            environment.update({
+                "PLAYWRIGHT_MCP_EXTENSION": "1",
+                "PLAYWRIGHT_MCP_EXECUTABLE_PATH": str(tmp / CONNECT_HELPER_NAME),
+                "NODE_OPTIONS": f'--require "{tmp / LOOPBACK_SHIM_NAME}"',
+                **self.browser_launch.environment,
+            })
         if self.sandbox:
             if sys.platform != "darwin" or not Path(SANDBOX_EXECUTABLE).is_file():
                 raise McpUnavailable("mcp_sandbox_unavailable")
-            profile = SANDBOX_DIR / SANDBOX_PROFILES[self.config.permission_profile]
+            profile = SANDBOX_DIR / (
+                BROWSER_EXTENSION_SANDBOX_PROFILE if extension else SANDBOX_PROFILES[self.config.permission_profile]
+            )
             if self.config.permission_profile != "connector" and self.additional_workspace_roots:
                 import json
                 extra = "\n".join(
@@ -638,6 +665,16 @@ class McpConnection:
             encoding="utf-8",
             encoding_error_handler="strict",
         )
+
+    async def _start_connect_broker(self, stack: AsyncExitStack) -> None:
+        """The sandboxed relay asks this broker to open the extension's connect page."""
+
+        listener = await anyio.create_unix_listener(self.runtime_root / "tmp" / BROKER_SOCKET_NAME)
+        await stack.enter_async_context(listener)
+        group = await stack.enter_async_context(anyio.create_task_group())
+        # Exit order is LIFO: stop serving before the group waits for its task.
+        stack.callback(group.cancel_scope.cancel)
+        group.start_soon(ConnectPageBroker().serve, listener)
 
     def _verify_runtime_directory(self) -> None:
         current = self.runtime_root.lstat()
@@ -1121,10 +1158,13 @@ def _valid_tool_entries(
 ) -> list[ToolRegistryEntry]:
     entries: list[ToolRegistryEntry] = []
     browser = connection.browser_launch is not None
+    user_chrome = browser and connection.browser_launch is not None and connection.browser_launch.profile == "user"
     for tool in tools:
         tool_class = browser_tool_class(tool.name) if browser else None
         if browser and tool_class is None:
             # Unlisted browser tools are blocked, not registered as rejected.
+            continue
+        if user_chrome and tool.name in USER_CHROME_BLOCKED_BROWSER_TOOLS:
             continue
         try:
             entries.append(
@@ -1227,6 +1267,12 @@ def _result(
         "sideEffectsMayExist": side_effects_may_exist,
         "reconciliationRequired": False,
     }
+
+
+def _write_private(path: Path, content: str, mode: int) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write(content)
 
 
 def _expand_launch_variables(

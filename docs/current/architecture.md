@@ -300,6 +300,14 @@ Token 计量优先使用 Provider 返回的实际 Usage。该值只代表对应�
 
 `model/retryUpdated` 通知携带整条 Activity；`session/read.modelRetries` 从当前历史页的事件重建每个请求组的最新状态。Renderer 按 Run 和请求组合并，使用 event ID 拒绝迟到状态，倒计时由 `nextRetryAt` 在本地计算。Run 已结束而 Activity 仍是 `waiting` 或 `requesting` 时，界面按 Run 状态显示为已取消或已失败。协议修复、空回复修复和上下文压缩不属于这类事件。没有新增数据库表、Schema 版本或后台 Worker。
 
+### 实时活动行与思考摘要
+
+Run 进行中（`running`、`finalizing`），Feed 末尾显示一行实时活动行（`LiveActivityLine`），取代原来只在第一个过程项出现之前显示的“正在思考…”。文字来源按优先级为：模型思考摘要的标题、折叠在工具组里的正在执行的工具（沿用工具行的进行中文案；独立工具行自己已显示动作，此时显示“正在执行”）、“正在思考”（`finalizing` 为“正在整理回复”）。摘要在收到之后有工具完成时视为过期，回到后两项，直到下一条摘要到达。等待审批、等待回答、等待子任务、模型重试等待或请求中、上下文压缩进行中、最终回复已开始流式输出时，该行隐藏，由各自的界面显示状态。该行显示时，其上方的工具组行保持静态汇总、不再转圈；该行隐藏时工具组恢复自己的运行态。每条文字至少停留 1.2 秒。有摘要正文时整行是按钮，点击在上方弹出气泡（当前摘要、此前最多 4 条标题），Esc、点击外部或正文消失时关闭；没有正文时它只是 `role="status"`。
+
+文字有两个来源，都只用于这一行，不存储、不回放、不进入模型上下文。Responses API：`OpenAIResponsesModelClient` 在请求带思考强度（且不是 `none`）时附带 `reasoning.summary: "auto"`，流中读取 `response.reasoning_summary_text.delta/done`，这是服务商写的摘要。Chat Completions（内置模型和自定义模型）：`PydanticAIModelClient` 把流中的 `ThinkingPart` 增量作为原始思考文本转发（`_RawThinkingForwarder`，在线程切换之前按 0.25 秒节流，最多 16 段、每段 4096 字符），模型返回的响应和回放记录不受影响。两者通过 `model/reasoning_summary.py` 的 ContextVar 交给 Sampling，不改变 `ModelClient.complete` 签名；原始思考文本带 `raw` 标记。没有任何思考输出的模型落到工具文案或“正在思考”。
+
+`ThinkingSummaryNotifier` 对摘要取首行或 `**粗体**` 作为标题，对原始思考文本取第一句（句号、问号、分号、换行，或满 80 字）作为标题，标题 ≤ 80 字，其余作为正文（≤ 600 字），经 `redact_for_presentation` 脱敏，同一摘要段的增长最多每 0.25 秒发送一次，新段和结束文本不被节流。结果通过 `run/thinking` 通知发送（`sessionId`、`runId`、`summaryId`、`title`、可选 `body`；Fixture 为 `protocol/fixtures/run-thinking-v1.json`）。它不是 Event：不写 SQLite、不进 Outbox、不进入模型上下文、不随 `session/read` 返回，Runtime 重启或通知丢失只会让该行退回到工具文案。Renderer 在 `AppShell` 内按 Run 保存（`live-thinking.ts`），Run 进入终态时清除，切换会话重读快照后会等到下一条摘要才重新出现。没有新增数据库表、Schema 版本或后台 Worker。
+
 Run 因 Provider 错误结束时，`ModelFailureNotice` 取代单行红字：认证、参数、额度、内容限制和耗尽重试各有标题、原因和芯片，认证、参数、额度与耗尽重试提供“打开模型设置”。其他失败仍使用原来的单行提示。
 
 

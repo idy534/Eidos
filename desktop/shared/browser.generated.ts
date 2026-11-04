@@ -7,8 +7,11 @@ export type Running = boolean;
 export type Plugininstalled = boolean;
 export type Pluginenabled = boolean;
 export type Resource = "unavailable" | "missing" | "preparing" | "ready" | "failed";
-export type Target = "eidos" | "user_chrome";
+export type Target = "eidos" | "user_chrome" | "chrome_extension";
+export type Effectivetarget = "eidos" | "user_chrome" | "chrome_extension";
 export type Attachavailable = boolean;
+export type Extensionconfigured = boolean;
+export type Extensionpresence = "installed" | "missing" | "unknown";
 export type Granted = boolean;
 export type Sessionid1 = string;
 export type Revoked = boolean;
@@ -18,9 +21,12 @@ export type Errorcode = string | null;
 export type Cleared = boolean;
 export type Revokedgrants = number;
 export type Errorcode1 = string | null;
-export type Target1 = "eidos" | "user_chrome";
-export type Target2 = "eidos" | "user_chrome";
+export type Target1 = "eidos" | "user_chrome" | "chrome_extension";
+export type Target2 = "eidos" | "user_chrome" | "chrome_extension";
 export type Revokedgrants1 = number;
+export type Token = string;
+export type Configured = boolean;
+export type Revokedgrants2 = number;
 
 export interface BrowserContract {
   statusRequest: BrowserStatusRequest;
@@ -35,6 +41,9 @@ export interface BrowserContract {
   clearResponse: BrowserClearResponse;
   targetRequest: BrowserTargetRequest;
   targetResponse: BrowserTargetResponse;
+  extensionTokenRequest: BrowserExtensionTokenRequest;
+  extensionTokenResponse: BrowserExtensionTokenResponse;
+  extensionTokenClearRequest: BrowserExtensionTokenClearRequest;
 }
 export interface BrowserStatusRequest {
   sessionId?: Sessionid;
@@ -47,7 +56,10 @@ export interface BrowserStatus {
   pluginEnabled: Pluginenabled;
   resource: Resource;
   target?: Target;
+  effectiveTarget?: Effectivetarget;
   attachAvailable?: Attachavailable;
+  extensionConfigured?: Extensionconfigured;
+  extensionPresence?: Extensionpresence;
   granted?: Granted;
 }
 export interface BrowserGrantRevokeRequest {
@@ -78,3 +90,11 @@ export interface BrowserTargetResponse {
   target: Target2;
   revokedGrants: Revokedgrants1;
 }
+export interface BrowserExtensionTokenRequest {
+  token: Token;
+}
+export interface BrowserExtensionTokenResponse {
+  configured: Configured;
+  revokedGrants: Revokedgrants2;
+}
+export interface BrowserExtensionTokenClearRequest {}

@@ -741,6 +741,15 @@ export interface ExtensionSnapshot {
   throughEventId: number;
 }
 
+export interface RunThinkingParams {
+  sessionId: string;
+  runId: string;
+  /** Provider summary part id; the same id with longer text is an update. */
+  summaryId: string;
+  title: string;
+  body?: string;
+}
+
 export type RuntimeNotification =
   | { method: "memory/changed"; params: import("./memory.generated.js").MemoryChangedNotice }
   | { method: "context/compactionUpdated"; params: { sessionId: string; activity: ContextCompactionActivity } }
@@ -755,6 +764,8 @@ export type RuntimeNotification =
   | { method: "run/started"; params: { sessionId: string; run: Run } }
   | { method: "run/updated"; params: { sessionId: string; run: Run } }
   | { method: "run/completed"; params: { sessionId: string; run: Run } }
+  /** Live-only provider reasoning summary: not an Event, never stored or replayed. */
+  | { method: "run/thinking"; params: RunThinkingParams }
   | {
       method: "context/compacted";
       params: {

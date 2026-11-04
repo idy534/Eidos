@@ -367,6 +367,11 @@ export interface EidosRuntimeAPI {
   openBrowserAgent(): Promise<import("./browser.js").BrowserOpenResponse>;
   clearBrowserAgentProfile(): Promise<import("./browser.js").BrowserClearResponse>;
   setBrowserAgentTarget(request: import("./browser.js").BrowserTargetRequest): Promise<import("./browser.js").BrowserTargetResponse>;
+  /** Saves the Playwright Extension token; Runtime keeps it outside SQLite and never returns it. */
+  setBrowserAgentExtensionToken(request: import("./browser.js").BrowserExtensionTokenRequest): Promise<import("./browser.js").BrowserExtensionTokenResponse>;
+  clearBrowserAgentExtensionToken(): Promise<import("./browser.js").BrowserExtensionTokenResponse>;
+  /** Opens the Playwright Extension page in the Chrome Web Store with the system browser. */
+  openBrowserExtensionStore(): Promise<void>;
   setMcpEnabled(pluginId: string, serverId: string, enabled: boolean): Promise<McpServerRecord>;
   createMcpServer(input: McpCreateInput): Promise<McpServerRecord>;
   updateMcpServer(input: McpUpdateInput): Promise<McpServerRecord>;

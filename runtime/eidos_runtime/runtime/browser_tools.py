@@ -30,6 +30,13 @@ USER_CHROME_ACCESS_WARNING = (
     "包括邮箱、支付和工作账号，直到你撤销授权。Chrome 每次连接时还会请你确认。"
     "购买、发送、发布或删除前，Agent 仍会先询问你；上传文件每次都需要批准。"
 )
+CHROME_EXTENSION_ACCESS_WARNING = (
+    "批准后，本会话中的后续任务可以通过 Playwright Extension 操作你日常使用的 Google Chrome，直到你撤销授权。"
+    "Agent 只控制标签栏中「Playwright · Eidos · 会话名」标签组里的标签页，你可以把标签页拖进或拖出这个组。"
+    "标签组不隔离账号：Agent 可以在组内打开任何网站，并使用你在 Chrome 中已登录的账号，包括邮箱、支付和工作账号，"
+    "也能读取这些网站的 Cookie。下载不会被拦截。"
+    "购买、发送、发布或删除前，Agent 仍会先询问你；上传文件每次都需要批准。"
+)
 BROWSER_UPLOAD_WARNING = "批准后，这些文件会发送给当前网页所在的网站。"
 
 
@@ -84,9 +91,38 @@ def with_browser(
                 return tool_error(call_name, error.code, _UNAVAILABLE_SUMMARIES.get(
                     error.code, "The Eidos browser could not be started.",
                 ))
-        return execute()
+        result = execute()
+        if browser.launch.mode == "extension":
+            return extension_failure(call_name, result) or result
+        return result
 
     return run
+
+
+# Playwright's relay reports these before it touches any page.
+_EXTENSION_CONNECT_FAILURES = (
+    "Playwright extension did not connect",
+    "Extension disconnected before initialization",
+    "Playwright Extension not found",
+    "Extension not connected",
+)
+
+
+def extension_failure(call_name: str, result: dict[str, object]) -> dict[str, object] | None:
+    """Map the relay's connection failure to a stable code with guidance."""
+
+    data = result.get("data")
+    text = data.get("text") if isinstance(data, dict) else None
+    if result.get("code") != "mcp_tool_error" or not isinstance(text, str):
+        return None
+    if not any(marker in text for marker in _EXTENSION_CONNECT_FAILURES):
+        return None
+    return tool_error(
+        call_name, "browser_extension_not_connected",
+        "The Playwright Extension in the user's Chrome did not connect. Ask the user to keep Google Chrome open "
+        "with the Playwright Extension enabled, and to check the extension token saved in Eidos browser settings, "
+        "then retry. Do not switch to another browser.",
+    )
 
 
 def upload_paths(arguments: dict[str, object], roots: tuple[Path, ...]) -> tuple[str, ...]:
@@ -112,8 +148,13 @@ def upload_paths(arguments: dict[str, object], roots: tuple[Path, ...]) -> tuple
 
 def browser_access_description(
     call_name: str, arguments: dict[str, object], details: dict[str, object], profile: str = "default",
+    mode: str = "cdp",
 ) -> dict[str, object]:
     user = profile == "user"
+    warning = (
+        CHROME_EXTENSION_ACCESS_WARNING if user and mode == "extension"
+        else USER_CHROME_ACCESS_WARNING if user else BROWSER_ACCESS_WARNING
+    )
     return {
         "kind": "browser_access",
         "summary": "允许本会话使用你的 Chrome" if user else "允许本会话使用 Eidos 浏览器",
@@ -122,7 +163,7 @@ def browser_access_description(
         "grantScope": "session",
         "profile": profile,
         "access": "interact",
-        "riskWarning": USER_CHROME_ACCESS_WARNING if user else BROWSER_ACCESS_WARNING,
+        "riskWarning": warning,
         # The user's everyday accounts need the user's own decision.
         **({"requiresHumanConfirmation": True} if user else {}),
         **details,

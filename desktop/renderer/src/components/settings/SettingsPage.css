@@ -1067,11 +1067,113 @@
 .builtin-plugin-status { color: var(--muted); font-size: 0.8125rem; }
 .builtin-plugin-confirm {
   display: grid;
-  gap: 0.5rem;
+  gap: 0.6rem;
   margin-top: 0.5rem;
-  padding: 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
 }
-.builtin-plugin-confirm p { margin: 0; }
+.builtin-plugin-confirm p { margin: 0; color: var(--text-secondary); font-size: 0.8rem; line-height: 1.55; }
 .builtin-plugin-confirm-actions { display: flex; justify-content: flex-end; gap: 0.5rem; flex-wrap: wrap; }
+
+/* Browser plugin: which Chrome the Agent drives, and the extension setup. */
+.browser-target { display: grid; gap: 0.75rem; min-width: 0; }
+.browser-target-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.5rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.browser-target-options:disabled { opacity: var(--control-disabled-opacity); }
+.browser-target-options legend {
+  grid-column: 1 / -1;
+  margin-bottom: 0.4rem;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 550;
+}
+.browser-target-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  min-width: 0;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+.browser-target-option:hover { border-color: rgba(0, 0, 0, 0.18); }
+.browser-target-option--selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+.browser-target-option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.browser-target-options:disabled .browser-target-option { cursor: not-allowed; }
+.browser-target-option input[type="radio"] {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  margin: 0.1rem 0 0;
+  padding: 0;
+  border: 0;
+  accent-color: var(--accent);
+  cursor: inherit;
+}
+.browser-target-option-text { display: grid; gap: 0.2rem; min-width: 0; }
+.browser-target-option-title {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 550;
+}
+.browser-target-option-desc { color: var(--muted); font-size: 0.75rem; line-height: 1.45; }
+.browser-extension-setup {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+.browser-extension-steps { display: grid; gap: 0.75rem; margin: 0; padding: 0; list-style: none; counter-reset: browser-step; }
+.browser-extension-steps li {
+  display: grid;
+  grid-template-columns: 1.35rem minmax(0, 1fr);
+  column-gap: 0.6rem;
+  row-gap: 0.35rem;
+  align-items: center;
+  counter-increment: browser-step;
+}
+.browser-extension-steps li::before {
+  content: counter(browser-step);
+  grid-row: 1;
+  display: grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.browser-extension-steps li > * { grid-column: 2; justify-self: start; }
+.browser-extension-step-title { color: var(--text); font-size: 0.8rem; font-weight: 550; }
+.browser-extension-step-state,
+.browser-extension-step-hint { color: var(--muted); font-size: 0.75rem; line-height: 1.45; }
+.browser-extension-step-state--done { color: var(--status-success); }
+.browser-extension-step-actions { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.browser-extension-remove.btn--ghost { color: var(--danger); }
+.browser-extension-steps .browser-extension-token-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; justify-self: stretch; min-width: 0; }
+.browser-extension-token-row .web-search-input-field { min-width: 12rem; }
+.browser-extension-error { color: var(--danger); font-size: 0.75rem; }
+.browser-extension-summary { margin: 0; color: var(--muted); font-size: 0.75rem; line-height: 1.45; }
+.browser-extension-summary--active { color: var(--text-secondary); }

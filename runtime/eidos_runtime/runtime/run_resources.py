@@ -230,8 +230,11 @@ class RunResources:
 
     def _browser_launch(self) -> BrowserLaunch:
         """Resolve verified Playwright MCP inputs and the shared Chrome endpoint."""
+        session = self.store.read_session(str(self.store.read_run(self.run_id)["sessionId"]))
+        title = session.get("title") if session is not None else None
         return resolve_browser_launch(
             self.store, self.browser_host, self.runtime_dependency_catalog,
+            session_title=title if isinstance(title, str) else None,
         )
 
     def _set_registry(

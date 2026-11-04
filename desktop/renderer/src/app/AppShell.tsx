@@ -65,6 +65,7 @@ import { resolveSessionRun } from "./session-model-resolver.js";
 import { useExtensionController } from "./useExtensionController.js";
 import { McpPluginNamesContext } from "../components/McpToolDetails.js";
 import { useGitReviewController } from "./useGitReviewController.js";
+import { applyThinking, clearThinking, type LiveThinkingMap } from "../live-thinking.js";
 import { applyNotification, applyQueuedRunChange, isQueuedMessage, userFacingError } from "../session-state.js";
 import { IPC } from "../../../shared/ipc-channels.js";
 import { NavigationControls } from "../components/NavigationControls.js";
@@ -100,6 +101,7 @@ const MAIN_MIN_WIDTH = 16 * 16;
 const DOCK_AUTO_COLLAPSE_BODY_WIDTH = 40 * 16;
 const EMPTY_MODELS: ModelOption[] = [];
 const EMPTY_AGENTS: AgentSummary[] = [];
+const ENDED_RUN_STATUSES = new Set<Run["status"]>(["stopped", "succeeded", "failed", "canceled", "interrupted"]);
 
 const TerminalPanel = lazy(() => import("../components/TerminalPanel.js").then((module) => ({
   default: module.TerminalPanel,
@@ -136,6 +138,9 @@ export function AppShell({ runtime }: AppShellProps) {
     sessionState.snapshot?.session.id,
   );
   const latestRun = sessionState.snapshot?.runs.filter((run) => !run.inherited).at(-1);
+  // Live-only reasoning summaries: not part of the snapshot, dropped when the Run ends.
+  const [liveThinking, setLiveThinking] = useState<LiveThinkingMap>({});
+  const endedThinkingRuns = useRef(new Set<string>());
   const [forkSelection, setForkSelection] = useState<{ session: Session; item: Item } | null>(null);
   const [forkTarget, setForkTarget] = useState<"same_workspace" | "new_worktree">("same_workspace");
   const sessionConfigRun = resolveSessionRun(sessionState.snapshot?.runs.filter((run) => !run.inherited) ?? []);
@@ -480,6 +485,20 @@ export function AppShell({ runtime }: AppShellProps) {
     const unsubNotifications = window.eidosRuntime?.onNotification?.((notification) => {
       handleContextUsageNotification(notification);
       gitReviewActions.handleNotification(notification);
+      if (notification.method === "run/thinking") {
+        // A summary can arrive after the Run's terminal notification; ignore it.
+        if (!endedThinkingRuns.current.has(notification.params.runId)) {
+          setLiveThinking((prev) => applyThinking(prev, notification.params));
+        }
+        return;
+      }
+      if (
+        (notification.method === "run/updated" || notification.method === "run/completed")
+        && ENDED_RUN_STATUSES.has(notification.params.run.status)
+      ) {
+        endedThinkingRuns.current.add(notification.params.run.id);
+        setLiveThinking((prev) => clearThinking(prev, notification.params.run.id));
+      }
       if (notification.method === "project/updated") {
         void sessionActions.loadProjects();
       } else if (notification.method === "sidebar/pinsChanged") {
@@ -1753,6 +1772,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   onEnsureItemMounted={sessionActions.ensureItemLoaded}
                   contextCompactions={currentSnapshot.contextCompactions}
                   modelRetries={currentSnapshot.modelRetries}
+                  liveThinking={liveThinking}
                   onOpenModelSettings={() => { setAutomationsOpen(false); setSettingsCategory("model"); setSettingsOpen(true); setDockOpen(false); setDockExpanded(false); }}
                   runs={feedVisibleRuns}
                   models={feedModels}

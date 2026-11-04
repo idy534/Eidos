@@ -16,6 +16,7 @@ pytestmark = pytest.mark.platform
 
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 PROFILE = Path(__file__).resolve().parents[1] / "eidos_runtime" / "sandbox" / "mcp_browser.sbpl"
+EXTENSION_PROFILE = PROFILE.with_name("mcp_browser_extension.sbpl")
 
 
 @unittest.skipUnless(
@@ -53,9 +54,9 @@ class BrowserSeatbeltTests(unittest.TestCase):
             self.accepted += 1
             connection.close()
 
-    def run_sandboxed(self, command: str) -> subprocess.CompletedProcess[str]:
+    def run_sandboxed(self, command: str, profile: Path = PROFILE) -> subprocess.CompletedProcess[str]:
         return subprocess.run([
-            SANDBOX_EXEC, "-f", str(PROFILE),
+            SANDBOX_EXEC, "-f", str(profile),
             f"-DPLUGIN_ROOT={self.runtime}", f"-DWORKSPACE_ROOT={self.workspace}",
             f"-DSANDBOX_HOME={self.home}", f"-DSANDBOX_TMP={self.tmp}",
             f"-DNODE_RUNTIME_ROOT={self.runtime}", f"-DBROWSER_RUNTIME_ROOT={self.runtime}",
@@ -88,3 +89,41 @@ class BrowserSeatbeltTests(unittest.TestCase):
             self.skipTest("this machine has no route to a non-local address")
         denied = self.run_sandboxed(" ".join(remote))
         self.assertNotEqual(denied.returncode, 0)
+
+    def test_default_profile_cannot_listen_but_extension_profile_can_on_loopback(self) -> None:
+        listen = "/usr/bin/nc -l 127.0.0.1 0 & pid=$!; sleep 0.5; kill -0 $pid && echo listening; kill $pid"
+        self.assertNotIn("listening", self.run_sandboxed(listen).stdout)
+        self.assertIn("listening", self.run_sandboxed(listen, EXTENSION_PROFILE).stdout)
+
+    def test_extension_profile_reaches_the_broker_socket_but_not_the_internet(self) -> None:
+        import tempfile
+        # Unix socket paths are limited to 104 bytes.
+        short = Path(tempfile.mkdtemp(prefix="eb-", dir="/private/tmp"))
+        try:
+            self.tmp = short
+            socket_path = short / "connect-broker.sock"
+            server = socket.socket(socket.AF_UNIX)
+            server.bind(str(socket_path))
+            server.listen(1)
+            received: list[bytes] = []
+
+            def accept() -> None:
+                connection, _ = server.accept()
+                received.append(connection.recv(4096))
+                connection.close()
+
+            thread = threading.Thread(target=accept, daemon=True)
+            thread.start()
+            sent = self.run_sandboxed(f"printf 'page\\n' | /usr/bin/nc -U {socket_path}", EXTENSION_PROFILE)
+            thread.join(5)
+            server.close()
+            self.assertEqual(sent.returncode, 0, sent.stderr)
+            self.assertEqual(received, [b"page\n"])
+        finally:
+            for child in short.iterdir():
+                child.unlink()
+            short.rmdir()
+        remote = ["nc", "-z", "-w", "3", "192.0.2.1", "443"]
+        if subprocess.run(remote, capture_output=True, timeout=20, check=False).returncode != 0:
+            self.skipTest("this machine has no route to a non-local address")
+        self.assertNotEqual(self.run_sandboxed(" ".join(remote), EXTENSION_PROFILE).returncode, 0)

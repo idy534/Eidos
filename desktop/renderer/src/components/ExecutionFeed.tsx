@@ -12,6 +12,8 @@ import {
 } from "./InputContext.js";
 import { InlineRichEditor } from "./InlineRichEditor.js";
 import { ToolTextView } from "./ToolTextView.js";
+import { LiveActivityLine } from "./LiveActivityLine.js";
+import type { LiveThinking, LiveThinkingMap } from "../live-thinking.js";
 import { BrowserToolBody, McpPluginNamesContext, McpToolBody, browserPageHost, mcpToolTitle } from "./McpToolDetails.js";
 import { toolFilePaths } from "./ResultFiles.js";
 import { createContext, Fragment, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -65,6 +67,8 @@ interface Props {
   searchTarget?: { itemId: string; query: string; occurrence: number; revision: number } | undefined;
   contextCompactions?: readonly ContextCompactionActivity[] | undefined;
   modelRetries?: readonly ModelRetryActivity[] | undefined;
+  /** Live-only reasoning summaries by Run id; absent entries fall back to the current action. */
+  liveThinking?: LiveThinkingMap | undefined;
   onOpenModelSettings?: (() => void) | undefined;
   items: Item[];
   resultItems?: Item[];
@@ -122,6 +126,8 @@ const ACTIVE_RUN_STATUSES = new Set<Run["status"]>([
   "queued", "running", "waiting_input", "waiting_agents", "waiting_approval", "finalizing",
 ]);
 
+const LIVE_RUN_STATUSES = new Set<Run["status"]>(["running", "finalizing"]);
+
 const TERMINAL_RUN_STATUSES = new Set<Run["status"]>([
   "stopped", "succeeded", "failed", "canceled", "interrupted",
 ]);
@@ -140,6 +146,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   searchTarget,
   contextCompactions = EMPTY_COMPACTIONS,
   modelRetries = EMPTY_RETRIES,
+  liveThinking,
   onOpenModelSettings,
   items,
   resultItems = items,
@@ -326,6 +333,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
                     allowEditResend={allowEditResend}
                     isSearchTarget={searchTarget?.itemId === segment.user?.id}
                     searchItemId={searchTarget?.itemId}
+                    thinking={liveThinking?.[runId]}
                   />
                 ))}
                 <RunNotice run={run} retry={runRetries.at(-1)} onOpenModelSettings={onOpenModelSettings} />
@@ -373,6 +381,7 @@ const RunSegment = memo(function RunSegment({
   allowEditResend = true,
   isSearchTarget = false,
   searchItemId,
+  thinking,
 }: {
   segment: Segment;
   run: Run;
@@ -398,7 +407,9 @@ const RunSegment = memo(function RunSegment({
   allowEditResend?: boolean | undefined;
   isSearchTarget?: boolean | undefined;
   searchItemId?: string | undefined;
+  thinking?: LiveThinking | undefined;
 }) {
+  const mcpNames = useContext(McpPluginNamesContext);
   // Hidden observations still determine which assistant messages are progress.
   const visibleProcess = segment.process.filter((entry) => {
     if (entry.kind !== "item") return true;
@@ -407,10 +418,36 @@ const RunSegment = memo(function RunSegment({
     const data = objectField(parseObject(item.toolCall.resultJson), "data");
     return item.status === "failed" && !stringField(data, "executionStatus");
   });
-  const showThinking = isLast
-    && ACTIVE_RUN_STATUSES.has(run.status)
-    && visibleProcess.length === 0
-    && segment.response.length === 0;
+  // One live line ends a running Run. Approval, question and sub-agent waits,
+  // retries and compaction already show their own state, and streamed final
+  // text is itself the activity.
+  const stageBusy = segment.retries.at(-1)?.status === "waiting"
+    || segment.retries.at(-1)?.status === "requesting"
+    || segment.process.some((entry) => entry.kind === "compaction" && entry.activity.status === "running");
+  const showLive = isLast
+    && LIVE_RUN_STATUSES.has(run.status)
+    && segment.response.length === 0
+    && !stageBusy;
+  const processNodes = groupProcessEntries(visibleProcess);
+  // A standalone tool row already names and animates its own action, so the live
+  // line only repeats a tool that is hidden inside a collapsed group.
+  const groupedActiveTool = showLive
+    ? processNodes.flatMap((node) => (node.kind === "tools" ? node.items : []))
+      .reverse().find((item) => !item.inherited && item.status === "in_progress")
+    : undefined;
+  const standaloneToolRunning = showLive && !groupedActiveTool && processNodes.some((node) => (
+    node.kind === "item" && isToolEntryItem(node.item) && !node.item.inherited && node.item.status === "in_progress"
+  ));
+  // A tool finishing after the summary arrived means the model has moved on; the
+  // summary no longer says what is happening, so fall back until the next one.
+  const currentThinking = thinking && !segment.process.some((entry) => (
+    entry.kind === "item" && isToolEntryItem(entry.item) && entry.item.status !== "in_progress"
+    && entry.item.completedAt !== undefined && entry.item.completedAt > thinking.receivedAt
+  )) ? thinking : undefined;
+  const liveText = currentThinking?.title
+    ?? (groupedActiveTool?.toolCall ? activeToolText(groupedActiveTool.toolCall, agents, mcpNames) : undefined)
+    ?? (standaloneToolRunning ? "正在执行" : undefined)
+    ?? (run.status === "finalizing" ? "正在整理回复" : "正在思考");
 
   return (
     <>
@@ -431,7 +468,7 @@ const RunSegment = memo(function RunSegment({
           containsSearchTarget={searchItemId !== undefined
             && visibleProcess.some((entry) => entry.kind === "item" && entry.item.id === searchItemId)}
         >
-          {groupProcessEntries(visibleProcess).map((node) => {
+          {processNodes.map((node) => {
             if (node.kind === "compaction") {
               return <ContextCompactionRow key={`compaction:${node.activity.requestId}`} activity={node.activity} run={run} />;
             }
@@ -458,6 +495,7 @@ const RunSegment = memo(function RunSegment({
                   && node.items.some((item) => approvals.some((request) => request.itemId === item.id))}
                 containsSearchTarget={searchItemId !== undefined && node.items.some((item) => item.id === searchItemId)}
                 agents={agents}
+                liveLineShown={showLive}
               >
                 {node.items.map(renderItem)}
               </ToolGroup>
@@ -465,7 +503,7 @@ const RunSegment = memo(function RunSegment({
           })}
         </ProcessGroup>
       )}
-      {showThinking && <p className="thinking-indicator" role="status">正在思考</p>}
+      {showLive && <LiveActivityLine text={liveText} thinking={currentThinking} />}
       {segment.response.map((item, index) => {
         if (item.toolCall?.toolName === "write_plan") {
           return (
@@ -642,12 +680,15 @@ const ToolGroup = memo(function ToolGroup({
   needsApproval,
   containsSearchTarget,
   agents,
+  liveLineShown,
   children,
 }: {
   items: readonly Item[];
   needsApproval: boolean;
   containsSearchTarget: boolean;
   agents?: AgentSummary[] | undefined;
+  /** The live activity line carries the motion, so the group stays a static summary. */
+  liveLineShown: boolean;
   children: ReactNode;
 }) {
   const forceOpen = needsApproval || containsSearchTarget;
@@ -662,13 +703,10 @@ const ToolGroup = memo(function ToolGroup({
   }
 
   const summary = useMemo(() => summarizeToolGroup(items), [items]);
-  const active = [...items].reverse().find((item) => !item.inherited && item.status === "in_progress");
-  const activeText = active?.toolCall
-    ? active.toolCall.toolName === "run_shell"
-      ? shellSummary("in_progress", stringField(parseObject(active.toolCall.argumentsJson), "command")
-        || stringArrayField(parseObject(active.toolCall.argumentsJson), "argv").join(" ") || "Shell 命令")
-      : toolSummary(active.toolCall, "in_progress", agents, mcpNames)
-    : undefined;
+  const active = liveLineShown
+    ? undefined
+    : [...items].reverse().find((item) => !item.inherited && item.status === "in_progress");
+  const activeText = active?.toolCall ? activeToolText(active.toolCall, agents, mcpNames) : undefined;
   const label = activeText ?? summary.parts.map((part) => part.text).join(" · ");
   const failedLabel = !active && summary.failed > 0 ? `${summary.failed} 失败` : undefined;
 
@@ -690,6 +728,18 @@ const ToolGroup = memo(function ToolGroup({
     </details>
   );
 });
+
+function activeToolText(
+  toolCall: ToolCall,
+  agents: AgentSummary[] | undefined,
+  mcpNames: ReadonlyMap<string, string>,
+): string {
+  if (toolCall.toolName === "run_shell") {
+    const args = parseObject(toolCall.argumentsJson);
+    return shellSummary("in_progress", stringField(args, "command") || stringArrayField(args, "argv").join(" ") || "Shell 命令");
+  }
+  return toolSummary(toolCall, "in_progress", agents, mcpNames);
+}
 
 function ToolGroupStackIcon() {
   return (
