@@ -30,6 +30,7 @@
 
 - [浏览器操作能力设计方案](browser-automation-design.md)：选型、BrowserHost、沙盒、工具面、授权、上下文与分阶段实施；当前为设计方案。
 - [MCP 工具调用展示优化](mcp-tool-display-design.md)：截图可见、MCP 工具行的标题、结果、参数与错误展示，以及浏览器结果的结构化投影；当前为设计方案。
+- [与用户共用 Chrome（标签组模式）](shared-chrome-tab-group-design.md)：基于 Playwright Extension 的标签组共用、本机代理、令牌、授权与分阶段实施；P1、P2 已实施。
 
 ## 文档资源
 
