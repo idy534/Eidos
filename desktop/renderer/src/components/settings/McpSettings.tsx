@@ -8,6 +8,7 @@ import { McpReviewDialog } from "./McpReviewDialog";
 import { McpCreateDialog } from "./McpCreateDialog";
 import { McpDetailDialog } from "./McpDetailDialog.js";
 import { GitHubIcon } from "./SettingsIcons.js";
+import { mcpCommandLabel } from "./mcpCommand.js";
 
 interface McpSettingsProps {
   servers: McpServerRecord[];
@@ -508,7 +509,7 @@ export function McpSettings({
 
                 const category = getCategoryInfo(server.serverId, server.executable);
                 const CategoryIcon = category.icon;
-                const fullCommand = server.remote?.url || [server.executable, ...server.argv].join(" ");
+                const fullCommand = mcpCommandLabel(server);
 
                 // Status logic
                 let statusTone: "success" | "warning" | "danger" | "neutral" = "neutral";

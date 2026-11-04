@@ -14,6 +14,7 @@ import type { SettingsPendingAction } from "./settings-types.js";
 import "./PluginDetailDialog.css";
 import { McpConnectionPanel } from "./McpConnectionPanel.js";
 import { HookHistoryDialog } from "./HookHistoryDialog.js";
+import { mcpCommandLabel } from "./mcpCommand.js";
 
 interface PluginDetailDialogProps {
   plugin: PluginRecord | undefined;
@@ -278,7 +279,7 @@ export function PluginDetailDialog({
                     ? "提供 GitHub 仓库、Issue 和 Pull Request 等操作工具"
                     : server.remote
                     ? (server.remote.url ? `远程 MCP 服务 · ${server.remote.url}` : "远程 MCP 工具服务")
-                    : (server.executable ? `本地服务 · ${[server.executable, ...server.argv].filter(Boolean).join(" ")}` : "本地 MCP 工具服务");
+                    : (server.executable ? `本地服务 · ${mcpCommandLabel(server)}` : "本地 MCP 工具服务");
                   return (
                     <div key={server.serverId} className="plugin-card-item plugin-mcp-item">
                       <button

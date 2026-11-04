@@ -8,6 +8,7 @@ import { StatusBadge } from "../StatusBadge.js";
 import { McpToolRow } from "./McpToolRow.js";
 import { McpSchemaDialog } from "./McpSchemaDialog.js";
 import { useMcpTools } from "./useMcpTools.js";
+import { isBundledBrowserServer, mcpCommandLabel } from "./mcpCommand.js";
 
 export function McpDetailDialog({
   server,
@@ -110,7 +111,7 @@ export function McpDetailDialog({
                 </StatusBadge>
               </div>
               <p className="mcp-detail-command">
-                <code>{server.remote?.url || `$ ${[server.executable, ...server.argv].join(" ")}`}</code>
+                <code>{(server.remote?.url || isBundledBrowserServer(server)) ? mcpCommandLabel(server) : `$ ${mcpCommandLabel(server)}`}</code>
               </p>
               {description ? <p className="mcp-detail-description">{description}</p> : null}
             </div>
