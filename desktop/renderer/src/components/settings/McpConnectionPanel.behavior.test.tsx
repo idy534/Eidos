@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { McpConnectionPanel } from "./McpConnectionPanel.js";
-import { BuiltinPlugins } from "./BuiltinPlugins.js";
 import type { McpServerRecord } from "../../contracts.js";
 
 const server: McpServerRecord = {
@@ -14,15 +13,9 @@ const server: McpServerRecord = {
 const initial = { pluginId: "eidos-github", serverId: "github", status: "disconnected", authType: "github-device", browserAvailable: false, updatedAt: 0 };
 const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
 afterEach(() => { cleanup(); if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor); vi.restoreAllMocks(); });
-const browserStatus = {
-  chromeInstalled: true, chromeVersion: "156.0", running: false, pluginInstalled: false, pluginEnabled: false,
-  resource: "unavailable", granted: false,
-};
 
 function api(value: object) {
-  Object.defineProperty(window, "eidosRuntime", {
-    configurable: true, value: { readBrowserAgentStatus: vi.fn().mockResolvedValue(browserStatus), ...value },
-  });
+  Object.defineProperty(window, "eidosRuntime", { configurable: true, value });
 }
 
 describe("Remote MCP accounts", () => {
@@ -94,27 +87,5 @@ describe("Remote MCP accounts", () => {
     await act(async () => rejectConnect(new Error("old operation failed")));
     expect(screen.queryByText("连接操作失败，请稍后重试。")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "断开账号连接" })).toBeEnabled();
-  });
-
-  it("lists and installs a bundled plugin through the shared catalog", async () => {
-    const plugin = { id: "eidos-github", name: "GitHub", description: "GitHub tools", version: "1.0.0", installed: false };
-    api({ builtinPlugins: vi.fn().mockResolvedValueOnce({ plugins: [plugin] }).mockResolvedValueOnce({ plugins: [{ ...plugin, installed: true }] }) });
-    const onInstall = vi.fn().mockResolvedValue(undefined);
-    render(<BuiltinPlugins onInstall={onInstall} onShowToast={vi.fn()} />);
-    await userEvent.setup().click(await screen.findByRole("button", { name: "安装" }));
-    expect(onInstall).toHaveBeenCalledWith("eidos-github");
-    expect(await screen.findByRole("button", { name: "已安装" })).toBeDisabled();
-  });
-
-  it("triggers floating toast notification instead of inline error when installation fails", async () => {
-    const plugin = { id: "eidos-github", name: "GitHub", description: "GitHub tools", version: "1.0.0", installed: false };
-    api({ builtinPlugins: vi.fn().mockResolvedValue({ plugins: [plugin] }) });
-    const onInstall = vi.fn().mockRejectedValue(new Error("install failed"));
-    const onShowToast = vi.fn();
-    render(<BuiltinPlugins onInstall={onInstall} onShowToast={onShowToast} />);
-    await userEvent.setup().click(await screen.findByRole("button", { name: "安装" }));
-    expect(onInstall).toHaveBeenCalledWith("eidos-github");
-    expect(onShowToast).toHaveBeenCalledWith("安装 GitHub 插件失败，请稍后重试。", "error");
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

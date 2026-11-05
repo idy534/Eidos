@@ -1,0 +1,27 @@
+/* Browser plugin settings in the plugin detail dialog. */
+.browser-settings-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  box-shadow: var(--apple-shadow-sm);
+  overflow: hidden;
+}
+.browser-settings-card .setting-row { padding: 0.85rem 1rem; }
+.browser-settings-card .setting-row-main { flex-wrap: wrap; row-gap: 0.6rem; }
+.browser-settings-card .setting-row-info { flex: 1 1 auto; }
+.browser-settings-card .setting-row-action { flex-wrap: wrap; max-width: 100%; }
+.browser-settings-card--message {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.browser-settings-select { width: 13.5rem; max-width: 100%; height: 2.125rem; }
+.browser-settings-select select { padding: 0 2rem 0 0.75rem; font-size: 0.8125rem; cursor: pointer; }
+.browser-settings-token .setting-row-action { flex: 1 1 auto; justify-content: flex-end; }
+.browser-settings-token-form { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.5rem; min-width: 0; max-width: 26rem; }
+.browser-settings-token-form .web-search-input-field { flex: 1 1 12rem; min-width: 0; }
+.browser-settings-danger.btn--ghost { color: var(--danger); }

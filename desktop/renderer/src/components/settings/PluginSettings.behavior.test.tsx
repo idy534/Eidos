@@ -263,6 +263,45 @@ describe("Plugin resources", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("reports a failed marketplace install as a toast", async () => {
+    const builtinPlugin = { id: "eidos-github", name: "GitHub", description: "GitHub tools", version: "1.0.0", installed: false };
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: { builtinPlugins: vi.fn().mockResolvedValue({ plugins: [builtinPlugin] }) },
+    });
+    const props = setup(plugin, { onInstallBuiltinPlugin: vi.fn().mockRejectedValue(new Error("install failed")) });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "插件市场" }));
+    const dialog = await screen.findByRole("dialog", { name: "插件市场" });
+    await user.click(await within(dialog).findByRole("button", { name: "安装" }));
+    await waitFor(() => expect(props.onShowToast).toHaveBeenCalledWith("安装 GitHub 插件失败，请稍后重试。", "error"));
+  });
+
+  it("shows browser settings in the browser plugin's details and not in other plugins'", async () => {
+    const browserPlugin: PluginRecord = { ...plugin, id: "eidos-browser", name: "浏览器", enabled: true, hookReview: undefined };
+    const readBrowserAgentStatus = vi.fn().mockResolvedValue({
+      chromeInstalled: true, chromeVersion: "156.0", running: false, pluginInstalled: true, pluginEnabled: true,
+      resource: "ready", granted: false, target: "chrome_extension", effectiveTarget: "eidos",
+      extensionConfigured: false, extensionPresence: "installed",
+    });
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { readBrowserAgentStatus } });
+    render(<PluginSettings plugins={[plugin, browserPlugin]} pendingAction={undefined} onImportPlugin={vi.fn()}
+      onTogglePlugin={vi.fn()} onRemovePlugin={vi.fn()} onShowToast={vi.fn()} />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "查看 浏览器 的资源" }));
+    const dialog = screen.getByRole("dialog", { name: "浏览器" });
+    const settings = within(dialog).getByRole("region", { name: "浏览器设置" });
+    expect(await within(settings).findByRole("combobox", { name: "Agent 使用的浏览器" })).toHaveValue("chrome_extension");
+    expect(within(settings).getByText("完成下方设置前，使用 Eidos 浏览器")).toBeInTheDocument();
+    expect(within(settings).getByLabelText("Playwright Extension 令牌")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "关闭插件详情" }));
+
+    await user.click(screen.getByRole("button", { name: "查看 Demo 的资源" }));
+    expect(within(screen.getByRole("dialog", { name: "Demo" })).queryByRole("region", { name: "浏览器设置" })).toBeNull();
+    expect(readBrowserAgentStatus).toHaveBeenCalledOnce();
+  });
+
   it("opens marketplace from empty state when no plugins are installed", async () => {
     Object.defineProperty(window, "eidosRuntime", {
       configurable: true,

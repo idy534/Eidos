@@ -15,6 +15,7 @@ import "./PluginDetailDialog.css";
 import { McpConnectionPanel } from "./McpConnectionPanel.js";
 import { HookHistoryDialog } from "./HookHistoryDialog.js";
 import { mcpCommandLabel } from "./mcpCommand.js";
+import { BROWSER_PLUGIN_ID, BrowserSettingsSection } from "./BrowserSettingsSection.js";
 
 interface PluginDetailDialogProps {
   plugin: PluginRecord | undefined;
@@ -57,6 +58,7 @@ export function PluginDetailDialog({
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
   const [hookHistory, setHookHistory] = useState(false);
+  const [sectionDialog, setSectionDialog] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const pluginSkills = skills.filter((skill) => skill.sourceKind === "plugin" && skill.pluginId === plugin?.id);
@@ -64,7 +66,7 @@ export function PluginDetailDialog({
   const selectedSkill = pluginSkills.find((skill) => skill.qualifiedId === skillId);
   const selectedServer = pluginServers.find((server) => server.serverId === serverId) ?? null;
   const reviewing = pluginServers.find((server) => server.serverId === reviewId);
-  const nested = Boolean(selectedSkill || selectedServer || reviewing || obscured || hookHistory);
+  const nested = Boolean(selectedSkill || selectedServer || reviewing || obscured || hookHistory || sectionDialog);
   const busy = saving || Boolean(pendingAction);
   const isGitHub = plugin?.id === "eidos-github" || plugin?.name.toLowerCase() === "github";
   const iconSrc = plugin?.presentation?.icon || (isGitHub ? githubIcon : undefined);
@@ -200,6 +202,8 @@ export function PluginDetailDialog({
 
             {resourceError && <AlertBanner tone="error">{resourceError}</AlertBanner>}
             {error && !reviewing && <AlertBanner tone="error">{error}</AlertBanner>}
+
+            {plugin.id === BROWSER_PLUGIN_ID && <BrowserSettingsSection key={plugin.contentHash} onShowToast={onShowToast} onDialogChange={setSectionDialog} />}
 
             <section className="plugin-resource-section" aria-label="插件技能">
               <div className="plugin-section-header">
