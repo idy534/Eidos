@@ -2398,7 +2398,13 @@ export function splitRunIntoSegments(
     const processTools = body.filter(
       (item) => item.kind !== "assistant_message" && item.toolCall?.toolName !== "write_plan",
     );
-    if (processTools.length === 0 && compactions.length === 0 && segmentRetries.length === 0) {
+    // A failed draft that the Run moved past (a rejected tool call, a retried
+    // stream) is progress, not an unfinished answer; only the last one is.
+    const lastBodyOrdinal = Math.max(-Infinity, ...body.map((item) => item.ordinal));
+    const supersededDraft = (item: Item) => item.kind === "assistant_message"
+      && item.status === "failed" && item.incomplete === true && item.ordinal < lastBodyOrdinal;
+    const hasSupersededDrafts = body.some(supersededDraft);
+    if (processTools.length === 0 && compactions.length === 0 && segmentRetries.length === 0 && !hasSupersededDrafts) {
       return {
         user,
         retries: segmentRetries,
@@ -2408,8 +2414,9 @@ export function splitRunIntoSegments(
         ),
       };
     }
-    const lastProcessToolOrdinal = Math.max(...processTools.map((item) => item.ordinal));
-    const inProcess = (item: Item) => item.kind !== "assistant_message" || item.ordinal <= lastProcessToolOrdinal || item.createdAt <= lastCompactionAt;
+    const lastProcessToolOrdinal = Math.max(-Infinity, ...processTools.map((item) => item.ordinal));
+    const inProcess = (item: Item) => item.kind !== "assistant_message" || item.ordinal <= lastProcessToolOrdinal
+      || item.createdAt <= lastCompactionAt || supersededDraft(item);
     const process: ProcessEntry[] = body.filter((item) => item.toolCall?.toolName !== "write_plan" && inProcess(item))
       .map((item) => ({ kind: "item", item }));
     const stages: Array<Exclude<ProcessEntry, { kind: "item" }>> = [

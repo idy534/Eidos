@@ -254,6 +254,35 @@ describe("conversation fork actions", () => {
   });
 });
 
+describe("rejected drafts", () => {
+  const draft = (ordinal: number, overrides: Partial<Item> = {}): Item => ({
+    id: `draft-${ordinal}`, sessionId: baseRun.sessionId, runId: baseRun.id, ordinal,
+    kind: "assistant_message", status: "failed", incomplete: true, createdAt: 1_000 + ordinal,
+    content: `重新打开浏览器 ${ordinal}`, ...overrides,
+  });
+  const user: Item = {
+    id: "user", sessionId: baseRun.sessionId, runId: baseRun.id, ordinal: 1,
+    kind: "user_message", status: "completed", createdAt: 1_000, content: "去浏览器看看",
+  };
+
+  it("marks only the draft the Run stopped on as unfinished", async () => {
+    const canceled = { ...baseRun, status: "canceled" as const };
+    const { container } = render(<ExecutionFeed items={[user, draft(2), draft(3), draft(4)]} runs={[canceled]} approvals={[]} />);
+    expect(screen.getAllByText("回答未完成")).toHaveLength(1);
+    expect(screen.getByText("重新打开浏览器 4").closest(".feed-item--assistant")).not.toBeNull();
+    await expandDetails(container);
+    expect(screen.getByText("重新打开浏览器 2").closest(".process-text")).not.toBeNull();
+    expect(screen.getAllByText("回答未完成")).toHaveLength(1);
+  });
+
+  it("drops the marker once a later attempt replaces the draft", () => {
+    render(<ExecutionFeed items={[user, draft(2), draft(3, { status: "completed", incomplete: false, content: "浏览器插件未安装" })]}
+      runs={[{ ...baseRun, status: "succeeded" }]} approvals={[]} />);
+    expect(screen.queryByText("回答未完成")).not.toBeInTheDocument();
+    expect(screen.getByText("浏览器插件未安装").closest(".feed-item--assistant")).not.toBeNull();
+  });
+});
+
 describe("Run failure presentation", () => {
   it("shows a concrete cause without technical diagnostics in the Session body", () => {
     const run: Run = { ...baseRun, status: "failed", errorCode: "MODEL_PROTOCOL_ERROR",
