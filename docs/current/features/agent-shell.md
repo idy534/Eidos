@@ -40,6 +40,12 @@ PTY 将 stdout 和 stderr 合并到 `stdout`，并返回 `transport=pty`、`outp
 
 Run 取消、收尾和关闭继续清理进程组及终端描述符。Runtime 不跨 Run 或重启恢复进程。系统会保留已提交结果和未知 Intent，且不会自动重放命令。
 
+## 后台进程
+
+命令可以在前台启动服务，也可以用 `&` 把进程放到后台。主进程退出而同一进程组仍有成员时，Runtime 不会立即终止它们。会话保持 `executionStatus=running`，本次 `run_shell` 或 `write_stdin` 立即返回，结果带有 `backgroundProcesses=true` 和主进程的 `leaderExitCode`。之后的等待按普通运行中会话处理，继承了输出管道的后台进程输出仍会被捕获。
+
+后台进程全部退出、模型调用 `control_shell` 的 `terminate`，或 Run 收尾清理时，系统才提交该命令的最终结果，最终 `exitCode` 是主进程的退出码。Run 收尾停止这些后台进程时，结果与显式 `terminate` 一样记为 `termination=terminated`，不记为未知结果。仍在执行的前台命令在 Run 收尾被停止时，继续记为 `canceled` 和未知结果。最终结果之后不会再出现该命令的后台写入。通过 setsid 或 daemon 模式脱离进程组的进程不在 Run 所有权内，Runtime 无法跟踪或停止它们；工具说明要求模型不要这样启动服务。
+
 ## 输出边界
 
 Runtime 为 stdout 和 stderr 各保留最多 1 MiB，合计最多 2 MiB。后台会话和一次性执行使用同一套保留规则：每条流保留前半部分和最新后半部分，系统会在缺口处插入省略字节数。PTY 只有一条合并流，所以最多保留 1 MiB。系统会按 UTF-8 边界返回文字。增量等待使用原始流的字节位置，已读内容不会因为尾部滚动而重新返回。
@@ -50,4 +56,4 @@ Feed 的实时追加预览合计最多 256 KiB。模型可以继续轮询最新�
 
 ## 当前范围
 
-第一版支持终端检测、无换行提示、输入、Unicode、尺寸调整、终端 Ctrl-C、显式停止和 PIPE EOF。Feed 会移除 ANSI/OSC 控制序列，并按纯文本展示输出。第一版没有完整终端画面、屏幕光标状态、用户接管、跨 Run 常驻服务或重启接回进程的能力。
+第一版支持终端检测、无换行提示、输入、Unicode、尺寸调整、终端 Ctrl-C、显式停止和 PIPE EOF。Feed 会移除 ANSI/OSC 控制序列，并按纯文本展示输出。第一版没有完整终端画面、屏幕光标状态、用户接管、跨 Run 常驻服务或重启接回进程的能力。后台进程最长存活到所属 Run 结束。

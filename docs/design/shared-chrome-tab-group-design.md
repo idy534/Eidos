@@ -11,7 +11,7 @@ Agent 直接使用用户正在用的 Google Chrome，而不是另外启动一个
 - 用户把标签页拖进组，就交给 Agent；拖出组，Agent 立即失去控制；
 - 不同 Session 使用不同的组，互不干扰。
 
-独立的 Eidos 浏览器仍保留，并继续作为默认选项。“使用我的 Chrome（标签组）”是用户主动开启的可选模式。
+独立的 Eidos 浏览器仍保留，并继续作为默认选项。“使用 Chrome（标签组）”是用户主动开启的可选模式。
 
 ## 2. 调研结论
 
@@ -55,7 +55,7 @@ Eidos Runtime ──启动──▶ Playwright MCP（--extension，Seatbelt 内�
 - 扩展不能拦截下载，Eidos 的“拒绝下载”规则在这个模式下无法生效。
 - 调试器连接后，Chrome 会在窗口顶部显示“Playwright Extension 正在调试此浏览器”的提示条。这是 Chrome 的强制提示，不能隐藏，也正好告诉用户浏览器正被控制。
 
-因此，标签组限定的是 **Agent 操作哪些标签页**，并不限定它能接触哪些账号。这个模式沿用现有“使用我的 Chrome”的高危规则：每个 Session 第一次使用时需要用户人工确认，`auto_review` 不能代替；确认文案必须写清楚上述范围。
+因此，标签组限定的是 **Agent 操作哪些标签页**，并不限定它能接触哪些账号。这个模式沿用现有“使用 Chrome”的高危规则：每个 Session 第一次使用时需要用户人工确认，`auto_review` 不能代替；确认文案必须写清楚上述范围。
 
 ## 3. 方案
 
@@ -92,7 +92,7 @@ Eidos Runtime ──启动──▶ Playwright MCP（--extension，Seatbelt 内�
 
 ### 3.4 设置与令牌
 
-Settings → 插件 → 浏览器 → 目标浏览器，新增“使用我的 Chrome（标签组）”。开启时显示一个三步引导：
+Settings → 插件 → 浏览器 → 目标浏览器，新增“使用 Chrome（标签组）”。开启时显示一个三步引导：
 
 1. **安装扩展**：检测结果实时显示；未安装时提供“打开 Chrome 应用商店”按钮（由 Main 用系统浏览器打开固定地址）。
 2. **选择 Chrome 配置**：读取 `Local State` 中的配置列表，只列出已安装扩展的配置。
@@ -226,3 +226,5 @@ Eidos 现在为每个 Run 启动一个 MCP 进程，所以：
 - 新增 IPC：`setBrowserAgentExtensionToken`、`clearBrowserAgentExtensionToken`、`openBrowserExtensionStore`（应用商店地址固定在 `desktop/shared/browser.ts`，由 Main 打开）。
 - 顺带修正：插件行的确认框原先使用了不存在的 `--border` 变量，没有边框；现改用 `--line` 和 `--surface-raised`，文字与面板统一为说明字号。
 - 验证：`BrowserGrantIndicator.behavior.test.tsx`（推荐与降级说明、应用商店入口、令牌确认与保存、无效令牌提示、移除令牌、远程调试的确认与改回）、`PluginSettings`、`SettingsPage` 行为测试；在临时页面中用真实组件检查了 900px 与 600px 宽度（窗口最小 800px，设置内容区约 560–600px），无横向溢出。未在打包后的 App 中检查。
+- 更正（2026-11-05）：上述面板加在了 `BuiltinPlugins.tsx`，而该组件在 10 月 27 日插件市场改版（`48caf852`）后已不再挂载，所以 0.5.6 的设置页中看不到。测试和临时页面都直接渲染组件，没有发现这一点。现已移到浏览器插件详情弹窗顶部的“浏览器”一节（`BrowserSettingsSection.tsx`），删除 `BuiltinPlugins.tsx`；行为测试改为经插件设置页打开详情弹窗来验证挂载位置。
+- 精简（2026-11-05）：按用户反馈，“浏览器”一节改为三行设置（浏览器下拉框、扩展、令牌），去掉推荐标签、编号步骤、状态行和底部说明；高危确认改为模态确认框，结果与错误改用全局悬浮通知；移除“打开浏览器登录”“关闭浏览器”“清除浏览器数据”按钮；扩展检测为“无法读取”时（macOS 阻止读取 Chrome 配置目录）不显示检测结论。`BrowserTargetPanel.tsx` 合并进 `BrowserSettingsSection.tsx`。

@@ -10,6 +10,7 @@ import stat
 import unicodedata
 from typing import Iterator
 
+from eidos_runtime.context.input_references import INLINE_REFERENCE_TOKEN
 from eidos_runtime.db.database import WorkspaceIdentity
 from eidos_runtime.workspace.reader import WorkspacePathError, capture_directory_identity
 
@@ -27,6 +28,34 @@ def projectless_root() -> Path:
 
 
 def readable_workspace_name(hint: str | None, *, max_bytes: int = MAX_NAME_BYTES) -> str:
+    """Return a directory name that a shell can use without quoting.
+
+    Letters and digits from any script stay, as do ``_`` and combining marks on
+    a kept character. Every other character (punctuation, symbols, spaces,
+    controls) separates words with one ``-``. Composer references keep only
+    their label, so the name never carries ``$``, brackets or reference IDs.
+    """
+    text = unicodedata.normalize("NFKC", (hint or "")[:MAX_NAME_HINT_CHARACTERS])
+    text = INLINE_REFERENCE_TOKEN.sub(lambda match: f" {match[1]} ", text)
+    characters: list[str] = []
+    attached = False
+    for char in text:
+        category = unicodedata.category(char)
+        attached = (
+            char == "_" or category[0] in "LN"
+            or (attached and category in {"Mn", "Mc"} and not _is_variation_selector(char))
+        )
+        characters.append(char if attached else " ")
+    text = "-".join("".join(characters).split())
+    text = text.encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore")
+    return text.strip("-_") or "新会话"
+
+
+def legacy_readable_workspace_name(hint: str | None, *, max_bytes: int = MAX_NAME_BYTES) -> str:
+    """Name rule of earlier versions, which kept shell punctuation.
+
+    Existing creation records and operation replays still use these names.
+    """
     text = unicodedata.normalize("NFKC", (hint or "")[:MAX_NAME_HINT_CHARACTERS])
     text = "".join(
         " " if unicodedata.category(char).startswith("C") or char in '/\\:*?"<>|'
@@ -36,6 +65,15 @@ def readable_workspace_name(hint: str | None, *, max_bytes: int = MAX_NAME_BYTES
     text = "-".join(text.split()).strip(". -_`'“”‘’")
     text = text.encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore")
     return text.rstrip(". -") or "新会话"
+
+
+def is_readable_workspace_name(name: str) -> bool:
+    return name in {readable_workspace_name(name), legacy_readable_workspace_name(name)}
+
+
+def _is_variation_selector(char: str) -> bool:
+    code = ord(char)
+    return 0xFE00 <= code <= 0xFE0F or 0xE0100 <= code <= 0xE01EF
 
 
 def creation_date(timestamp_ms: int) -> str:

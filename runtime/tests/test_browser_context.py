@@ -40,7 +40,7 @@ def _history(names: list[str]) -> tuple[tuple[dict[str, object], ...], ContextFa
 def test_old_browser_pages_clear_to_a_preview_with_read_back():
     names = ["mcp__browser__browser_snapshot"] * 12
     context, facts = _history(names)
-    cleared = clear_old_tool_results(context, facts, target_reduction=1)
+    cleared = clear_old_tool_results(context, facts, target_reduction=1, batch_bytes=1)
     marker = json.loads(cleared[1]["result"])
     assert marker["contextCleared"] is True
     assert marker["readBack"]["callId"] == "call-0"
@@ -51,7 +51,7 @@ def test_old_browser_pages_clear_to_a_preview_with_read_back():
 
 def test_other_mcp_results_keep_their_bodies():
     context, facts = _history(["mcp__github__get_issue"] * 12)
-    assert clear_old_tool_results(context, facts, target_reduction=10**9) == context
+    assert clear_old_tool_results(context, facts, target_reduction=10**9, batch_bytes=1) == context
 
 
 def test_only_the_newest_browser_screenshots_stay_in_the_request():

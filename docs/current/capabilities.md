@@ -75,7 +75,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - Git directory 可以使用 `executionMode = local` 创建不绑定 Worktree 的 Local Session，也可以使用 `executionMode = worktree` 创建 Managed Worktree Session。Worktree Session 的 Run、Tool、Shell cwd、Project Rules 和 Repository Intelligence 使用 Worktree root。
 - `session/create` 的协议默认 `executionMode` 是 `local`。Desktop 只在首次提交时调用它。Worktree 请求会先解析可选 `baseRef` 为 immutable `baseCommit`，并接受显式的 `includeLocalChanges`。缺省 `baseRef` 使用当前 branch；repository 处于 detached HEAD 时使用 `HEAD`。不存在的 ref 返回 `BASE_REF_NOT_FOUND`。
 - `session/create` 允许省略或传入空的 `workspaceRoot` 来创建 projectless Session。Projectless Session 只接受 `executionMode = local`，不创建 Project 或 Worktree binding。
-- Runtime 创建的 Projectless 工作空间默认位于 `~/Eidos/YYYY-MM-DD/可读名称`。新建目录的名称主体最多为 48 个 UTF-8 字节，对应最多 16 个常见汉字或 48 个 ASCII 字符；重名时，系统额外追加数字后缀。已有目录与创建记录保留原名称。Desktop 首次输入通过 `workspaceNameHint` 提供命名提示，标题变化不移动目录。`EIDOS_PROJECTLESS_ROOT` 可以隔离开发和测试目录。Managed Worktree 根目录仍位于 `EIDOS_DATA_DIR` 内，默认是 `~/.eidos/.eidos-worktrees/<worktree_id>`。
+- Runtime 创建的 Projectless 工作空间默认位于 `~/Eidos/YYYY-MM-DD/可读名称`。新建目录的名称主体最多为 48 个 UTF-8 字节，对应最多 16 个常见汉字或 48 个 ASCII 字符；重名时，系统额外追加数字后缀。已有目录与创建记录保留原名称。Desktop 首次输入通过 `workspaceNameHint` 提供命名提示，标题变化不移动目录。名称只保留各语言的字母、数字和 `_`，其余标点、符号和空白统一变成单个 `-`；`[$ppt-master](ref:…)` 这类引用标记只保留 `ppt-master`。早期版本创建的目录保持原名。`EIDOS_PROJECTLESS_ROOT` 可以隔离开发和测试目录。Managed Worktree 根目录仍位于 `EIDOS_DATA_DIR` 内，默认是 `~/.eidos/.eidos-worktrees/<worktree_id>`。
 - 本次 Alpha 更新会在启动时废弃旧无项目 Session 及关联历史，不做旧目录迁移或兼容。旧工作空间文件原地保留。有项目的 Session 不受该清理影响。
 - Projectless Run 使用日期目录下的可读工作空间作为执行 workspace。Run 仍提供文件工具、Shell、Skill、MCP 和 Plugin 资源。Projectless Run 不提供 Project Rules、Repository Intelligence、Git status 或 Git diff。Desktop 保留环境信息中的“输出内容”和文件预览，但 Workspace Dock 不展示 Files、Terminal 或 Review；Browser 仍可用。Projectless 对话可以展示文本修改卡和产物卡。用户通过文本修改卡打开持久化补丁审查。
 - Local Session 和 Worktree Session 都是正式 Session projection。Worktree Session 默认使用 detached HEAD，`worktree.branch` 为 NULL。Git Project 的 Local Session 通过当前 Local checkout 提供 Git status 和 Git diff。
@@ -153,6 +153,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - Runtime 会在预计输入达到当前 Run 冻结模型窗口的 85% 时尝试自动摘要压缩。系统已移除固定 64K 和新增 32 条历史的触发条件。系统按 Token 预算保留完整近期响应、用户消息和 Skill 正文。手动压缩、请求输出预留、内部投影超限和 Provider 超限保护继续生效。原始证据仍保存在 SQLite 和 Context Snapshot 中。
 - 在线历史与每批摘要候选使用不同的读取预算。在线历史受 8 MiB / 2,000 条资源保护，768 KiB / 200 条只限制摘要候选批次。系统按实际 JSON 大小优先保留近期事实，并让旧历史溢出进入既有恢复路径。分叉历史使用同一套预算。
 - Provider Usage 只有提供正的 input tokens 时才作为 active Context truth。Provider Usage 缺失或返回 0 时，Runtime 使用有界 estimated fallback。
+- ContextBuilder 尽量只追加请求尾部，以保持 Provider 前缀缓存可复用：子 Agent 证据位于历史之后；旧工具正文按 64 KiB 原始历史批次清理；历史工具图片等内容超出 16 MiB 预算时一次释放到预算一半，不在每次新增图片时替换一张旧图。
 - ContextBuilder 对 Workspace state 未变化时完全相同的部分只读 Tool Result 做去重。内部去重计数只由投影历史本身决定，不进入模型提示，也不随 Run 级 `workspaceVersion` 漂移。
 - `workspace-environment` 只包含 Run 内不变的 Workspace 路径和 platform。Run 级 `workspaceVersion` 不进入模型输入，因此 Workspace 写入不会只因版本计数变化而使后续历史失去缓存。
 - ContextCompactor 使用 deterministic bounded extraction 保存任务目标、约束、动作、证据、修改、失败尝试、决定、待处理 Approval、未解决问题和下一步。

@@ -27,7 +27,11 @@ from eidos_runtime.context.facts import ContextFacts
 from eidos_runtime.context.input_references import inline_reference_mention, project_input_mentions
 from eidos_runtime.infrastructure.automation_time import local_timezone
 from eidos_runtime.domain.automation import AutomationError
-from eidos_runtime.context.tool_history import clear_old_tool_results, omit_old_browser_images
+from eidos_runtime.context.tool_history import (
+    clear_old_tool_results,
+    omit_old_browser_images,
+    retained_content_ids,
+)
 from eidos_runtime.model.context_projection import project_context, recovery_context, generated_summary_view, fit_personalization
 from eidos_runtime.context.policy import TOOL_RESULT_CLEARING_TARGET_TOKENS, CONTINUITY_SECTION_ID
 from eidos_runtime.context.summary_evidence import continuity_context
@@ -143,11 +147,14 @@ class ContextBuilder:
                 source_context_messages.append({"type": "context", "sectionId": "selected-agents",
                     "content": "The user explicitly selected these subagent types for this Run. Delegate suitable tasks to them through spawn_agent; retain normal parent coordination. No automatic dispatch or special completion rule is implied.\n" + json.dumps(selected)})
         agent_state = collaboration.model_state(run_id)
+        agent_evidence: ModelContextItem | None = None
         if agent_state.parent_run_id is not None:
             # A distinct source-labelled section keeps agent findings out of
-            # user-message history and preserves them across compaction.
-            source_context_messages.append(build_agent_evidence(collaboration, run_id, agent_state,
-                input_budget=profile.context_window_tokens - profile.max_output_tokens))
+            # user-message history and preserves them across compaction. Child
+            # status and messages change while the parent works, so the section
+            # joins the request tail instead of rewriting the cached prefix.
+            agent_evidence = build_agent_evidence(collaboration, run_id, agent_state,
+                input_budget=profile.context_window_tokens - profile.max_output_tokens)
         plan_context = PlanningRepository(self.store.database).context(run_id)
         from eidos_runtime.persistence.automations import AutomationRepository
         from eidos_runtime.persistence.channels import ChannelRepository
@@ -273,7 +280,9 @@ class ContextBuilder:
         automation_origins = AutomationRepository(self.store.database).origins_for_runs(source_runs)
         from eidos_runtime.persistence.channels import ChannelRepository
         # Prefer recent observations; omitted media never requires a source-file read.
-        for item in reversed(facts.items):
+        content_references: dict[str, str] = {}
+        content_sizes: list[tuple[str, int]] = []
+        for item in facts.items:
             if item.item_id in source_ids and item.item_id != facts.current_user_goal_id:
                 continue
             if item.model_result_json is None:
@@ -281,12 +290,12 @@ class ContextBuilder:
             payload = json.loads(item.model_result_json)
             reference = payload.get("modelContentSnapshot") if isinstance(payload, dict) else None
             if isinstance(reference, str):
-                size = content_repository.stored_size(reference)
-                if size > historical_image_budget:
-                    saved_content[item.item_id] = None
-                else:
-                    saved_content[item.item_id] = content_repository.read(reference)
-                    historical_image_budget -= size
+                content_references[item.item_id] = reference
+                content_sizes.append((item.item_id, content_repository.stored_size(reference)))
+        retained_content = retained_content_ids(tuple(content_sizes), historical_image_budget)
+        for item_id, reference in content_references.items():
+            saved_content[item_id] = content_repository.read(reference) if item_id in retained_content else None
+        historical_image_budget -= sum(size for item_id, size in content_sizes if item_id in retained_content)
         for item in facts.items:
             if (
                 item.item_id in source_ids
@@ -448,6 +457,8 @@ class ContextBuilder:
                 if "input" in projected:
                     projected["input"] = ""
         context.extend(extra_context)
+        if agent_evidence is not None:
+            context.append(agent_evidence)
         if facts.reconciliation_required:
             context.append({
                 "type": "context", "sectionId": "runtime-state",

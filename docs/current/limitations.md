@@ -349,7 +349,7 @@ Run `e277e61b`（`deepseek-v4-1-flash-261017`，reasoning high）共 10 步。�
 - Schema v22 以前已经丢弃的思考正文无法从 token 数恢复。思考模式下，这些历史模型响应会作为标注来源的历史资料回传；新响应使用原始思考记录。各 Provider 的生产端点仍需分别联调，mock wire 验证不代表真实端点已通过。轨迹界面尚未实现。
 - 思考强度选项和默认值按模型配置。火山引擎 `deepseek-v4.1-flash` 已在 Runtime 映射关闭、低、中、高、最高五档到顶层 `reasoning_effort`，默认高。火山引擎 `kimi-k3.1-pro` 映射低、高、最高三档，默认最高，不提供关闭选项。Agent Plan `/api/plan/v3` 对这两个模型的思考参数是否接受，以及 Kimi K3.1 Pro 的图片和工具调用，尚未通过真实请求验证。MiniMax M3 直连 API 只确认支持思考开关，没有已确认的离散 effort 档位；Kimi K2.7 Code HighSpeed 固定开启思考，没有已确认的 effort 档位。
 - Chat Completions 的多工具图片结果编码已调整为同批次共享一个 `ModelRequest`，并增加调用 ID、工具名和回复完整性检查。定向测试覆盖图片结果位置、多图批次、MockTransport 请求顺序、完整性错误、思考回放和日志脱敏。MockTransport 不代表真实 Provider endpoint 已通过。
-- 旧图片工具结果只保留路径等元数据，缺失的历史图片正文无法补回。当前回放会明确说明缺失，不重读当前文件。新工具内容快照保存已取得的文字或二进制内容，不保存全部生成文件。单个工具内容原始字节总量最多 10 MiB；工具内容与用户图片引用共用 16 MiB 编码内容预算，超出时优先保留最近的工具内容，并保留省略说明。音频等二进制内容可以使用同一内部保存边界，但当前 MCP 内容支持和模型音频能力没有扩展。不支持的媒体只提供说明。
+- 旧图片工具结果只保留路径等元数据，缺失的历史图片正文无法补回。当前回放会明确说明缺失，不重读当前文件。新工具内容快照保存已取得的文字或二进制内容，不保存全部生成文件。单个工具内容原始字节总量最多 10 MiB；工具内容与用户图片引用共用 16 MiB 编码内容预算，超出时一次释放最早的工具内容，直到不超过预算的一半，并保留省略说明。音频等二进制内容可以使用同一内部保存边界，但当前 MCP 内容支持和模型音频能力没有扩展。不支持的媒体只提供说明。
 - Provider 请求拒绝诊断只记录固定原因和有界 request ID。未知错误继续显示通用拒绝原因；日志不保留原始错误正文。原始失败 Run 的缺失正文不会因本次代码修改而补齐。
 - Chat Completions 没有原生的 Assistant `phase` 字段。Adapter 只根据 ToolCall 做 `commentary` 分类，并保留 Provider 的 `finish_reason`。`MessagePhase` 可以是 `commentary`、`final_answer`、`unknown` 或 `None`，但它不控制 Agent Loop。Agent Loop 使用 normalized response 的 `needs_follow_up` 决定继续采样还是完成当前 Turn。
 - 当前测试已包含可见流式草稿、断流恢复和迟到 Writer 的用例；本轮文档核对没有执行这些测试。敏感扫描仍按完整行释放文本，无换行的长段落会等到响应结束。尚未闭合的尖括号文本会等待闭合或完整响应校验，以避免跨片段的 Provider 控制标记进入 Feed。当前实现不是逐 token 输出。

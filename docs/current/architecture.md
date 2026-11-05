@@ -270,7 +270,7 @@ Runtime 在预计输入达到当前 Run 冻结模型窗口的 85% 时尝试自�
 
 在线历史投影继续使用有界数据库读取与完整响应分组。摘要候选批次和在线资源预算保持独立；系统不会删除原始 Item、Blob 或冻结历史。投影资源不足时，Engine 尝试摘要和更小的证据视图，并保留取消入口。当前延续记录有独立的资源上限，系统不会通过恢复预览悄悄截断有效记录。
 
-ContextBuilder 在摘要前独立清理旧工具正文。清理阈值是 65,536 与可用输入预算 75% 中的较小值，目标是阈值的 75%；这个阈值只控制工具正文清理，不触发摘要请求或压缩过程记录。Builder 按可用输入预算的 1/8 保留近期证据，参考 Token 目标限制在 1,024～16,384。系统按完整模型响应保留记录，至少保留最后一个响应，即使该响应本身超过目标。系统只清理较大的、已完成且成功的文件读取、文件列表、搜索和已结束 Shell 结果。失败、运行中、需要 reconciliation、Skill、记忆、MCP 和带图片正文的结果保持原样。模型输入保留结果状态、文件版本、来源 Item、原文 Hash 和 `read_tool_output` 回读参数。系统不修改 SQLite 原始结果，也不重新执行原操作。内部候选投影超限仍沿用已有摘要恢复。旧的直接调用仍支持按数量保留近期记录；在线百分比摘要使用 Token 预算。
+ContextBuilder 在摘要前独立清理旧工具正文。清理阈值是 65,536 与可用输入预算 75% 中的较小值，目标是阈值的 75%；这个阈值只控制工具正文清理，不触发摘要请求或压缩过程记录。Builder 按可用输入预算的 1/8 保留近期证据，参考 Token 目标限制在 1,024～16,384。系统按完整模型响应保留记录，至少保留最后一个响应，即使该响应本身超过目标。清理按原始工具历史的 64 KiB 批次推进：只有整批都早于近期证据窗口时才可以清理，达到目标后系统会清完当前批次。已清理边界因此约每 64 KiB 新工具输出才前移一次，不会在每次请求中改写 Provider 前缀缓存覆盖的历史。系统只清理较大的、已完成且成功的文件读取、文件列表、搜索和已结束 Shell 结果。失败、运行中、需要 reconciliation、Skill、记忆、MCP 和带图片正文的结果保持原样。模型输入保留结果状态、文件版本、来源 Item、原文 Hash 和 `read_tool_output` 回读参数。系统不修改 SQLite 原始结果，也不重新执行原操作。内部候选投影超限仍沿用已有摘要恢复。旧的直接调用仍支持按数量保留近期记录；在线百分比摘要使用 Token 预算。
 
 `read_tool_output(stream="result", itemId=..., callId=...)` 对允许的历史工具结果提供 UTF-8 字节分页。读取范围只包含当前 Session 和该 Session 已冻结的分叉历史。源 Session 的原始 Item ID 不授权访问其他 Session。原有 stdout/stderr 和活动 Shell 读取保持兼容；记忆、Skill、MCP 和写入工具正文不进入这个回读出口。
 
@@ -425,6 +425,8 @@ Tool Result 的 `reconciliationRequired` 只记录本次执行的未知结果。
 
 Shell 每次 ToolCall 只等待一个窗口。Shell 输出会持续追加到原命令 Item。命令退出后，Runtime 更新原命令的完整 `executionStatus`、`exitCode`、`stdout`、`stderr` 和 `termination`。普通且确定的 Shell 退出会把 Item 按命令结果标记为 `completed` 或 `failed`。确定的 `shell_exit_nonzero` 会把 Item 标记为 `failed`，但会把 ToolCall 标记为 `completed`。Workspace observation 不完整只影响 observation metadata，不会把已退出的 Shell 变成只读 reconciliation。`reconciliationRequired = true`、timeout、background child 清理未完成和真正的 Shell 启动失败仍然把 ToolCall 标记为 `failed` 并保持 fail closed。
 
+命令主进程退出而同一进程组仍有后台进程时，Run 的 Shell 会话不再立即终止进程组。会话保持 `running`，本次等待立即返回 `backgroundProcesses=true` 和 `leaderExitCode`，后续等待按普通运行中会话处理。后台进程全部退出、`control_shell` 终止或 Run 收尾清理之后，系统才提交最终结果，因此最终结果之后不会再出现该命令的后台写入。最终 `exitCode` 是主进程的退出码。Run 收尾停止这类会话时使用与显式终止相同的 `terminated`，主进程已经退出，结果不记为未知；仍在执行的前台命令被收尾停止时继续记为 `canceled` 和未知结果。通过 setsid 或 daemon 模式脱离进程组的进程不受 Run 所有权管理，工具说明要求模型不要这样启动服务。Hook 等一次性执行路径仍按原规则终止遗留的后台进程并记录 `background_process`。
+
 Runtime 会记录 Shell 和其他工具的未知结果。系统不会因此建立后续操作的核验门，也不会同步扫描 Workspace 来解除这类执行限制。系统不会自动重放未知操作。后续操作仍执行各自的权限、身份、版本和结果校验。
 
 Runtime 内部维护经过校验的 Python、ripgrep、Python import roots 和受支持包版本的 Catalog。内置依赖发现工具已移除。`run_shell` 对识别到的 Skill 脚本自动选择该 Skill 声明的 binding，并复用现有校验、权限和启动前复检。普通项目命令保留原环境，激活 Skill 本身不会切换环境。`dependencyBindingId` 输入保留兼容，显式值仍校验 Run 和 Skill 归属。
@@ -443,7 +445,7 @@ Runtime 在 Run 开始时固定核心与资源发布声明。准备成功后，�
 
 只有同时满足 `parallel_safe`、无副作用、参数安全和共享 Kernel 条件的只读批次可以在自身的有界范围内并发执行。每个 Run 的 Workspace write、Shell、Eidos-state、MCP 和 external Tool 实际副作用窗口使用该 Run 自己的独占门，所以同一 Run 内保持串行，不同 Session 的 Run 可以并行，即使它们共享同一个 Workspace。Approval 等待不占用该 Run 的副作用门。并发结果最终按模型声明顺序提交。
 
-工具可以随已验证结果提供 `ToolContentSnapshot`。该内部模型保存有界文字与带 MIME 的二进制内容，不增加内容 Hash 字段。Execution Repository 在既有 ToolResult、Event 与 Outbox 事务中保存 `tool-result-content` Blob 引用；引用进入 `model_result_json`，公共结果与 UI DTO 保持原契约。ContextBuilder 从引用读取内容，冻结到现有 ContextSnapshot。Runtime 优先保留最近的工具内容，并与用户图片引用共用 16 MiB 的编码内容预算；单个工具内容的原始字节总量最多 10 MiB。预算省略会保留说明，原始结果继续保存。Blob GC 保留 ToolCall 引用和既有 ContextSnapshot 共享块。此路径复用 SQLite、现有 Blob 存储、Pydantic 与标准库，不增加数据库列或生产依赖。
+工具可以随已验证结果提供 `ToolContentSnapshot`。该内部模型保存有界文字与带 MIME 的二进制内容，不增加内容 Hash 字段。Execution Repository 在既有 ToolResult、Event 与 Outbox 事务中保存 `tool-result-content` Blob 引用；引用进入 `model_result_json`，公共结果与 UI DTO 保持原契约。ContextBuilder 从引用读取内容，冻结到现有 ContextSnapshot。工具内容与用户图片引用共用 16 MiB 的编码内容预算；单个工具内容的原始字节总量最多 10 MiB。工具内容按时间形成保留窗口：窗口超出预算时，系统一次释放最早的内容，直到窗口不超过预算的一半，并始终保留最新一项；超过整个预算的单项不进入请求。之后的新内容继续追加在同一前缀之后，直到下一次超出预算。预算省略会保留说明，原始结果继续保存。Blob GC 保留 ToolCall 引用和既有 ContextSnapshot 共享块。此路径复用 SQLite、现有 Blob 存储、Pydantic 与标准库，不增加数据库列或生产依赖。
 
 工具内容快照只保存已取得的内容，不备份全部生成文件。工作区临时文件被删除或替换后，历史仍回放当时取得的内容；新工具调用继续核验当前路径与权限。旧 `view_image` 结果没有保存图片正文时，模型上下文保留元数据和缺失说明，不读取当前文件来补造历史。Chat Completions 与 Responses 都从同一内容快照编码请求。不支持的二进制类型只显示省略说明；当前产品没有因此新增音频工具或音频模型能力。已有 Blob 存储的完整性与权限检查继续使用原实现。
 
@@ -611,7 +613,7 @@ Project
 ```
 
 新的 `project/create` 接收可选的 `name` 和必需的 `workspaceRoot`。Runtime 先通过 Project resolution boundary 校验并 canonicalize 用户选择的目录，再保存 Project 元数据。名称缺省时，Runtime 使用 canonical Workspace 的文件夹名。这个调用不创建 Session。新的 `session/create` 接收 `workspaceRoot`、`executionMode`、可选的 `baseRef` 和显式的 `includeLocalChanges`。Runtime 先通过 Project resolution boundary 校验并 canonicalize 用户选择的目录，再检测可选 Git capability。`executionMode = local` 时，Runtime 创建 `worktree_id = NULL` 的 Local Session，不创建 Git side effect，也不创建 Worktree lifecycle intent。`executionMode = worktree` 时，Runtime 要求 Git capability，通过 `GitBackend` 将 `baseRef` 解析为 immutable `base_commit`，确定 `project_id`、`worktree_id`、`worktree_root` 和 `branch = NULL`，写入 durable lifecycle intent，然后通过唯一的 hardened Git CLI `worktree add --detach` 创建 Worktree。Runtime 只复制 ignored 且命中 source `.worktreeinclude` 的文件、自动复制 ignored 的 `EIDOS.override.md` 和 `AGENTS.override.md`，以及可选的 Git patch bytes。没有 Git 时，Worktree 请求返回 typed `WORKTREE_REQUIRES_GIT`。没有显式 `baseRef` 时，Runtime 使用当前 branch；repository 处于 detached HEAD 时使用 `HEAD`。Local Run 使用 `Project.workspace_root`，Worktree Run 使用 Worktree root。
-`workspaceRoot` 省略或为 null 时，Runtime 创建 projectless Session。默认工作空间是 `~/Eidos/YYYY-MM-DD/可读名称`，与 `EIDOS_DATA_DIR` 分离。Desktop 首次提交通过 `workspaceNameHint` 传递首行短文本；Runtime 统一清理名称并限制 UTF-8 字节长度。名称缺省时使用“新会话”，重名时使用 `-2`、`-3`，目录创建采用排他 mkdir。日期使用首次创建请求的本地日期，后续标题变化不移动目录。开发和测试可以通过 `EIDOS_PROJECTLESS_ROOT` 指定独立根目录。该 Session 不创建 Project、Worktree 或 Repository workspace，固定为 Local execution。Run 使用普通 Workspace permission profile，写权限只作用于当前工作空间。RunResources 仍创建文件工具、Shell、Skill、MCP 和 Plugin 资源。projectless Run 不注入 Project Rules 或 Repository Context，但仍提供自身工作目录和环境信息。Desktop 保留输出内容和文件预览，但 Workspace Dock 不展示 Files、Terminal 或 Review；Browser 仍可用。
+`workspaceRoot` 省略或为 null 时，Runtime 创建 projectless Session。默认工作空间是 `~/Eidos/YYYY-MM-DD/可读名称`，与 `EIDOS_DATA_DIR` 分离。Desktop 首次提交通过 `workspaceNameHint` 传递首行短文本；Runtime 统一清理名称并限制 UTF-8 字节长度：Composer 引用标记只保留标签，名称只保留各语言的字母、数字、`_` 和附着其上的组合符号，其余标点、符号、空白和控制字符统一替换为单个 `-`，因此名称在 Shell 中无需引号。早期规则生成的已有目录和创建记录保持原名，重放同一操作仍返回原目录。名称缺省时使用“新会话”，重名时使用 `-2`、`-3`，目录创建采用排他 mkdir。日期使用首次创建请求的本地日期，后续标题变化不移动目录。开发和测试可以通过 `EIDOS_PROJECTLESS_ROOT` 指定独立根目录。该 Session 不创建 Project、Worktree 或 Repository workspace，固定为 Local execution。Run 使用普通 Workspace permission profile，写权限只作用于当前工作空间。RunResources 仍创建文件工具、Shell、Skill、MCP 和 Plugin 资源。projectless Run 不注入 Project Rules 或 Repository Context，但仍提供自身工作目录和环境信息。Desktop 保留输出内容和文件预览，但 Workspace Dock 不展示 Files、Terminal 或 Review；Browser 仍可用。
 
 Schema v23 的 `projectless_workspace_creations` 保存新工作空间的操作 ID、目录分配和身份。重复请求复用首次路径；已保存身份的创建可以在重启后继续。目录已经存在但没有已提交身份时，Runtime 不接管该目录，而是分配下一个后缀。Session、创建完成状态和 `session.created` Event/Outbox 在同一事务提交。失败清理只删除已核验且仍为空的本次目录。子 Agent 继续借用父 Session 的工作空间。
 
@@ -994,7 +996,7 @@ SQLite 新增三张表。`agent_delegations` 保存父 Run、子 Session、当�
 
 父任务可以调用 `send_message`、`followup_task`、`list_agents`、`wait_agents`、`stop_agent`、`read_agent_result` 和 `read_agent_message`。创建任务、发送消息和续派正文统一限制为 64 KiB UTF-8，三个入口的 JSON 参数预算为 512 KiB。`send_message` 返回消息 ID 和 queued 状态，只保存消息，不重启已结束任务；`followup_task` 才会启动空闲子任务。每个父 Run 最多创建 16 个子 Session，同时最多运行 8 个子 Run；名额只在该父 Run 内计数。
 
-主模型默认读取最终结果、简要状态和明确发送的未读消息，不读取子任务的工具轨迹或中间回答。协作工具使用独立投影，只返回简要状态和结果 Item ID；`agent-evidence` 从子会话的原始结果 Item 构建正文，避免在工具返回中重复正文。单结果预览最多 8,192 个估算 token 和 64 KiB；协作正文总目标为 `min(32,768, 可用输入预算 / 4)` 个 token，序列化上限为 512 KiB。预算不足时仍返回状态、原始字节数、截断标记和结果 Item ID。大结果保留开头和结尾，父任务通过 `read_agent_result(agentId,itemId,offsetBytes,maxBytes)` 读取剩余正文，默认每页 16 KiB、最大 64 KiB，也可用 fromEnd 读取尾部。Item ID 固定具体回答，续派后仍能读取该子会话的旧回答。读取入口校验父 Run 对子任务的所有权，只读取完整助手消息，不读取工具参数或工具结果。
+主模型默认读取最终结果、简要状态和明确发送的未读消息，不读取子任务的工具轨迹或中间回答。协作工具使用独立投影，只返回简要状态和结果 Item ID；`agent-evidence` 从子会话的原始结果 Item 构建正文，避免在工具返回中重复正文。该段位于请求末尾，在历史和本步注入内容之后、Runtime state 之前；子任务状态或消息变化只改写请求尾部，不会使前面的 Provider 前缀缓存失效。单结果预览最多 8,192 个估算 token 和 64 KiB；协作正文总目标为 `min(32,768, 可用输入预算 / 4)` 个 token，序列化上限为 512 KiB。预算不足时仍返回状态、原始字节数、截断标记和结果 Item ID。大结果保留开头和结尾，父任务通过 `read_agent_result(agentId,itemId,offsetBytes,maxBytes)` 读取剩余正文，默认每页 16 KiB、最大 64 KiB，也可用 fromEnd 读取尾部。Item ID 固定具体回答，续派后仍能读取该子会话的旧回答。读取入口校验父 Run 对子任务的所有权，只读取完整助手消息，不读取工具参数或工具结果。
 
 模型按顺序读取最早 32 条未读消息，消息也受协作正文预算控制；截断消息通过 `read_agent_message(messageId)` 读取完整正文。成功接受模型响应后，Runtime 从冻结 ContextSnapshot 的结构化消息 ID 元数据保存投递回执；只有完整正文进入请求的消息才获得回执。失败、取消和截断预览不消费消息。已读消息不在后续模型请求中反复注入。容量恢复按结构裁剪正文并重新生成有效 JSON，不再依赖解析已截坏的文本生成回执。Desktop 的状态摘要继续保留 512 字符任务、2,000 字符结果和最近 16 条消息预览；完整会话记录沿用原分页接口。本次不改变 SQLite Schema、并发调度、权限、取消、Durable Intent 或未知副作用语义，也不新增依赖。
 

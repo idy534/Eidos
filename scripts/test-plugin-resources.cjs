@@ -30,7 +30,44 @@ app.whenReady().then(async () => {
       win.webContents.focus();
       await wait("document.querySelector('[aria-label=\"查看 代码质量检查 的资源\"]')");
       assert.equal(await run("Array.from(document.querySelectorAll('[role=tab]')).find(tab => tab.textContent.startsWith('技能')).textContent"), "技能0");
-      assert.equal(await run("Array.from(document.querySelectorAll('[role=tab]')).find(tab => tab.textContent.startsWith('MCP Servers')).textContent"), "MCP Servers0");
+      assert.equal(await run("Array.from(document.querySelectorAll('[role=tab]')).find(tab => tab.textContent.startsWith('MCP 服务')).textContent"), "MCP 服务0");
+      await run("document.querySelector('[aria-label=\"查看 浏览器 的资源\"]').click()");
+      await wait("document.querySelector('[aria-label=\"浏览器设置\"] select') && document.querySelector('[aria-label=\"Playwright Extension 令牌\"]')");
+      await settle();
+      const browserLayout = await run(`(() => { const body=document.querySelector('.plugin-resource-body'); const box=body.getBoundingClientRect(); const section=document.querySelector('[aria-label="浏览器设置"]'); const outside=Array.from(section.querySelectorAll('button, input, select, .setting-row-desc')).filter(element => { const rect=element.getBoundingClientRect(); return rect.width > 0 && (rect.left < box.left - 1 || rect.right > box.right + 1); }).map(element => element.textContent || element.getAttribute('aria-label')); return { overflow:body.scrollWidth-body.clientWidth, first:body.querySelector('.plugin-resource-section')===section, outside, buttons:Array.from(section.querySelectorAll('button')).map(button => button.textContent || button.getAttribute('aria-label')) }; })()`);
+      assert.ok(browserLayout.overflow <= 1 && browserLayout.first && browserLayout.outside.length === 0, JSON.stringify(browserLayout));
+      assert.deepEqual(browserLayout.buttons, ["Chrome 应用商店 ↗", "显示令牌", "保存"]);
+      if (process.env.EIDOS_PLUGIN_SCREENSHOT_DIR) {
+        await mkdir(process.env.EIDOS_PLUGIN_SCREENSHOT_DIR, { recursive: true });
+        await writeFile(path.join(process.env.EIDOS_PLUGIN_SCREENSHOT_DIR, `browser-settings-${width}.png`), (await win.webContents.capturePage()).toPNG());
+      }
+      await run("document.querySelector('[aria-label=\"Playwright Extension 令牌\"]').focus()");
+      await win.webContents.insertText("PLAYWRIGHT_MCP_EXTENSION_TOKEN=" + "a".repeat(43));
+      await run("Array.from(document.querySelectorAll('.browser-settings-token-form button')).find(button => button.textContent==='保存').click()");
+      await wait("document.querySelector('[role=alertdialog]')?.textContent.includes('不隔离账号') && document.activeElement?.textContent==='取消'");
+      await settle();
+      const confirmLayout = await run(`(() => { const rect=document.querySelector('[role=alertdialog]').getBoundingClientRect(); return { left:rect.left, right:rect.right, top:rect.top, bottom:rect.bottom, width:innerWidth, height:innerHeight }; })()`);
+      assert.ok(confirmLayout.left >= -1 && confirmLayout.right <= confirmLayout.width + 1 && confirmLayout.top >= -1 && confirmLayout.bottom <= confirmLayout.height + 1, JSON.stringify(confirmLayout));
+      if (process.env.EIDOS_PLUGIN_SCREENSHOT_DIR) {
+        await writeFile(path.join(process.env.EIDOS_PLUGIN_SCREENSHOT_DIR, `browser-token-confirm-${width}.png`), (await win.webContents.capturePage()).toPNG());
+      }
+      // Escape closes only the confirmation; the plugin dialog stays open.
+      await run("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+      await wait("!document.querySelector('[role=alertdialog]') && document.querySelector('.plugin-resource-dialog')?.contains(document.activeElement)");
+      await run("Array.from(document.querySelectorAll('.browser-settings-token-form button')).find(button => button.textContent==='保存').click()");
+      await wait("document.querySelector('[role=alertdialog]')");
+      await run("Array.from(document.querySelectorAll('[role=alertdialog] button')).find(button => button.textContent==='保存').click()");
+      await wait("!document.querySelector('[role=alertdialog]') && Array.from(document.querySelectorAll('.browser-settings-card button')).some(button => button.textContent==='移除')");
+      await run("document.querySelectorAll('.app-toast-close').forEach(button => button.click())");
+      await wait("!document.querySelector('.app-toast-close')");
+      if (process.env.EIDOS_PLUGIN_SCREENSHOT_DIR) {
+        await writeFile(path.join(process.env.EIDOS_PLUGIN_SCREENSHOT_DIR, `browser-settings-enabled-${width}.png`), (await win.webContents.capturePage()).toPNG());
+      }
+      await run("Array.from(document.querySelectorAll('.browser-settings-card button')).find(button => button.textContent==='移除').click()");
+      await wait("document.querySelector('[aria-label=\"Playwright Extension 令牌\"]')");
+      await run("document.querySelectorAll('.app-toast-close').forEach(button => button.click())");
+      await run("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+      await wait("!document.querySelector('.plugin-resource-dialog')");
       await run("const trigger=document.querySelector('[aria-label=\"查看 代码质量检查 的资源\"]'); trigger.focus(); trigger.click()");
       await wait("document.activeElement?.getAttribute('aria-label')==='关闭插件详情'");
       await settle();
@@ -74,9 +111,12 @@ app.whenReady().then(async () => {
       await wait("!document.querySelector('[role=alertdialog]') && document.activeElement?.textContent==='审阅 Hook'");
       await run("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
       await wait("!document.querySelector('.plugin-resource-dialog') && document.activeElement?.classList.contains('plugin-name-button')");
-      await wait("Array.from(document.querySelectorAll('button')).some(button => button.textContent==='安装')");
-      await run("Array.from(document.querySelectorAll('button')).find(button => button.textContent==='安装').click()");
+      await run("Array.from(document.querySelectorAll('button')).find(button => button.textContent==='插件市场').click()");
+      await wait("Array.from(document.querySelectorAll('[role=dialog] button')).some(button => button.textContent==='安装')");
+      await run("Array.from(document.querySelectorAll('[role=dialog] button')).find(button => button.textContent==='安装').click()");
       await wait("document.querySelector('[aria-label=\"查看 GitHub 的资源\"]')");
+      await run("document.querySelector('[aria-label=\"关闭插件市场\"]').click()");
+      await wait("!document.querySelector('[aria-label=\"关闭插件市场\"]')");
       await run("document.querySelector('[aria-label=\"查看 GitHub 的资源\"]').click()");
       await wait("document.querySelector('#mcp-token-github')");
       await settle();
@@ -84,7 +124,7 @@ app.whenReady().then(async () => {
       await wait("!document.querySelector('.app-toast-close')");
       const remoteLayout = await run(`(() => { const body=document.querySelector('.plugin-resource-body'); const input=document.querySelector('#mcp-token-github'); return { overflow:body.scrollWidth-body.clientWidth, type:input.type, text:body.textContent }; })()`);
       assert.equal(remoteLayout.type, "password");
-      assert.ok(remoteLayout.overflow <= 1 && remoteLayout.text.includes("当前版本尚未配置 GitHub 浏览器登录"));
+      assert.ok(remoteLayout.overflow <= 1 && remoteLayout.text.includes("使用令牌连接"));
       if (process.env.EIDOS_PLUGIN_SCREENSHOT_DIR) {
         await writeFile(path.join(process.env.EIDOS_PLUGIN_SCREENSHOT_DIR, `github-connect-${width}.png`), (await win.webContents.capturePage()).toPNG());
       }
@@ -96,16 +136,16 @@ app.whenReady().then(async () => {
       await wait("document.querySelector('#mcp-token-github')?.value===''");
       await run("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
       await wait("!document.querySelector('.plugin-resource-dialog')");
-      await run("const sourceReview=document.querySelector('.hook-source-actions button'); sourceReview.focus(); sourceReview.click()");
-      await wait("document.querySelector('[role=alertdialog]') && document.activeElement?.textContent==='取消'");
+      await run("const sourceReview=document.querySelector('.hook-split-button-main'); sourceReview.focus(); sourceReview.click()");
+      await wait("document.querySelector('[role=alertdialog]')");
       await settle();
       const sourceLayout = await run(`(() => { const dialog=document.querySelector('[role=alertdialog]'); const bounds=dialog.getBoundingClientRect(); const body=dialog.querySelector('.modal-body'); return { left:bounds.left, right:bounds.right, width:innerWidth, overflow:body.scrollWidth-body.clientWidth }; })()`);
       assert.ok(sourceLayout.left >= -1 && sourceLayout.right <= sourceLayout.width + 1 && sourceLayout.overflow <= 1, JSON.stringify(sourceLayout));
-      await run("Array.from(document.querySelectorAll('[role=alertdialog] button')).find(button=>button.textContent==='信任此配置').click()");
-      await wait("!document.querySelector('[role=alertdialog]') && document.querySelector('.hook-source-actions').textContent.includes('撤销信任')");
+      await run("Array.from(document.querySelectorAll('[role=alertdialog] button')).find(button=>button.textContent==='关闭').click()");
+      await wait("!document.querySelector('[role=alertdialog]')");
     }
     assert.deepEqual(errors, []);
-    console.log("Plugin resources passed 320/768/1024/1440 layout, Hook history paging, local configuration review, nested dialogs, keyboard, GitHub install, PAT connection and disconnect checks.");
+    console.log("Plugin resources passed 320/768/1024/1440 layout, browser settings, token confirmation and nested Escape, Hook history paging, local configuration review, nested dialogs, keyboard, GitHub install, PAT connection and disconnect checks.");
   } catch (error) { console.error(error); code = 1; }
   finally {
     clearTimeout(deadline);

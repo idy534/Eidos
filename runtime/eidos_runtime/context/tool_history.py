@@ -13,6 +13,10 @@ from eidos_runtime.context.working_set import recent_item_ids
 
 KEEP_RECENT_TOOL_RESULTS = 8
 MIN_RESULT_BYTES = 4 * 1024
+# Old tool bodies are released in whole batches of raw history. A Provider
+# prompt cache only reuses an unchanged prefix, so clearing one more result on
+# every request would invalidate everything after it each time.
+CLEARING_BATCH_BYTES = 64 * 1024
 # Browser pages are re-read with a fresh snapshot, so old page bodies and
 # screenshots are the first context to give back.
 BROWSER_TOOL_PREFIX = "mcp__browser__browser_"
@@ -44,18 +48,49 @@ def omit_old_browser_images(
     return tuple(result)
 
 
+def retained_content_ids(sizes: tuple[tuple[str, int], ...], budget: int) -> set[str]:
+    """Select saved media for one request with a stable eviction boundary.
+
+    ``sizes`` lists item IDs and stored sizes from oldest to newest. Content
+    larger than the whole budget is never sent. When the retained window
+    overflows, the oldest content is released until the window uses at most
+    half of the budget (the newest item always stays). Later media then extends
+    the same request prefix until the next overflow, instead of displacing one
+    old image on every request.
+    """
+
+    low_water = budget // 2
+    window: list[tuple[str, int]] = []
+    start = 0
+    used = 0
+    for item_id, size in sizes:
+        if size > budget:
+            continue
+        window.append((item_id, size))
+        used += size
+        if used > budget:
+            while start < len(window) - 1 and used > low_water:
+                used -= window[start][1]
+                start += 1
+    return {item_id for item_id, _ in window[start:]}
+
+
 def clear_old_tool_results(
     context: tuple[ModelContextItem, ...],
     facts: ContextFacts,
     *,
     target_reduction: int,
     recent_token_budget: int | None = None,
+    batch_bytes: int = CLEARING_BATCH_BYTES,
 ) -> tuple[ModelContextItem, ...]:
     if target_reduction <= 0:
         return context
+    if batch_bytes <= 0:
+        raise ValueError("clearing batch must be positive")
     tools = [item for item in facts.items if item.provider_call_id is not None]
-    protected = (recent_item_ids(tuple(tools), recent_token_budget) if recent_token_budget is not None
-                 else {item.item_id for item in tools[-KEEP_RECENT_TOOL_RESULTS:]})
+    recent = (recent_item_ids(tuple(tools), recent_token_budget) if recent_token_budget is not None
+              else {item.item_id for item in tools[-KEEP_RECENT_TOOL_RESULTS:]})
+    protected = set(recent)
     # Preserve an entire assistant response and all its tool returns. This also
     # protects signed/provider reasoning attached to a multi-tool response.
     groups = {
@@ -71,8 +106,24 @@ def clear_old_tool_results(
             and (item.run_id, item.model_step_index) in groups
         )
     )
+    # Batch numbers come from the raw size of earlier tool facts, which never
+    # changes, so a fact keeps its batch while new responses arrive. Only whole
+    # batches older than the recent window are eligible: the cleared boundary
+    # moves one batch at a time instead of on every request.
+    batches: dict[str, int] = {}
+    position = 0
+    for item in tools:
+        batches[item.item_id] = position // batch_bytes
+        position += len((item.arguments_json or "").encode("utf-8"))
+        position += len((item.model_result_json or item.result_json or "").encode("utf-8"))
+    first_recent_batch = min(
+        (batches[item.item_id] for item in tools if item.item_id in recent), default=None,
+    )
     candidates = {
-        item.provider_call_id: item for item in tools if item.item_id not in protected
+        item.provider_call_id: item
+        for item in tools
+        if item.item_id not in protected
+        and (first_recent_batch is None or batches[item.item_id] < first_recent_batch)
     }
     # Provider call IDs may be reused across Runs. Never create an ambiguous
     # reference, even if a request encoder accepts the duplicate history.
@@ -83,11 +134,16 @@ def clear_old_tool_results(
         )
     result = list(context)
     saved = 0
+    # Once the target is met, finish the current batch so the next request
+    # does not clear the rest of it one result at a time.
+    final_batch: int | None = None
     for index, projected in enumerate(context):
         if projected.get("type") != "tool_result":
             continue
         call_id = str(projected.get("callId", ""))
         item = candidates.get(call_id)
+        if item is not None and final_batch is not None and batches[item.item_id] > final_batch:
+            break
         raw = projected.get("result")
         if (
             item is None
@@ -173,6 +229,6 @@ def clear_old_tool_results(
             continue
         result[index] = {**projected, "result": cleared}
         saved += reduction
-        if saved >= target_reduction:
-            break
+        if saved >= target_reduction and final_batch is None:
+            final_batch = batches[item.item_id]
     return tuple(result)

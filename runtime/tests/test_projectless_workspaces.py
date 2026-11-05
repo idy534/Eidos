@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import unicodedata
 import uuid
 
 import pytest
@@ -24,6 +25,7 @@ from eidos_runtime.protocol.methods import (
 from eidos_runtime.workspace.projectless import (
     MAX_NAME_BYTES,
     ProjectlessDirectoryAllocator,
+    legacy_readable_workspace_name,
     projectless_root,
     readable_workspace_name,
 )
@@ -62,10 +64,31 @@ def operation_id(name: str) -> str:
     ("... / \x00", "新会话"),
     (None, "新会话"),
     ("ＡＢＣ test", "ABC-test"),
+    ("[$ppt-master](ref:3c32c73a4ab1)做一篇ppt，长度 5 页 主题：独库公路", "ppt-master-做一篇ppt-长度-5-页-主题-独库公路"),
+    ("[@reviewer](ref:abc12345) 检查 `main`", "reviewer-检查-main"),
+    ("fix: bug (#12) & deploy!", "fix-bug-12-deploy"),
+    ("报告❤️v2.0 *final*", "报告-v2-0-final"),
+    ("$HOME/[draft]'s \"notes\"", "HOME-draft-s-notes"),
+    ("café __init__", "café-__init"),
+    ("❤️🎉", "新会话"),
 ])
 def test_readable_names_are_safe_components(hint: str | None, name: str) -> None:
     assert readable_workspace_name(hint) == name
     assert len(readable_workspace_name("中文" * 512).encode()) <= MAX_NAME_BYTES
+
+
+@pytest.mark.parametrize("hint", [
+    "[$ppt-master](ref:3c32c73a4ab1)做一篇ppt，长度 5 页",
+    "a-" * 30 + "中文",
+    "1️⃣ e\u0301tape ـ test",
+    "中" * 15 + "ab",
+])
+def test_readable_names_are_stable_and_need_no_shell_quoting(hint: str) -> None:
+    name = readable_workspace_name(hint)
+    assert readable_workspace_name(name) == name
+    assert readable_workspace_name(name, max_bytes=48) == readable_workspace_name(hint, max_bytes=48)
+    assert all(char.isalnum() or char in "-_" or unicodedata.category(char) in {"Mn", "Mc"} for char in name)
+    assert not name.startswith(("-", "_")) and not name.endswith(("-", "_"))
 
 
 def test_default_root_uses_real_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -148,6 +171,34 @@ def test_existing_long_directory_names_survive_restart(
     assert (root / "keep.txt").read_text() == "existing content"
     new = application(store).create(request(hint)).root
     assert Path(new["workspaceRoot"]).name == expected
+
+
+@pytest.mark.parametrize("completed", [False, True])
+def test_names_from_the_earlier_rule_survive_replay_after_upgrade(
+    store: SessionStore, monkeypatch: pytest.MonkeyPatch, completed: bool,
+) -> None:
+    hint = "[$ppt-master](ref:3c32c73a4ab1)做一篇ppt,长"
+    earlier = legacy_readable_workspace_name(hint, max_bytes=48)
+    assert "$" in earlier and earlier != readable_workspace_name(hint, max_bytes=48)
+    create_request = request(hint, "earlier-name-rule")
+    with monkeypatch.context() as legacy:
+        for module in ("application.sessions", "persistence.projectless_workspaces"):
+            legacy.setattr(f"eidos_runtime.{module}.readable_workspace_name", legacy_readable_workspace_name)
+        if completed:
+            root = Path(application(store).create(create_request).root["workspaceRoot"])
+        else:
+            repository = store.typed_runtime_repository().projectless_workspaces()
+            creation = repository.prepare(
+                create_request.operation_id, legacy_readable_workspace_name(hint), projectless_root(),
+            )
+            identity = ProjectlessDirectoryAllocator().create(Path(creation.workspace_root))
+            repository.mark_created(creation, identity)
+            root = identity.path
+    assert root.name == earlier
+    restored = application(store).create(create_request).root
+    assert restored["workspaceRoot"] == str(root)
+    new = application(store).create(request(hint)).root
+    assert Path(new["workspaceRoot"]).name == readable_workspace_name(hint, max_bytes=48)
 
 
 def test_concurrent_and_existing_names_allocate_numeric_suffixes(store: SessionStore, tmp_path: Path) -> None:

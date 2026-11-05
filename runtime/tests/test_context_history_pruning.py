@@ -17,7 +17,7 @@ from eidos_runtime.context.compactor import (
 )
 from eidos_runtime.context.facts import CompactSummary, ContextFacts, ContextItemFact
 from eidos_runtime.context.tokens import _encoding, estimate_text_tokens
-from eidos_runtime.context.tool_history import clear_old_tool_results
+from eidos_runtime.context.tool_history import clear_old_tool_results, retained_content_ids
 from eidos_runtime.db.errors import InvalidRunStateError
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import (
@@ -97,7 +97,7 @@ def _tools(count: int = 12) -> tuple[tuple[dict[str, object], ...], ContextFacts
 
 def test_old_outputs_clear_before_summary_and_keep_pairing_and_recent_results():
     context, facts = _tools()
-    cleared = clear_old_tool_results(context, facts, target_reduction=1)
+    cleared = clear_old_tool_results(context, facts, target_reduction=1, batch_bytes=1)
     assert len(cleared) == len(context)
     assert cleared[0] == context[0]
     marker = json.loads(cleared[1]["result"])
@@ -110,7 +110,7 @@ def test_old_outputs_clear_before_summary_and_keep_pairing_and_recent_results():
     }
     assert "originalResultSha256" not in marker
     assert cleared[2:] == context[2:]
-    assert clear_old_tool_results(context, facts, target_reduction=1) == cleared
+    assert clear_old_tool_results(context, facts, target_reduction=1, batch_bytes=1) == cleared
     assert "contextCleared" not in context[1]["result"]
 
 
@@ -161,7 +161,8 @@ def test_clearing_keeps_nonrecoverable_or_unresolved_evidence(changed):
         )
     original = tuple(context)
     cleared = clear_old_tool_results(
-        original, facts.model_copy(update={"items": tuple(items)}), target_reduction=1
+        original, facts.model_copy(update={"items": tuple(items)}), target_reduction=1,
+        batch_bytes=1,
     )
     assert cleared[1] == original[1]
 
@@ -173,10 +174,61 @@ def test_recent_multi_tool_response_is_retained_as_one_group():
         update={"model_step_index": items[-1].model_step_index}
     )
     cleared = clear_old_tool_results(
-        context, facts.model_copy(update={"items": tuple(items)}), target_reduction=1
+        context, facts.model_copy(update={"items": tuple(items)}), target_reduction=1,
+        batch_bytes=1,
     )
     assert cleared[1] == context[1]
     assert json.loads(cleared[3]["result"])["contextCleared"] is True
+
+
+def _cleared_calls(context) -> set[str]:
+    return {
+        str(item["callId"]) for item in context
+        if item["type"] == "tool_result" and "contextCleared" in item["result"]
+    }
+
+
+def test_clearing_releases_whole_batches_and_keeps_the_prefix_between_them():
+    context, facts = _tools(16)
+    result_bytes = len(facts.items[0].model_result_json.encode("utf-8"))
+    batch = result_bytes * 3
+
+    def clear(count: int):
+        window = facts.model_copy(update={"items": facts.items[:count]})
+        return clear_old_tool_results(
+            context[:count * 2], window, target_reduction=10**9, batch_bytes=batch,
+        )
+
+    # Eight recent results stay protected. Batches hold three results each.
+    assert _cleared_calls(clear(10)) == set()
+    assert _cleared_calls(clear(11)) == {"call-0", "call-1", "call-2"}
+    # New responses inside the next batch do not clear one more old result.
+    assert clear(12)[:22] == clear(11)
+    assert clear(13)[:22] == clear(11)
+    assert _cleared_calls(clear(14)) == {f"call-{n}" for n in range(6)}
+
+
+def test_clearing_finishes_the_batch_that_meets_the_target():
+    context, facts = _tools()
+    result_bytes = len(facts.items[0].model_result_json.encode("utf-8"))
+    cleared = clear_old_tool_results(context, facts, target_reduction=1, batch_bytes=result_bytes * 2)
+    assert _cleared_calls(cleared) == {"call-0", "call-1"}
+
+
+def test_media_window_releases_half_the_budget_at_once():
+    sizes = tuple((f"image-{n}", 30) for n in range(8))
+    assert retained_content_ids(sizes[:3], 100) == {"image-0", "image-1", "image-2"}
+    # The fourth image overflows the window; the oldest images leave together.
+    assert retained_content_ids(sizes[:4], 100) == {"image-3"}
+    assert retained_content_ids(sizes[:5], 100) == {"image-3", "image-4"}
+    assert retained_content_ids(sizes[:6], 100) == {"image-3", "image-4", "image-5"}
+    assert retained_content_ids(sizes[:7], 100) == {"image-6"}
+
+
+def test_media_window_skips_oversized_content_and_keeps_the_newest_item():
+    assert retained_content_ids((("old", 10), ("huge", 200), ("new", 95)), 100) == {"new"}
+    assert retained_content_ids((("old", 60), ("new", 60)), 100) == {"new"}
+    assert retained_content_ids((("one", 1),), 0) == set()
 
 
 def test_replayed_reasoning_is_counted_once_per_response():
