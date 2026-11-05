@@ -75,7 +75,7 @@ interface Props {
   runs: Run[];
   allRuns?: Run[] | undefined;
   onEnsureItemMounted?: ((itemId: string) => Promise<boolean>) | undefined;
-  models?: ModelOption[];
+  models?: readonly ModelOption[] | undefined;
   workspaceRoot?: string;
   responseActionState?: ResponseActionState;
   pendingFeedbackItemIds?: ReadonlySet<string>;
@@ -313,6 +313,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
                     run={run}
                     resultItems={runResultItems}
                     modelName={modelName}
+                    models={models}
                     workspaceRoot={workspaceRoot}
                     isLast={index === segments.length - 1}
                     canReviseRun={canReviseRun}
@@ -361,6 +362,7 @@ const RunSegment = memo(function RunSegment({
   run,
   resultItems,
   modelName,
+  models,
   workspaceRoot,
   isLast,
   canReviseRun,
@@ -387,6 +389,7 @@ const RunSegment = memo(function RunSegment({
   run: Run;
   resultItems: Item[];
   modelName: string;
+  models?: readonly ModelOption[] | undefined;
   workspaceRoot?: string | undefined;
   isLast: boolean;
   canReviseRun: boolean;
@@ -473,7 +476,7 @@ const RunSegment = memo(function RunSegment({
               return <ContextCompactionRow key={`compaction:${node.activity.requestId}`} activity={node.activity} run={run} />;
             }
             if (node.kind === "retry") {
-              return <ModelRetryRow key={`retry:${node.activity.requestGroupId}`} activity={node.activity} run={run} />;
+              return <ModelRetryRow key={`retry:${node.activity.requestGroupId}`} activity={node.activity} run={run} models={models} />;
             }
             const renderItem = (item: Item) => (
               <ProcessItem
@@ -1920,7 +1923,7 @@ function SkillReadToolItem({
   const errSummary = safeToolSummary(toolCall.resultJson, item.status);
   const titleText = isError && errSummary ? errSummary : undefined;
   const isResource = toolCall.toolName === "skill_read_resource";
-  const suffix = isResource ? "整个技能包" : "技能 SKILL.md";
+  const suffix = isResource ? "技能包" : "技能 SKILL.md";
   const actionPrefix = running
     ? "正在读取"
     : (item.status === "completed" ? "已读取" : `${statusLabel(item.status)} 读取`);
@@ -2398,7 +2401,13 @@ export function splitRunIntoSegments(
     const processTools = body.filter(
       (item) => item.kind !== "assistant_message" && item.toolCall?.toolName !== "write_plan",
     );
-    if (processTools.length === 0 && compactions.length === 0 && segmentRetries.length === 0) {
+    // A failed draft that the Run moved past (a rejected tool call, a retried
+    // stream) is progress, not an unfinished answer; only the last one is.
+    const lastBodyOrdinal = Math.max(-Infinity, ...body.map((item) => item.ordinal));
+    const supersededDraft = (item: Item) => item.kind === "assistant_message"
+      && item.status === "failed" && item.incomplete === true && item.ordinal < lastBodyOrdinal;
+    const hasSupersededDrafts = body.some(supersededDraft);
+    if (processTools.length === 0 && compactions.length === 0 && segmentRetries.length === 0 && !hasSupersededDrafts) {
       return {
         user,
         retries: segmentRetries,
@@ -2408,8 +2417,9 @@ export function splitRunIntoSegments(
         ),
       };
     }
-    const lastProcessToolOrdinal = Math.max(...processTools.map((item) => item.ordinal));
-    const inProcess = (item: Item) => item.kind !== "assistant_message" || item.ordinal <= lastProcessToolOrdinal || item.createdAt <= lastCompactionAt;
+    const lastProcessToolOrdinal = Math.max(-Infinity, ...processTools.map((item) => item.ordinal));
+    const inProcess = (item: Item) => item.kind !== "assistant_message" || item.ordinal <= lastProcessToolOrdinal
+      || item.createdAt <= lastCompactionAt || supersededDraft(item);
     const process: ProcessEntry[] = body.filter((item) => item.toolCall?.toolName !== "write_plan" && inProcess(item))
       .map((item) => ({ kind: "item", item }));
     const stages: Array<Exclude<ProcessEntry, { kind: "item" }>> = [
@@ -2806,7 +2816,7 @@ function toolSummary(
     memory_edit: args.action === "delete" ? "删除记忆" : "保存记忆",
     read_tool_output: "查看工具输出",
     skill_read: skillName ? `${skillName}技能 SKILL.md` : "技能 SKILL.md",
-    skill_read_resource: skillName ? `${skillName}整个技能包` : "整个技能包",
+    skill_read_resource: skillName ? `${skillName}技能包` : "技能包",
   };
   const targetLabel = isMemory
     ? baseLabels[toolCall.toolName]
@@ -2846,8 +2856,8 @@ function toolSummary(
       ? (skillName ? `正在读取${skillName}技能 SKILL.md` : "正在读取技能 SKILL.md")
       : (skillName ? `已读取${skillName}技能 SKILL.md` : "已读取技能 SKILL.md"),
     skill_read_resource: running
-      ? (skillName ? `正在读取${skillName}整个技能包` : "正在读取整个技能包")
-      : (skillName ? `已读取${skillName}整个技能包` : "已读取整个技能包"),
+      ? (skillName ? `正在读取${skillName}技能包` : "正在读取技能包")
+      : (skillName ? `已读取${skillName}技能包` : "已读取技能包"),
     memory_search: running
       ? (memoryQuery ? `正在搜索记忆 "${memoryQuery}"` : "正在搜索记忆")
       : (memoryQuery ? `已搜索记忆 "${memoryQuery}"` : "已搜索记忆"),

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { McpServerRecord } from "../../contracts.js";
 import type { McpToolDetail } from "../../../../shared/mcp-details.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
@@ -89,7 +90,7 @@ export function McpDetailDialog({
     : "已授权";
   const description = state.description?.trim();
 
-  return (
+  const dialogNode = (
     <>
       <div className="modal-backdrop mcp-detail-backdrop" onClick={onClose}>
         <div
@@ -204,4 +205,8 @@ export function McpDetailDialog({
       />
     </>
   );
+
+  return typeof document !== "undefined" && document.body
+    ? createPortal(dialogNode, document.body)
+    : dialogNode;
 }

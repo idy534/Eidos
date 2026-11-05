@@ -7,6 +7,21 @@ interface DialogFocusLifecycleOptions {
   getFallbackFocus?: (() => HTMLElement | null) | undefined;
 }
 
+function restoreFocusTarget(target: HTMLElement | null | undefined): void {
+  if (!target?.isConnected) return;
+  target.setAttribute("data-restored-focus", "true");
+  target.focus();
+  if (typeof queueMicrotask === "function") {
+    queueMicrotask(() => {
+      if (target.isConnected) {
+        target.removeAttribute("data-restored-focus");
+      }
+    });
+  } else {
+    target.removeAttribute("data-restored-focus");
+  }
+}
+
 export function useDialogFocusLifecycle({
   open,
   initialFocusRef,
@@ -15,6 +30,8 @@ export function useDialogFocusLifecycle({
   const wasOpenRef = useRef(false);
   const triggerRef = useRef<HTMLElement | null>(null);
   const rafRef = useRef<number | null>(null);
+  const fallbackRef = useRef(getFallbackFocus);
+  fallbackRef.current = getFallbackFocus;
 
   useLayoutEffect(() => {
     const wasOpen = wasOpenRef.current;
@@ -44,19 +61,7 @@ export function useDialogFocusLifecycle({
       const target = triggerRef.current?.isConnected
         ? triggerRef.current
         : getFallbackFocus?.();
-      if (target?.isConnected) {
-        target.setAttribute("data-restored-focus", "true");
-        target.focus();
-        if (typeof queueMicrotask === "function") {
-          queueMicrotask(() => {
-            if (target?.isConnected) {
-              target.removeAttribute("data-restored-focus");
-            }
-          });
-        } else {
-          target.removeAttribute("data-restored-focus");
-        }
-      }
+      restoreFocusTarget(target);
       triggerRef.current = null;
     }
 
@@ -67,4 +72,17 @@ export function useDialogFocusLifecycle({
       }
     };
   }, [open, initialFocusRef, getFallbackFocus]);
+
+  useLayoutEffect(() => {
+    return () => {
+      if (!wasOpenRef.current) return;
+      wasOpenRef.current = false;
+      const trigger = triggerRef.current;
+      triggerRef.current = null;
+      const target = trigger && trigger !== document.body && trigger.isConnected
+        ? trigger
+        : fallbackRef.current?.();
+      restoreFocusTarget(target);
+    };
+  }, []);
 }

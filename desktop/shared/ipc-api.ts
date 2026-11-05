@@ -290,7 +290,8 @@ export interface EidosRuntimeAPI {
   /** A preview URL for one saved tool image; release it with releaseInputPreview. */
   prepareToolContentPreview(sessionId: string, toolCallId: string, index: number): Promise<string>;
   releaseInputPreview(url: string): Promise<void>;
-  pasteInputImage(): Promise<InputReference | null>;
+  /** Pastes the clipboard bitmap, or with `source` an image file the clipboard lists. */
+  pasteInputImage(source?: string): Promise<InputReference | null>;
   readInputDraft(key: string): Promise<InputDraft>;
   writeInputDraft(key: string, draft: InputDraft): Promise<InputDraft>;
 

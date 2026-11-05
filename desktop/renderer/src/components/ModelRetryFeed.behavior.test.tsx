@@ -60,6 +60,32 @@ describe("model retry stage in the feed", () => {
     expect(screen.getByRole("button", { name: "收起" })).toHaveAttribute("aria-expanded", "true");
   });
 
+  it("shows custom provider and model names instead of raw custom IDs in retry details", () => {
+    const customId = "custom-d30de9db-a2c6-472b-8ca3-7349f6c8c57e";
+    const customRun: Run = { ...run, modelId: customId, remoteModelId: "company/reasoner-v1" };
+    const customRetry: ModelRetryActivity = {
+      ...waiting, status: "recovered", providerId: "custom", modelId: customId,
+    };
+    const customModel = {
+      id: customId, modelId: "company/reasoner-v1", name: "公司推理模型", vendor: "公司网关",
+      provider: "custom", url: "https://gateway.invalid/v1/chat/completions",
+      supportsToolCall: true, supportsImages: false, supportsReasoning: false,
+      custom: {
+        providerId: "company-gateway", providerName: "公司网关",
+        baseUrl: "https://gateway.invalid/v1", name: "公司推理模型",
+        contextWindowTokens: 64000, maxOutputTokens: 4096,
+      },
+    };
+    const { container } = render(
+      <ExecutionFeed {...props} runs={[customRun]} models={[customModel]} modelRetries={[customRetry]} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+    const detail = container.querySelector(".model-retry-detail")!;
+    expect(detail.textContent).toContain("服务商公司网关");
+    expect(detail.textContent).toContain("模型公司推理模型");
+    expect(detail.textContent).not.toContain("custom");
+  });
+
   it("replaces the one-line notice with a failure block that opens model settings", () => {
     const onOpenModelSettings = vi.fn();
     const failedRun: Run = { ...run, status: "failed", completedAt: 30_000, errorCode: "MODEL_AUTHENTICATION_FAILED",

@@ -240,3 +240,77 @@ def test_context_builder_projects_current_input_reference(tmp_path: Path) -> Non
         assert prepared.reference.sha256 not in reference_items[0]["content"]
     finally:
         store.close()
+
+
+def test_clipboard_webp_named_jpg_is_pasted_as_png(tmp_path: Path) -> None:
+    store, application, session_id, _workspace = _application(tmp_path)
+    try:
+        source = tmp_path / "paste" / "copied.jpg"
+        source.parent.mkdir()
+        Image.new("RGBA", (4, 5), (255, 0, 0, 128)).save(source, format="WEBP")
+
+        prepared = application.prepare(InputPrepareRequest(
+            sessionId=session_id, kind="image", source=str(source), origin="clipboard",
+        ))
+        preview = application.read(InputReadRequest(id=prepared.reference.id))
+
+        assert prepared.reference.kind == "image"
+        assert prepared.reference.source == "clipboard:image"
+        assert preview.thumbnail is not None
+        snapshot = application.repository.read(prepared.reference.id)
+        assert snapshot.mime == "image/png"
+    finally:
+        store.close()
+
+
+def test_selected_webp_named_jpg_stays_rejected_with_a_logged_reason(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, application, session_id, workspace = _application(tmp_path)
+    try:
+        source = workspace / "secret-name.jpg"
+        Image.new("RGB", (4, 5), "red").save(source, format="WEBP")
+
+        with caplog.at_level("WARNING", logger="eidos.input"), pytest.raises(ApplicationError) as error:
+            application.prepare(InputPrepareRequest(sessionId=session_id, kind="file", source=str(source)))
+
+        assert error.value.code == "INVALID_PARAMS"
+        assert "reason=invalid_image" in caplog.text
+        assert "secret-name" not in caplog.text
+    finally:
+        store.close()
+
+
+def test_clipboard_rejects_formats_that_are_not_converted(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, application, session_id, _workspace = _application(tmp_path)
+    try:
+        source = tmp_path / "paste.png"
+        Image.new("RGB", (4, 5), "red").save(source, format="ICO")
+
+        with caplog.at_level("WARNING", logger="eidos.input"), pytest.raises(ApplicationError) as error:
+            application.prepare(InputPrepareRequest(
+                sessionId=session_id, kind="image", source=str(source), origin="clipboard",
+            ))
+
+        assert error.value.code == "INVALID_PARAMS"
+        assert "reason=unsupported_image_format" in caplog.text
+    finally:
+        store.close()
+
+
+def test_missing_file_logs_errno_without_the_path(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, application, session_id, workspace = _application(tmp_path)
+    try:
+        with caplog.at_level("WARNING", logger="eidos.input"), pytest.raises(ApplicationError):
+            application.prepare(InputPrepareRequest(
+                sessionId=session_id, kind="file", source=str(workspace / "gone-name.png"),
+            ))
+
+        assert "reason=ENOENT" in caplog.text
+        assert "gone-name" not in caplog.text
+    finally:
+        store.close()

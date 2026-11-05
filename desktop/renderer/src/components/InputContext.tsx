@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import type { InputPrepareRequest, InputPreview, InputReference } from "../../../shared/input-context.js";
 import { isInlineReference, isShelfReference, parseInlineSegments } from "../../../shared/inline-references.js";
 import type { McpServerRecord } from "../contracts.js";
-import { userFacingError } from "../session-state.js";
+import { runtimeBusinessCode, userFacingError } from "../session-state.js";
 import { CloseIcon as ImageCloseIcon } from "./MenuIcons.js";
 import { ToastContainer } from "./ToastContainer.js";
 import { FileIcon, FolderIcon, AgentIcon, SkillIcon, ServerIcon, PuzzleIcon, ChatHistoryIcon } from "./InputPicker.js";
@@ -33,6 +33,8 @@ interface InputContextValue {
   clearError?: () => void;
   add(request: InputPrepareRequest, range?: { start: number; end: number }): Promise<void>;
   paths(paths: string[]): Promise<void>;
+  /** Like `paths`, for pasted files: a rejected image file is retried as a clipboard image. */
+  pastePaths(paths: string[]): Promise<void>;
   paste(): Promise<void>;
   settings(section?: string): void;
   reuse(reference: InputReference): void;
@@ -40,6 +42,7 @@ interface InputContextValue {
   registerEditor?: ((bridge: InputEditorSelectionBridge) => () => void) | undefined;
 }
 const Context = createContext<InputContextValue | null>(null);
+const PASTED_IMAGE_PATH = /\.(?:png|jpe?g|gif|webp|tiff?|bmp)$/i;
 export const useInputContext = () => useContext(Context);
 
 export function InputContextProvider({
@@ -119,15 +122,29 @@ export function InputContextProvider({
     range,
   ), [work, sessionId]);
 
-  const paths = useCallback(async (paths: string[]) => {
+  const preparePaths = useCallback(async (paths: string[], pasted: boolean) => {
     if (paths.length > 20) {
       if (sessionId) setErrors((previous) => ({ ...previous, [sessionId]: "一次最多添加 20 个引用。" }));
       return;
     }
     // Each selection is prepared in order; a failure never discards accepted files.
     if (sessionId) setErrors((previous) => ({ ...previous, [sessionId]: undefined }));
-    for (const source of paths) await work(() => window.eidosRuntime.prepareInput({ kind: "file", source, ...(sessionId && !sessionId.startsWith("draft-") ? { sessionId } : {}) }), false);
+    for (const source of paths) await work(async () => {
+      try {
+        return await window.eidosRuntime.prepareInput({ kind: "file", source, ...(sessionId && !sessionId.startsWith("draft-") ? { sessionId } : {}) });
+      } catch (error) {
+        // A pasted image file the file checks reject (other owner, hard link,
+        // WebP named .jpg, removed temp file) is retried through Main as a
+        // private clipboard copy. Other failures keep the original error.
+        if (!pasted || !PASTED_IMAGE_PATH.test(source) || runtimeBusinessCode(error) !== "INVALID_PARAMS") throw error;
+        const reference = await window.eidosRuntime.pasteInputImage(source).catch(() => null);
+        if (!reference) throw error;
+        return reference;
+      }
+    }, false);
   }, [work, sessionId]);
+  const paths = useCallback((paths: string[]) => preparePaths(paths, false), [preparePaths]);
+  const pastePaths = useCallback((paths: string[]) => preparePaths(paths, true), [preparePaths]);
 
   const registerEditor = useCallback((bridge: InputEditorSelectionBridge) => {
     editorBridgeRef.current = bridge;
@@ -149,7 +166,7 @@ export function InputContextProvider({
   }, [sessionId]);
 
   return <Context.Provider value={sessionId ? {
-    sessionId, workspaceRoot: workspaceRoot ?? "", workspaceRoots: workspaceRoots ?? (workspaceRoot ? [workspaceRoot] : []), projectId, busy: Boolean(counts[sessionId]), error: errors[sessionId], clearError, add, paths,
+    sessionId, workspaceRoot: workspaceRoot ?? "", workspaceRoots: workspaceRoots ?? (workspaceRoot ? [workspaceRoot] : []), projectId, busy: Boolean(counts[sessionId]), error: errors[sessionId], clearError, add, paths, pastePaths,
     paste: () => work(() => window.eidosRuntime.pasteInputImage()), settings: onSettings,
     reuse: (reference) => { if (ready) commitReference(sessionId, reference); },
     navigateToSession: onNavigateToSession,

@@ -1,5 +1,5 @@
 import type { ModelRetryActivity } from "../../shared/context.generated.js";
-import type { Run } from "./contracts.js";
+import type { ModelOption, Run } from "./contracts.js";
 
 export type ModelRetryCause = ModelRetryActivity["cause"];
 export type ModelRetryPhase = "waiting" | "requesting" | "recovered" | "failed" | "canceled";
@@ -62,6 +62,46 @@ const waitingTitles: Record<ModelRetryCause, string> = {
 
 export function retryCauseName(cause: ModelRetryCause): string {
   return causeNames[cause];
+}
+
+export function resolveModelRetryTarget(
+  activity: Pick<ModelRetryActivity, "providerId" | "modelId">,
+  run?: Pick<Run, "modelId" | "remoteModelId"> | undefined,
+  models?: readonly ModelOption[] | undefined,
+): { providerId?: string | undefined; modelId?: string | undefined } {
+  // Match only by configuration ID: the Run's model ID names the exact config
+  // it was created with. Remote model IDs are not unique across configs, so
+  // matching on them could label a built-in retry with a custom model's name.
+  const configIds = [run?.modelId, activity.modelId ?? undefined].filter(
+    (id): id is string => Boolean(id),
+  );
+  const matched = configIds
+    .map((id) => models?.find((model) => model.id === id))
+    .find((model) => model !== undefined);
+  const isCustom = Boolean(
+    matched?.custom ||
+    matched?.provider === "custom" ||
+    activity.providerId === "custom" ||
+    configIds.some((id) => id.startsWith("custom-")),
+  );
+  if (isCustom) {
+    const providerId =
+      matched?.custom?.providerName?.trim() ||
+      matched?.vendor?.trim() ||
+      matched?.custom?.providerId?.trim() ||
+      (activity.providerId && activity.providerId !== "custom" ? activity.providerId : undefined);
+    const modelId =
+      matched?.custom?.name?.trim() ||
+      matched?.name?.trim() ||
+      matched?.modelId?.trim() ||
+      (activity.modelId && !activity.modelId.startsWith("custom-") ? activity.modelId : undefined) ||
+      run?.remoteModelId?.trim();
+    return { providerId, modelId };
+  }
+  return {
+    providerId: activity.providerId ?? undefined,
+    modelId: activity.modelId ?? undefined,
+  };
 }
 
 export interface ModelRetryLabels {

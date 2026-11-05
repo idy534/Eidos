@@ -486,7 +486,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 - 设置页铺满当前应用窗口。项目侧栏、侧栏折叠按钮和浮动导航在设置期间隐藏；侧栏快捷键不会展开侧栏。用户退出设置后，侧栏恢复此前状态。设置分类导航继续保留。设置页顶部标题栏高度（2.75rem）与标题字体规格（0.85rem / 600）与 Session 标题栏保持对齐。
 - 技能页面提供搜索、个人/系统分类和双列列表，窄窗口改为单列。页面不展示插件 Skill，插件 Skill 由插件详情管理。列表使用首字母图标、名称、简短说明和技能自身启用勾选，不展示 ID、只读、来源或版本。
-- 技能详情展示描述、状态与可滚动 Markdown 正文。左上角开关控制技能自身状态；右上角菜单提供“在 Finder 中显示”和“复制 Markdown”。复制内容包含原始 frontmatter。所属插件未启用时，详情会说明该限制，保存技能开关不会自动启用插件。
+- 技能详情展示描述、状态与可滚动 Markdown 正文。左上角开关控制技能自身状态；右上角菜单提供“在 Finder 中显示”和“复制 Markdown”。复制内容包含原始 frontmatter。所属插件未启用时，详情会说明该限制，保存技能开关不会自动启用插件。技能详情弹窗与 MCP 详情弹窗通过 Portal 挂载到 `document.body`，从消息流中的 `skill_read` / `skill_read_resource` 工具行或行内引用标签打开只读预览时不会被工具分组或容器查询裁剪，关闭后焦点恢复到触发按钮。
 - 个人技能目录的文件树 Hash 只作为来源记录。脚本在个人 Skill 目录里生成缓存或输出，不会使已固定的 Run 快照失效；快照仍用 `SKILL.md` 内容 Hash 核验指令，`SKILL.md` 在 Run 固定快照后被改动时，Runtime 不再让 Run 失败：该 Skill 不注入本轮指令，Run 继续，`skill_read` 向模型返回错误，下一个 Run 使用新快照。系统技能和插件技能保持整树核验。设置页读取技能详情只读取 `SKILL.md`；技能列表按文件元数据复用整树 Hash，目录变化后重新计算。新建 Run 的扩展快照同样按文件元数据复用整树 Hash，目录变化后重新计算；卸载仍做完整读取。扩展快照对每个插件包只读取并哈希一次。Run、Step、规则和上下文快照在创建时不再对刚算出的 Hash 重复自校验，从存储读取时仍完整校验，篡改会被拒绝。
 - 个人技能支持二次确认卸载；系统技能只有启用/禁用能力。独立技能文件清理只等待实际固定该 Skill Catalog 条目的非终态 Run。快照缺少条目列表时按旧快照和排除记录保守处理，不因无关 Run 阻断清理。插件 Skill 在插件内启用或禁用，插件移除继续保留历史来源记录；底层原有 Skill 状态和卸载协议保持兼容。
 - 技能状态保存在 SQLite，后续 Turn 使用新状态，已开始的 Turn 保留原快照。
@@ -504,6 +504,8 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 用户可以通过输入框左下角 `+` 选择文件、文件夹、Skill、MCP、Plugin 和历史对话。选择器提供分类、搜索、可用状态和扩展设置入口。`@` 打开统一引用选择，`$` 选择 Skill，`/` 提供 model、skills、mcp、plugins、status 快捷入口。选择器支持方向键、Enter、Escape，并避开中文输入法的组词确认。
 
 用户可以从 Finder 向对话区域拖入文件或文件夹，也可以粘贴剪贴板图片。输入框使用 macOS 原生剪切、复制、粘贴、撤销、重做和全选菜单。拖入内容只进入草稿，不自动发送。正在运行的 Run 不会因新草稿而改变。
+
+粘贴时，剪贴板如果带文件路径，先按普通文件引用处理。图片文件（png、jpg、gif、webp、tiff、bmp）被文件检查以 `INVALID_PARAMS` 拒绝时，Renderer 改用 `input:pasteImage` 携带该路径重试。Main 只读取剪贴板（`NSFilenamesPboardType` 或 `public.file-url`）确实列出的文件，按解析后的真实路径比对，拒绝 Eidos 数据目录内的文件，用 `O_NOFOLLOW` 打开后核对 dev/inode，限制 10 MiB，再把副本写进私有临时目录，以 `origin: clipboard` 交给 Runtime。这样，属主不同、多硬链接、源应用已删除的临时文件，以及扩展名与内容不符的图片也能粘贴。Runtime 只对剪贴板来源把 WebP、GIF、TIFF、BMP 重新编码为 PNG；用户选择的文件仍保留原始字节和 Hash，格式不符时继续拒绝。HEIC 不在转换范围内。拖入文件、非图片文件和其他错误码不重试，重试失败时显示原始错误。Runtime 拒绝引用时在 `eidos.input` 日志写入原因码（如 `invalid_image`、`unsafe_path`、`ENOENT`），不写路径和内容。
 
 引用采用双区域分层展示：
 - **顶部附件架（Attachment Shelf，位于输入框上方与已发送消息气泡上方）**：承载 `image`（正方形缩略图卡片，点击打开全屏预览）、`file`（近正方形文档微缩预览卡片，顶部展示真实文本微缩页或类型扩展名角标，底部展示分类色彩图标与文件名，点击在 Finder 中定位）、`directory`（双行文件夹卡片，展示文件夹名称与“文件夹”副标题，点击在 Finder 中定位）和 `excerpt`（引用文本微缩卡片，点击弹出只读全文预览弹窗）。

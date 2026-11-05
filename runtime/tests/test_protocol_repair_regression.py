@@ -741,6 +741,50 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         assert isinstance(diagnostic, dict)
         self.assertNotIn("argumentsSha256", diagnostic)
 
+    def test_undeclared_tool_feedback_names_the_missing_tool(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Open the browser again")
+        bad = ModelResponse(
+            text="I will open the browser.",
+            phase=AssistantMessagePhase.COMMENTARY,
+            tool_calls=(ModelToolCall(
+                "bad-browser", "mcp__browser__browser_navigate", {"url": "https://example.com"},
+            ),),
+        )
+        model = ScriptedModel([bad, bad, bad, ModelResponse(text="The browser plugin is not installed.")])
+
+        RuntimeLoop(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        diagnostic = self.store.read_model_attempts(run["id"])[0]["protocolDiagnostics"]
+        assert isinstance(diagnostic, dict)
+        self.assertIs(diagnostic["toolDeclared"], False)
+        # The in-step repair attempt carries the structured flag for the client.
+        repair = [
+            item for item in model.contexts[1] if item.get("type") == "protocol_error"
+        ]
+        self.assertEqual(repair[-1]["toolDeclared"], False)
+        self.assertEqual(repair[-1]["toolName"], "mcp__browser__browser_navigate")
+        # After the repair budget, the next step says the tool is unavailable
+        # instead of asking for corrected arguments.
+        feedback = [
+            str(item.get("content")) for item in model.contexts[2]
+            if item.get("sectionId") == "runtime-feedback"
+        ]
+        self.assertEqual(len(feedback), 1)
+        self.assertIn('"mcp__browser__browser_navigate" is not available in this Run', feedback[0])
+        self.assertIn("tell the user", feedback[0])
+        self.assertNotIn("Correct the arguments", feedback[0])
+
+    def test_declared_tool_rejection_keeps_argument_feedback(self) -> None:
+        from eidos_runtime.model.native_custom import _context_feedback
+
+        declared = {"type": "protocol_error", "code": "invalid_tool_call", "toolDeclared": True}
+        undeclared = {**declared, "toolDeclared": False, "toolName": "mcp__browser__browser_tabs"}
+        self.assertIn("Correct the tool call", _context_feedback("protocol_error", declared))
+        self.assertIn('"mcp__browser__browser_tabs" is not available', _context_feedback("protocol_error", undeclared))
+
     def test_argument_summary_keeps_shape_without_parameter_digest(self) -> None:
         argument_bytes, keys, types, truncated = argument_summary({
             "a" * 257: "secret",

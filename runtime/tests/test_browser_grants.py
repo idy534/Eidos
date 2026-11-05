@@ -231,3 +231,70 @@ def test_returning_to_the_eidos_browser_revokes_user_chrome_grants(store, worksp
     assert response.revoked_grants == 1
     assert repository.active(session["id"], "user") is None
     assert repository.active(session["id"], "default") is not None
+
+
+def _install_plugin(store: SessionStore, plugin_id: str) -> None:
+    store.insert_plugin_record({
+        "id": plugin_id, "name": plugin_id, "version": "1.0.0", "description": "",
+        "manifestJson": "{}", "contentHash": "hash-1",
+    })
+
+
+def test_removing_the_plugin_revokes_its_grant_in_every_session(store, workspace):
+    repository = BrowserGrantRepository(store.database)
+    _install_plugin(store, "eidos-browser")
+    sessions = [store.create_session(str(workspace)) for _ in range(2)]
+    for session in sessions:
+        _grant(repository, session["id"])
+        repository.grant(session_id=session["id"], plugin_id="eidos-browser", plugin_version="1.0.0",
+                         plugin_hash="hash-1", source_approval_id=None, profile="user")
+    other = store.create_session(str(workspace))
+    repository.grant(session_id=other["id"], plugin_id="other-browser", plugin_version="1.0.0",
+                     plugin_hash="hash-1", source_approval_id=None)
+    waterline = store.connection.execute("SELECT max(id) FROM events").fetchone()[0]
+
+    store.remove_plugin_record("eidos-browser")
+
+    for session in sessions:
+        assert repository.active(session["id"]) is None
+        assert repository.active(session["id"], "user") is None
+    assert repository.active(other["id"]) is not None
+    reasons = store.connection.execute(
+        "SELECT DISTINCT revoke_reason FROM session_browser_grants WHERE plugin_id = 'eidos-browser'",
+    ).fetchall()
+    assert [row[0] for row in reasons] == ["plugin_changed"]
+    changed = store.connection.execute(
+        "SELECT session_id, payload_json FROM events WHERE id > ? AND event_type = 'browser.grant_changed'",
+        (waterline,),
+    ).fetchall()
+    assert sorted(row[0] for row in changed) == sorted(s["id"] for s in sessions for _ in range(2))
+    # Removing an already removed plugin changes nothing.
+    store.remove_plugin_record("eidos-browser")
+    assert store.connection.execute(
+        "SELECT count(*) FROM events WHERE id > ? AND event_type = 'browser.grant_changed'", (waterline,),
+    ).fetchone()[0] == 4
+
+
+def test_startup_repair_revokes_grants_left_by_an_uninstalled_plugin(store, workspace):
+    repository = BrowserGrantRepository(store.database)
+    _install_plugin(store, "kept-browser")
+    stale = store.create_session(str(workspace))
+    missing = store.create_session(str(workspace))
+    kept = store.create_session(str(workspace))
+    _grant(repository, stale["id"])
+    repository.grant(session_id=missing["id"], plugin_id="never-installed", plugin_version="1.0.0",
+                     plugin_hash="h", source_approval_id=None)
+    repository.grant(session_id=kept["id"], plugin_id="kept-browser", plugin_version="1.0.0",
+                     plugin_hash="h", source_approval_id=None)
+    # A grant left active by a removal that predates the in-transaction revoke.
+    _install_plugin(store, "eidos-browser")
+    store.connection.execute("UPDATE plugins SET status = 'removed' WHERE id = 'eidos-browser'")
+    store.connection.commit()
+
+    repaired = repository.revoke_uninstalled_plugin_grants()
+
+    assert repaired.value == 2 and len(repaired.events) == 2
+    assert repository.active(stale["id"]) is None
+    assert repository.active(missing["id"]) is None
+    assert repository.active(kept["id"]) is not None
+    assert repository.revoke_uninstalled_plugin_grants().value == 0

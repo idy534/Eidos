@@ -6,6 +6,7 @@ import {
   modelFailurePresentation,
   modelRetryLabels,
   modelRetryPhase,
+  resolveModelRetryTarget,
   totalModelRetries,
 } from "./model-retry.js";
 import { terminalRunPresentation } from "./run-presentation.js";
@@ -72,4 +73,90 @@ test("treats an in-stream provider failure as an interrupted reply, not a reject
   assert.match(presentation.title, /回复在接收过程中中断/);
   assert.doesNotMatch(presentation.title + presentation.body, /拒绝了请求参数/);
   assert.equal(terminalRunPresentation({ status: "failed", termination: { stage: "model", reason: "stream_interrupted" } })!.label, "模型回复在接收过程中中断");
+});
+
+test("resolves custom provider and model names instead of custom identifiers", () => {
+  const customModel = {
+    id: "custom-d30de9db-a2c6-472b-8ca3-7349f6c8c57e",
+    modelId: "company/reasoner-v1",
+    name: "公司推理模型",
+    vendor: "公司网关",
+    provider: "custom",
+    url: "https://gateway.invalid/v1/chat/completions",
+    supportsToolCall: true,
+    supportsImages: false,
+    supportsReasoning: true,
+    custom: {
+      providerId: "company-gateway",
+      providerName: "公司网关",
+      baseUrl: "https://gateway.invalid/v1",
+      name: "公司推理模型",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 4096,
+    },
+  };
+  assert.deepEqual(
+    resolveModelRetryTarget(
+      { providerId: "custom", modelId: customModel.id },
+      { modelId: customModel.id, remoteModelId: "company/reasoner-v1" },
+      [customModel],
+    ),
+    { providerId: "公司网关", modelId: "公司推理模型" },
+  );
+  assert.deepEqual(
+    resolveModelRetryTarget(
+      { providerId: "custom", modelId: customModel.id },
+      { modelId: customModel.id, remoteModelId: "company/reasoner-v1" },
+      [],
+    ),
+    { providerId: undefined, modelId: "company/reasoner-v1" },
+  );
+  assert.deepEqual(
+    resolveModelRetryTarget(
+      { providerId: "deepseek", modelId: "deepseek-flash" },
+      { modelId: "deepseek-flash" },
+      [],
+    ),
+    { providerId: "deepseek", modelId: "deepseek-flash" },
+  );
+});
+
+test("does not label a built-in retry with a custom model that shares its remote model ID", () => {
+  const customModel = {
+    id: "custom-0b7c2f1e-9a4d-4c35-8e21-5f6a7b8c9d0e",
+    modelId: "deepseek-flash",
+    name: "我的代理",
+    vendor: "公司网关",
+    provider: "custom",
+    url: "https://gateway.invalid/v1/chat/completions",
+    supportsToolCall: true,
+    supportsImages: false,
+    supportsReasoning: false,
+    custom: {
+      providerId: "company-gateway",
+      providerName: "公司网关",
+      baseUrl: "https://gateway.invalid/v1",
+      name: "我的代理",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 4096,
+    },
+  };
+  const builtInModel = {
+    id: "deepseek-flash",
+    name: "DeepSeek-V4.1 Flash",
+    vendor: "DeepSeek",
+    provider: "deepseek",
+    url: "https://api.deepseek.invalid/v1/chat/completions",
+    supportsToolCall: true,
+    supportsImages: false,
+    supportsReasoning: true,
+  };
+  assert.deepEqual(
+    resolveModelRetryTarget(
+      { providerId: "deepseek", modelId: "deepseek-flash" },
+      { modelId: "deepseek-flash" },
+      [customModel, builtInModel],
+    ),
+    { providerId: "deepseek", modelId: "deepseek-flash" },
+  );
 });

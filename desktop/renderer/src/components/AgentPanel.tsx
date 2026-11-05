@@ -282,6 +282,7 @@ function AgentTranscript({
   onOpenFile,
   onOpenPlan,
   workspaceRoot,
+  models,
 }: {
   agent: AgentSummary;
   approvals: ApprovalRequest[];
@@ -294,6 +295,7 @@ function AgentTranscript({
   onOpenFile?: ((path: string) => void) | undefined;
   onOpenPlan?: (() => void) | undefined;
   workspaceRoot?: string | undefined;
+  models?: readonly ModelOption[] | undefined;
 }) {
   const [snapshot, setSnapshot] = useState<SessionSnapshot>();
   const [error, setError] = useState("");
@@ -459,6 +461,7 @@ function AgentTranscript({
           contextCompactions={snapshot?.contextCompactions}
           modelRetries={snapshot?.modelRetries}
           runs={runs}
+          models={models}
           approvals={childApprovals}
           onOpenFile={onOpenFile}
           onOpenPlan={onOpenPlan}
@@ -722,6 +725,7 @@ export function AgentWorkspacePanel({
             onOpenFile={onOpenFile}
             onOpenPlan={onOpenPlan}
             workspaceRoot={workspaceRoot}
+            models={effectiveModels}
           />
         </article>
       )}

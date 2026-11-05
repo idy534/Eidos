@@ -5,11 +5,15 @@ from eidos_runtime.application.agent_catalog import AgentCatalog
 import base64
 import hashlib
 import io
+import errno
 import json
+import logging
 import math
 import os
 from pathlib import Path
+import re
 import stat
+import warnings
 from collections.abc import Callable
 
 from PIL import Image
@@ -25,10 +29,17 @@ from eidos_runtime.protocol.input_context import (
     InputReadRequest, InputReferenceResponse, InputPreviewResponse,
     InputReadAssetRequest, InputReadAssetResponse,
 )
-from eidos_runtime.tools.view_image import read_authorized_image, ViewImageRootAuthority
+from eidos_runtime.tools.view_image import (
+    MAX_VIEW_IMAGE_PIXELS, ViewImageError, ViewImageRootAuthority, detect_image_mime, read_authorized_image,
+)
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_TEXT_CHARS = 65536
+# Formats Pillow decodes without extra dependencies. Only clipboard pastes are
+# re-encoded; a selected file keeps its original bytes and hash.
+CLIPBOARD_CONVERTIBLE_FORMATS = frozenset({'WEBP', 'GIF', 'TIFF', 'BMP'})
+_REASON = re.compile(r'[a-z_]{1,64}')
+_LOGGER = logging.getLogger('eidos.input')
 
 
 
@@ -49,6 +60,10 @@ class InputContextApplication:
         except ApplicationError:
             raise
         except (OSError, ValueError, UnicodeError) as error:
+            _LOGGER.warning(
+                'input reference rejected kind=%s origin=%s reason=%s',
+                request.kind, request.origin, _rejection_reason(error),
+            )
             raise ApplicationError('INVALID_PARAMS', '引用不可用，请检查路径、格式或大小。') from error
 
     def _prepare(self, request: InputPrepareRequest) -> InputSnapshot:
@@ -92,10 +107,17 @@ class InputContextApplication:
                     if len(raw) > MAX_FILE_BYTES or _identity(before) != _identity(after):
                         raise ValueError('file_changed')
                     if path.suffix.lower() in {'.png', '.jpg', '.jpeg'} or kind == 'image':
-                        picture = read_authorized_image(source, ViewImageRootAuthority(path.parent))
-                        if hashlib.sha256(raw).hexdigest() != picture.sha256:
-                            raise ValueError('file_changed')
-                        kind, mime = 'image', picture.mime
+                        try:
+                            picture = read_authorized_image(source, ViewImageRootAuthority(path.parent))
+                        except ViewImageError as error:
+                            if error.code != 'invalid_image' or request.origin != 'clipboard':
+                                raise
+                            raw = _clipboard_png(raw)
+                            kind, mime = 'image', detect_image_mime(raw)
+                        else:
+                            if hashlib.sha256(raw).hexdigest() != picture.sha256:
+                                raise ValueError('file_changed')
+                            kind, mime = 'image', picture.mime
                         image = base64.b64encode(raw).decode('ascii')
                         with Image.open(io.BytesIO(raw)) as picture:
                             image_tokens = 1024 + math.ceil(picture.width / 512) * math.ceil(picture.height / 512) * 256
@@ -231,6 +253,38 @@ class InputContextApplication:
             ))
             if current.reference.sha256 != snapshot.reference.sha256:
                 raise ApplicationError('INVALID_STATE', '扩展已经变化，请移除引用后重新选择。')
+
+
+def _clipboard_png(raw: bytes) -> bytes:
+    """Re-encode a pasted WebP, GIF, TIFF or BMP image as PNG."""
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(raw)) as picture:
+                if picture.format not in CLIPBOARD_CONVERTIBLE_FORMATS:
+                    raise ValueError('unsupported_image_format')
+                if picture.width < 1 or picture.height < 1 or picture.width * picture.height > MAX_VIEW_IMAGE_PIXELS:
+                    raise ValueError('image_too_large')
+                has_alpha = picture.mode in {'RGBA', 'LA', 'PA'} or 'transparency' in picture.info
+                converted = picture.convert('RGBA' if has_alpha else 'RGB')
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
+        raise ValueError('image_too_large') from error
+    buffer = io.BytesIO()
+    converted.save(buffer, format='PNG')
+    data = buffer.getvalue()
+    if len(data) > MAX_FILE_BYTES:
+        raise ValueError('image_too_large')
+    return data
+
+
+def _rejection_reason(error: BaseException) -> str:
+    """Return a log-safe reason code; never the path or file content."""
+    if isinstance(error, ViewImageError):
+        return error.code
+    if isinstance(error, OSError):
+        return errno.errorcode.get(error.errno or 0, type(error).__name__)
+    message = str(error)
+    return message if _REASON.fullmatch(message) else type(error).__name__
 
 
 def _open_path(path: Path) -> int:

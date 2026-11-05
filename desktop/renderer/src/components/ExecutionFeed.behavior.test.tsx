@@ -254,6 +254,35 @@ describe("conversation fork actions", () => {
   });
 });
 
+describe("rejected drafts", () => {
+  const draft = (ordinal: number, overrides: Partial<Item> = {}): Item => ({
+    id: `draft-${ordinal}`, sessionId: baseRun.sessionId, runId: baseRun.id, ordinal,
+    kind: "assistant_message", status: "failed", incomplete: true, createdAt: 1_000 + ordinal,
+    content: `重新打开浏览器 ${ordinal}`, ...overrides,
+  });
+  const user: Item = {
+    id: "user", sessionId: baseRun.sessionId, runId: baseRun.id, ordinal: 1,
+    kind: "user_message", status: "completed", createdAt: 1_000, content: "去浏览器看看",
+  };
+
+  it("marks only the draft the Run stopped on as unfinished", async () => {
+    const canceled = { ...baseRun, status: "canceled" as const };
+    const { container } = render(<ExecutionFeed items={[user, draft(2), draft(3), draft(4)]} runs={[canceled]} approvals={[]} />);
+    expect(screen.getAllByText("回答未完成")).toHaveLength(1);
+    expect(screen.getByText("重新打开浏览器 4").closest(".feed-item--assistant")).not.toBeNull();
+    await expandDetails(container);
+    expect(screen.getByText("重新打开浏览器 2").closest(".process-text")).not.toBeNull();
+    expect(screen.getAllByText("回答未完成")).toHaveLength(1);
+  });
+
+  it("drops the marker once a later attempt replaces the draft", () => {
+    render(<ExecutionFeed items={[user, draft(2), draft(3, { status: "completed", incomplete: false, content: "浏览器插件未安装" })]}
+      runs={[{ ...baseRun, status: "succeeded" }]} approvals={[]} />);
+    expect(screen.queryByText("回答未完成")).not.toBeInTheDocument();
+    expect(screen.getByText("浏览器插件未安装").closest(".feed-item--assistant")).not.toBeNull();
+  });
+});
+
 describe("Run failure presentation", () => {
   it("shows a concrete cause without technical diagnostics in the Session body", () => {
     const run: Run = { ...baseRun, status: "failed", errorCode: "MODEL_PROTOCOL_ERROR",
@@ -1694,7 +1723,7 @@ describe("ExecutionFeed skill and read_tool_output rendering", () => {
         },
       };
 
-      render(
+      const { container } = render(
         <ExecutionFeed
           items={[item]}
           runs={[baseRun]}
@@ -1704,10 +1733,15 @@ describe("ExecutionFeed skill and read_tool_output rendering", () => {
 
       const button = screen.getByRole("button", { name: "translator" });
       expect(button).toBeInTheDocument();
-      expect(screen.getByText(/已读取.*整个技能包/)).toBeInTheDocument();
+      expect(screen.getByText(/已读取.*技能包/)).toBeInTheDocument();
+      expect(screen.queryByText(/整个技能包/)).not.toBeInTheDocument();
 
+      button.focus();
       fireEvent.click(button);
 
+      const dialog = await screen.findByRole("dialog", { name: "translator" });
+      expect(dialog.closest(".modal-backdrop")?.parentElement).toBe(document.body);
+      expect(container.querySelector(".feed-shell")?.contains(dialog)).toBe(false);
       expect(await screen.findByRole("heading", { name: "translator" })).toBeInTheDocument();
       expect(await screen.findByText("Translate text between languages.")).toBeInTheDocument();
       expect(screen.queryByText("未提供技能说明")).not.toBeInTheDocument();
@@ -1716,6 +1750,112 @@ describe("ExecutionFeed skill and read_tool_output rendering", () => {
       const closeBtn = screen.getByRole("button", { name: "关闭技能详情" });
       fireEvent.click(closeBtn);
       expect(screen.queryByRole("heading", { name: "translator" })).not.toBeInTheDocument();
+      expect(button).toHaveFocus();
+    } finally {
+      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+
+  it("portals SkillDetailDialog outside scrollable tool-group when previewing skill_read_resource", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    const readSkillDetail = vi.fn().mockResolvedValue({
+      qualifiedId: "user:ppt-master",
+      content: "---\nname: ppt-master\ndescription: Build slide decks.\n---\n# PPT Master\n\nRouting workflow.\n",
+      body: "# PPT Master\n\nRouting workflow.\n",
+      directory: "/skills/ppt-master",
+    });
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: {
+        readSkillDetail,
+        listSkills: vi.fn().mockResolvedValue({
+          skills: [
+            {
+              qualifiedId: "user:ppt-master",
+              name: "ppt-master",
+              description: "Build slide decks.",
+              sourceKind: "user",
+              enabled: true,
+              available: true,
+              schemaVersion: 1,
+              pluginId: "",
+              pluginVersion: "",
+              pluginHash: "",
+              contentHash: "hash-ppt",
+            },
+          ],
+        }),
+      },
+    });
+
+    try {
+      const items: Item[] = [
+        {
+          id: "tool-srr-group-0",
+          sessionId: baseRun.sessionId,
+          runId: baseRun.id,
+          ordinal: 1,
+          kind: "tool_call",
+          status: "completed",
+          createdAt: 1000,
+          toolCall: {
+            id: "tc-srr-group-0",
+            itemId: "tool-srr-group-0",
+            modelStepIndex: 1,
+            batchOrder: 0,
+            providerCallId: "p-srr-0",
+            toolName: "skill_read_resource",
+            status: "completed",
+            startedAt: 1000,
+            completedAt: 1100,
+            argumentsJson: JSON.stringify({ qualifiedId: "user:ppt-master", resourcePath: "workflows/routing.md" }),
+            resultJson: JSON.stringify({ outcome: "success", code: "ok" }),
+          },
+        },
+        ...Array.from({ length: 8 }, (_, index) =>
+          shellItem({
+            id: `tool-srr-shell-${index}`,
+            ordinal: index + 2,
+            status: "completed",
+            toolCall: {
+              ...shellItem().toolCall!,
+              id: `tc-srr-shell-${index}`,
+              itemId: `tool-srr-shell-${index}`,
+              status: "completed",
+              argumentsJson: JSON.stringify({ command: `echo step-${index}` }),
+            },
+          }),
+        ),
+      ];
+
+      const { container } = render(
+        <ExecutionFeed
+          items={items}
+          runs={[baseRun]}
+          approvals={[]}
+        />,
+      );
+
+      await expandDetails(container, "details.tool-group");
+      const groupList = container.querySelector(".tool-group-list");
+      expect(groupList).toHaveAttribute("data-scrollable", "true");
+
+      const trigger = screen.getByRole("button", { name: "ppt-master" });
+      trigger.focus();
+      fireEvent.click(trigger);
+
+      const dialog = await screen.findByRole("dialog", { name: "ppt-master" });
+      const backdrop = dialog.closest(".modal-backdrop");
+      expect(backdrop).toHaveClass("skill-detail-backdrop");
+      expect(backdrop?.parentElement).toBe(document.body);
+      expect(container.querySelector("details.tool-group")?.contains(dialog)).toBe(false);
+      expect(container.querySelector(".feed-shell")?.contains(dialog)).toBe(false);
+      expect(await screen.findByText("Routing workflow.")).toBeInTheDocument();
+
+      fireEvent.keyDown(window, { key: "Escape" });
+      expect(screen.queryByRole("dialog", { name: "ppt-master" })).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
     } finally {
       if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
       else delete (window as Partial<Window>).eidosRuntime;

@@ -203,6 +203,47 @@ class BrowserGrantRepository(Repository):
         with self.database.transaction() as connection:
             return write(connection)
 
+    def revoke_uninstalled_plugin_grants(self) -> CommittedMutation[int]:
+        """Startup repair: a grant whose plugin is no longer installed cannot stay active."""
+
+        def write(connection: sqlite3.Connection) -> CommittedMutation[int]:
+            plugin_ids = [
+                str(row["plugin_id"]) for row in connection.execute(
+                    """
+                    SELECT DISTINCT g.plugin_id FROM session_browser_grants AS g
+                    LEFT JOIN plugins AS p ON p.id = g.plugin_id
+                    WHERE g.status = 'active' AND (p.id IS NULL OR p.status != 'installed')
+                    """,
+                ).fetchall()
+            ]
+            events: list[dict[str, object]] = []
+            for plugin_id in plugin_ids:
+                events.extend(revoke_plugin_browser_grants(connection, plugin_id))
+            return CommittedMutation(len(events), tuple(events))
+
+        with self.database.transaction() as connection:
+            return write(connection)
+
+
+def revoke_plugin_browser_grants(
+    connection: sqlite3.Connection, plugin_id: str,
+) -> list[dict[str, object]]:
+    """Removing a plugin revokes its grants in every Session, in the caller's transaction."""
+
+    rows = connection.execute(
+        "SELECT id, session_id FROM session_browser_grants WHERE status = 'active' AND plugin_id = ?",
+        (plugin_id,),
+    ).fetchall()
+    now = now_ms()
+    events: list[dict[str, object]] = []
+    for row in rows:
+        _revoke(connection, row["id"], "plugin_changed", now)
+        events.append(append_event(
+            connection, EventType.BROWSER_GRANT_CHANGED, now,
+            {"sessionId": row["session_id"], "active": False}, session_id=row["session_id"],
+        ))
+    return events
+
 
 def delete_session_browser_grants(connection: sqlite3.Connection, session_id: str) -> None:
     """Session deletion removes its grant history before its approvals."""

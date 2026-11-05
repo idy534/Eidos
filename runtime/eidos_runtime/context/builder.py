@@ -7,6 +7,7 @@ from eidos_runtime.persistence.agent_catalog import AgentSnapshotRepository
 
 from eidos_runtime.persistence.planning import PlanningRepository
 
+from collections.abc import Sequence
 import json
 import platform
 import os
@@ -82,6 +83,7 @@ class ContextBuilder:
         repository_context: RunRepositoryContext | None = None,
         projectless: bool = False,
         recovery_level: int = 0,
+        callable_tool_names: frozenset[str] | None = None,
     ) -> ContextBuild:
         facts = self.store.context_projection_facts(run_id)
         profile = self.store.read_model_profile(run_id)
@@ -456,6 +458,19 @@ class ContextBuilder:
                 projected["arguments"] = "{}"
                 if "input" in projected:
                     projected["input"] = ""
+        if callable_tool_names is not None:
+            unavailable = unavailable_history_tools(context, callable_tool_names)
+            if unavailable:
+                context.append({
+                    "type": "context", "sectionId": "unavailable-tools",
+                    "content": (
+                        "Tools called earlier in this conversation that are not available in this Run: "
+                        + json.dumps(unavailable, ensure_ascii=False, separators=(",", ":"))
+                        + ". Their plugin or server has since been removed, disabled or not connected, "
+                        "so calls to them are rejected. Use only the advertised tools. If the user's request "
+                        "needs one of these capabilities, tell the user it must be installed or enabled first."
+                    ),
+                })
         context.extend(extra_context)
         if agent_evidence is not None:
             context.append(agent_evidence)
@@ -650,3 +665,21 @@ def _tool_result_changes_workspace(result_json: str) -> bool:
         data.get("workspaceChanged") is True
         or data.get("workspaceChangeState") in {"changed", "unknown"}
     )
+
+
+_MAX_UNAVAILABLE_TOOL_NAMES = 20
+
+
+def unavailable_history_tools(
+    context: Sequence[ModelContextItem], callable_tool_names: frozenset[str],
+) -> list[str]:
+    """Historical tool names the current step cannot call, bounded and sorted."""
+
+    names = {
+        name for item in context
+        if item.get("type") == "tool_call"
+        and isinstance(name := item.get("name"), str)
+        and 0 < len(name) <= 128
+        and name not in callable_tool_names
+    }
+    return sorted(names)[:_MAX_UNAVAILABLE_TOOL_NAMES]

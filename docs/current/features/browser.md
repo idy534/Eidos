@@ -48,6 +48,7 @@ Model → ToolCallRuntime → ExternalToolHandler（浏览器授权）
 
 - Session 中第一次页面操作会生成 `browser_access` 审批（`grantScope: session`）。批准后，Runtime 写入 `session_browser_grants`，该 Session 后续的 Run 不再询问。`auto_review` 对每个 Session 只审查这一次。授权期间 Session 标题栏右侧显示一个 Chrome 图标；点击后在气泡中显示授权状态和“撤销”按钮，点外部或按 Escape 关闭。
 - 授权绑定插件内容 Hash。插件内容变化、清除浏览器数据或撤销后，下一次页面操作会重新询问。Fork 不继承授权。子任务在父 Run 活跃时使用父 Session 的授权。
+- 移除浏览器插件时，Runtime 在同一事务中撤销该插件在所有 Session 的有效授权（`revoke_reason=plugin_changed`），并为每个 Session 发出 `browser/grantChanged`。Runtime 启动时还会撤销插件已不处于 `installed` 状态的遗留授权，用于修复此前移除插件后仍显示授权的记录。
 - `browser_file_upload` 不带 `paths` 时只取消文件选择框，只需要 Session 授权。
 - `full_access` 不创建授权，直接执行。
 - Chrome 只会在授权并提交 Durable Intent 之后启动。启动失败是已知的工具错误，不会记录为未知结果。

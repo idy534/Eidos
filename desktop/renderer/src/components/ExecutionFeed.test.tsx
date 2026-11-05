@@ -1950,8 +1950,8 @@ test("renders skill_read and skill_read_resource as static rows with SkillIcon a
   assert.match(html, /已读取<button[^>]*>code-review<\/button>技能 SKILL\.md/);
 
   // skill_read_resource copy
-  assert.match(html, /正在读取<button[^>]*>translator<\/button>整个技能包/);
-  assert.match(html, /已读取<button[^>]*>translator<\/button>整个技能包/);
+  assert.match(html, /正在读取<button[^>]*>translator<\/button>技能包/);
+  assert.match(html, /已读取<button[^>]*>translator<\/button>技能包/);
 
   // Static rows
   const staticRows = (html.match(/class="tool-item tool-item--read-done"/g) ?? []).length;
