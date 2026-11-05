@@ -18,6 +18,7 @@ import type { RunPlanningOptions } from "../shared/planning.generated.js";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, powerMonitor, shell as electronShell } from "electron";
 import { fileURLToPath } from "node:url";
 import { realpath, stat, mkdtemp, writeFile, rm } from "node:fs/promises";
+import { clipboardFilePaths, MAX_PASTED_IMAGE_BYTES, readPastedImageFile } from "./clipboard-image.js";
 import os from "node:os";
 import { isInputPrepareRequest, isInputDraft } from "../shared/input-context.js";
 import { isAgentDefinitionSaveRequest, isAgentDefinitionRemoveRequest } from "../shared/agent-definitions.js";
@@ -445,7 +446,7 @@ async function startRuntime(): Promise<void> {
     client = new RuntimeClient({
       pythonExecutable: runtimePaths.pythonExecutable,
       runtimeRoot: runtimePaths.runtimeRoot,
-      dataDirectory: process.env.EIDOS_DATA_DIR ?? path.join(app.getPath("home"), ".eidos"),
+      dataDirectory: runtimeDataDirectory(),
       environmentPolicy: app.isPackaged ? "packaged" : "development",
       onNotification: publishNotification,
       onApprovalRequest: requestApproval,
@@ -1291,15 +1292,31 @@ ipcMain.handle(IPC.INPUT_DRAFT_WRITE, (event, key: unknown, draft: unknown) => {
   if (!isInputDraft(draft)) throw new Error("草稿参数无效。");
   return clientOrThrow().writeInputDraft(inputKey(key), draft);
 });
-ipcMain.handle(IPC.INPUT_PASTE_IMAGE, async (event) => {
+function runtimeDataDirectory(): string {
+  return process.env.EIDOS_DATA_DIR ?? path.join(app.getPath("home"), ".eidos");
+}
+// Without a source, the clipboard bitmap is pasted. With one, the source must be
+// a file the pasteboard lists; Main hands the Runtime a private copy so files
+// the selected-file checks reject (other owner, hard links, removed temp files,
+// WebP named .jpg) can still be pasted as images.
+ipcMain.handle(IPC.INPUT_PASTE_IMAGE, async (event, source: unknown) => {
   inputOwner(event);
-  const picture = clipboard.readImage();
-  if (picture.isEmpty()) return null;
-  const bytes = picture.toPNG();
-  if (bytes.length > 10 * 1024 * 1024) throw new Error("图片不能超过 10 MiB。");
+  let bytes: Buffer;
+  let extension = ".png";
+  if (source === undefined) {
+    const picture = clipboard.readImage();
+    if (picture.isEmpty()) return null;
+    bytes = picture.toPNG();
+  } else {
+    ({ bytes, extension } = await readPastedImageFile(source, {
+      clipboardPaths: clipboardFilePaths((format) => clipboard.read(format)),
+      dataDirectory: runtimeDataDirectory(),
+    }));
+  }
+  if (bytes.length > MAX_PASTED_IMAGE_BYTES) throw new Error("图片不能超过 10 MiB。");
   const directory = await mkdtemp(path.join(os.tmpdir(), "eidos-input-"));
   try {
-    const filename = path.join(directory, "粘贴的图片.png");
+    const filename = path.join(directory, `粘贴的图片${extension}`);
     await writeFile(filename, bytes, { mode: 0o600, flag: "wx" });
     return await clientOrThrow().prepareInput({ kind: "image", source: filename, origin: "clipboard" });
   } finally {

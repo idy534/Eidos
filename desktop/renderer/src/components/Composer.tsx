@@ -281,7 +281,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
     if (!files.length) return false;
     const paths = files.map((file) => window.eidosRuntime.inputPathForFile(file)).filter(Boolean);
     if (paths.length) {
-      void context?.paths(paths);
+      void context?.pastePaths(paths);
       return true;
     }
     if (files.some((file) => file.type.startsWith("image/"))) {

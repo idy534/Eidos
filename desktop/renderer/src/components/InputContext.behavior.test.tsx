@@ -93,6 +93,74 @@ describe("InputContext behavior", () => {
     expect(screen.getByText("操作失败，请查看 Runtime 日志。")).toBeInTheDocument();
   });
 
+  describe("pasted image files", () => {
+    const imageReference: InputReference = { ...fileReference, id: "d".repeat(64), kind: "image", label: "粘贴的图片", source: "clipboard:image" };
+    const rejected = () => new Error("Error invoking remote method 'input:prepare': RuntimeRequestError: EIDOS_RUNTIME_ERROR:INVALID_PARAMS");
+
+    function PasteActions({ paths }: { paths: string[] }) {
+      const context = useInputContext();
+      return (
+        <>
+          <button type="button" onClick={() => void context?.pastePaths(paths)}>paste paths</button>
+          <button type="button" onClick={() => void context?.paths(paths)}>drop paths</button>
+          <span>{context?.error}</span>
+        </>
+      );
+    }
+
+    it("retries a rejected pasted image file as a clipboard image", async () => {
+      const onAdd = vi.fn();
+      const api = setupRuntime({
+        prepareInput: vi.fn().mockRejectedValue(rejected()),
+        pasteInputImage: vi.fn().mockResolvedValue(imageReference),
+      });
+      render(provider(<PasteActions paths={["/Users/me/微信图片.jpg"]} />, { onAdd }));
+
+      fireEvent.click(screen.getByRole("button", { name: "paste paths" }));
+
+      await waitFor(() => expect(onAdd).toHaveBeenCalledWith("session-1", imageReference));
+      expect(api.pasteInputImage).toHaveBeenCalledWith("/Users/me/微信图片.jpg");
+    });
+
+    it("keeps the original error when the clipboard retry fails", async () => {
+      const onAdd = vi.fn();
+      const api = setupRuntime({
+        prepareInput: vi.fn().mockRejectedValue(rejected()),
+        pasteInputImage: vi.fn().mockRejectedValue(new Error("剪贴板中没有这个文件。")),
+      });
+      render(provider(<PasteActions paths={["/Users/me/photo.webp"]} />, { onAdd }));
+
+      fireEvent.click(screen.getByRole("button", { name: "paste paths" }));
+
+      await waitFor(() => expect(api.pasteInputImage).toHaveBeenCalledTimes(1));
+      // The original Runtime error is shown, not the Main retry error.
+      await waitFor(() => expect(screen.getByText("Runtime 遇到内部错误，请查看诊断日志。")).toBeInTheDocument());
+      expect(onAdd).not.toHaveBeenCalled();
+    });
+
+    it("does not retry dropped files, non-image files or other error codes", async () => {
+      const api = setupRuntime({
+        prepareInput: vi.fn()
+          .mockRejectedValueOnce(rejected())
+          .mockRejectedValueOnce(rejected())
+          .mockRejectedValueOnce(new Error("EIDOS_RUNTIME_ERROR:WORKSPACE_SENSITIVE_PATH")),
+      });
+      const { rerender } = render(provider(<PasteActions paths={["/Users/me/a.png"]} />));
+      fireEvent.click(screen.getByRole("button", { name: "drop paths" }));
+      await waitFor(() => expect(api.prepareInput).toHaveBeenCalledTimes(1));
+
+      rerender(provider(<PasteActions paths={["/Users/me/a.txt"]} />));
+      fireEvent.click(screen.getByRole("button", { name: "paste paths" }));
+      await waitFor(() => expect(api.prepareInput).toHaveBeenCalledTimes(2));
+
+      rerender(provider(<PasteActions paths={["/Users/me/.eidos/b.png"]} />));
+      fireEvent.click(screen.getByRole("button", { name: "paste paths" }));
+      await waitFor(() => expect(api.prepareInput).toHaveBeenCalledTimes(3));
+
+      expect(api.pasteInputImage).not.toHaveBeenCalled();
+    });
+  });
+
   it("blocks additions until draft hydration is ready", async () => {
     const api = setupRuntime();
     render(provider(<Actions />, { ready: false }));
