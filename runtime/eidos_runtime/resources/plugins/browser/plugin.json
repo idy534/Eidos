@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "eidos-browser",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "在 Chrome 中打开网页、读取页面、点击、输入和截图。",
   "extensions": {
     "com.openai": {
