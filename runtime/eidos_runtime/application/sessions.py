@@ -37,6 +37,7 @@ from eidos_runtime.db.database import CommittedMutation
 from eidos_runtime.persistence.projectless_workspaces import ProjectlessWorkspaceRepository
 from eidos_runtime.workspace.projectless import (
     ProjectlessDirectoryAllocator,
+    legacy_readable_workspace_name,
     projectless_root,
     readable_workspace_name,
 )
@@ -769,7 +770,10 @@ class SessionApplication:
         allocator = ProjectlessDirectoryAllocator()
         repository = self._repository.projectless_workspaces()
         with self._lifecycle.hold_operation("session/create", operation_id):
-            creation = repository.prepare(operation_id, name, projectless_root())
+            creation = repository.prepare(
+                operation_id, name, projectless_root(),
+                earlier_names=(legacy_readable_workspace_name(request.workspace_name_hint),),
+            )
             if creation.status == "completed":
                 # A deleted Session must never be recreated by replaying its old operation.
                 if self._repository.read_session(creation.session_id) is None:

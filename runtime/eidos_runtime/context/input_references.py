@@ -8,7 +8,8 @@ from eidos_runtime.domain.input_reference import InputReference
 
 
 _INLINE_KINDS = frozenset({"skill", "agent", "mcp", "plugin", "history"})
-_INLINE_TOKEN = re.compile(r"\[([^\[\]\r\n]+)\]\(ref:([A-Za-z0-9_-]{1,64})\)")
+# Composer reference markup, for example ``[$ppt-master](ref:3c32c73a4ab1)``.
+INLINE_REFERENCE_TOKEN = re.compile(r"\[([^\[\]\r\n]+)\]\(ref:([A-Za-z0-9_-]{1,64})\)")
 
 
 def inline_reference_mention(reference: InputReference) -> str | None:
@@ -43,4 +44,4 @@ def project_input_mentions(text: str, references: Sequence[InputReference]) -> s
             return match[0]
         return inline_reference_mention(matches[0]) or match[0]
 
-    return _INLINE_TOKEN.sub(replace, text)
+    return INLINE_REFERENCE_TOKEN.sub(replace, text)

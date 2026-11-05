@@ -12,7 +12,9 @@ from pydantic import Field
 from eidos_runtime.db.database import Repository, WorkspaceIdentity, canonical_hash, now_ms
 from eidos_runtime.db.errors import OperationConflictError, StorageError, WorkspaceBoundaryError
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
-from eidos_runtime.workspace.projectless import MAX_NEW_NAME_BYTES, creation_date, readable_workspace_name
+from eidos_runtime.workspace.projectless import (
+    MAX_NEW_NAME_BYTES, creation_date, is_readable_workspace_name, readable_workspace_name,
+)
 
 
 class ProjectlessWorkspaceCreation(EidosFrozenStrictModel):
@@ -40,8 +42,12 @@ class ProjectlessWorkspaceCreation(EidosFrozenStrictModel):
 
 
 class ProjectlessWorkspaceRepository(Repository):
-    def prepare(self, operation_id: str, name: str, root: Path) -> ProjectlessWorkspaceCreation:
+    def prepare(
+        self, operation_id: str, name: str, root: Path, *, earlier_names: tuple[str, ...] = (),
+    ) -> ProjectlessWorkspaceCreation:
         request_hash = canonical_hash({"workspaceName": name})
+        # A replay keeps matching a reservation made under an earlier name rule.
+        accepted_hashes = {request_hash, *(canonical_hash({"workspaceName": value}) for value in earlier_names)}
         if self._workspace_overlaps_data(root):
             raise WorkspaceBoundaryError("workspace overlaps runtime data")
         with self.database.transaction() as connection:
@@ -50,7 +56,7 @@ class ProjectlessWorkspaceRepository(Repository):
                 (operation_id,),
             ).fetchone()
             if existing is not None:
-                if existing["request_hash"] != request_hash:
+                if existing["request_hash"] not in accepted_hashes:
                     raise OperationConflictError("operation id was reused")
                 if Path(existing["workspace_root"]).parent.parent != root:
                     raise WorkspaceBoundaryError("projectless workspace is outside its managed root")
@@ -150,7 +156,7 @@ def _creation(row: sqlite3.Row) -> ProjectlessWorkspaceCreation:
         if (
             not path.is_absolute() or ".." in path.parts
             or str(path) != creation.workspace_root or day.isoformat() != path.parent.name
-            or readable_workspace_name(creation.base_name) != creation.base_name or path.name != name
+            or not is_readable_workspace_name(creation.base_name) or path.name != name
         ):
             raise ValueError("invalid workspace creation path")
         return creation
