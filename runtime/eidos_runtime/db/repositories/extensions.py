@@ -289,6 +289,9 @@ class ExtensionRepository(Repository):
                 _now_ms(),
                 {"plugin": _plugin_from_row(row)},
             )
+            # A removed plugin leaves no Session grant behind.
+            from eidos_runtime.persistence.browser_grants import revoke_plugin_browser_grants
+            revoke_plugin_browser_grants(connection, plugin_id)
         result = self.plugin_record(plugin_id)
         assert result is not None
         return result

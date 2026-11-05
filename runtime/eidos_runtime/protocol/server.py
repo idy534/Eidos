@@ -43,6 +43,7 @@ from eidos_runtime.application.channels import ChannelApplication
 from eidos_runtime.domain.channels import ChannelError
 from eidos_runtime.application.shell_environment import ShellEnvironmentApplication
 from eidos_runtime.application.personalization import PersonalizationApplication
+from eidos_runtime.persistence.browser_grants import BrowserGrantRepository
 from eidos_runtime.persistence.personalization import PersonalizationRepository
 from eidos_runtime.protocol.personalization import PersonalizationReadRequest, PersonalizationSaveRequest, PersonalizationResponse
 from eidos_runtime.persistence.shell_environment import ShellEnvironmentRepository
@@ -2121,6 +2122,10 @@ class RuntimeServer:
                     deploy_system_skills(self.store.data_directory)
                     self.plugins = PluginCatalog(self.store)
                     self.plugins.connections.recover()
+                    try:
+                        BrowserGrantRepository(self.store.database).revoke_uninstalled_plugin_grants()
+                    except Exception:
+                        logger.exception("Browser grant repair is incomplete")
                     skill_management = SkillManagement(SkillCatalog(self.plugins))
                     skill_management.migrate_builtin_documents()
                     skill_management.cleanup()
