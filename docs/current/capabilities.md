@@ -153,6 +153,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - Runtime 会在预计输入达到当前 Run 冻结模型窗口的 85% 时尝试自动摘要压缩。系统已移除固定 64K 和新增 32 条历史的触发条件。系统按 Token 预算保留完整近期响应、用户消息和 Skill 正文。手动压缩、请求输出预留、内部投影超限和 Provider 超限保护继续生效。原始证据仍保存在 SQLite 和 Context Snapshot 中。
 - 在线历史与每批摘要候选使用不同的读取预算。在线历史受 8 MiB / 2,000 条资源保护，768 KiB / 200 条只限制摘要候选批次。系统按实际 JSON 大小优先保留近期事实，并让旧历史溢出进入既有恢复路径。分叉历史使用同一套预算。
 - Provider Usage 只有提供正的 input tokens 时才作为 active Context truth。Provider Usage 缺失或返回 0 时，Runtime 使用有界 estimated fallback。
+- ContextBuilder 尽量只追加请求尾部，以保持 Provider 前缀缓存可复用：子 Agent 证据位于历史之后；旧工具正文按 64 KiB 原始历史批次清理；历史工具图片等内容超出 16 MiB 预算时一次释放到预算一半，不在每次新增图片时替换一张旧图。
 - ContextBuilder 对 Workspace state 未变化时完全相同的部分只读 Tool Result 做去重。内部去重计数只由投影历史本身决定，不进入模型提示，也不随 Run 级 `workspaceVersion` 漂移。
 - `workspace-environment` 只包含 Run 内不变的 Workspace 路径和 platform。Run 级 `workspaceVersion` 不进入模型输入，因此 Workspace 写入不会只因版本计数变化而使后续历史失去缓存。
 - ContextCompactor 使用 deterministic bounded extraction 保存任务目标、约束、动作、证据、修改、失败尝试、决定、待处理 Approval、未解决问题和下一步。

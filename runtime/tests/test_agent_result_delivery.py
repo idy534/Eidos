@@ -70,6 +70,22 @@ def test_long_chinese_assignments_and_escaped_messages_cross_the_argument_bounda
         AgentMessageRequest(agent_id='parent', message='   ')
 
 
+def test_child_updates_rewrite_only_the_request_tail(collaboration):
+    store, parent, application = collaboration
+    child = spawn(store, parent, application)
+    before = ContextBuilder(store).build(parent['id']).model_context
+    finish_child(store, child, 'final answer')
+    after = ContextBuilder(store).build(parent['id']).model_context
+
+    position = next(index for index, item in enumerate(after) if item.get('sectionId') == 'agent-evidence')
+    # The user goal and history precede the changing child state, so a
+    # Provider prompt cache can keep reusing the unchanged prefix.
+    assert any(item.get('type') == 'user' and not item.get('sectionId') for item in after[:position])
+    assert before[position].get('sectionId') == 'agent-evidence'
+    assert before[:position] == after[:position]
+    assert before[position] != after[position]
+
+
 def test_parent_receives_the_long_final_answer_without_child_process_messages(collaboration):
     store, parent, application = collaboration
     child = spawn(store, parent, application)
