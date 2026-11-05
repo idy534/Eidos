@@ -11,6 +11,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .runtime/
+.claude/
 node_modules/
 .pnpm-store/
 data/postgres/

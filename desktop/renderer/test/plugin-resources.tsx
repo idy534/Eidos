@@ -25,12 +25,12 @@ const mcp: McpServerRecord = {
   toolTimeoutSeconds: 10, declaredEnabled: true, consented: false, available: false, updatedAt: 1,
 };
 const github: PluginRecord = { schemaVersion: 1, id: "eidos-github", name: "GitHub", version: "1.0.0",
-  description: "连接 GitHub，读取仓库、Issue 和 Pull Request，并在授权后执行操作。", contentHash: "c".repeat(64), enabled: true,
+  description: "连接 GitHub，读取仓库、Issue 和 Pull Request。", contentHash: "c".repeat(64), enabled: true,
   status: "installed", installedAt: 1, updatedAt: 1, presentation: { developerName: "Eidos" } };
 const remote: McpServerRecord = { ...mcp, pluginId: github.id, pluginHash: github.contentHash, serverId: "github", executable: "", argv: [],
   permissionProfile: "connector", remote: { url: "https://api.githubcopilot.com/mcp/", authType: "github-device" } };
 const browser: PluginRecord = { schemaVersion: 1, id: "eidos-browser", name: "浏览器", version: "1.0.0",
-  description: "让 Agent 在 Eidos 专用的 Chrome 中打开网页、读取页面、点击、输入和截图。", contentHash: "e".repeat(64), enabled: true,
+  description: "在 Chrome 中打开网页、读取页面、点击、输入和截图。", contentHash: "e".repeat(64), enabled: true,
   status: "installed", installedAt: 1, updatedAt: 1 };
 const browserServer: McpServerRecord = { ...mcp, pluginId: browser.id, pluginHash: browser.contentHash, serverId: "browser",
   executable: "node", argv: ["playwright-mcp"], permissionProfile: "browser", consented: true, available: true };
