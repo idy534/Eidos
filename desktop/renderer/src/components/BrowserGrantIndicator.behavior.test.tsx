@@ -31,28 +31,37 @@ describe("Browser grant indicator", () => {
     const onShowToast = vi.fn();
     api({ readBrowserAgentStatus: vi.fn().mockResolvedValue(status), revokeBrowserAgentGrant });
     render(<BrowserGrantIndicator sessionId="s1" onShowToast={onShowToast} />);
-    expect(await screen.findByRole("status")).toHaveTextContent("浏览器已授权");
+    await screen.findByRole("button", { name: "浏览器已授权" });
+    // Only the icon shows until it is clicked.
+    expect(screen.queryByRole("button", { name: "撤销本会话的浏览器授权" })).toBeNull();
 
     act(() => { for (const listener of listeners) listener({ method: "browser/grantChanged", params: { sessionId: "other", active: false } }); });
-    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "浏览器已授权" })).toBeInTheDocument();
     act(() => { for (const listener of listeners) listener({ method: "browser/grantChanged", params: { sessionId: "s1", active: false } }); });
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("button", { name: "浏览器已授权" })).toBeNull();
     act(() => { for (const listener of listeners) listener({ method: "browser/grantChanged", params: { sessionId: "s1", active: true } }); });
 
+    await userEvent.click(screen.getByRole("button", { name: "浏览器已授权" }));
+    expect(screen.getByRole("dialog", { name: "浏览器授权" })).toHaveTextContent("浏览器已授权");
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "浏览器授权" })).toBeNull();
+    expect(screen.getByRole("button", { name: "浏览器已授权" })).toHaveFocus();
+
+    await userEvent.click(screen.getByRole("button", { name: "浏览器已授权" }));
     await userEvent.click(screen.getByRole("button", { name: "撤销本会话的浏览器授权" }));
     expect(revokeBrowserAgentGrant).toHaveBeenCalledWith({ sessionId: "s1" });
-    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "浏览器已授权" })).toBeNull());
     expect(onShowToast).toHaveBeenCalledWith(expect.stringContaining("已撤销"), "success");
   });
 
   it("names the user's own Chrome when the extension is in effect, and the Eidos browser after fallback", async () => {
     api({ readBrowserAgentStatus: vi.fn().mockResolvedValue({ ...status, target: "chrome_extension", effectiveTarget: "chrome_extension" }) });
     const { unmount } = render(<BrowserGrantIndicator sessionId="s1" onShowToast={vi.fn()} />);
-    expect(await screen.findByRole("status")).toHaveTextContent("我的 Chrome 已授权");
+    expect(await screen.findByRole("button", { name: "Chrome 已授权" })).toBeInTheDocument();
     unmount();
     api({ readBrowserAgentStatus: vi.fn().mockResolvedValue({ ...status, target: "chrome_extension", effectiveTarget: "eidos" }) });
     render(<BrowserGrantIndicator sessionId="s1" onShowToast={vi.fn()} />);
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/^浏览器已授权/));
+    expect(await screen.findByRole("button", { name: "浏览器已授权" })).toBeInTheDocument();
   });
 
   it("stays hidden without a grant", async () => {
@@ -60,6 +69,15 @@ describe("Browser grant indicator", () => {
     api({ readBrowserAgentStatus });
     render(<BrowserGrantIndicator sessionId="s1" onShowToast={vi.fn()} />);
     await waitFor(() => expect(readBrowserAgentStatus).toHaveBeenCalledWith({ sessionId: "s1" }));
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("button", { name: /已授权/ })).toBeNull();
+  });
+
+  it("closes the popover on an outside click", async () => {
+    api({ readBrowserAgentStatus: vi.fn().mockResolvedValue(status) });
+    render(<><BrowserGrantIndicator sessionId="s1" onShowToast={vi.fn()} /><p>outside</p></>);
+    await userEvent.click(await screen.findByRole("button", { name: "浏览器已授权" }));
+    expect(screen.getByRole("dialog", { name: "浏览器授权" })).toBeInTheDocument();
+    await userEvent.click(screen.getByText("outside"));
+    expect(screen.queryByRole("dialog", { name: "浏览器授权" })).toBeNull();
   });
 });

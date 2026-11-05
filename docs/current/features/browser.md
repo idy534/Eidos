@@ -46,7 +46,7 @@ Model → ToolCallRuntime → ExternalToolHandler（浏览器授权）
 | 页面操作 | navigate、back、click、type、fill_form、select、press_key、hover、drag、drop、tabs、dialog、resize、close | Session 浏览器授权 |
 | 本地文件 | `browser_file_upload`（带 `paths`） | 每次审批；只允许 Workspace 内的普通文件 |
 
-- Session 中第一次页面操作会生成 `browser_access` 审批（`grantScope: session`）。批准后，Runtime 写入 `session_browser_grants`，该 Session 后续的 Run 不再询问。`auto_review` 对每个 Session 只审查这一次。用户可以在 Session 顶部的“浏览器已授权”处撤销授权。
+- Session 中第一次页面操作会生成 `browser_access` 审批（`grantScope: session`）。批准后，Runtime 写入 `session_browser_grants`，该 Session 后续的 Run 不再询问。`auto_review` 对每个 Session 只审查这一次。授权期间 Session 标题栏右侧显示一个 Chrome 图标；点击后在气泡中显示授权状态和“撤销”按钮，点外部或按 Escape 关闭。
 - 授权绑定插件内容 Hash。插件内容变化、清除浏览器数据或撤销后，下一次页面操作会重新询问。Fork 不继承授权。子任务在父 Run 活跃时使用父 Session 的授权。
 - `browser_file_upload` 不带 `paths` 时只取消文件选择框，只需要 Session 授权。
 - `full_access` 不创建授权，直接执行。
@@ -63,7 +63,7 @@ Model → ToolCallRuntime → ExternalToolHandler（浏览器授权）
 | `user_chrome` | 通过远程调试使用用户的 Chrome（见下一节） |
 
 - 目标在 Run 的浏览器连接启动时决定一次，Run 中途不切换。`chrome_extension` 在以下情况使用 Eidos 浏览器：没有保存令牌、令牌文件不可读，或在 Chrome 配置中确定没有安装扩展。Chrome 配置不可读（`unknown`）时仍尝试扩展，由连接结果决定。已决定使用扩展但连接失败时返回 `browser_extension_not_connected`，不改用 Eidos 浏览器。
-- `browser/status` 返回 `target`、实际生效的 `effectiveTarget`、`extensionConfigured` 和 `extensionPresence`（`installed`、`missing`、`unknown`），从不返回令牌。Session 顶部的授权提示按 `effectiveTarget` 显示“我的 Chrome 已授权”或“浏览器已授权”。
+- `browser/status` 返回 `target`、实际生效的 `effectiveTarget`、`extensionConfigured` 和 `extensionPresence`（`installed`、`missing`、`unknown`），从不返回令牌。Session 标题栏的授权气泡（以及图标的无障碍名称）按 `effectiveTarget` 显示“Chrome 已授权”或“浏览器已授权”。
 - 切换目标、保存或清除令牌，都会撤销所有 Session 对用户 Chrome（`user` profile）的授权。
 
 ## 通过 Playwright Extension 使用用户的 Chrome
@@ -73,7 +73,8 @@ Model → ToolCallRuntime → ExternalToolHandler（浏览器授权）
 设置界面在 设置 → 插件 → 浏览器 的插件详情顶部“浏览器”一节（`BrowserSettingsSection.tsx`），由几行设置组成：
 
 - “Agent 使用的浏览器”是一个下拉框，说明文字写明新任务实际使用的浏览器（例如标签组模式在令牌保存前使用 Eidos 浏览器）。读取失败时提供“重试”。只有未找到 Google Chrome 或资源包未就绪时，才额外显示对应的一行。
-- 选项为“我的 Chrome（标签组）”（默认）、“Eidos 浏览器”和“我的 Chrome（远程调试）”。选择远程调试会先弹出模态高危确认（“使用远程调试”），取消后保持原选项。
+- 选项为“Chrome（标签组）”（默认）、“Eidos 浏览器”和“Chrome（远程调试）”。选择远程调试会先弹出模态高危确认（“使用远程调试”），取消后保持原选项。
+- 浏览器插件在插件列表、插件市场和插件详情中显示 Chrome 图标（`ChromeIcon.tsx`），不使用插件包里的图标，因此不改变插件内容 Hash。
 - 选择标签组模式后多两行：“Playwright Extension”在检测到扩展时显示“已安装”，否则提供“Chrome 应用商店”按钮（Main 用系统浏览器打开固定地址，Renderer 不能传入地址）。macOS 通常不允许 Eidos 读取 Chrome 的配置目录，检测结果为“无法读取”时界面不显示检测结论，只提供商店按钮。“连接令牌”行粘贴令牌（密码框，可切换显示），保存前弹出模态高危确认，说明标签组不隔离账号、Agent 能读取 Cookie、下载不会被拦截。保存后显示“已保存”和“更换”“移除”。
 - 确认框通过 portal 渲染在插件详情之上，插件详情在确认框打开期间不处理 Escape 和 Tab。保存、移除、切换的结果和令牌格式错误都通过全局悬浮通知提示，不在布局中插入提示。
 - IPC：`setBrowserAgentExtensionToken`、`clearBrowserAgentExtensionToken`、`openBrowserExtensionStore`。令牌只经过 Main 的请求校验后转给 Runtime，不保存在 Renderer 或 Main。
@@ -99,10 +100,10 @@ Runtime ──启动──▶ Playwright MCP（--extension 模式，Seatbelt：m
 
 ## 使用用户自己的 Chrome（远程调试）
 
-用户在“浏览器”一节选择“我的 Chrome（远程调试）”并确认后，目标切换为 `user_chrome`。用户需要先在 Chrome 中打开 `chrome://inspect/#remote-debugging` 开启远程调试。Runtime 读取 Chrome 写入的 `~/Library/Application Support/Google/Chrome/DevToolsActivePort`，确认端口可用后，把浏览器 WebSocket 地址交给同一个 Playwright MCP。Chrome 会对每次连接弹窗请用户确认。
+用户在“浏览器”一节选择“Chrome（远程调试）”并确认后，目标切换为 `user_chrome`。用户需要先在 Chrome 中打开 `chrome://inspect/#remote-debugging` 开启远程调试。Runtime 读取 Chrome 写入的 `~/Library/Application Support/Google/Chrome/DevToolsActivePort`，确认端口可用后，把浏览器 WebSocket 地址交给同一个 Playwright MCP。Chrome 会对每次连接弹窗请用户确认。
 
 - Eidos 不启动、不配置用户的 Chrome，也不为其设置下载规则。
-- 在 `manual` 和 `auto_review` 下，每个 Session 第一次操作时，都需要高危人工确认（`requiresHumanConfirmation`）。`auto_review` 不能代替这次确认。授权使用独立的 `user` profile，Eidos 浏览器的授权不覆盖用户的 Chrome。`full_access` 沿用现有例外，不逐次确认；选择“使用我的 Chrome”本身仍需要用户在 Desktop 中确认。
+- 在 `manual` 和 `auto_review` 下，每个 Session 第一次操作时，都需要高危人工确认（`requiresHumanConfirmation`）。`auto_review` 不能代替这次确认。授权使用独立的 `user` profile，Eidos 浏览器的授权不覆盖用户的 Chrome。`full_access` 沿用现有例外，不逐次确认；选择“使用 Chrome”本身仍需要用户在 Desktop 中确认。
 - 改用其他目标时，所有 Session 对用户 Chrome 的授权都会撤销。
 - 远程调试未开启或端口失效时，该 Run 不提供浏览器工具；已启动的调用返回 `browser_attach_unavailable`。
 

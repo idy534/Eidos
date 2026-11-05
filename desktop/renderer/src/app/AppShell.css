@@ -323,17 +323,38 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.browser-grant-indicator {
-  display: inline-flex;
+.browser-grant-indicator { position: relative; display: inline-flex; flex: none; }
+.browser-grant-trigger {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.browser-grant-trigger:hover,
+.browser-grant-trigger[aria-expanded="true"] { background: var(--surface-hover); }
+.browser-grant-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.browser-grant-icon { width: 16px; height: 16px; }
+.browser-grant-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  display: flex;
   align-items: center;
-  gap: 0.35rem;
-  min-width: 0;
-  padding: 0.1rem 0.15rem 0.1rem 0.55rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--muted);
+  gap: 0.75rem;
+  padding: 0.4rem 0.4rem 0.4rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  box-shadow: var(--apple-shadow-md, 0 6px 20px rgba(0, 0, 0, 0.12));
+  color: var(--text);
   font-size: 0.8125rem;
   white-space: nowrap;
 }
-.browser-grant-icon { width: 14px; height: 14px; flex: none; }
-.browser-grant-label { overflow: hidden; text-overflow: ellipsis; }
+.browser-grant-revoke.btn--ghost { color: var(--danger); }

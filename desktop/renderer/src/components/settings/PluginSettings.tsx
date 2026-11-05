@@ -11,6 +11,8 @@ import { ConfirmDialog } from "../ConfirmDialog.js";
 import { EmptyState } from "../EmptyState.js";
 import { StatusBadge } from "../StatusBadge.js";
 import { PluginDetailDialog } from "./PluginDetailDialog.js";
+import { BROWSER_PLUGIN_ID } from "./BrowserSettingsSection.js";
+import { chromeIconSrc } from "../ChromeIcon.js";
 import { HookSourceSettings } from "./HookSourceSettings.js";
 import { compatibilityIssue } from "./plugin-compatibility.js";
 import { PluginMarketplaceDialog } from "./PluginMarketplaceDialog.js";
@@ -228,7 +230,7 @@ export function PluginSettings({
               pendingAction.pluginId === plugin.id;
             const isRowPending = isToggling || isRemoving;
             const isGitHub = plugin.id === "eidos-github" || plugin.name.toLowerCase() === "github";
-            const iconSrc = plugin.presentation?.icon || (isGitHub ? githubIcon : undefined);
+            const iconSrc = plugin.id === BROWSER_PLUGIN_ID ? chromeIconSrc : plugin.presentation?.icon || (isGitHub ? githubIcon : undefined);
 
             return (
               <SettingRow

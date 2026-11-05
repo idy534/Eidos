@@ -14,9 +14,9 @@ type BrowserTarget = BrowserTargetRequest["target"];
 type Toast = (message: string, type: "success" | "info" | "error") => void;
 
 const TARGETS: Array<{ value: BrowserTarget; label: string }> = [
-  { value: "chrome_extension", label: "我的 Chrome（标签组）" },
+  { value: "chrome_extension", label: "Chrome（标签组）" },
   { value: "eidos", label: "Eidos 浏览器" },
-  { value: "user_chrome", label: "我的 Chrome（远程调试）" },
+  { value: "user_chrome", label: "Chrome（远程调试）" },
 ];
 const TARGET_TOASTS: Record<BrowserTarget, string> = {
   chrome_extension: "已切换到你的 Chrome（标签组）",

@@ -16,6 +16,7 @@ import { McpConnectionPanel } from "./McpConnectionPanel.js";
 import { HookHistoryDialog } from "./HookHistoryDialog.js";
 import { mcpCommandLabel } from "./mcpCommand.js";
 import { BROWSER_PLUGIN_ID, BrowserSettingsSection } from "./BrowserSettingsSection.js";
+import { chromeIconSrc } from "../ChromeIcon.js";
 
 interface PluginDetailDialogProps {
   plugin: PluginRecord | undefined;
@@ -69,7 +70,7 @@ export function PluginDetailDialog({
   const nested = Boolean(selectedSkill || selectedServer || reviewing || obscured || hookHistory || sectionDialog);
   const busy = saving || Boolean(pendingAction);
   const isGitHub = plugin?.id === "eidos-github" || plugin?.name.toLowerCase() === "github";
-  const iconSrc = plugin?.presentation?.icon || (isGitHub ? githubIcon : undefined);
+  const iconSrc = plugin?.id === BROWSER_PLUGIN_ID ? chromeIconSrc : plugin?.presentation?.icon || (isGitHub ? githubIcon : undefined);
   useDialogFocusLifecycle({ open: Boolean(plugin), initialFocusRef: closeRef, getFallbackFocus });
 
   useEffect(() => {

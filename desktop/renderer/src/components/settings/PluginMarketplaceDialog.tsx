@@ -4,6 +4,8 @@ import { Button } from "../Button.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 import { CloseIcon, FinderIcon } from "../MenuIcons.js";
 import { PluginsSettingsIcon, githubIcon } from "./SettingsIcons.js";
+import { chromeIconSrc } from "../ChromeIcon.js";
+import { BROWSER_PLUGIN_ID } from "./BrowserSettingsSection.js";
 import "./PluginMarketplaceDialog.css";
 
 export interface PluginMarketplaceDialogProps {
@@ -178,12 +180,13 @@ export function PluginMarketplaceDialog({
               {filteredPlugins.map((plugin) => {
                 const isBusy = busyId === plugin.id;
                 const isGitHub = plugin.id === "eidos-github" || plugin.name.toLowerCase().includes("github");
+                const iconSrc = plugin.id === BROWSER_PLUGIN_ID ? chromeIconSrc : isGitHub ? githubIcon : undefined;
                 return (
                   <div key={plugin.id} className="plugin-marketplace-card">
                     <div className="plugin-marketplace-card-main">
                       <div className="plugin-marketplace-card-icon-wrap">
-                        {isGitHub ? (
-                          <img className="plugin-marketplace-card-icon" src={githubIcon} alt={plugin.name} />
+                        {iconSrc ? (
+                          <img className="plugin-marketplace-card-icon" src={iconSrc} alt={plugin.name} />
                         ) : (
                           <span className="plugin-marketplace-card-avatar">
                             {Array.from(plugin.name.trim())[0]?.toLocaleUpperCase() ?? "P"}
