@@ -91,7 +91,7 @@ pnpm build
 
 ### GitHub、远程插件与定时任务
 
-设置 → Plugins → 内置插件 → GitHub → 安装，会通过普通受管包入口安装 GitHub。用户再打开 GitHub 的资源详情连接账号。PAT 只在密码输入框中填写，不能写入包或提交到仓库。应用不需要用户安装 Docker、Node、GitHub CLI 或本地 GitHub MCP 二进制。
+设置 → 插件 → 插件市场 → GitHub → 安装，会通过普通受管包入口安装 GitHub。用户再打开 GitHub 的资源详情连接账号。PAT 只在密码输入框中填写，不能写入包或提交到仓库。应用不需要用户安装 Docker、Node、GitHub CLI 或本地 GitHub MCP 二进制。
 
 浏览器 Device Flow 需要发行方先注册自己的 GitHub OAuth App / GitHub App，并在 GitHub 启用 Device Flow。公开 Client ID 可以放入 `runtime/eidos_runtime/resources/plugins/github/mcp.json` 的 `extensions.com.eidos.auth.clientId`，并按包内容变化更新插件版本。开发环境也可以使用 `EIDOS_GITHUB_CLIENT_ID=<public-client-id> pnpm start`。Client Secret 不参与 Device Flow，也不能打进包。仓库当前没有填入真实 Client ID；未配置时，界面提供 PAT 连接和 GitHub 令牌设置入口，不显示可用的浏览器登录按钮。
 
@@ -260,7 +260,7 @@ Hook 的当前范围见 `docs/current/features/hooks.md`。开发者修改 Hook 
 
 `pnpm exec electron scripts/test-plugin-hooks.cjs` 使用临时 user-data 和本地生产组件，验证四种窗口宽度、焦点、取消和信任后启用顺序。它不读取真实会话，也不运行插件命令。`EIDOS_HOOK_SCREENSHOT_DIR` 可以指定截图输出目录。
 
-`pnpm exec electron scripts/test-plugin-resources.cjs` 使用隔离 user-data 和插件资源 fixture，验证 320、768、1024、1440px 下的资源详情布局、独立列表数量、技能开关、嵌套详情、Hook 审阅和焦点返回。`EIDOS_PLUGIN_SCREENSHOT_DIR` 可以保存截图。该检查不读取真实插件或凭据，也不启动 MCP、Hook 或模型。Renderer 定向行为入口是 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/PluginSettings.behavior.test.tsx desktop/renderer/src/components/settings/SkillSettings.behavior.test.tsx desktop/renderer/src/components/SettingsPage.behavior.test.tsx`。
+`pnpm exec electron scripts/test-plugin-resources.cjs` 使用隔离 user-data 和插件资源 fixture，验证 320、768、1024、1440px 下的资源详情布局、浏览器插件详情中的“浏览器”一节（浏览器下拉框、令牌模态确认与确认框内 Escape、启用与移除）、插件市场安装、独立列表数量、技能开关、嵌套详情、Hook 审阅和焦点返回。`EIDOS_PLUGIN_SCREENSHOT_DIR` 可以保存截图。该检查不读取真实插件或凭据，也不启动 MCP、Hook 或模型。Renderer 定向行为入口是 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/PluginSettings.behavior.test.tsx desktop/renderer/src/components/settings/BrowserSettingsSection.behavior.test.tsx desktop/renderer/src/components/settings/SkillSettings.behavior.test.tsx desktop/renderer/src/components/SettingsPage.behavior.test.tsx`。
 
 ### 自定义模型提供商
 

@@ -4,11 +4,11 @@
 
 ## 入口与准备
 
-浏览器能力由内置插件 `eidos-browser`（`runtime/eidos_runtime/resources/plugins/browser/`）提供。用户在 Settings → Plugins 的内置插件中安装并启用插件，再在插件资源中授权其 MCP 服务。插件行显示 Google Chrome 检测结果、资源包状态，以及浏览器是否正在运行。
+浏览器能力由内置插件 `eidos-browser`（`runtime/eidos_runtime/resources/plugins/browser/`）提供。用户在 设置 → 插件 → 插件市场 中安装浏览器插件，启用后在插件详情中授权其 MCP 服务。插件详情（`PluginDetailDialog.tsx`）顶部的“浏览器”一节（`BrowserSettingsSection.tsx`）用于选择 Agent 使用的浏览器，并在未找到 Google Chrome 或资源包未就绪时提示。
 
-- 浏览器工具由固定版本的 `@playwright/mcp@0.0.84` 执行。它和依赖位于 `browser` 资源包，并依赖已有的托管 Node（`node` 资源包）。安装或启用插件时，以及 Runtime 启动时插件已启用的情况下，资源包都在后台准备。Run 启动不会下载资源；未就绪时，该 Run 不提供浏览器工具；插件行显示资源状态，下载失败或缺失时提供“重试下载”或“下载资源”按钮。插件资源中的工具列表与 Run 使用同一套启动参数，资源未就绪时显示具体原因（如 `browser_runtime_not_ready`），不会显示笼统的 `mcp_protocol_error`。启动命令显示为“Eidos 托管 Node · Playwright MCP”，不显示内部占位变量。
+- 浏览器工具由固定版本的 `@playwright/mcp@0.0.84` 执行。它和依赖位于 `browser` 资源包，并依赖已有的托管 Node（`node` 资源包）。安装或启用插件时，以及 Runtime 启动时插件已启用的情况下，资源包都在后台准备。Run 启动不会下载资源；未就绪时，该 Run 不提供浏览器工具；“浏览器”一节在资源未就绪时显示状态，下载失败或缺失时提供“重试”或“下载”按钮。插件资源中的工具列表与 Run 使用同一套启动参数，资源未就绪时显示具体原因（如 `browser_runtime_not_ready`），不会显示笼统的 `mcp_protocol_error`。启动命令显示为“Eidos 托管 Node · Playwright MCP”，不显示内部占位变量。
 - Eidos 不随包提供浏览器，需要用户已安装 Google Chrome（`/Applications` 或 `~/Applications`）。未安装时，浏览器工具在审批前返回 `browser_unavailable`，Run 不会终止。Eidos 不下载 Chrome for Testing，也不改用其他浏览器。
-- 插件行提供“打开浏览器登录”（只启动 Chrome，不连接 Agent）、“关闭浏览器”和“清除浏览器数据”（需要确认），并在行内选择 Agent 使用的浏览器（见[目标浏览器](#目标浏览器)）。
+- “浏览器”一节用于选择 Agent 使用的浏览器（见[目标浏览器](#目标浏览器)）。设置页不再提供单独打开、关闭或清除 Eidos 浏览器的按钮；用户可以在 Agent 打开的 Eidos 浏览器窗口中登录网站。Main 与 Runtime 中对应的 IPC 和 RPC 仍保留，当前没有界面调用。
 
 ## 调用链
 
@@ -70,11 +70,12 @@ Model → ToolCallRuntime → ExternalToolHandler（浏览器授权）
 
 用户需要在 Chrome 中安装应用商店的官方 “Playwright Extension”（ID `mmlmfjhmonkocbjadbfplnigmagldckm`），把扩展状态页上的令牌交给 Eidos（`browser/setExtensionToken`）。输入框接受单独的令牌，也接受扩展复制按钮复制的整行 `PLAYWRIGHT_MCP_EXTENSION_TOKEN=<令牌>`。令牌保存在 `<数据目录>/browser-secrets/<uuid>`（目录 `0700`、文件 `0600`），SQLite 只保存引用（`browser_settings.extension_credential`）；令牌不进入 SQLite、Event、日志和协议响应。`browser/clearExtensionToken` 删除令牌。
 
-设置界面在 Settings → 插件 → 内置插件的浏览器行（`BrowserTargetPanel.tsx`）：
+设置界面在 设置 → 插件 → 浏览器 的插件详情顶部“浏览器”一节（`BrowserSettingsSection.tsx`），由几行设置组成：
 
-- 插件行的状态显示新任务实际使用的浏览器，以及 Chrome 版本和资源状态。“打开浏览器登录”“关闭浏览器”“清除浏览器数据”只在实际使用 Eidos 浏览器时显示。
-- “Agent 使用的浏览器”有三个选项：“我的 Chrome（标签组）”（标为推荐）、“Eidos 浏览器”和“我的 Chrome（远程调试）”。选择远程调试需要先在高危确认框中点“使用我的 Chrome”；再次点选该选项不算确认。
-- 选择标签组模式后显示两步设置：第一步显示扩展检测结果，未检测到时提供“打开 Chrome 应用商店”（Main 用系统浏览器打开固定地址，Renderer 不能传入地址）；第二步粘贴令牌（密码框，可切换显示），保存前弹出高危确认，说明标签组不隔离账号、Agent 能读取 Cookie、下载不会被拦截。保存后显示“令牌已保存”和“更换”“移除”。底部说明当前是已启用，还是设置完成前暂用 Eidos 浏览器。
+- “Agent 使用的浏览器”是一个下拉框，说明文字写明新任务实际使用的浏览器（例如标签组模式在令牌保存前使用 Eidos 浏览器）。读取失败时提供“重试”。只有未找到 Google Chrome 或资源包未就绪时，才额外显示对应的一行。
+- 选项为“我的 Chrome（标签组）”（默认）、“Eidos 浏览器”和“我的 Chrome（远程调试）”。选择远程调试会先弹出模态高危确认（“使用远程调试”），取消后保持原选项。
+- 选择标签组模式后多两行：“Playwright Extension”在检测到扩展时显示“已安装”，否则提供“Chrome 应用商店”按钮（Main 用系统浏览器打开固定地址，Renderer 不能传入地址）。macOS 通常不允许 Eidos 读取 Chrome 的配置目录，检测结果为“无法读取”时界面不显示检测结论，只提供商店按钮。“连接令牌”行粘贴令牌（密码框，可切换显示），保存前弹出模态高危确认，说明标签组不隔离账号、Agent 能读取 Cookie、下载不会被拦截。保存后显示“已保存”和“更换”“移除”。
+- 确认框通过 portal 渲染在插件详情之上，插件详情在确认框打开期间不处理 Escape 和 Tab。保存、移除、切换的结果和令牌格式错误都通过全局悬浮通知提示，不在布局中插入提示。
 - IPC：`setBrowserAgentExtensionToken`、`clearBrowserAgentExtensionToken`、`openBrowserExtensionStore`。令牌只经过 Main 的请求校验后转给 Runtime，不保存在 Renderer 或 Main。
 
 ```text
@@ -98,7 +99,7 @@ Runtime ──启动──▶ Playwright MCP（--extension 模式，Seatbelt：m
 
 ## 使用用户自己的 Chrome（远程调试）
 
-用户在插件行选择“使用我的 Chrome”并确认后，目标切换为 `user_chrome`。用户需要先在 Chrome 中打开 `chrome://inspect/#remote-debugging` 开启远程调试。Runtime 读取 Chrome 写入的 `~/Library/Application Support/Google/Chrome/DevToolsActivePort`，确认端口可用后，把浏览器 WebSocket 地址交给同一个 Playwright MCP。Chrome 会对每次连接弹窗请用户确认。
+用户在“浏览器”一节选择“我的 Chrome（远程调试）”并确认后，目标切换为 `user_chrome`。用户需要先在 Chrome 中打开 `chrome://inspect/#remote-debugging` 开启远程调试。Runtime 读取 Chrome 写入的 `~/Library/Application Support/Google/Chrome/DevToolsActivePort`，确认端口可用后，把浏览器 WebSocket 地址交给同一个 Playwright MCP。Chrome 会对每次连接弹窗请用户确认。
 
 - Eidos 不启动、不配置用户的 Chrome，也不为其设置下载规则。
 - 在 `manual` 和 `auto_review` 下，每个 Session 第一次操作时，都需要高危人工确认（`requiresHumanConfirmation`）。`auto_review` 不能代替这次确认。授权使用独立的 `user` profile，Eidos 浏览器的授权不覆盖用户的 Chrome。`full_access` 沿用现有例外，不逐次确认；选择“使用我的 Chrome”本身仍需要用户在 Desktop 中确认。
@@ -147,5 +148,5 @@ Runtime ──启动──▶ Playwright MCP（--extension 模式，Seatbelt：m
 - 定向 Runtime 测试：`test_browser_runtime`、`test_browser_sandbox`（真实 Seatbelt）、`test_browser_mcp`、`test_browser_host`（含真实 headless Chrome 启动与接管）、`test_browser_grants`、`test_browser_tools`、`test_browser_context`、`test_user_chrome`，以及受影响的 MCP、存储 Schema、备份和迁移测试。
 - 端到端测试 `test_browser_e2e`（需要设置 `EIDOS_BROWSER_E2E_NODE` 和 `EIDOS_BROWSER_E2E_ENTRY`）：使用真实 Playwright MCP、`browser` Seatbelt 和 BrowserHost 启动的 Chrome，覆盖导航、快照、截图进入模型上下文、跨 Run 复用 Tab，以及下载被拒绝。
 - Main：`runtime-client-browser.test.ts`（审批投影、伪造审批的拒绝、通知、真实 Runtime 往返）和 `runtime-client.test.ts`。
-- Renderer：审批卡片、Session 授权指示、插件行、Feed 动作行，以及受影响的 AppShell、欢迎页和插件设置测试。
+- Renderer：审批卡片、Session 授权指示、插件详情的“浏览器”一节、Feed 动作行，以及受影响的 AppShell、欢迎页和插件设置测试。
 - 未运行 Full Suite、Electron smoke 和打包验证。
