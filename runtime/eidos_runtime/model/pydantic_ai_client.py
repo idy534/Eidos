@@ -95,6 +95,7 @@ from eidos_runtime.runtime.resource_registry import (
 )
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.fault_injection import hit_fault
+from eidos_runtime.runtime.protocol_diagnostics import undeclared_tool_feedback
 from eidos_runtime.telemetry.provider import tracing_enabled
 from eidos_runtime.model.tool_content import encode_tool_content
 
@@ -703,6 +704,11 @@ def encode_context(
                         "Your previous response reached the output token limit "
                         "and was incomplete. Return a shorter, complete response. "
                         "No tool calls from that response were executed."
+                    ))
+                    continue
+                if code == "invalid_tool_call" and item.get("toolDeclared") is False:
+                    user_turn(render_reminder(
+                        undeclared_tool_feedback(item.get("toolName"))
                     ))
                     continue
                 details: dict[str, object] = {}

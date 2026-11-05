@@ -66,7 +66,7 @@ from eidos_runtime.runtime.lifecycle import (
     LoopLifecycleEvent,
     LoopStage,
 )
-from eidos_runtime.runtime.protocol_diagnostics import ProtocolDiagnostic
+from eidos_runtime.runtime.protocol_diagnostics import ProtocolDiagnostic, undeclared_tool_feedback
 from eidos_runtime.runtime.run_resources import RunResourceError, RunResources
 from eidos_runtime.runtime.shell_process_manager import ShellSessionFinalizationError
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
@@ -572,6 +572,10 @@ class RuntimeEngine:
                     repository_context=None if projectless else repository_context,
                     projectless=projectless,
                     recovery_level=self.context_recovery_level,
+                    callable_tool_names=frozenset((
+                        *snapshot.available_names, *snapshot.deferred_names,
+                        *(tool.name for tool in tool_definitions),
+                    )),
                 )
 
             built = build_current_context()
@@ -774,7 +778,7 @@ class RuntimeEngine:
             self._resume_effective_time()
 
             context_recovered = False
-            capacity_retry = False
+            keep_runtime_feedback = False
             while True:
                 try:
                     self._pause_at(run.run_id, SafePoint.BEFORE_MODEL, cancel)
@@ -836,7 +840,7 @@ class RuntimeEngine:
                 except SamplingError as error:
                     if isinstance(error, SamplingCapacityExceeded):
                         self.store.complete_current_step(run.run_id, "failed", reason="request_capacity")
-                        capacity_retry = True
+                        keep_runtime_feedback = True
                         run = run.model_copy(update={"model_context": ({
                             "type": "context", "sectionId": "runtime-feedback", "content": (
                                 "The previous response exceeded a request resource budget. No tool from that "
@@ -955,12 +959,21 @@ class RuntimeEngine:
                     self.store.complete_current_step(
                         run.run_id, "failed", reason=reason
                     )
+                    diagnostic = validation.protocol_diagnostic
                     run = run.model_copy(update={"model_context": ({
                         "type": "context", "sectionId": "runtime-feedback", "content": (
+                            undeclared_tool_feedback(diagnostic.tool_name)
+                            if reason == "invalid_tool_call"
+                            and diagnostic is not None
+                            and diagnostic.tool_declared is False
+                            else
                             "The last tool call was rejected (" + reason + "). No tool in that response was executed. "
                             "Correct the arguments, split the request, or choose another available tool."
                         ),
                     },)})
+                    # The next step must see why this one was rejected; without
+                    # it the model receives the same context and repeats itself.
+                    keep_runtime_feedback = True
                     context_recovered = True
                     break
 
@@ -1029,7 +1042,7 @@ class RuntimeEngine:
                 break
 
             if context_recovered:
-                if not capacity_retry:
+                if not keep_runtime_feedback:
                     run = run.model_copy(update={"model_context": ()})
                 continue
 
@@ -1555,6 +1568,7 @@ def _protocol_repair_step(
             ("toolCallCount", diagnostic.tool_call_count),
             ("validationPath", diagnostic.validation_path),
             ("validationCode", diagnostic.validation_code),
+            ("toolDeclared", diagnostic.tool_declared),
         ):
             if value is not None:
                 repair_context[key] = value

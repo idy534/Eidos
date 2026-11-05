@@ -136,6 +136,27 @@ def serialize_protocol_diagnostic(diagnostic: ProtocolDiagnostic) -> str:
     )
 
 
+def undeclared_tool_feedback(tool_name: object) -> str:
+    """Model-facing text for a call to a tool this request did not advertise.
+
+    History can show tools from earlier Runs whose plugin has since been
+    removed, disabled or not granted. Saying only "invalid arguments" makes the
+    model repeat the call, so the text names the missing tool and the way out.
+    """
+    name = (
+        json.dumps(tool_name[:128], ensure_ascii=False)
+        if isinstance(tool_name, str) and tool_name else "that tool"
+    )
+    return (
+        f"The tool {name} is not available in this Run, so no tool from that "
+        "response was executed. If earlier turns show it, its plugin or server "
+        "has since been removed, disabled or not connected. Call only "
+        "the tools advertised in this request. If none of them can do what the "
+        "user asked, tell the user which capability is unavailable and that it "
+        "must be installed or enabled first, instead of calling the tool again."
+    )
+
+
 def _json_type(value: object) -> ArgumentType:
     if value is None:
         return "null"
@@ -166,4 +187,5 @@ __all__ = [
     "argument_summary",
     "response_text_metrics",
     "serialize_protocol_diagnostic",
+    "undeclared_tool_feedback",
 ]

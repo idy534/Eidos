@@ -342,6 +342,23 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertIn("No tool calls", feedback)
         self.assertNotIn("invalid", feedback)
 
+    def test_undeclared_tool_repair_says_the_tool_is_unavailable(self) -> None:
+        messages = encode_context(({
+            "type": "protocol_error", "code": "invalid_tool_call",
+            "toolName": "mcp__browser__browser_navigate", "toolDeclared": False,
+        },))
+        feedback = messages[0].parts[0].content
+        self.assertIn('"mcp__browser__browser_navigate" is not available in this Run', feedback)
+        self.assertIn("installed or enabled", feedback)
+        self.assertNotIn("do not repeat the same invalid arguments", feedback)
+
+        declared = encode_context(({
+            "type": "protocol_error", "code": "invalid_tool_call",
+            "toolName": "read_file", "toolDeclared": True,
+        },))[0].parts[0].content
+        self.assertIn("Correct the reported field", declared)
+        self.assertNotIn("is not available", declared)
+
     def test_encode_context_only_encodes_messages_without_instructions(self) -> None:
         messages = encode_context((
             {"type": "user", "content": "你好"},

@@ -55,6 +55,7 @@ from eidos_runtime.model.retry_transport import (
 from eidos_runtime.model.reasoning_summary import emit_reasoning_summary
 from eidos_runtime.model.request_scope import run_model_request
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
+from eidos_runtime.runtime.protocol_diagnostics import undeclared_tool_feedback
 
 
 def encode_responses_tool_definition(
@@ -743,6 +744,8 @@ async def _close_stream(stream: object) -> None:
 def _context_feedback(item_type: object, item: ModelContextItem) -> str:
     if item_type == "protocol_error":
         code = item.get("code")
+        if code == "invalid_tool_call" and item.get("toolDeclared") is False:
+            return undeclared_tool_feedback(item.get("toolName"))
         return f"Your previous response was invalid ({code}). Correct the tool call."
     if item_type == "tool_error":
         code = item.get("code")
