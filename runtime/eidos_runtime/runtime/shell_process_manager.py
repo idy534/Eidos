@@ -35,6 +35,13 @@ from eidos_runtime.runtime.shell_output_buffer import ShellOutputBuffer
 from eidos_runtime.runtime.shell_process_transport import ShellProcessTransport, spawn_shell_process
 
 
+# How often a session whose command exited checks its remaining background
+# processes when they hold no output pipe.
+BACKGROUND_POLL_SECONDS = 0.1
+# A wait that can be canceled checks the cancel event this often.
+CANCEL_POLL_SECONDS = 0.1
+
+
 class ShellProcessSessionNotFound(KeyError):
     """Raised when a ToolCall names a session outside its Run."""
 
@@ -68,6 +75,11 @@ class ShellProcessSession:
     drain_error: str | None = None
     thread: threading.Thread | None = None
     done: threading.Event = field(default_factory=threading.Event)
+    # The started command exited while its process group still has members.
+    leader_exited: threading.Event = field(default_factory=threading.Event)
+    background_reported: bool = False
+    # Set when the command exits with background processes or the session ends.
+    wake: threading.Event = field(default_factory=threading.Event)
     stop: threading.Event = field(default_factory=threading.Event)
     lock: threading.RLock = field(default_factory=threading.RLock)
     write_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -198,6 +210,7 @@ class ShellProcessManager:
                 session.execution_status = "exited"
                 session.exit_code = process.returncode
                 session.done.set()
+                session.wake.set()
                 if session.resource is not None:
                     session.resource.close()
                 with self._lock:
@@ -288,7 +301,9 @@ class ShellProcessManager:
                         on_input()
                     self._terminate(session, termination="terminated")
             else:
-                if session.execution_status != "running" or session.process.poll() is not None:
+                # Background processes may still use the terminal or stdin after
+                # the command itself exited, so the session state decides.
+                if session.execution_status != "running":
                     raise RuntimeError("shell_session_exited")
                 if action == "resize":
                     if columns is None or rows is None or not (2 <= columns <= 500 and 2 <= rows <= 500):
@@ -367,7 +382,11 @@ class ShellProcessManager:
                 self._closed = True
         stopped = False
         for session in sessions:
-            stopped = self._terminate(session) or stopped
+            # Background processes outlived a command that already exited.
+            # Stopping them with the Run is an owned, deliberate stop like
+            # control_shell terminate, not an interrupted command.
+            termination = "terminated" if session.leader_exited.is_set() else "canceled"
+            stopped = self._terminate(session, termination=termination) or stopped
         for session in sessions:
             thread = session.thread
             if thread is not None and thread is not threading.current_thread():
@@ -407,16 +426,21 @@ class ShellProcessManager:
         cancel: threading.Event | None = None,
         cumulative: bool = False,
     ) -> dict[str, object]:
-        timeout = max(0.0, yield_time_ms / 1000.0)
-        if cancel is None:
-            session.done.wait(timeout)
-        else:
-            deadline = time.monotonic() + timeout
-            while not session.done.is_set() and not cancel.is_set():
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    break
-                session.done.wait(min(0.1, remaining))
+        deadline = time.monotonic() + max(0.0, yield_time_ms / 1000.0)
+        while not session.done.is_set():
+            if cancel is not None and cancel.is_set():
+                break
+            # Report once, without waiting out the yield, that the command
+            # exited and left background processes running.
+            if not cumulative and session.leader_exited.is_set() and not session.background_reported:
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            # Until a background exit is reported, a newly exited command also
+            # ends the wait; afterwards only completion does.
+            waiter = session.done if cumulative or session.background_reported else session.wake
+            waiter.wait(remaining if cancel is None else min(CANCEL_POLL_SECONDS, remaining))
         with session.lock:
             stdout = session.output["stdout"].read(0 if cumulative else session.stdout_cursor)
             stderr = session.output["stderr"].read(0 if cumulative else session.stderr_cursor)
@@ -424,6 +448,9 @@ class ShellProcessManager:
                 session.stdout_cursor = stdout.next_offset
                 session.stderr_cursor = stderr.next_offset
             running = session.execution_status == "running"
+            background = running and session.leader_exited.is_set()
+            if background and not cumulative:
+                session.background_reported = True
             data: dict[str, object] = {
                 "executionStatus": "running" if running else "exited",
                 "exitCode": None if running else session.exit_code,
@@ -451,6 +478,8 @@ class ShellProcessManager:
                 data["environmentSource"] = session.launch.environment_source
             if session.launch.tty:
                 data.update(columns=session.columns, rows=session.rows)
+            if background:
+                data.update(backgroundProcesses=True, leaderExitCode=session.exit_code)
             return {
                 "schemaVersion": 1,
                 "toolName": tool_name,
@@ -464,7 +493,12 @@ class ShellProcessManager:
                 else "shell_exit_nonzero"
                 if session.termination == "exit"
                 else session.termination,
-                "summary": "Command is still running"
+                "summary": (
+                    f"Command exited with code {session.exit_code}; its background processes keep running "
+                    "in this session until they exit, control_shell terminates them, or the Run ends"
+                )
+                if background
+                else "Command is still running"
                 if running
                 else "Command completed"
                 if session.exit_code == 0 and session.termination == "exit"
@@ -562,7 +596,7 @@ class ShellProcessManager:
             for name, descriptor in session.transport.output_descriptors():
                 selector.register(descriptor, selectors.EVENT_READ, name)
             termination_started_at: float | None = None
-            while selector.get_map() or session.process.poll() is None:
+            while True:
                 ready = selector.select(timeout=0.1) if selector.get_map() else ()
                 for key, _mask in ready:
                     try:
@@ -591,11 +625,19 @@ class ShellProcessManager:
                                 session.termination = "exit"
                     if _process_group_exists(session.process_group_id):
                         with session.lock:
-                            if session.termination == "exit":
-                                session.termination = "background_process"
-                        if termination_started_at is None:
+                            adopted = session.termination == "exit"
+                        if adopted:
+                            # Background processes started by the command stay
+                            # owned by this session. The result stays open until
+                            # they exit, control_shell stops them or the Run ends,
+                            # so nothing can change the workspace after it.
+                            session.leader_exited.set()
+                            session.wake.set()
+                        elif termination_started_at is None:
                             termination_started_at = time.monotonic()
                             _terminate_group(session.process_group_id)
+                        if not selector.get_map():
+                            time.sleep(BACKGROUND_POLL_SECONDS)
                     elif not selector.get_map():
                         break
                 if (
@@ -654,6 +696,7 @@ class ShellProcessManager:
                 except Exception:
                     pass
             session.done.set()
+            session.wake.set()
             self._finalize(session)
 
     @staticmethod

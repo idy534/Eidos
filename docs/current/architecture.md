@@ -425,6 +425,8 @@ Tool Result 的 `reconciliationRequired` 只记录本次执行的未知结果。
 
 Shell 每次 ToolCall 只等待一个窗口。Shell 输出会持续追加到原命令 Item。命令退出后，Runtime 更新原命令的完整 `executionStatus`、`exitCode`、`stdout`、`stderr` 和 `termination`。普通且确定的 Shell 退出会把 Item 按命令结果标记为 `completed` 或 `failed`。确定的 `shell_exit_nonzero` 会把 Item 标记为 `failed`，但会把 ToolCall 标记为 `completed`。Workspace observation 不完整只影响 observation metadata，不会把已退出的 Shell 变成只读 reconciliation。`reconciliationRequired = true`、timeout、background child 清理未完成和真正的 Shell 启动失败仍然把 ToolCall 标记为 `failed` 并保持 fail closed。
 
+命令主进程退出而同一进程组仍有后台进程时，Run 的 Shell 会话不再立即终止进程组。会话保持 `running`，本次等待立即返回 `backgroundProcesses=true` 和 `leaderExitCode`，后续等待按普通运行中会话处理。后台进程全部退出、`control_shell` 终止或 Run 收尾清理之后，系统才提交最终结果，因此最终结果之后不会再出现该命令的后台写入。最终 `exitCode` 是主进程的退出码。Run 收尾停止这类会话时使用与显式终止相同的 `terminated`，主进程已经退出，结果不记为未知；仍在执行的前台命令被收尾停止时继续记为 `canceled` 和未知结果。通过 setsid 或 daemon 模式脱离进程组的进程不受 Run 所有权管理，工具说明要求模型不要这样启动服务。Hook 等一次性执行路径仍按原规则终止遗留的后台进程并记录 `background_process`。
+
 Runtime 会记录 Shell 和其他工具的未知结果。系统不会因此建立后续操作的核验门，也不会同步扫描 Workspace 来解除这类执行限制。系统不会自动重放未知操作。后续操作仍执行各自的权限、身份、版本和结果校验。
 
 Runtime 内部维护经过校验的 Python、ripgrep、Python import roots 和受支持包版本的 Catalog。内置依赖发现工具已移除。`run_shell` 对识别到的 Skill 脚本自动选择该 Skill 声明的 binding，并复用现有校验、权限和启动前复检。普通项目命令保留原环境，激活 Skill 本身不会切换环境。`dependencyBindingId` 输入保留兼容，显式值仍校验 Run 和 Skill 归属。

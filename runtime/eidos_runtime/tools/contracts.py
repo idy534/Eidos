@@ -897,6 +897,10 @@ class RunShellResultData(WorkspaceResultData):
         "output_projection_failed",
     ] | None = None
     exitCode: StrictInt | None = None
+    # A running session whose command exited while its background processes
+    # continue. The final exitCode arrives when the session ends.
+    backgroundProcesses: bool | None = None
+    leaderExitCode: StrictInt | None = None
     stdout: StrictStr | None = None
     stderr: StrictStr | None = None
     truncated: bool | None = None
@@ -1202,6 +1206,7 @@ _SHELL_MODEL_FACT_FIELDS = frozenset({
     "outputCallId", "outputComplete", "outputCaptureError",
     "sessionId", "executionStatus", "exitCode", "termination", "truncated", "truncationReason",
     "originalBytes", "omittedBytes", "attemptCount", "escalated", "sandboxed",
+    "backgroundProcesses", "leaderExitCode",
     "modelProjectionTruncated", "modelProjectionContinuation",
     "modelProjectionOmittedBytes",
 })
@@ -1363,6 +1368,7 @@ def _project_shell_data(
         "outputCallId", "outputComplete", "outputCaptureError",
         "sessionId", "executionStatus", "exitCode", "termination", "truncated", "truncationReason",
         "originalBytes", "omittedBytes", "attemptCount", "escalated", "sandboxed",
+        "backgroundProcesses", "leaderExitCode",
     ):
         if key not in safe_data:
             continue
