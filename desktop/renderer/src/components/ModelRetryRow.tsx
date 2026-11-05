@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import type { ModelRetryActivity } from "../../../shared/context.generated.js";
-import type { Run } from "../contracts.js";
+import type { ModelOption, Run } from "../contracts.js";
 import {
   modelRetryLabels,
   modelRetryPhase,
+  resolveModelRetryTarget,
   retryCauseName,
   type ModelFailurePresentation,
   type ModelRetryCause,
@@ -57,7 +58,15 @@ const ACTIVE_PHASES = new Set<ModelRetryPhase>(["waiting", "requesting"]);
  * One stage row for a provider request that is being retried. The phase comes
  * from Runtime events and the Run status; this component never decides retries.
  */
-export function ModelRetryRow({ activity, run }: { activity: ModelRetryActivity; run: Run }) {
+export function ModelRetryRow({
+  activity,
+  run,
+  models,
+}: {
+  activity: ModelRetryActivity;
+  run: Run;
+  models?: readonly ModelOption[] | undefined;
+}) {
   const [open, setOpen] = useState(false);
   const live = ["queued", "running", "waiting_input", "waiting_agents", "waiting_approval", "finalizing"].includes(run.status);
   const now = useCountdown(activity.nextRetryAt ?? undefined, live && activity.status === "waiting");
@@ -101,18 +110,27 @@ export function ModelRetryRow({ activity, run }: { activity: ModelRetryActivity;
         </div>
       )}
       {phase === "requesting" && <div className="model-retry-rail model-retry-rail--indeterminate" aria-hidden="true"><i /></div>}
-      {open && <RetryDetails activity={activity} />}
+      {open && <RetryDetails activity={activity} run={run} models={models} />}
     </div>
   );
 }
 
-function RetryDetails({ activity }: { activity: ModelRetryActivity }) {
+function RetryDetails({
+  activity,
+  run,
+  models,
+}: {
+  activity: ModelRetryActivity;
+  run: Run;
+  models?: readonly ModelOption[] | undefined;
+}) {
   const elapsed = Math.max(0, Math.round((activity.updatedAt - activity.startedAt) / 1000));
+  const { providerId, modelId } = resolveModelRetryTarget(activity, run, models);
   const rows: Array<[string, string]> = [
     ["原因", retryCauseName(activity.cause)],
     ...(activity.httpStatus != null ? [["HTTP 状态", String(activity.httpStatus)] as [string, string]] : []),
-    ...(activity.providerId ? [["服务商", activity.providerId] as [string, string]] : []),
-    ...(activity.modelId ? [["模型", activity.modelId] as [string, string]] : []),
+    ...(providerId ? [["服务商", providerId] as [string, string]] : []),
+    ...(modelId ? [["模型", modelId] as [string, string]] : []),
     ["已持续", `${elapsed} 秒`],
   ];
   return (

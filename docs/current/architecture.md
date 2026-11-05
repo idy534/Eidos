@@ -298,7 +298,7 @@ Token 计量优先使用 Provider 返回的实际 Usage。该值只代表对应�
 
 模型请求的 Provider 重试在界面中显示为 Run 过程里的一行阶段，不再只在 Run 终止后给出一句失败提示。`model_attempts` 仍是唯一重试权威；`ModelRetryActivity` 只是显示投影，不决定是否重试。Runtime 在提交 Attempt 状态的同一事务里写入 `model.retry_changed` Event：失败 Attempt 被判定可重试时记录 `waiting`（含 `nextRetryAt`、`deadlineAt`、`retryAfterApplied`），下一次 Attempt 开始时记录 `requesting`，重试后的 Attempt 结束时记录 `recovered`，预算或恢复窗口耗尽时记录 `failed`。首次请求成功、第一次失败即不可重试（认证、参数、额度）时不产生该事件。`cause` 由稳定错误码与 HTTP 状态归类为 `connection_failed`、`timeout`、`service_unavailable`、`rate_limited`、`stream_interrupted`。Engine 在开始重试 Attempt 后立即交付 Outbox。
 
-`model/retryUpdated` 通知携带整条 Activity；`session/read.modelRetries` 从当前历史页的事件重建每个请求组的最新状态。Renderer 按 Run 和请求组合并，使用 event ID 拒绝迟到状态，倒计时由 `nextRetryAt` 在本地计算。Run 已结束而 Activity 仍是 `waiting` 或 `requesting` 时，界面按 Run 状态显示为已取消或已失败。协议修复、空回复修复和上下文压缩不属于这类事件。没有新增数据库表、Schema 版本或后台 Worker。
+`model/retryUpdated` 通知携带整条 Activity；`session/read.modelRetries` 从当前历史页的事件重建每个请求组的最新状态。事件中的 `providerId`、`modelId` 仍是原始标识；Renderer 按 Run 的模型配置 ID 精确匹配当前模型列表，自定义模型在重试详情中展示提供商名称与模型名称，不展示内部的 `custom` 提供商标识或 `custom-<uuid>` 配置 ID；配置已删除时回退到 Run 的远端模型 ID。远端模型 ID 不参与匹配，避免与内置模型同名时误标。Renderer 按 Run 和请求组合并，使用 event ID 拒绝迟到状态，倒计时由 `nextRetryAt` 在本地计算。Run 已结束而 Activity 仍是 `waiting` 或 `requesting` 时，界面按 Run 状态显示为已取消或已失败。协议修复、空回复修复和上下文压缩不属于这类事件。没有新增数据库表、Schema 版本或后台 Worker。
 
 ### 实时活动行与思考摘要
 

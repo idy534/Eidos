@@ -75,7 +75,7 @@ interface Props {
   runs: Run[];
   allRuns?: Run[] | undefined;
   onEnsureItemMounted?: ((itemId: string) => Promise<boolean>) | undefined;
-  models?: ModelOption[];
+  models?: readonly ModelOption[] | undefined;
   workspaceRoot?: string;
   responseActionState?: ResponseActionState;
   pendingFeedbackItemIds?: ReadonlySet<string>;
@@ -313,6 +313,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
                     run={run}
                     resultItems={runResultItems}
                     modelName={modelName}
+                    models={models}
                     workspaceRoot={workspaceRoot}
                     isLast={index === segments.length - 1}
                     canReviseRun={canReviseRun}
@@ -361,6 +362,7 @@ const RunSegment = memo(function RunSegment({
   run,
   resultItems,
   modelName,
+  models,
   workspaceRoot,
   isLast,
   canReviseRun,
@@ -387,6 +389,7 @@ const RunSegment = memo(function RunSegment({
   run: Run;
   resultItems: Item[];
   modelName: string;
+  models?: readonly ModelOption[] | undefined;
   workspaceRoot?: string | undefined;
   isLast: boolean;
   canReviseRun: boolean;
@@ -473,7 +476,7 @@ const RunSegment = memo(function RunSegment({
               return <ContextCompactionRow key={`compaction:${node.activity.requestId}`} activity={node.activity} run={run} />;
             }
             if (node.kind === "retry") {
-              return <ModelRetryRow key={`retry:${node.activity.requestGroupId}`} activity={node.activity} run={run} />;
+              return <ModelRetryRow key={`retry:${node.activity.requestGroupId}`} activity={node.activity} run={run} models={models} />;
             }
             const renderItem = (item: Item) => (
               <ProcessItem
