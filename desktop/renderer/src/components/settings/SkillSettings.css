@@ -77,6 +77,9 @@
 .skill-card-name, .skill-card-description { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .skill-card-name { font-size: 0.925rem; font-weight: 500; }
 .skill-card-description { color: var(--muted); font-size: 0.825rem; }
+.skill-detail-backdrop {
+  overscroll-behavior: contain;
+}
 .skill-detail-dialog {
   display: flex;
   flex-direction: column;
@@ -233,6 +236,7 @@
   flex: 1 1 auto;
   padding: 1rem;
   overflow: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm, 6px);
   background: var(--surface-raised);

@@ -1923,7 +1923,7 @@ function SkillReadToolItem({
   const errSummary = safeToolSummary(toolCall.resultJson, item.status);
   const titleText = isError && errSummary ? errSummary : undefined;
   const isResource = toolCall.toolName === "skill_read_resource";
-  const suffix = isResource ? "整个技能包" : "技能 SKILL.md";
+  const suffix = isResource ? "技能包" : "技能 SKILL.md";
   const actionPrefix = running
     ? "正在读取"
     : (item.status === "completed" ? "已读取" : `${statusLabel(item.status)} 读取`);
@@ -2816,7 +2816,7 @@ function toolSummary(
     memory_edit: args.action === "delete" ? "删除记忆" : "保存记忆",
     read_tool_output: "查看工具输出",
     skill_read: skillName ? `${skillName}技能 SKILL.md` : "技能 SKILL.md",
-    skill_read_resource: skillName ? `${skillName}整个技能包` : "整个技能包",
+    skill_read_resource: skillName ? `${skillName}技能包` : "技能包",
   };
   const targetLabel = isMemory
     ? baseLabels[toolCall.toolName]
@@ -2856,8 +2856,8 @@ function toolSummary(
       ? (skillName ? `正在读取${skillName}技能 SKILL.md` : "正在读取技能 SKILL.md")
       : (skillName ? `已读取${skillName}技能 SKILL.md` : "已读取技能 SKILL.md"),
     skill_read_resource: running
-      ? (skillName ? `正在读取${skillName}整个技能包` : "正在读取整个技能包")
-      : (skillName ? `已读取${skillName}整个技能包` : "已读取整个技能包"),
+      ? (skillName ? `正在读取${skillName}技能包` : "正在读取技能包")
+      : (skillName ? `已读取${skillName}技能包` : "已读取技能包"),
     memory_search: running
       ? (memoryQuery ? `正在搜索记忆 "${memoryQuery}"` : "正在搜索记忆")
       : (memoryQuery ? `已搜索记忆 "${memoryQuery}"` : "已搜索记忆"),

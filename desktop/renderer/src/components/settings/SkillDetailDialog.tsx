@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { SkillDetail, SkillMetadata, SkillRemoval } from "../../contracts.js";
 import { userFacingError } from "../../session-state.js";
 import { ArtifactProvider } from "../ArtifactContext.js";
@@ -258,7 +259,7 @@ export function SkillDetailDialog({
   const effectiveSourceKind = skill.sourceKind ?? matchedMetadata?.sourceKind;
   const effectiveEnabled = skill.enabled ?? matchedMetadata?.enabled ?? true;
 
-  return (
+  const dialogNode = (
     <>
       <div className="modal-backdrop skill-detail-backdrop" inert={confirmRemove} onClick={() => { if (!busy) onClose(); }}>
         <div
@@ -344,5 +345,9 @@ export function SkillDetailDialog({
       )}
     </>
   );
+
+  return typeof document !== "undefined" && document.body
+    ? createPortal(dialogNode, document.body)
+    : dialogNode;
 }
 

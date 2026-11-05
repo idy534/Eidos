@@ -461,12 +461,14 @@ describe("InputContext behavior", () => {
     // Skill token opens SkillDetailDialog
     fireEvent.click(screen.getByRole("button", { name: "frontend-design" }));
     const skillDialog = await screen.findByRole("dialog", { name: "frontend-design" });
+    expect(skillDialog.closest(".modal-backdrop")?.parentElement).toBe(document.body);
     expect(skillDialog).toHaveTextContent("Use intentional typography.");
     fireEvent.click(screen.getByRole("button", { name: "关闭技能详情" }));
 
     // MCP token opens McpDetailDialog
     fireEvent.click(screen.getByRole("button", { name: "Context7" }));
     const mcpDialog = await screen.findByRole("dialog", { name: "context7" });
+    expect(mcpDialog.closest(".modal-backdrop")?.parentElement).toBe(document.body);
     expect(mcpDialog).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "关闭 MCP 详情" }));
 
