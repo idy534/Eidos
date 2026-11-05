@@ -29,6 +29,13 @@ const github: PluginRecord = { schemaVersion: 1, id: "eidos-github", name: "GitH
   status: "installed", installedAt: 1, updatedAt: 1, presentation: { developerName: "Eidos" } };
 const remote: McpServerRecord = { ...mcp, pluginId: github.id, pluginHash: github.contentHash, serverId: "github", executable: "", argv: [],
   permissionProfile: "connector", remote: { url: "https://api.githubcopilot.com/mcp/", authType: "github-device" } };
+const browser: PluginRecord = { schemaVersion: 1, id: "eidos-browser", name: "浏览器", version: "1.0.0",
+  description: "让 Agent 在 Eidos 专用的 Chrome 中打开网页、读取页面、点击、输入和截图。", contentHash: "e".repeat(64), enabled: true,
+  status: "installed", installedAt: 1, updatedAt: 1 };
+const browserServer: McpServerRecord = { ...mcp, pluginId: browser.id, pluginHash: browser.contentHash, serverId: "browser",
+  executable: "node", argv: ["playwright-mcp"], permissionProfile: "browser", consented: true, available: true };
+let browserTarget = "chrome_extension";
+let extensionConfigured = false;
 let builtinInstalled = false;
 let connected = false;
 let hookTrusted = false;
@@ -52,6 +59,14 @@ Object.assign(window, { eidosRuntime: {
       accountLabel: connected ? "octocat" : null, authType: "github-device", browserAvailable: false, updatedAt: 1 };
   },
   openMcpLogin: async () => {},
+  readBrowserAgentStatus: async () => ({ chromeInstalled: true, chromeVersion: "142.0.7444.60", running: false, pluginInstalled: true,
+    pluginEnabled: true, resource: "ready", granted: false, target: browserTarget, attachAvailable: false,
+    effectiveTarget: browserTarget === "chrome_extension" && !extensionConfigured ? "eidos" : browserTarget,
+    extensionConfigured, extensionPresence: "unknown" }),
+  setBrowserAgentTarget: async (request: { target: string }) => { browserTarget = request.target; return { target: browserTarget, revokedGrants: 0 }; },
+  setBrowserAgentExtensionToken: async () => { extensionConfigured = true; return { configured: true, revokedGrants: 0 }; },
+  clearBrowserAgentExtensionToken: async () => { extensionConfigured = false; return { configured: false, revokedGrants: 0 }; },
+  openBrowserExtensionStore: async () => {},
 } as unknown as EidosRuntimeAPI });
 
 function Fixture() {
@@ -60,7 +75,7 @@ function Fixture() {
   const [, refresh] = useState(0);
   return <SettingsPage initialCategory="plugins"
     runtime={{ state: "ready", protocolVersion: 1, runtimeVersion: "0.5.4", runShell: true, modelConfigured: true, storageHealth: { state: "ready" } }}
-    plugins={[plugin, ...(installed ? [github] : [])]} skills={[skill]} mcpServers={[mcp, ...(installed ? [{ ...remote, consented: connected, available: connected }] : [])]} pendingAction={undefined}
+    plugins={[plugin, browser, ...(installed ? [github] : [])]} skills={[skill]} mcpServers={[mcp, browserServer, ...(installed ? [{ ...remote, consented: connected, available: connected }] : [])]} pendingAction={undefined}
     onInstallBuiltinPlugin={async () => { builtinInstalled = true; setInstalled(true); }}
     onExtensionsChanged={async () => refresh(value => value + 1)}
     onClose={() => {}} onModelsChanged={async () => {}} onImportPlugin={async () => {}} onTogglePlugin={async () => {}}
