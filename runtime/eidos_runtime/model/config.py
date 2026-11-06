@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 import stat
 import tempfile
+import threading
+from collections.abc import Mapping
 import uuid
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
@@ -143,11 +145,32 @@ class CustomModelRuntimeSettings(EidosFrozenStrictModel):
         return self
 
 
+class QoderModelSettings(EidosFrozenStrictModel):
+    supports_tool_call: bool = Field(default=True, exclude_if=lambda value: value is True)
+    supports_images: bool = False
+    context_window_limit: int | None = Field(default=None, gt=8192, le=100000000)
+    output_token_limit: int | None = Field(default=None, gt=0, le=131072)
+    reasoning: ModelReasoningConfig | None = None
+    account_ref: Literal["default"] = "default"
+    context_window_tokens: int = Field(default=128000, gt=8192, le=100000000)
+    max_output_tokens: int = Field(default=8192, gt=0, le=131072)
+
+    @model_validator(mode="after")
+    def valid_limits(self) -> "QoderModelSettings":
+        if self.context_window_limit is not None and self.context_window_tokens > self.context_window_limit:
+            raise ValueError("上下文窗口超过当前模型上限。")
+        if self.output_token_limit is not None and self.max_output_tokens > self.output_token_limit:
+            raise ValueError("输出超过当前模型上限。")
+        if self.max_output_tokens >= self.context_window_tokens:
+            raise ValueError("上下文窗口必须大于最大输出。")
+        return self
+
+
 class ModelConfig(EidosFrozenStrictModel):
     id: str = Field(min_length=1, max_length=256)
     name: str = Field(min_length=1, max_length=120)
     vendor: str = Field(min_length=1, max_length=64)
-    url: str = Field(min_length=1, max_length=2048)
+    url: str | None = Field(default=None, min_length=1, max_length=2048)
     api_key: str = Field(alias="apiKey", max_length=512, repr=False)
     supports_tool_call: bool = Field(alias="supportsToolCall")
     supports_images: bool = Field(default=False, alias="supportsImages")
@@ -155,6 +178,7 @@ class ModelConfig(EidosFrozenStrictModel):
     reasoning: ModelReasoningConfig | None = None
     model_id: str | None = Field(default=None, min_length=1, max_length=256)
     custom: CustomModelRuntimeSettings | None = None
+    qoder: QoderModelSettings | None = None
 
     @field_validator("api_key")
     @classmethod
@@ -168,6 +192,15 @@ class ModelConfig(EidosFrozenStrictModel):
 
     @model_validator(mode="after")
     def validate_reasoning(self) -> "ModelConfig":
+        if self.qoder is not None:
+            if (self.custom is not None or self.url is not None or self.api_key
+                    or self.vendor != "Qoder" or not self.model_id
+                    or self.supports_tool_call != self.qoder.supports_tool_call or self.supports_images != self.qoder.supports_images
+                    or self.supports_reasoning != (self.qoder.reasoning is not None) or self.reasoning != self.qoder.reasoning):
+                raise ValueError("Qoder 使用独立账号与 SDK 配置。")
+            return self
+        if self.url is None:
+            raise ValueError("HTTP provider requires a URL")
         if not self.api_key and self.custom is None:
             raise ValueError("API key is required for built-in providers")
         if self.custom is not None:
@@ -191,12 +224,13 @@ class ModelPublicConfig(EidosFrozenStrictModel):
     name: str
     vendor: str
     provider: str
-    url: str
+    url: str | None
     supports_tool_call: bool = Field(alias="supportsToolCall")
     supports_images: bool = Field(default=False, alias="supportsImages")
     supports_reasoning: bool = Field(alias="supportsReasoning")
     reasoning: ModelReasoningConfig | None = None
     custom: CustomModelSettings | None = None
+    qoder: QoderModelSettings | None = None
     model_id: str | None = None
     context_window_tokens: int | None = None
     max_output_tokens: int | None = None
@@ -206,7 +240,7 @@ class ModelPublicConfig(EidosFrozenStrictModel):
 class ModelProfileSpec(EidosFrozenStrictModel):
     provider_id: str
     model_id: str
-    wire_api: Literal["chat_completions", "openai_responses"] = "chat_completions"
+    wire_api: Literal["chat_completions", "openai_responses", "qoder_sdk"] = "chat_completions"
     context_window_tokens: int = Field(gt=0)
     max_output_tokens: int = Field(gt=0)
     request_timeout_seconds: float = Field(gt=0)
@@ -243,10 +277,19 @@ class ModelProfileSpec(EidosFrozenStrictModel):
                 config.get("supportsImages", self.supports_images),
             ) is True
         )
+        from eidos_runtime.model.qoder_protocol import SDK_VERSION, CLI_VERSION, RESOURCE_VERSION
+        qoder = isinstance(config, ModelConfig) and config.qoder is not None
         return ModelProfileSnapshot(
+            schema_version=2 if qoder else 1,
+            pydantic_ai_version=None if qoder else "2.57.0",
+            qoder_sdk_version=SDK_VERSION if qoder else None,
+            qoder_cli_version=CLI_VERSION if qoder else None,
+            qoder_resource_version=RESOURCE_VERSION if qoder else None,
+            context_encoding="text_v1" if qoder else None,
+            account_ref="default" if qoder else None,
             provider_id=self.provider_id,
-            model_id=config.id if isinstance(config, ModelConfig) and config.custom else self.model_id,
-            remote_model_id=self.model_id if isinstance(config, ModelConfig) and config.custom else None,
+            model_id=config.id if isinstance(config, ModelConfig) and (config.custom or config.qoder) else self.model_id,
+            remote_model_id=self.model_id if isinstance(config, ModelConfig) and (config.custom or config.qoder) else None,
             wire_api=self.wire_api,
             context_window_tokens=self.context_window_tokens,
             max_output_tokens=self.max_output_tokens,
@@ -268,12 +311,12 @@ class ModelProfileSpec(EidosFrozenStrictModel):
 class CatalogModel(EidosFrozenStrictModel):
     id: str
     name: str
-    url: str
+    url: str | None
     supports_tool_call: bool
     supports_images: bool = False
     supports_reasoning: bool
     reasoning: ModelReasoningConfig | None = None
-    wire_api: Literal["chat_completions", "openai_responses"] = "chat_completions"
+    wire_api: Literal["chat_completions", "openai_responses", "qoder_sdk"] = "chat_completions"
     supports_custom_tools: bool = False
     supports_tool_grammar: bool = False
     context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS
@@ -516,6 +559,13 @@ class ModelCatalog:
     def profile(
         self, model_id: str, *, config: ModelConfig | None = None
     ) -> ModelProfileSpec:
+        if config is not None and config.qoder is not None:
+            return ModelProfileSpec(
+                provider_id="qoder", model_id=config.model_id or config.id,
+                wire_api="qoder_sdk", context_window_tokens=config.qoder.context_window_tokens,
+                max_output_tokens=config.qoder.max_output_tokens,
+                request_timeout_seconds=DEFAULT_REQUEST_TIMEOUT_SECONDS, supports_images=config.qoder.supports_images,
+            )
         if config is not None and config.custom is not None:
             return ModelProfileSpec(
                 provider_id="custom", model_id=config.model_id or config.id,
@@ -572,7 +622,7 @@ class ModelCatalog:
         selected = self._models.get(self.canonical_id(model_id))
         if config is not None and config.reasoning is not None:
             reasoning = config.reasoning
-        elif selected is not None and (config is None or config.custom is None):
+        elif selected is not None and (config is None or (config.custom is None and config.qoder is None)):
             reasoning = selected[1].reasoning
         if requested is None:
             return reasoning.default_selection if reasoning else None
@@ -624,6 +674,7 @@ class ModelReasoningSelectionError(ValueError):
 class ModelConfigStore:
     def __init__(self, data_directory: Path | None = None) -> None:
         self.data_directory = data_directory
+        self._mutation_lock = threading.RLock()
         self.path: Path | None = None
 
     def initialize(self) -> None:
@@ -691,25 +742,34 @@ class ModelConfigStore:
     def create(
         self, *, provider_id: str, model_id: str, api_key: str,
         custom: CustomModelSettings | None = None,
+        qoder: QoderModelSettings | None = None,
+        qoder_name: str | None = None,
     ) -> ModelConfig:
-        values = self.list()
-        if provider_id == "custom":
-            if custom is None:
-                raise ModelConfigError("自定义模型配置必填。")
-            created = self._custom_config(f"custom-{uuid.uuid4()}", model_id, api_key, custom)
+        with self._mutation_lock:
+            values = self.list()
+            if provider_id == "qoder":
+                created = self._qoder_config(f"qoder-{uuid.uuid4()}", model_id, api_key, custom, qoder, qoder_name)
+                self._write([*values, created])
+                return created
+            if qoder is not None:
+                raise ModelConfigError("只有 Qoder 可以使用 SDK 配置。")
+            if provider_id == "custom":
+                if custom is None:
+                    raise ModelConfigError("自定义模型配置必填。")
+                created = self._custom_config(f"custom-{uuid.uuid4()}", model_id, api_key, custom)
+                self._write([*values, created])
+                return created
+            if custom is not None:
+                raise ModelConfigError("内置提供商不能使用自定义连接配置。")
+            model_id = MODEL_CATALOG.canonical_id(model_id)
+            if any(value.id == model_id for value in values):
+                raise ModelConfigError("model ID already exists")
+            try:
+                created = MODEL_CATALOG.materialize(provider_id, model_id, api_key)
+            except ValueError as error:
+                raise ModelConfigError("API key is invalid") from error
             self._write([*values, created])
             return created
-        if custom is not None:
-            raise ModelConfigError("内置提供商不能使用自定义连接配置。")
-        model_id = MODEL_CATALOG.canonical_id(model_id)
-        if any(value.id == model_id for value in values):
-            raise ModelConfigError("model ID already exists")
-        try:
-            created = MODEL_CATALOG.materialize(provider_id, model_id, api_key)
-        except ValueError as error:
-            raise ModelConfigError("API key is invalid") from error
-        self._write([*values, created])
-        return created
 
     def update(
         self,
@@ -719,54 +779,90 @@ class ModelConfigStore:
         model_id: str,
         api_key: str | None,
         custom: CustomModelSettings | None = None,
+        qoder: QoderModelSettings | None = None,
+        qoder_name: str | None = None,
     ) -> ModelConfig:
-        values = self.list()
-        existing_id = MODEL_CATALOG.canonical_id(existing_id)
-        model_id = model_id if provider_id == "custom" else MODEL_CATALOG.canonical_id(model_id)
-        index = next(
-            (position for position, value in enumerate(values) if value.id == existing_id),
-            None,
-        )
-        if index is None:
-            raise ModelConfigError("model was not found")
-        if provider_id == "custom":
-            if custom is None:
-                raise ModelConfigError("自定义模型配置必填。")
-            old = values[index]
-            if api_key is None and normalize_model_base_url(old.url) != custom.base_url:
-                raise ModelConfigError("修改接口地址后，请重新填写或清除 API Key。")
-            replacement = self._custom_config(existing_id, model_id, old.api_key if api_key is None else api_key, custom)
+        with self._mutation_lock:
+            values = self.list()
+            existing_id = MODEL_CATALOG.canonical_id(existing_id)
+            model_id = model_id if provider_id == "custom" else MODEL_CATALOG.canonical_id(model_id)
+            index = next(
+                (position for position, value in enumerate(values) if value.id == existing_id),
+                None,
+            )
+            if index is None:
+                raise ModelConfigError("model was not found")
+            if provider_id == "qoder":
+                replacement = self._qoder_config(existing_id, model_id, api_key or "", custom, qoder,
+                    qoder_name or (values[index].name if values[index].model_id == model_id else None))
+                values[index] = replacement
+                self._write(values)
+                return replacement
+            if qoder is not None:
+                raise ModelConfigError("只有 Qoder 可以使用 SDK 配置。")
+            if provider_id == "custom":
+                if custom is None:
+                    raise ModelConfigError("自定义模型配置必填。")
+                old = values[index]
+                if api_key is None and (old.url is None or normalize_model_base_url(old.url) != custom.base_url):
+                    raise ModelConfigError("修改接口地址后，请重新填写或清除 API Key。")
+                replacement = self._custom_config(existing_id, model_id, old.api_key if api_key is None else api_key, custom)
+                values[index] = replacement
+                self._write(values)
+                return replacement
+            if custom is not None:
+                raise ModelConfigError("内置提供商不能使用自定义连接配置。")
+            if model_id != existing_id and any(value.id == model_id for value in values):
+                raise ModelConfigError("model ID already exists")
+            key = api_key.strip() if api_key is not None else ""
+            try:
+                replacement = MODEL_CATALOG.materialize(
+                    provider_id,
+                    model_id,
+                    key or values[index].api_key,
+                )
+            except ValueError as error:
+                raise ModelConfigError("API key is invalid") from error
             values[index] = replacement
             self._write(values)
             return replacement
-        if custom is not None:
-            raise ModelConfigError("内置提供商不能使用自定义连接配置。")
-        if model_id != existing_id and any(value.id == model_id for value in values):
-            raise ModelConfigError("model ID already exists")
-        key = api_key.strip() if api_key is not None else ""
-        try:
-            replacement = MODEL_CATALOG.materialize(
-                provider_id,
-                model_id,
-                key or values[index].api_key,
-            )
-        except ValueError as error:
-            raise ModelConfigError("API key is invalid") from error
-        values[index] = replacement
-        self._write(values)
-        return replacement
 
     def delete(self, model_id: str) -> ModelConfig:
-        values = self.list()
-        model_id = MODEL_CATALOG.canonical_id(model_id)
-        deleted = next((value for value in values if value.id == model_id), None)
-        if deleted is None:
-            raise ModelConfigError("model was not found")
-        self._write([value for value in values if value.id != model_id])
-        return deleted
+        with self._mutation_lock:
+            values = self.list()
+            model_id = MODEL_CATALOG.canonical_id(model_id)
+            deleted = next((value for value in values if value.id == model_id), None)
+            if deleted is None:
+                raise ModelConfigError("model was not found")
+            self._write([value for value in values if value.id != model_id])
+            return deleted
+
+    def refresh_qoder_names(self, names: Mapping[str, str]) -> None:
+        """Persist catalog labels without changing model IDs or capabilities."""
+        with self._mutation_lock:
+            values = self.list()
+            changed = False
+            for index, config in enumerate(values):
+                if config.qoder is None:
+                    continue
+                name = names.get(config.model_id or "", "").strip()
+                if name and len(name) <= 120 and config.name != name:
+                    values[index] = config.model_copy(update={"name": name})
+                    changed = True
+            if changed:
+                self._write(values)
 
     def public_list(self) -> list[ModelPublicConfig]:
         return [public_model_config(value) for value in self.list()]
+
+    @staticmethod
+    def _qoder_config(config_id: str, model_id: str, api_key: str, custom: CustomModelSettings | None,
+                      qoder: QoderModelSettings | None, name: str | None = None) -> ModelConfig:
+        if api_key or custom is not None or qoder is None or not model_id.strip():
+            raise ModelConfigError("Qoder 需要 SDK 配置和模型 ID，不使用 API Key。")
+        return ModelConfig(id=config_id, model_id=model_id, name=name or model_id, vendor="Qoder",
+                           apiKey="", supportsToolCall=qoder.supports_tool_call, supportsImages=qoder.supports_images,
+                           supportsReasoning=qoder.reasoning is not None, reasoning=qoder.reasoning, qoder=qoder)
 
     @staticmethod
     def _custom_config(config_id: str, model_id: str, api_key: str, custom: CustomModelSettings) -> ModelConfig:
@@ -794,11 +890,12 @@ class ModelConfigStore:
         temporary_path = Path(temporary_name)
         try:
             os.fchmod(descriptor, 0o600)
-            payload = json.dumps(
-                [value.model_dump(mode="json", by_alias=True, exclude={"custom", "model_id"} if value.custom is None else set()) for value in values],
-                ensure_ascii=False,
-                indent=2,
-            ).encode("utf-8")
+            serialized = []
+            for value in values:
+                excluded = ({"custom", "model_id", "qoder"} if value.custom is None and value.qoder is None
+                            else {"qoder"} if value.qoder is None else set())
+                serialized.append(value.model_dump(mode="json", by_alias=True, exclude=excluded))
+            payload = json.dumps(serialized, ensure_ascii=False, indent=2).encode("utf-8")
             offset = 0
             while offset < len(payload):
                 written = os.write(descriptor, payload[offset:])
@@ -855,10 +952,10 @@ def public_model_config(config: ModelConfig) -> ModelPublicConfig:
         )
     return ModelPublicConfig(
         **config.model_dump(
-            mode="json", by_alias=True, exclude={"api_key", "reasoning", "custom", "model_id"}
+            mode="json", by_alias=True, exclude={"api_key", "reasoning", "custom", "model_id"} | ({"qoder"} if config.qoder is None else set())
         ),
         api_key=config.api_key,
-        provider="custom" if custom else MODEL_CATALOG.provider_id_for(config.id, vendor=config.vendor),
+        provider="qoder" if config.qoder else "custom" if custom else MODEL_CATALOG.provider_id_for(config.id, vendor=config.vendor),
         reasoning=reasoning, custom=custom, model_id=config.model_id,
         context_window_tokens=profile.context_window_tokens, max_output_tokens=profile.max_output_tokens,
     )

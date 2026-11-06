@@ -313,3 +313,24 @@ def test_symlinked_outer_resource_parent_is_rejected_before_any_write(resources,
     with pytest.raises(ResourceError, match="resource_directory_unsafe"):
         manager.ensure(("document-python",), threading.Event())
     assert not calls and not list(outside.iterdir())
+
+
+def test_isolated_model_pack_is_never_exposed_to_shell_or_skill_python(resources, tmp_path):
+    manager, _, _ = resources
+    pack = manager.index.packs[0].model_copy(update={"id": "qoder", "isolated": True})
+    isolated = ManagedResourceManager(ResourceIndex(version="1.0.0", packs=(pack,)), root=manager.root,
+                                      client_factory=manager.client_factory)
+    core = tmp_path / "Core"
+    files = {"bin/python3": b"#!/bin/sh\nexit 0\n"}
+    (core / "bin").mkdir(parents=True)
+    (core / "bin/python3").write_bytes(files["bin/python3"])
+    (core / "bin/python3").chmod(0o700)
+    (core / "runtime.json").write_text(manifest(files, executable=True).model_dump_json(by_alias=True))
+    catalog = ManagedResourceCatalog(RuntimeDependencyCatalog.from_manifest(core / "runtime.json"), isolated)
+    assert not any("example" in item.name for item in catalog.snapshot().python_package_roots)
+    assert not any(str(isolated.location("qoder")) in path for path in catalog.snapshot().python_path)
+    with pytest.raises(ResourceError, match="resource_isolated"):
+        catalog.resolve_profile(None, context_id="skill", pack_ids=("qoder",))
+    isolated.ensure(("qoder",), threading.Event())
+    assert isolated.verified_catalog("qoder").resolve(None).python_path
+    assert not catalog.resolve(None).python_path

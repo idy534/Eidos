@@ -229,6 +229,7 @@ class SamplingRuntime:
                 step.run_id,
                 "canceled" if isinstance(error, SamplingCancelled) else "failed",
                 provider_name=failure.provider_name if failure else None,
+                usage=failure.usage if failure else None,
                 error_code=failure.code if failure else str(error),
                 http_status=failure.status_code if failure else None,
                 ttft_ms=interrupted.ttft_ms,

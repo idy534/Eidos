@@ -718,3 +718,34 @@ Workspace 恢复扫描只在受影响目标或需要解除屏障的新副作用�
 CI 将质量、依赖审计、Runtime、Desktop 和原生打包拆为独立 Job。PR 按实际路径选择 Runtime、Desktop 和 native；main push 执行所有边界。静态和审计检查保持独立，不因审计失败跳过回归。汇总 `test` Job 要求所有已选检查成功，无法判定改动范围时不跳过验证。原生 Job 只在 Desktop build、Seatbelt、Electron 和 Bundle 验证通过后复用本 Job 的产物组装 DMG；其他 Job 的测试结果仍由汇总门禁判定。
 
 返回 [开发指南](../../DEVELOPMENT.md) 或 [文档入口](../README.md)。
+
+## Qoder 模型接入
+
+当前行为见[Qoder 模型接入](../current/features/qoder-models.md)。开发者使用独立项目 `resources/runtime-dependencies/qoder/` 维护 SDK 依赖。开发者不能把 SDK 安装进主 Runtime，也不能下调主 Runtime 的 MCP 版本。
+
+开发者可以执行以下定向验证：
+
+```bash
+uv run --locked pytest runtime/tests/test_qoder_model.py runtime/tests/test_qoder_worker.py runtime/tests/test_managed_resources.py
+node scripts/generate-qoder-contracts.mjs
+pnpm build:main
+node --test dist/main/runtime-client-qoder.test.js dist/shared/qoder.test.js
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/QoderModelSettings.behavior.test.tsx
+EIDOS_QODER_SCREENSHOT_DIR=/tmp/eidos-qoder-screenshots pnpm exec electron scripts/test-qoder-models.cjs
+```
+
+Python 与 TypeScript 共用 `protocol/fixtures/qoder-model-v1.json`。生成器以 Python 的配置和连接 DTO 为源。Worker 协议的唯一源码为 `runtime/eidos_runtime/model/qoder_protocol.py`。构建器把它复制到隔离包内。
+
+开发者运行 `pnpm build:runtime:mac` 构建 App 核心与 Qoder 资源包。这个命令会调用 `scripts/build-qoder-worker.py`。开发者可以单独运行 `.venv/bin/python scripts/build-qoder-worker.py` 检查独立依赖安装和 CLI 版本。资源包沿用固定 Release 索引与现有发布验证。维护者不能把本地包构建成功写成远端资源已发布。
+
+真实账号验收会消耗 Credits。开发者需要提供一个已经通过浏览器登录的私有 Qoder 配置目录。脚本只使用临时工作区与 SQLite，并通过真实资源安装器校验本地构建包：
+
+```bash
+PYTHONPATH=runtime .venv/bin/python scripts/qoder-model-smoke.py \
+  --auth-directory /absolute/private/qoder-config \
+  --report /tmp/eidos-qoder-smoke.json
+```
+
+该脚本检查文字生成、双工具请求、严格输出工具、真实 `read_file` 外层循环、Credits 持久化和取消。脚本不打印 Token、模型正文或第三方错误正文。取消不能证明远端消费为零。这个入口不代替所有模型、复杂写入任务、长历史质量、第二台机器或签名发布验收。
+
+维护者在隔离项目目录运行 `uv lock --check`，并用根环境的 Deptry 对 `resources/runtime-dependencies/qoder/src` 和该项目 `pyproject.toml` 做检查。维护者还需要导出该项目的锁定 requirements，并用 `pip-audit --disable-pip -r <导出文件>` 审计。主 Runtime 继续使用原有的 Ruff、Deptry 和审计命令。

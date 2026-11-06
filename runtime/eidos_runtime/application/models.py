@@ -10,6 +10,7 @@ from eidos_runtime.application.errors import (
 )
 from eidos_runtime.model.config import (
     CustomModelSettings,
+    QoderModelSettings,
     ModelConfig,
     ModelConfigError,
     ModelConfigStore,
@@ -23,8 +24,9 @@ from eidos_runtime.model.discovery import CustomProviderRequest
 class ModelApplication:
     """Owns the five public model methods over ``~/.eidos/models.json``."""
 
-    def __init__(self, store: ModelConfigStore) -> None:
+    def __init__(self, store: ModelConfigStore, *, qoder_name: Callable[[str], str | None] | None = None) -> None:
         self._store = store
+        self._qoder_name = qoder_name or (lambda _model_id: None)
 
     def presets(self) -> dict[str, object]:
         return model_presets()
@@ -51,6 +53,7 @@ class ModelApplication:
     def create(
         self, *, provider: str, model_id: str, api_key: str,
         custom: CustomModelSettings | None = None,
+        qoder: QoderModelSettings | None = None,
     ) -> dict[str, object]:
         return self._public(
             self._call(
@@ -59,6 +62,8 @@ class ModelApplication:
                     model_id=model_id,
                     api_key=api_key,
                     custom=custom,
+                    qoder=qoder,
+                    qoder_name=self._qoder_name(model_id) if provider == "qoder" else None,
                 )
             )
         )
@@ -71,6 +76,7 @@ class ModelApplication:
         model_id: str,
         api_key: str | None,
         custom: CustomModelSettings | None = None,
+        qoder: QoderModelSettings | None = None,
     ) -> dict[str, object]:
         return self._public(
             self._call(
@@ -80,6 +86,8 @@ class ModelApplication:
                     model_id=model_id,
                     api_key=api_key,
                     custom=custom,
+                    qoder=qoder,
+                    qoder_name=self._qoder_name(model_id) if provider == "qoder" else None,
                 )
             )
         )

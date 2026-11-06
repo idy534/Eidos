@@ -113,19 +113,26 @@ class ModelToolCall(_FrozenModel):
         return self.payload.kind
 
 
+class CreditsUsage(_FrozenModel):
+    amount: float = Field(ge=0, allow_inf_nan=False)
+    source: Literal["request", "session"]
+    billable: bool | None = None
+
+
 class ModelUsage(_FrozenModel):
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
     cache_read_tokens: int | None = Field(default=None, ge=0)
     cache_write_tokens: int | None = Field(default=None, ge=0)
     details: dict[str, int] = Field(default_factory=dict)
+    credits_usage: CreditsUsage | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ModelResponse(_FrozenModel):
     text: str = ""
     tool_calls: tuple[ModelToolCall, ...] = ()
     reasoning_parts: tuple[ModelReasoningPart, ...] = ()
-    wire_api: Literal["chat_completions", "openai_responses"] = "chat_completions"
+    wire_api: Literal["chat_completions", "openai_responses", "qoder_sdk"] = "chat_completions"
     phase: AssistantMessagePhase | None = AssistantMessagePhase.UNKNOWN
     phase_source: ResponsePhaseSource = "unknown"
     end_turn: bool | None = None
@@ -143,6 +150,7 @@ class ModelResponse(_FrozenModel):
 
 
 class ModelRequestFailure(_FrozenModel):
+    usage: ModelUsage | None = Field(default=None, exclude_if=lambda value: value is None)
     code: str
     reason: str | None = Field(default=None, min_length=1, max_length=128)
     retryable: bool
@@ -172,6 +180,7 @@ class ModelProfileSnapshot(_FrozenModel):
     wire_api: Literal[
         "chat_completions",
         "openai_responses",
+        "qoder_sdk",
     ] = "chat_completions"
     context_window_tokens: int = Field(gt=0)
     max_output_tokens: int = Field(gt=0)
@@ -187,7 +196,12 @@ class ModelProfileSnapshot(_FrozenModel):
     retry_initial_backoff_seconds: float = Field(default=2.0, ge=0, le=60)
     retry_max_backoff_seconds: float = Field(default=30.0, ge=0, le=300)
     retry_recovery_window_seconds: float = Field(default=180, gt=0, le=3600)
-    pydantic_ai_version: str = "2.57.0"
+    pydantic_ai_version: str | None = "2.57.0"
+    qoder_sdk_version: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    qoder_cli_version: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    qoder_resource_version: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    context_encoding: Literal["text_v1"] | None = Field(default=None, exclude_if=lambda value: value is None)
+    account_ref: Literal["default"] | None = Field(default=None, exclude_if=lambda value: value is None)
     connection_fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$", exclude_if=lambda value: value is None)
 
 

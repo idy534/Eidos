@@ -35,6 +35,7 @@ class ResourcePack(EidosFrozenStrictModel):
     requires: tuple[str, ...] = Field(default=(), max_length=16)
     font_directory: str | None = Field(default=None, max_length=512)
     python_abi: Literal["cp312"] | None = None
+    isolated: bool = False
     manifest: RuntimeDependencyManifest
 
     _location = field_validator("location")(resource_relative_path)

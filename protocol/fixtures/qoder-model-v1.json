@@ -1,0 +1,8 @@
+{
+  "create": {"provider": "qoder", "modelId": "efficient", "apiKey": "", "qoder": {"accountRef": "default", "contextWindowTokens": 128000, "maxOutputTokens": 8192}},
+  "textOnlyCreate": {"provider": "qoder", "modelId": "dfmodel", "apiKey": "", "qoder": {"supportsImages": false, "supportsToolCall": false}},
+  "connectionRequest": {"action": "refresh"},
+  "checkRequest": {"action": "check"},
+  "checkingState": {"resourceReady": true, "phase": "checking", "models": []},
+  "connectionState": {"resourceReady": true, "resourcePreparing": false, "resourceError": null, "phase": "ready", "models": [{"id": "efficient", "name": "Efficient", "enabled": true}], "errorCode": null}
+}

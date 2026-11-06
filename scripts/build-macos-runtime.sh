@@ -126,6 +126,9 @@ env -u NODE_OPTIONS node "$ROOT_DIR/scripts/build-runtime-python.mjs" \
   --python "$PYTHON_EXECUTABLE" \
   --target "$PYTHON_DEPENDENCY_ROOT"
 
+"$ROOT_DIR/.venv/bin/python" "$ROOT_DIR/scripts/build-qoder-worker.py" \
+  --python "$PYTHON_EXECUTABLE" --target "$BUILD_ROOT/dependencies/qoder"
+
 env -u NODE_OPTIONS bash "$ROOT_DIR/scripts/build-runtime-fonts.sh"
 
 rsync -a \

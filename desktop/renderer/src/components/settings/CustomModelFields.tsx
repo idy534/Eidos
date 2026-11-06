@@ -7,6 +7,7 @@ import { Tooltip } from "../Tooltip.js";
 import { ModelIdCombobox } from "./ModelIdCombobox.js";
 import { CustomReasoningFields } from "./CustomReasoningFields.js";
 import { TokenLimitField } from "./TokenLimitField.js";
+import { ModelInputTypes } from "./ModelInputTypes.js";
 import { EyeIcon, EyeOffIcon } from "./ChannelIcons.js";
 
 type CustomField = keyof CustomModelSettings;
@@ -130,11 +131,8 @@ export function CustomModelFields({ draft, busy, onChange }: Props) {
       <TokenLimitField label="上下文窗口" value={custom.contextWindowTokens} presets={[262144, 524288, 1048576]} placeholder="默认 128K" disabled={busy} onChange={value => update("contextWindowTokens", value)} />
       <TokenLimitField label="最大输出" value={custom.maxOutputTokens} presets={[32768, 65536, 131072]} placeholder="默认 8K" disabled={busy} onChange={value => update("maxOutputTokens", value)} />
     </div>
-    <div className="custom-model-capabilities"><span>输入类型</span><div>
-      <label className="custom-model-check"><input type="checkbox" checked disabled />文本</label>
-      <label className="custom-model-check"><input type="checkbox" checked={custom.supportsImages ?? false} disabled={busy} onChange={event => update("supportsImages", event.target.checked)} />图像</label>
-      <label className="custom-model-check"><input type="checkbox" checked={custom.supportsToolCall ?? true} disabled={busy} onChange={event => update("supportsToolCall", event.target.checked)} />支持工具调用</label>
-    </div></div>
+    <ModelInputTypes supportsImages={custom.supportsImages ?? false} supportsToolCall={custom.supportsToolCall ?? true} disabled={busy}
+      onImagesChange={value => update("supportsImages", value)} onToolCallChange={value => update("supportsToolCall", value)} />
     <CustomReasoningFields custom={custom} busy={busy} onChange={next => { edited.current.add("reasoning"); edited.current.add("reasoningFormat"); edited.current.add("reasoningControl"); onChange({ ...draft, custom: next }); }} />
   </>;
 }

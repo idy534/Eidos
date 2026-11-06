@@ -1038,7 +1038,25 @@
 .custom-model-token-control { position: relative; }
 .custom-model-token-control input { padding-right: 36px; }
 .custom-model-token-control > button { position: absolute; right: 1px; top: 1px; bottom: 1px; width: 34px; border: 0; background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center; border-radius: var(--radius); }
-.custom-model-token-field .custom-model-options { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 4; box-shadow: var(--shadow-menu); }
+.custom-model-token-field .custom-model-options,
+.custom-model-token-control .custom-model-options {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  box-shadow: var(--shadow-menu);
+}
+.custom-model-token-field.is-up .custom-model-options,
+.custom-model-token-control.is-up .custom-model-options,
+.custom-model-options.is-up {
+  top: auto;
+  bottom: calc(100% + 4px);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12), 0 -1px 3px rgba(0, 0, 0, 0.08);
+}
+.custom-model-token-control.is-up > button svg {
+  transform: rotate(180deg);
+}
 .custom-model-combobox { display: flex; flex-direction: column; gap: 7px; }
 .custom-model-combobox > label { display: block; font-size: 12.5px; font-weight: 600; }
 .custom-model-options { max-height: 220px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-menu); background: var(--surface-raised); padding: 4px; }
@@ -1063,4 +1081,74 @@
   .custom-model-section-heading { align-items: flex-start; flex-direction: column; gap: 4px; }
   .custom-model-check small { flex-basis: 100%; }
   .model-dialog-fields .custom-model-check { flex-wrap: wrap; }
+}
+
+/* Qoder model connection and settings styling */
+.qoder-model-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.qoder-model-field-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 18px;
+}
+
+.qoder-model-field-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.qoder-model-connection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+}
+
+.qoder-model-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.qoder-model-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.qoder-model-status {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.4;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.qoder-model-status.is-success {
+  color: var(--status-success);
+}
+
+@media (max-width: 480px) {
+  .qoder-model-connection-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .qoder-model-actions {
+    flex-wrap: wrap;
+  }
+  .qoder-model-status {
+    text-align: left;
+    white-space: normal;
+  }
 }

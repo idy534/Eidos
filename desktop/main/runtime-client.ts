@@ -1,3 +1,4 @@
+import { isQoderConnectionState, isQoderModelSettings, type QoderConnectionRequest, type QoderConnectionState } from "../shared/qoder.js";
 import { isProjectRoot, isProjectWorkspace, type ProjectUpdateRequest, type ProjectCreateFoldersRequest, type GitWorkspaceRequest, type GitWorkspaceContract } from "../shared/project-workspaces.js";
 import { isShellEnvironmentResponse, type ShellEnvironmentReadRequest, type ShellEnvironmentRefreshRequest, type ShellEnvironmentSaveRequest, type ShellEnvironmentResponse } from "../shared/shell-environment.js";
 import { isPersonalizationResponse, type PersonalizationReadRequest, type PersonalizationSaveRequest, type PersonalizationResponse } from "../shared/personalization.js";
@@ -1137,6 +1138,10 @@ export class RuntimeClient {
     return this.validatedRequest("context/compact", { runId }, isContextCompactionRecord);
   }
 
+  qoderConnection(input: QoderConnectionRequest): Promise<QoderConnectionState> {
+    return this.validatedRequest("model/qoder", { ...input }, isQoderConnectionState);
+  }
+
   discoverCustomModels(input: CustomProviderRequest): Promise<CustomProviderResult> {
     return this.validatedRequest("model/discoverCustom", { ...input }, isCustomProviderResult);
   }
@@ -1747,10 +1752,11 @@ function isModelOption(value: unknown): value is ModelOption {
     isRecord(value)
     && hasOnlyKeys(value, [
       "id", "name", "vendor", "provider", "url", "supportsToolCall",
-      "supportsImages", "supportsReasoning", "reasoning", "custom", "modelId", "contextWindowTokens", "maxOutputTokens", "apiKey",
+      "supportsImages", "supportsReasoning", "reasoning", "custom", "qoder", "modelId", "contextWindowTokens", "maxOutputTokens", "apiKey",
     ])
     && (value.apiKey === undefined || typeof value.apiKey === "string")
     && (value.custom == null || isCustomModelSettings(value.custom))
+    && (value.qoder == null || (isQoderModelSettings(value.qoder) && value.provider === "qoder" && value.custom == null))
     && (value.modelId == null || isModelId(value.modelId))
     && (value.contextWindowTokens == null || (Number.isSafeInteger(value.contextWindowTokens) && Number(value.contextWindowTokens) > 0))
     && (value.maxOutputTokens == null || (Number.isSafeInteger(value.maxOutputTokens) && Number(value.maxOutputTokens) > 0))
@@ -1758,7 +1764,7 @@ function isModelOption(value: unknown): value is ModelOption {
     && typeof value.name === "string"
     && typeof value.vendor === "string"
     && typeof value.provider === "string"
-    && typeof value.url === "string"
+    && (value.provider === "qoder" ? value.url == null && value.qoder != null : typeof value.url === "string")
     && typeof value.supportsToolCall === "boolean"
     && typeof value.supportsImages === "boolean"
     && typeof value.supportsReasoning === "boolean"

@@ -1,3 +1,4 @@
+import { QODER_TOKEN_LIMITS } from "../../../../shared/qoder.js";
 import { customModelAddressError } from "./custom-model-address.js";
 import { useEffect, useState } from "react";
 import type {
@@ -68,6 +69,7 @@ export function ModelSettings({
       originalId: model.id,
       provider: model.custom ? "custom" : model.provider as ModelDraft["provider"],
       modelId: model.modelId ?? model.id,
+      ...(model.qoder ? { qoder: { accountRef: "default", contextWindowTokens: 128000, maxOutputTokens: 8192, ...model.qoder } } : {}),
       ...(model.custom ? { custom: { ...model.custom }, originalBaseUrl: model.custom.baseUrl } : {}),
       apiKey: model.apiKey ?? "",
     });
@@ -91,7 +93,7 @@ export function ModelSettings({
   };
 
   async function save() {
-    if (!draft || (!draft.custom && !draft.apiKey.trim())) {
+    if (!draft || (!draft.custom && !draft.qoder && !draft.apiKey.trim())) {
       setLocalError("API Key 必填");
       return;
     }
@@ -127,10 +129,35 @@ export function ModelSettings({
       const addressError = customModelAddressError(resolvedCustom.baseUrl);
       if (addressError) { setLocalError(addressError); return; }
     }
+    const resolvedQoder = draft.qoder ? {
+      ...draft.qoder,
+      contextWindowTokens: resolveTokenLimit(draft.qoder.contextWindowTokens, 128000),
+      maxOutputTokens: resolveTokenLimit(draft.qoder.maxOutputTokens, 8192),
+    } : undefined;
+
+    if (resolvedQoder && (!draft.modelId.trim() || !Number.isSafeInteger(resolvedQoder.contextWindowTokens)
+        || !Number.isSafeInteger(resolvedQoder.maxOutputTokens))) {
+      setLocalError("请先登录并选择模型，检查上下文和输出上限。");
+      return;
+    }
+    if (resolvedQoder && (resolvedQoder.contextWindowTokens < QODER_TOKEN_LIMITS.contextMin
+        || resolvedQoder.contextWindowTokens > (resolvedQoder.contextWindowLimit ?? QODER_TOKEN_LIMITS.contextMax))) {
+      setLocalError(`Qoder 上下文窗口必须在 ${QODER_TOKEN_LIMITS.contextMin}～${resolvedQoder.contextWindowLimit ?? QODER_TOKEN_LIMITS.contextMax} Tokens 之间。`);
+      return;
+    }
+    if (resolvedQoder && (resolvedQoder.maxOutputTokens < QODER_TOKEN_LIMITS.outputMin
+        || resolvedQoder.maxOutputTokens > (resolvedQoder.outputTokenLimit ?? QODER_TOKEN_LIMITS.outputMax))) {
+      setLocalError(`Qoder 最大输出必须在 ${QODER_TOKEN_LIMITS.outputMin}～${resolvedQoder.outputTokenLimit ?? QODER_TOKEN_LIMITS.outputMax} Tokens 之间。`);
+      return;
+    }
+    if (resolvedQoder && resolvedQoder.contextWindowTokens <= resolvedQoder.maxOutputTokens) {
+      setLocalError("上下文窗口必须大于最大输出。");
+      return;
+    }
     setBusy(true);
     setLocalError(undefined);
     try {
-      const extra = resolvedCustom ? { custom: resolvedCustom } : {};
+      const extra = resolvedQoder ? { qoder: resolvedQoder } : resolvedCustom ? { custom: resolvedCustom } : {};
       if (draft.originalId) {
         await window.eidosRuntime.updateModel({
           id: draft.originalId,
@@ -251,6 +278,7 @@ export function ModelSettings({
         busy={busy}
         error={localError}
         onChange={setDraft}
+        onCatalogUpdated={onModelsChanged}
         onCancel={() => { if (!busy) { setDraft(undefined); setLocalError(undefined); } }}
         onSave={() => void save()}
       />

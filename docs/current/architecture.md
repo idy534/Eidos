@@ -1102,3 +1102,10 @@ Runtime 重启只恢复现有 Recovery 允许的纯模型阶段。恢复沿用�
 首个请求由 Supervisor 管理的任务完成，JSON-RPC 输入循环可以继续处理其他请求。McpDetails 先读取当前 Plugin/手动 MCP 配置及授权，再使用已有 McpConnection、官方 MCP SDK、沙盒和资源登记执行初始化及工具目录发现。它只读取 `serverInfo.description` 作为服务描述，不执行 Tool。它复用现有 Tool Schema 校验判断条目是否可用，并在 finally 中关闭连接。
 
 设置页目录是有界的短期展示缓存，不是第二套业务状态。每个目录保存本次发现的工具及获取时间，具有随机目录 ID、配置绑定和 5 分钟有效期；系统最多保留 8 个、每个 512 KiB 的目录。后续查询重新校验服务授权和配置，以游标在同一目录中搜索并返回最多 10 条。用户撤销授权时不会继续返回条目。缓存不写入 SQLite，不更改 Run/Step Extension Snapshot、Tool Registry 或审批规则。旧游标在 Runtime 重启后失效，页面允许重新获取。
+
+
+## Qoder 模型 Adapter（2026-11-06）
+
+Model Gateway 新增 `qoder_sdk` 分支。QoderModelClient 只提供模型请求与结果映射。现有 Runtime Loop、工具、权限、上下文压缩、SQLite 和恢复继续由 Eidos 管理。Model Lease 通过已有 AnyIO Kernel 持有隔离 Worker，Worker 通过锁定的 Qoder Agent SDK 调用模型。SDK 自带工具不会执行 Eidos 操作。每次采样使用新 SDK 会话，完整工具批次返回后才进入原有工具流程。
+
+隔离依赖使用独立锁和 `qoder` 资源包。`isolated` 资源不会进入 Shell 或 Skill 的共享 Python 绑定。模型 Profile 和回放使用明确的 `qoder_sdk` 类型，历史使用 `text_v1` 文本编码。Credits 存入既有 ModelAttempt 用量 JSON。本次没有修改 SQL Schema。具体边界与限制见[当前功能说明](features/qoder-models.md)。

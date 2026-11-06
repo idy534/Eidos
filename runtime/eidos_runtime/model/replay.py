@@ -26,7 +26,7 @@ class ModelReasoningPart(BaseModel):
 class ModelResponseReplay(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
     schema_version: Literal[1] = 1
-    wire_api: Literal["chat_completions", "openai_responses"] = "chat_completions"
+    wire_api: Literal["chat_completions", "openai_responses", "qoder_sdk"] = "chat_completions"
     provider_name: str | None = None
     reasoning_parts: tuple[ModelReasoningPart, ...] = Field(default=())
     tool_call_ids: tuple[str, ...] = Field(default=())

@@ -18,7 +18,7 @@ from typing import ClassVar, Literal
 from eidos_runtime.domain.input_reference import InputReferenceId
 from eidos_runtime.domain.context_management import ContextCompactionActivity
 from eidos_runtime.domain.model_retry import ModelRetryActivity
-from eidos_runtime.model.config import CustomModelSettings
+from eidos_runtime.model.config import CustomModelSettings, QoderModelSettings
 
 from pydantic import Field, JsonValue, StrictInt, StrictStr
 from pydantic import field_validator, model_validator
@@ -512,6 +512,7 @@ class ModelCreateRequestDto(MethodRequestDto):
     model_id: StrictStr = Field(alias="modelId", min_length=1, max_length=256)
     api_key: StrictStr = Field(default="", alias="apiKey", max_length=512, repr=False)
     custom: CustomModelSettings | None = None
+    qoder: QoderModelSettings | None = None
 
 
 class ModelUpdateRequestDto(MethodRequestDto):
@@ -520,6 +521,7 @@ class ModelUpdateRequestDto(MethodRequestDto):
     model_id: StrictStr = Field(alias="modelId", min_length=1, max_length=256)
     api_key: StrictStr | None = Field(default=None, alias="apiKey", max_length=512)
     custom: CustomModelSettings | None = None
+    qoder: QoderModelSettings | None = None
 
 
 class ModelDeleteRequestDto(MethodRequestDto):
@@ -1123,12 +1125,13 @@ class ModelOptionDto(ClosedModel):
     name: StrictStr
     vendor: StrictStr
     provider: StrictStr
-    url: StrictStr
+    url: StrictStr | None = None
     supports_tool_call: bool = Field(alias="supportsToolCall")
     supports_images: bool = Field(alias="supportsImages")
     supports_reasoning: bool = Field(alias="supportsReasoning")
     reasoning: ModelReasoningDto | None = None
     custom: CustomModelSettings | None = None
+    qoder: QoderModelSettings | None = None
     model_id: StrictStr | None = Field(default=None, alias="modelId")
     context_window_tokens: int | None = Field(default=None, alias="contextWindowTokens")
     max_output_tokens: int | None = Field(default=None, alias="maxOutputTokens")

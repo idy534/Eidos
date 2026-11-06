@@ -17,6 +17,7 @@ import tarfile
 import tempfile
 
 from eidos_runtime.models.managed_resources import ResourceIndex, ResourcePack
+from eidos_runtime.model.qoder_protocol import RESOURCE_VERSION
 from eidos_runtime.models.runtime_dependencies import (
     RuntimeDependencyExecutable, RuntimeDependencyInventoryFile,
     RuntimeDependencyManifest, RuntimeDependencyNodePackage, RuntimeDependencyPythonPackage,
@@ -34,7 +35,7 @@ TITLES = {
     "document-python": "基础文档处理", "node": "文档 Node 解释器", "document-node": "文档 JavaScript 库",
     "office": "Office 转换与重算", "images": "图片转换", "pdf": "PDF 生成与渲染",
     "data": "表格数据分析", "ocr": "OCR 引擎", "ocr-eng": "英文 OCR", "ocr-chi-sim": "中文 OCR",
-    "fonts": "文档字体", "browser": "浏览器自动化",
+    "fonts": "文档字体", "browser": "浏览器自动化", "qoder": "Qoder 模型 SDK",
 }
 REQUIRES = {
     "document-node": ("node",), "office": ("document-node", "fonts"),
@@ -152,12 +153,15 @@ def node_packages(bundle: Path, staging: Path) -> dict[str, list[RuntimeDependen
 
 def pack_group(group: Path, output: Path, python: list[RuntimeDependencyPythonPackage], node: list[RuntimeDependencyNodePackage]) -> ResourcePack:
     pack_id = group.name
-    version = NODE_VERSION if pack_id == "node" else VERSION
+    version = RESOURCE_VERSION if pack_id == "qoder" else NODE_VERSION if pack_id == "node" else VERSION
     files = [p for p in sorted(group.rglob("*")) if p.is_file()]
     inventory = tuple(RuntimeDependencyInventoryFile(path=p.relative_to(group).as_posix(), sha256=digest(p)) for p in files)
     executable = ()
     if pack_id == "node":
         executable = (RuntimeDependencyExecutable(name="node", version=NODE_VERSION, path="bin/node", sha256=digest(group / "bin/node")),)
+    if pack_id == "qoder":
+        relative = "lib/qoder_agent_sdk/_bundled/qodercli"
+        executable = (RuntimeDependencyExecutable(name="qodercli", version="1.1.79", path=relative, sha256=digest(group / relative)),)
     if pack_id == "office":
         relative = "node_modules/@deepseek-ai/libreoffice-kit-darwin-arm64/bin/dsoffice"
         executable = (RuntimeDependencyExecutable(name="office", version="0.2.3", path=relative, sha256=digest(group / relative)),)
@@ -195,10 +199,31 @@ def pack_group(group: Path, output: Path, python: list[RuntimeDependencyPythonPa
         archive_sha256=digest(archive_path), archive_bytes=archive_path.stat().st_size,
         expanded_bytes=sum(p.stat().st_size for p in files), requires=REQUIRES.get(pack_id, ()),
         font_directory="fonts" if pack_id == "fonts" else None, manifest=manifest,
-        python_abi="cp312" if python else None,
+        python_abi="cp312" if python else None, isolated=pack_id == "qoder",
     )
     print(f"Built {pack.title}: {pack.archive_bytes / 1024**2:.1f} MiB download, {pack.expanded_bytes / 1024**2:.1f} MiB installed", flush=True)
     return pack
+
+
+def qoder_packages(bundle: Path, staging: Path) -> list[RuntimeDependencyPythonPackage]:
+    source = bundle / "dependencies/qoder"
+    if not source.is_dir():
+        raise ValueError("build the isolated Qoder payload before resource packs")
+    shutil.copytree(source, staging / "qoder/lib", ignore=shutil.ignore_patterns("tests", "test", "__pycache__", "*.pyc"))
+    packages = []
+    for dist in importlib.metadata.distributions(path=[str(source)]):
+        name = dist.metadata["Name"]
+        declared = (dist.read_text("top_level.txt") or "").splitlines()
+        roots = {str(f).split("/")[0].removesuffix(".py") for f in dist.files or ()}
+        candidates = [*declared, *sorted(roots)]
+        # RECORD may include console-script bin/ and a native _cffi_backend.
+        # Declare an actual import package/module supported by the catalog.
+        import_name = next((v for v in candidates if v.isidentifier()
+                            and ((source / v / "__init__.py").is_file() or (source / (v + ".py")).is_file())), None)
+        if import_name is None:
+            raise ValueError(f"No import root for {name}")
+        packages.append(RuntimeDependencyPythonPackage(name=name, import_name=import_name, version=dist.version))
+    return packages
 
 
 def main() -> None:
@@ -216,6 +241,7 @@ def main() -> None:
         stage = Path(folder)
         python, shared = python_packages(bundle, stage)
         node = node_packages(bundle, stage)
+        python["qoder"] = qoder_packages(bundle, stage)
         shutil.copytree(bundle / "dependencies/fonts", stage / "fonts/fonts")
         packs = tuple(pack_group(group, output, python.get(group.name, []), node.get(group.name, []))
                       for group in sorted(stage.iterdir()) if group.is_dir())

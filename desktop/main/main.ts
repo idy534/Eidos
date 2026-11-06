@@ -1,3 +1,4 @@
+import { isQoderConnectionRequest } from "../shared/qoder.js";
 import { validateSessionCreateOptions } from "./session-create-options.js";
 import { isGitWorkspaceRequest, isProjectCreateFoldersRequest, isProjectReadRequest, isProjectUpdateRequest } from "../shared/project-workspaces.js";
 import { isShellEnvironmentReadRequest, isShellEnvironmentRefreshRequest, isShellEnvironmentSaveRequest } from "../shared/shell-environment.js";
@@ -1510,6 +1511,10 @@ ipcMain.handle(IPC.ITEM_SET_FEEDBACK, (_event, itemId: unknown, feedback: unknow
   );
 });
 
+ipcMain.handle(IPC.MODEL_QODER, (_event, input: unknown) => {
+  if (!isQoderConnectionRequest(input)) throw new Error("Qoder 参数无效。");
+  return clientOrThrow().qoderConnection(input);
+});
 ipcMain.handle(IPC.MODEL_DISCOVER_CUSTOM, (_event, input: unknown) => {
   if (!input || typeof input !== "object") throw new Error("自定义提供商参数无效。");
   return clientOrThrow().discoverCustomModels(input as CustomProviderRequest);

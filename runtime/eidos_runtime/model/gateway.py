@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import logging
 import uuid
+from pathlib import Path
+
+from eidos_runtime.infrastructure.managed_resources import ManagedResourceManager, ResourceError
+from eidos_runtime.infrastructure.qoder_model_driver import QoderModelDriver, QoderWorkerBinding
+from eidos_runtime.model.qoder_client import QoderModelClient
 
 from eidos_runtime.model.config import (
     MODEL_CATALOG,
     ModelConfig,
     ModelConfigStore,
+    ModelConfigError,
     ModelReasoningSelection,
 )
-from eidos_runtime.model.client import ModelClient
+from eidos_runtime.model.client import ModelClient, ModelProfileSnapshot
 from eidos_runtime.model.gateway_types import RetryPolicy
 from eidos_runtime.model.pydantic_ai_client import (
     ModelClientLease,
@@ -34,7 +40,7 @@ class ModelGatewayLease(ModelClientLease):
     ) -> None:
         self.lease_id = str(uuid.uuid4())
         self.model_id = config.id
-        self.provider = "custom" if config.custom else MODEL_CATALOG.provider_id_for(config.id, vendor=config.vendor)
+        self.provider = "qoder" if config.qoder else "custom" if config.custom else MODEL_CATALOG.provider_id_for(config.id, vendor=config.vendor)
         super().__init__(
             client,
             client.close,
@@ -60,7 +66,9 @@ class ModelGateway:
         *,
         async_kernel: RuntimeAsyncKernel,
         resource_registry: ResourceRegistry | None = None,
+        managed_resources: ManagedResourceManager | None = None,
     ) -> None:
+        self.managed_resources = managed_resources
         self.configs = configs
         self.resources = resource_registry
         self.async_kernel = async_kernel
@@ -72,12 +80,29 @@ class ModelGateway:
         reasoning_selection: ModelReasoningSelection | None = None,
         max_output_tokens: int | None = None,
         retry_policy: RetryPolicy | None = None,
+        frozen_profile: ModelProfileSnapshot | None = None,
     ) -> ModelGatewayLease:
         spec = MODEL_CATALOG.profile(config.id, config=config)
         if max_output_tokens is not None:
             if not 1 <= max_output_tokens <= spec.max_output_tokens:
                 raise ValueError("model_output_limit_invalid")
             spec = spec.model_copy(update={"max_output_tokens": max_output_tokens})
+        if config.qoder is not None:
+            if self.managed_resources is None:
+                raise ResourceError("resource_not_ready", "请先在运行环境设置中准备 Qoder 资源。")
+            if self.configs.path is None:
+                self.configs.initialize()
+            assert self.configs.path is not None
+            binding = QoderWorkerBinding(self.managed_resources, Path(self.configs.path.parent) / "qoder/default")
+            profile = spec.snapshot(config, reasoning_selection=reasoning_selection).model_copy(update={"qoder_resource_version": binding.version})
+            if frozen_profile is not None:
+                fields = ("wire_api", "remote_model_id", "connection_fingerprint", "qoder_sdk_version",
+                          "qoder_cli_version", "qoder_resource_version", "context_encoding", "account_ref")
+                if any(getattr(frozen_profile, name) != getattr(profile, name) for name in fields):
+                    raise ModelConfigError("Qoder model snapshot no longer matches this configuration or resource release")
+                profile = frozen_profile
+            return ModelGatewayLease(QoderModelClient(profile, QoderModelDriver(binding), self.async_kernel),
+                                     config, resource_registry=self.resources)
         built = (build_pydantic_model(config, wire_api=spec.wire_api, retry_policy=retry_policy)
                  if retry_policy is not None else build_pydantic_model(config, wire_api=spec.wire_api))
         profile_snapshot = spec.snapshot(

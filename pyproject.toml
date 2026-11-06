@@ -92,4 +92,4 @@ select = ["E4", "E7", "E9", "F"]
 known_first_party = ["eidos_runtime", "github_utils"]
 # Skill scripts run in the separately locked document environment, not in
 # the Runtime control process. Bundled document smoke validates their imports.
-extend_exclude = [".*resources/skills/.*"]
+extend_exclude = [".*resources/skills/.*", ".*resources/runtime-dependencies/qoder/.*"]
