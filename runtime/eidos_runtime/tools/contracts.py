@@ -565,21 +565,26 @@ class ControlShellInput(StrictToolModel):
 
 
 SKILL_READ_PAGE_BYTES = 24_000
+SKILL_RESOURCE_METADATA_BYTES = 4 * 1024
+SKILL_RESOURCE_MAX_ENTRIES = 40
+_SKILL_PATH_SEGMENT = r"(?:[^./\\\x00][^/\\\x00]*|\.[^./\\\x00][^/\\\x00]*|\.\.[^/\\\x00]+)"
+SKILL_RESOURCE_PATH_PATTERN = rf"^(?:\.|{_SKILL_PATH_SEGMENT}(?:/{_SKILL_PATH_SEGMENT})*)$"
 
 
 class SkillReadInput(StrictToolModel):
     qualifiedId: StrictStr = Field(
         min_length=1,
         max_length=129,
-        description="Use the name value from the available Skill catalog to select the enabled local Skill.",
+        pattern=r"^[a-z][a-z0-9_-]{0,63}:[a-z][a-z0-9-]{0,63}$",
+        description="name of an <available_skills> entry, e.g. user:pdf",
     )
     offset: int = Field(default=0, ge=0, le=MAX_SKILL_FILE_BYTES, description="UTF-8 byte offset; use nextOffset from the previous page.")
     maxBytes: int = Field(default=SKILL_READ_PAGE_BYTES, ge=4, le=SKILL_READ_PAGE_BYTES, description="Maximum content bytes per page.")
 
-    @field_validator("qualifiedId")
+    @field_validator("qualifiedId", mode="before")
     @classmethod
-    def validate_qualified_id(cls, value: str) -> str:
-        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}:[a-z][a-z0-9-]{0,63}", value):
+    def validate_qualified_id(cls, value: object) -> object:
+        if isinstance(value, str) and 1 <= len(value) <= 129 and not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}:[a-z][a-z0-9-]{0,63}", value):
             raise ValueError("invalid_qualified_skill_id")
         return value
 
@@ -588,13 +593,14 @@ class SkillReadResourceInput(SkillReadInput):
     resourcePath: StrictStr = Field(
         min_length=1,
         max_length=512,
-        description="Path relative to the selected Skill's directory.",
+        pattern=SKILL_RESOURCE_PATH_PATTERN,
+        description="Relative to the Skill root, e.g. references/api.md. No leading '/' or '..'. Use '.' to list the root.",
     )
 
     @field_validator("resourcePath")
     @classmethod
     def validate_resource_path(cls, value: str) -> str:
-        return _relative_path(value)
+        return _relative_path(value, allow_dot=True)
 
 
 class SkillFileInput(StrictToolModel):
@@ -952,6 +958,22 @@ class ControlShellResultData(RunShellResultData):
     pass
 
 
+class SkillResourceEntry(StrictToolModel):
+    resourcePath: StrictStr = Field(min_length=1, max_length=512, pattern=SKILL_RESOURCE_PATH_PATTERN)
+    sizeBytes: StrictInt = Field(ge=0)
+    type: Literal["text", "binary", "script", "directory"]
+
+
+class SkillResourceListingData(StrictToolModel):
+    qualifiedId: StrictStr
+    resourcePath: StrictStr
+    resourceType: Literal["directory"]
+    pluginId: StrictStr
+    skillRoot: StrictStr
+    resources: list[SkillResourceEntry] = Field(max_length=SKILL_RESOURCE_MAX_ENTRIES)
+    resourcesTruncated: StrictBool
+
+
 class SkillReadResultData(StrictToolModel):
     SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = (
         "qualifiedId", "content", "contentHash", "pluginId",
@@ -971,13 +993,22 @@ class SkillReadResultData(StrictToolModel):
     pluginHash: StrictStr | None = Field(
         default=None, pattern=r"^[0-9a-f]{64}$"
     )
+    skillRoot: StrictStr | None = None
+    resources: list[SkillResourceEntry] | None = Field(default=None, max_length=SKILL_RESOURCE_MAX_ENTRIES)
+    resourcesTruncated: StrictBool | None = None
 
 
 class SkillResourceResultData(SkillReadResultData):
+    SUCCESS_ALTERNATIVES: ClassVar[tuple[type[BaseModel], ...]] = (SkillResourceListingData,)
     SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = (
         "qualifiedId", "resourcePath", "content", "contentHash", "pluginId",
     )
     resourcePath: StrictStr | None = None
+    resourceType: Literal["text", "binary", "script", "directory"] | None = None
+    absolutePath: StrictStr | None = None
+    sizeBytes: StrictInt | None = Field(default=None, ge=0)
+    maxBytes: StrictInt | None = Field(default=None, ge=0)
+    candidates: list[StrictStr] | None = Field(default=None, max_length=5)
 
 
 class SkillChangeResultData(StrictToolModel):
@@ -1048,11 +1079,13 @@ def result_model(data_model: type[BaseModel]) -> type[BaseModel]:
             __base__=data_model,
             **required_fields,
         )
+        success_types = (success_data_model, *getattr(data_model, "SUCCESS_ALTERNATIVES", ()))
+        success_data_type = Union[success_types] if len(success_types) > 1 else success_data_model
         success_envelope = create_model(
             f"{data_model.__name__.removesuffix('Data')}SuccessResult",
             __base__=CanonicalToolResultBase,
             outcome=(Literal["success"], "success"),
-            data=(success_data_model, ...),
+            data=(success_data_type, ...),
             sideEffectsMayExist=(bool, False),
             reconciliationRequired=(
                 bool if getattr(data_model, "ALLOW_SUCCESS_RECONCILIATION", False)
@@ -1288,6 +1321,9 @@ def _project_tool_result(
             stream_omitted=stream_omitted,
         )
     else:
+        skill_metadata = {}
+        if tool_name in {"skill_read", "skill_read_resource"}:
+            skill_metadata = _project_skill_metadata(model_data)
         projected = {}
         truncated = False
         budget = _ProjectionBudget()
@@ -1327,6 +1363,9 @@ def _project_tool_result(
             ),
         }
         model_result = _fit_serialized_budget(model_result)
+        # Skill discovery metadata has its own 4 KiB allowance. It must not
+        # evict a text page or its continuation from the existing 48 KiB budget.
+        model_result["data"].update(skill_metadata)
     fingerprint = hashlib.sha256(
         _canonical_json(
             _semantic(canonical_result, set_fields=set_fields)
@@ -1355,6 +1394,29 @@ def _project_tool_result(
         )[:256],
         progress_fingerprint=fingerprint,
     )
+
+
+def _project_skill_metadata(data: dict[str, object]) -> dict[str, object]:
+    metadata = {
+        key: data.pop(key)
+        for key in ("skillRoot", "resources", "resourcesTruncated")
+        if key in data
+    }
+    resources = metadata.get("resources")
+    if isinstance(resources, list):
+        metadata["resources"] = resources[:SKILL_RESOURCE_MAX_ENTRIES]
+        if len(resources) > SKILL_RESOURCE_MAX_ENTRIES:
+            metadata["resourcesTruncated"] = True
+        resources = metadata["resources"]
+    while len(_canonical_json(metadata).encode("utf-8")) > SKILL_RESOURCE_METADATA_BYTES:
+        metadata["resourcesTruncated"] = True
+        if isinstance(resources, list) and resources:
+            resources.pop()
+        else:
+            # Never expose a shortened absolute path as if it were usable.
+            metadata.pop("skillRoot", None)
+            break
+    return metadata
 
 
 def _project_shell_data(
