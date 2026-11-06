@@ -82,6 +82,56 @@
         }
       },
       "canonicalJson": "{\"code\":\"shell_running\",\"data\":{\"columns\":120,\"controlAction\":\"resize\",\"executionStatus\":\"running\",\"exitCode\":null,\"outputMerged\":true,\"outputRevision\":16,\"rows\":40,\"sessionId\":\"shell-fixture\",\"stderr\":\"\",\"stdout\":\"提示> \",\"termination\":\"running\",\"transport\":\"pty\",\"truncated\":false,\"workspaceChanged\":false},\"outcome\":\"success\",\"reconciliationRequired\":false,\"schemaVersion\":1,\"sideEffectsMayExist\":true,\"summary\":\"Command is still running\",\"toolContractVersion\":1,\"toolName\":\"control_shell\"}"
+    },
+    {
+      "name": "skill-directory",
+      "result": {
+        "schemaVersion": 1,
+        "toolContractVersion": 1,
+        "toolName": "skill_read_resource",
+        "outcome": "success",
+        "code": "ok",
+        "summary": "Skill directory loaded",
+        "data": {
+          "qualifiedId": "user:pdf",
+          "resourcePath": "references",
+          "resourceType": "directory",
+          "pluginId": "eidos-user",
+          "skillRoot": "/skills/pdf",
+          "resourcesTruncated": false,
+          "resources": [
+            {
+              "resourcePath": "references/api.md",
+              "sizeBytes": 20,
+              "type": "text"
+            }
+          ]
+        },
+        "sideEffectsMayExist": false,
+        "reconciliationRequired": false
+      },
+      "canonicalJson": "{\"code\":\"ok\",\"data\":{\"pluginId\":\"eidos-user\",\"qualifiedId\":\"user:pdf\",\"resourcePath\":\"references\",\"resourceType\":\"directory\",\"resources\":[{\"resourcePath\":\"references/api.md\",\"sizeBytes\":20,\"type\":\"text\"}],\"resourcesTruncated\":false,\"skillRoot\":\"/skills/pdf\"},\"outcome\":\"success\",\"reconciliationRequired\":false,\"schemaVersion\":1,\"sideEffectsMayExist\":false,\"summary\":\"Skill directory loaded\",\"toolContractVersion\":1,\"toolName\":\"skill_read_resource\"}"
+    },
+    {
+      "name": "skill-binary-error",
+      "result": {
+        "schemaVersion": 1,
+        "toolContractVersion": 1,
+        "toolName": "skill_read_resource",
+        "outcome": "error",
+        "code": "skill_resource_not_text",
+        "summary": "Process binary resource with a Skill script",
+        "data": {
+          "qualifiedId": "user:pdf",
+          "resourcePath": "assets/template.pdf",
+          "resourceType": "binary",
+          "absolutePath": "/skills/pdf/assets/template.pdf",
+          "sizeBytes": 256
+        },
+        "sideEffectsMayExist": false,
+        "reconciliationRequired": false
+      },
+      "canonicalJson": "{\"code\":\"skill_resource_not_text\",\"data\":{\"absolutePath\":\"/skills/pdf/assets/template.pdf\",\"qualifiedId\":\"user:pdf\",\"resourcePath\":\"assets/template.pdf\",\"resourceType\":\"binary\",\"sizeBytes\":256},\"outcome\":\"error\",\"reconciliationRequired\":false,\"schemaVersion\":1,\"sideEffectsMayExist\":false,\"summary\":\"Process binary resource with a Skill script\",\"toolContractVersion\":1,\"toolName\":\"skill_read_resource\"}"
     }
   ]
 }

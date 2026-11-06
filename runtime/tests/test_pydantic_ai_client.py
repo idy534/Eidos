@@ -471,6 +471,39 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertIn("qualifiedId", content)
         self.assertIn("resourcePath", content)
 
+    def test_skill_resource_metadata_and_actionable_errors_reach_native_tool_results(self) -> None:
+        results = (
+            ("skill_read", "success", {
+                "skillRoot": "/skills/pdf", "resourcesTruncated": False,
+                "resources": [{"resourcePath": "references/api.md", "sizeBytes": 20, "type": "text"}],
+            }),
+            ("skill_read_resource", "error", {
+                "resourcePath": "references/ap.md", "candidates": ["references/api.md"],
+                "absolutePath": "/skills/pdf/assets/template.pdf",
+            }),
+            ("skill_read_resource", "success", {
+                "resourceType": "directory", "resourcePath": "references",
+                "resources": [{"resourcePath": "references/api.md", "sizeBytes": 20, "type": "text"}],
+            }),
+        )
+        context = []
+        for index, (name, outcome, data) in enumerate(results):
+            arguments = {"qualifiedId": "user:pdf"}
+            if name == "skill_read_resource":
+                arguments["resourcePath"] = data["resourcePath"]
+            context.extend((
+                {"type": "tool_call", "callId": f"skill-{index}", "name": name, "arguments": json.dumps(arguments)},
+                {"type": "tool_result", "callId": f"skill-{index}", "name": name,
+                 "result": json.dumps({"outcome": outcome, "data": data})},
+            ))
+        messages = encode_context(tuple(context))
+        returned = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        self.assertEqual(len(returned), 3)
+        for part, (_name, outcome, data) in zip(returned, results, strict=True):
+            content = json.loads(part.content)
+            self.assertEqual(content["outcome"], outcome)
+            self.assertEqual(content["data"], data)
+
     def test_complete_attaches_instructions_only_to_first_model_request(self) -> None:
         captured: dict[str, object] = {}
 

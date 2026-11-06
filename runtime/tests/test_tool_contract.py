@@ -6,6 +6,7 @@ import sys
 import unittest
 
 from pydantic import ValidationError
+from jsonschema import Draft202012Validator
 
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +21,13 @@ from eidos_runtime.tools.contracts import (  # noqa: E402
     RunShellInput,
     SearchTextInput,
     SearchTextWaitInput,
+    SKILL_RESOURCE_METADATA_BYTES,
+    SkillReadInput,
+    SkillReadResourceInput,
+    SkillReadResultData,
+    SkillResourceResultData,
     WriteStdinInput,
+    result_model,
 )
 from eidos_runtime.tools.workspace import (  # noqa: E402
     TOOL_SPECS,
@@ -32,6 +39,74 @@ from eidos_runtime.tools.registry import ToolSpec  # noqa: E402
 
 
 class ToolContractTests(unittest.TestCase):
+    def test_skill_input_constraints_are_visible_to_json_schema_consumers(self) -> None:
+        schema = SkillReadResourceInput.model_json_schema()
+        validator = Draft202012Validator(schema)
+        for path in ("references/api.md", "scripts/run.py", ".", ".hidden/info.md", "references/.../info.md"):
+            arguments = {"qualifiedId": "user:pdf", "resourcePath": path}
+            SkillReadResourceInput.model_validate(arguments)
+            validator.validate(arguments)
+        for field, value in (
+            ("qualifiedId", "pdf"), ("qualifiedId", "User:pdf"), ("qualifiedId", "user:pdf/extra"),
+            ("resourcePath", "/etc/passwd"), ("resourcePath", "../info.md"),
+            ("resourcePath", "references/../info.md"), ("resourcePath", "references/./info.md"),
+            ("resourcePath", "references//info.md"), ("resourcePath", "references/"),
+            ("resourcePath", "references\\info.md"), ("resourcePath", "references/\x00info.md"),
+        ):
+            arguments = {"qualifiedId": "user:pdf", "resourcePath": "references/api.md", field: value}
+            with self.subTest(field=field, value=value):
+                with self.assertRaises(ValidationError):
+                    SkillReadResourceInput.model_validate(arguments)
+                self.assertFalse(validator.is_valid(arguments))
+        self.assertIn("pattern", SkillReadInput.model_json_schema()["properties"]["qualifiedId"])
+
+    def test_skill_error_data_and_directory_success_are_typed_without_weakening_text_results(self) -> None:
+        base = {"toolName": "skill_read_resource", "code": "ok", "summary": "Resource result"}
+        failure = {**base, "outcome": "error", "data": {
+            "qualifiedId": "user:pdf", "resourcePath": "assets/sample.pdf",
+            "absolutePath": "/skills/pdf/assets/sample.pdf", "resourceType": "binary",
+            "candidates": ["references/api.md"],
+        }}
+        result_model(SkillResourceResultData).model_validate(failure)
+        directory = {**base, "outcome": "success", "data": {
+            "qualifiedId": "user:pdf", "resourcePath": "references", "resourceType": "directory",
+            "pluginId": "eidos-user", "skillRoot": "/skills/pdf", "resourcesTruncated": False,
+            "resources": [{"resourcePath": "references/api.md", "sizeBytes": 20, "type": "text"}],
+        }}
+        result_model(SkillResourceResultData).model_validate(directory)
+        with self.assertRaises(ValidationError):
+            result_model(SkillResourceResultData).model_validate({
+                **directory, "data": {key: value for key, value in directory["data"].items() if key != "resourceType"},
+            })
+        with self.assertRaises(ValidationError):
+            result_model(SkillResourceResultData).model_validate({**failure, "data": {"arbitrary": True}})
+
+    def test_skill_discovery_metadata_has_a_separate_budget_and_preserves_the_text_page(self) -> None:
+        result = {
+            "toolName": "skill_read", "outcome": "success", "code": "ok", "summary": "Skill loaded",
+            "data": {
+                "qualifiedId": "user:pdf", "content": "\x01" * 8_000,
+                "contentHash": "a" * 64, "pluginId": "eidos-user", "pluginVersion": "1", "pluginHash": "b" * 64,
+                "startByte": 0, "endByte": 8_000, "totalBytes": 16_000, "nextOffset": 8_000,
+                "skillRoot": "/skills/pdf", "resourcesTruncated": False,
+                "resources": [{"resourcePath": f"references/{'长' * 40}{index:03}.md", "sizeBytes": 20, "type": "text"} for index in range(40)],
+            },
+        }
+        result_model(SkillReadResultData).model_validate(result)
+        original_count = len(result["data"]["resources"])
+        projected = project_tool_result("skill_read", result).model_result
+        data = projected["data"]
+        metadata = {key: data[key] for key in ("skillRoot", "resources", "resourcesTruncated")}
+        self.assertEqual(data["content"], result["data"]["content"])
+        self.assertEqual(data["nextOffset"], 8_000)
+        self.assertTrue(data["resourcesTruncated"])
+        self.assertLess(len(data["resources"]), original_count)
+        self.assertEqual(len(result["data"]["resources"]), original_count)
+        size = len(json.dumps(projected, ensure_ascii=False, separators=(",", ":")).encode())
+        self.assertGreater(size, 48 * 1024)
+        self.assertLessEqual(size, 48 * 1024 + SKILL_RESOURCE_METADATA_BYTES)
+        self.assertLessEqual(len(json.dumps(metadata, ensure_ascii=False, separators=(",", ":")).encode()), SKILL_RESOURCE_METADATA_BYTES)
+
     def test_registry_and_cross_language_vectors_are_canonical(self) -> None:
         self.assertEqual(len({spec.name for spec in TOOL_SPECS}), len(TOOL_SPECS))
         fixture = json.loads(
@@ -40,7 +115,10 @@ class ToolContractTests(unittest.TestCase):
         )
         for vector in fixture["vectors"]:
             result = vector["result"]
-            self.assertEqual(canonical_tool_result(result["toolName"], result), result)
+            self.assertEqual(canonical_tool_result(
+                result["toolName"], result,
+                data_model=SkillResourceResultData if result["toolName"] == "skill_read_resource" else None,
+            ), result)
             self.assertEqual(
                 json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
                 vector["canonicalJson"],
