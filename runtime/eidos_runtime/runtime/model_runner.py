@@ -32,7 +32,7 @@ class ModelStepResult:
     text: str
     tool_calls: tuple[ModelToolCall, ...]
     reasoning_parts: tuple[ModelReasoningPart, ...] = ()
-    wire_api: Literal["chat_completions", "openai_responses"] = "chat_completions"
+    wire_api: Literal["chat_completions", "openai_responses", "qoder_sdk"] = "chat_completions"
     phase: AssistantMessagePhase | None = AssistantMessagePhase.UNKNOWN
     phase_source: ResponsePhaseSource = "unknown"
     end_turn: bool | None = None

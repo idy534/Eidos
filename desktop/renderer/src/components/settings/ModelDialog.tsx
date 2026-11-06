@@ -1,3 +1,5 @@
+import type { QoderModelSettings } from "../../../../shared/qoder.js";
+import { QoderModelFields } from "./QoderModelFields.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ModelProviderPreset, ModelPresetsResult } from "../../contracts.js";
 import type { CustomModelSettings } from "../../../../shared/custom-models.js";
@@ -11,7 +13,8 @@ import { EyeIcon, EyeOffIcon } from "./ChannelIcons.js";
 
 export interface ModelDraft {
   originalId?: string;
-  provider: ModelProviderPreset["id"] | "custom";
+  provider: ModelProviderPreset["id"] | "custom" | "qoder";
+  qoder?: QoderModelSettings;
   modelId: string;
   apiKey: string;
   apiKeyEdited?: boolean;
@@ -36,9 +39,10 @@ interface ModelDialogProps {
   onChange: (draft: ModelDraft) => void;
   onCancel: () => void;
   onSave: () => void;
+  onCatalogUpdated?: (() => Promise<void>) | undefined;
 }
 
-export function ModelDialog({ draft, presets, busy, error, onChange, onCancel, onSave }: ModelDialogProps) {
+export function ModelDialog({ draft, presets, busy, error, onChange, onCancel, onSave, onCatalogUpdated }: ModelDialogProps) {
   const [showKey, setShowKey] = useState(false);
   const providerSelectRef = useRef<HTMLSelectElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -68,11 +72,11 @@ export function ModelDialog({ draft, presets, busy, error, onChange, onCancel, o
   if (!draft || !presets) return null;
   return (
     <div className="modal-backdrop">
-      <div ref={dialogRef} className={`modal-dialog model-dialog${draft.custom ? " model-dialog--custom" : ""}`} role="dialog" aria-modal="true" aria-labelledby="model-dialog-title" onClick={(event) => event.stopPropagation()}>
+      <div ref={dialogRef} className={`modal-dialog model-dialog${draft.custom || draft.qoder ? " model-dialog--custom" : ""}`} role="dialog" aria-modal="true" aria-labelledby="model-dialog-title" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header model-dialog-header">
           <div>
             <h3 id="model-dialog-title">{draft.originalId ? "编辑模型" : "添加模型"}</h3>
-            {!draft.custom && <p>仅支持 OpenAI 兼容协议 API</p>}
+            {!draft.custom && <p>{draft.qoder ? "使用 Qoder 账号的登录" : "使用提供商的模型 API"}</p>}
           </div>
         </div>
         <div className="modal-body model-dialog-fields">
@@ -91,8 +95,12 @@ export function ModelDialog({ draft, presets, busy, error, onChange, onCancel, o
                 ref={providerSelectRef}
                 aria-label="提供商"
                 value={draft.provider}
-                disabled={busy || Boolean(draft.originalId && draft.custom)}
+                disabled={busy || Boolean(draft.originalId && (draft.custom || draft.qoder))}
                 onChange={(event) => {
+                  if (event.target.value === "qoder") {
+                    onChange({ ...(draft.originalId ? { originalId: draft.originalId } : {}), provider: "qoder", modelId: "", apiKey: "", qoder: { accountRef: "default", contextWindowTokens: 128000, maxOutputTokens: 8192 } });
+                    return;
+                  }
                   if (event.target.value === "custom") {
                     onChange({ ...(draft.originalId ? { originalId: draft.originalId } : {}), provider: "custom", modelId: "", apiKey: "", custom: emptyCustomSettings() });
                     return;
@@ -102,6 +110,7 @@ export function ModelDialog({ draft, presets, busy, error, onChange, onCancel, o
                 }}
               >
                 {presets.providers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                <option value="qoder">Qoder</option>
                 <option value="custom">自定义（OpenAI 兼容）</option>
               </select>
               <span className="model-select-control__chevron" aria-hidden="true">
@@ -111,7 +120,7 @@ export function ModelDialog({ draft, presets, busy, error, onChange, onCancel, o
               </span>
             </div>
           </label>
-          {draft.custom ? <CustomModelFields key={draft.originalId ?? "new"} draft={draft} busy={busy} onChange={onChange} /> : <>
+          {draft.qoder ? <QoderModelFields draft={draft} busy={busy} onChange={onChange} onCatalogUpdated={onCatalogUpdated} /> : draft.custom ? <CustomModelFields key={draft.originalId ?? "new"} draft={draft} busy={busy} onChange={onChange} /> : <>
           <label>
             <span>API Key</span>
             <div className="custom-model-secret">

@@ -1,3 +1,4 @@
+import type { QoderConnectionRequest, QoderConnectionState } from "../shared/qoder.js";
 import type { ProjectUpdateRequest, ProjectCreateFoldersRequest, GitWorkspaceRequest } from "../shared/project-workspaces.js";
 import type { ShellEnvironmentReadRequest, ShellEnvironmentRefreshRequest, ShellEnvironmentSaveRequest, ShellEnvironmentResponse } from "../shared/shell-environment.js";
 import type { PersonalizationReadRequest, PersonalizationSaveRequest, PersonalizationResponse } from "../shared/personalization.js";
@@ -400,6 +401,7 @@ const api: EidosRuntimeAPI = {
   ): Promise<ItemFeedbackResult> => ipcRenderer.invoke(IPC.ITEM_SET_FEEDBACK, itemId, feedback),
 
   // Models
+  qoderConnection: (input: QoderConnectionRequest): Promise<QoderConnectionState> => ipcRenderer.invoke(IPC.MODEL_QODER, input),
   discoverCustomModels: (input: CustomProviderRequest): Promise<CustomProviderResult> => ipcRenderer.invoke(IPC.MODEL_DISCOVER_CUSTOM, input),
   listModelPresets: (): Promise<ModelPresetsResult> => ipcRenderer.invoke(IPC.MODEL_PRESETS),
   listModels: (): Promise<ModelListResult> => ipcRenderer.invoke(IPC.MODEL_LIST),

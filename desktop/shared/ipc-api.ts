@@ -1,3 +1,4 @@
+import type { QoderConnectionRequest, QoderConnectionState } from "./qoder.js";
 import type { ProjectUpdateRequest, ProjectCreateFoldersRequest, GitWorkspaceRequest, GitWorkspaceContract } from "./project-workspaces.js";
 import type { ResourceStatus, ResourceRetryRequest, ResourceRetryResponse } from "./managed-resources.js";
 import type { ShellEnvironmentReadRequest, ShellEnvironmentRefreshRequest, ShellEnvironmentSaveRequest, ShellEnvironmentResponse } from "./shell-environment.js";
@@ -333,6 +334,7 @@ export interface EidosRuntimeAPI {
   ): Promise<ItemFeedbackResult>;
 
   // Models
+  qoderConnection(input: QoderConnectionRequest): Promise<QoderConnectionState>;
   discoverCustomModels(input: CustomProviderRequest): Promise<CustomProviderResult>;
   listModelPresets(): Promise<ModelPresetsResult>;
   listModels(): Promise<ModelListResult>;

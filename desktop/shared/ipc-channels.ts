@@ -141,6 +141,7 @@ export const IPC = {
   ITEM_SET_FEEDBACK: "item:set-feedback",
 
   // Model
+  MODEL_QODER: "model:qoder",
   MODEL_DISCOVER_CUSTOM: "model:discoverCustom",
   MODEL_PRESETS: "model:presets",
   MODEL_LIST: "model:list",

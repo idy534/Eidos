@@ -12,7 +12,7 @@ from eidos_runtime.context.budget import estimate_model_request_budget
 from eidos_runtime.model.context_projection import generated_summary_view, text_preview
 from eidos_runtime.context.facts import CompactContinuityNote, CompactNoteEvidence, CompactNoteKind, CompactSummary, ContextItemFact
 from eidos_runtime.context.summary_evidence import ground_note, merge_notes, model_source_text
-from eidos_runtime.model.client import FunctionToolDefinition, ModelClient, ModelUsage
+from eidos_runtime.model.client import FunctionToolDefinition, ModelClient, ModelRequestError, ModelUsage
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.runtime.cancellation import DeadlineCancellation
 from eidos_runtime.sandbox.sensitive import default_scanner
@@ -133,6 +133,7 @@ def assist_summary(
     budget = estimate_model_request_budget(
         context, instructions=POLICY, tool_definitions=(tool,),
         context_window_tokens=profile.context_window_tokens,
+        wire_api=profile.wire_api, required_tool=tool.name,
         request_max_output_tokens=min(4096, profile.max_output_tokens, profile.context_window_tokens // 4),
     )
     if len(payload.encode()) > 96 * 1024 or not budget.fits:
@@ -179,6 +180,8 @@ def assist_summary(
         })
         return AssistedSummary(summary, True, reason="summary_claims_downgraded" if downgraded else None, usage=usage)
     except Exception as error:
+        if isinstance(error, ModelRequestError) and error.failure.usage is not None:
+            usage = error.failure.usage
         # No provider exception/body or source text enters diagnostics. The
         # deterministic fallback remains valid even on malformed model output.
         code = error.args[0] if isinstance(error, ValueError) and len(error.args) == 1 and isinstance(error.args[0], str) else None

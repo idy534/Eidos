@@ -594,3 +594,6 @@ Eidos 使用全局/项目范围的 `MEMORY.md` 索引和主题 Markdown 笔记�
 ## 本地插件与 Hooks（2026-10-24）
 
 用户可以导入 Eidos、Codex 兼容清单和 Portable Agent Plugin 本地目录。Desktop 提供内容版本审阅、信任和撤销。Runtime 已接入 Codex 的 12 个 Hook 事件，并支持同步命令、后台命令和已连接服务的 MCP 处理器。Runtime 也支持个人、项目的 hooks.json 与 config.toml；内容变化后需要重新审阅。参数改写继续经过校验、权限和审批。PermissionRequest 可以决定普通请求，高危人工确认继续保留。后台结果只提供信息，不会重新启动已结束的 Run。SQLite v39 保存配置来源和后台接收记录，旧调用与输出继续保留。聊天显示状态和警告，插件详情提供历史分页。Runtime 提供有界 transcript 投影，但不保证完整复刻 Codex 文件格式。prompt/agent、Codex App 账号映射，以及官方仍保留的输出字段继续不执行。详细规则见 [docs/current/features/hooks.md](features/hooks.md)。
+
+
+Qoder 模型入口通过隔离 SDK 使用本地浏览器登录账号，支持文字与 Function Tools。现有 Eidos Runtime 继续管理工具和任务。具体入口、依赖和验证范围见[Qoder 模型接入](features/qoder-models.md)。

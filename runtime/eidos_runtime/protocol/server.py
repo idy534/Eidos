@@ -164,6 +164,8 @@ from eidos_runtime.runtime.supervisor import (
 )
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle
 from eidos_runtime.runtime.events import RuntimeOutputClosedError
+from eidos_runtime.application.qoder import QoderApplication
+from eidos_runtime.models.qoder import QoderConnectionRequest, QoderConnectionState
 from eidos_runtime.application.managed_resources import ManagedResourceApplication
 from eidos_runtime.models.managed_resources import (
     ResourceStatusRequest, ResourceStatus, ResourceRetryRequest, ResourceRetryResponse,
@@ -864,6 +866,9 @@ class RuntimeServer:
             repository_runtime=self.repository_runtime,
         )
         self.managed_resources = ManagedResourceApplication(self.supervisor.start_managed_task)
+        self.qoder = QoderApplication(lambda: self.managed_resources.manager, self._required_async_kernel,
+            lambda: self.store.data_directory, self.supervisor.start_managed_task,
+            on_catalog=self.model_config.refresh_qoder_names)
         self.method_registry = self._build_method_registry()
 
     def handle(self, message: object) -> None:
@@ -1431,6 +1436,7 @@ class RuntimeServer:
                     model_id=request.model_id,
                     api_key=request.api_key,
                     custom=request.custom,
+                    qoder=request.qoder,
                 ),
             ),
             (
@@ -1443,6 +1449,7 @@ class RuntimeServer:
                     model_id=request.model_id,
                     api_key=request.api_key,
                     custom=request.custom,
+                    qoder=request.qoder,
                 ),
             ),
             (
@@ -1716,6 +1723,12 @@ class RuntimeServer:
                 McpConnectionState,
             ),
             allowed_when_draining=False, allowed_during_reconfiguration=False, error_mapper=_application_error_mapping,
+        ))
+        registry.register(MethodRegistration(
+            name="model/qoder", request_type=QoderConnectionRequest, response_type=QoderConnectionState,
+            handler=_ApplicationMethodAdapter(lambda _id, request: self.qoder.connection(request), QoderConnectionState),
+            allowed_when_draining=False, allowed_during_reconfiguration=False,
+            error_mapper=_application_error_mapping,
         ))
         registry.register(MethodRegistration(
             name="model/discoverCustom", request_type=CustomProviderRequest,
@@ -2034,7 +2047,7 @@ class RuntimeServer:
                 self.store.typed_runtime_repository(),
                 _ServerApprovalRuntime(self.supervisor),
             ),
-            models=ModelApplication(self.model_config),
+            models=ModelApplication(self.model_config, qoder_name=self.qoder.model_name),
             extensions=ExtensionApplication(
                 store=self.store,
                 plugins=lambda: self.plugins,
@@ -2140,6 +2153,7 @@ class RuntimeServer:
                     self.model_config,
                     async_kernel=self.async_kernel,
                     resource_registry=self.supervisor.resources,
+                    managed_resources=self.managed_resources.manager,
                 )
                 self.supervisor.bind_async_kernel(self.async_kernel)
                 with startup_phase("restart_verification"):
@@ -2423,7 +2437,7 @@ class RuntimeServer:
         if self.model_gateway is None:
             raise ModelConfigError("model gateway is unavailable")
         return self.model_gateway.acquire_lease(
-            config, reasoning_selection=profile.reasoning_selection
+            config, reasoning_selection=profile.reasoning_selection, frozen_profile=profile
         )
 
     def _freeze_model_config(self, run_id: str, config: ModelConfig) -> None:

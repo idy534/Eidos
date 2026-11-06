@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import deepseekLogo from "../assets/providers/deepseek.svg";
 import minimaxLogo from "../assets/providers/minimax.svg";
+import qoderLogo from "../assets/providers/qoder.svg";
 import type { ModelOption } from "../contracts.js";
 import { ModelSelector } from "./ModelSelector.js";
 
@@ -31,6 +32,23 @@ const models: ModelOption[] = [
 ];
 
 describe("ModelSelector", () => {
+  it("shows Qoder catalog names while selecting by the saved config ID", () => {
+    const onModelChange = vi.fn();
+    const qoderModels: ModelOption[] = [
+      { ...models[0]!, id: "qoder-one", modelId: "dfmodel", name: "DeepSeek-Flash", provider: "qoder", vendor: "Qoder" },
+      { ...models[0]!, id: "qoder-two", modelId: "kmodel_latest", name: "Kimi-K3.1-Pro", provider: "qoder", vendor: "Qoder" },
+    ];
+    render(<ModelSelector models={qoderModels} selectedModelId="qoder-one" selection="high" disabled={false}
+      onModelChange={onModelChange} onChange={vi.fn()} />);
+    const trigger = screen.getByRole("button", { name: /DeepSeek-Flash，Qoder/ });
+    expect(trigger.querySelector(".provider-logo")).toHaveStyle({ maskImage: `url("${qoderLogo}")` });
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("button", { name: /切换模型，当前为 DeepSeek-Flash/ }));
+    fireEvent.click(screen.getByRole("radio", { name: "Kimi-K3.1-Pro，Qoder" }));
+    expect(onModelChange).toHaveBeenCalledWith("qoder-two");
+    expect(screen.queryByText("dfmodel")).not.toBeInTheDocument();
+    expect(screen.queryByText("kmodel_latest")).not.toBeInTheDocument();
+  });
   beforeEach(() => {
     vi.restoreAllMocks();
   });

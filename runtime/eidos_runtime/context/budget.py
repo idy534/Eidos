@@ -138,6 +138,8 @@ def estimate_model_request_budget(
     provider_usage: ModelUsage | None = None,
     provider_calibration_estimate: int | None = None,
     usage_updated_at: int = 0,
+    wire_api: str = "chat_completions",
+    required_tool: str | None = None,
 ) -> ContextBudget:
     """Estimate the exact structured request used by ContextBuilder/Sampling.
 
@@ -145,8 +147,7 @@ def estimate_model_request_budget(
     only move catalog shares out of the instructions section.
     """
 
-    budget = estimate_context_budget(
-        {
+    payload = {
             "instructions": instructions,
             "messages": tuple(
                 _text_budget_item(item)
@@ -155,9 +156,14 @@ def estimate_model_request_budget(
             "tools": [
                 tool.model_dump(mode="json") for tool in tool_definitions
             ],
-        },
+    }
+    if wire_api == "qoder_sdk":
+        from eidos_runtime.model.qoder_context import qoder_budget_payload
+        payload = qoder_budget_payload(model_context, instructions, tool_definitions, required_tool=required_tool)
+    budget = estimate_context_budget(
+        payload,
         # Image bytes are not text tokens. This remains an explicitly estimated budget.
-        media_tokens=sum(
+        media_tokens=(2048 if wire_api == "qoder_sdk" else 0) + sum(
             int(item.get("imageTokenEstimate", 4096)) if item.get("inputImage") else
             _tool_media_tokens(item)
             for item in model_context

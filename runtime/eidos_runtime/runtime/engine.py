@@ -1583,6 +1583,7 @@ def _protocol_repair_step(
         tool_definitions=step.tool_definitions,
         context_window_tokens=step.model_profile.context_window_tokens,
         request_max_output_tokens=step.model_profile.max_output_tokens,
+        wire_api=step.model_profile.wire_api,
     )
     return step.model_copy(update={
         "model_attempt_id": attempt_id,

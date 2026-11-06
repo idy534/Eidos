@@ -54,6 +54,10 @@ class ManagedResourceCatalog(RuntimeDependencyCatalog):
         files = list(base.files)
         for pack_id in self.resources.closure(pack_ids):
             pack = self.resources.pack(pack_id)
+            if pack.isolated:
+                # Isolated model SDK dependencies are never part of a Skill or
+                # Shell Python path. Their declaration is still in release_hash.
+                continue
             root = self.resources.location(pack_id)
             manifest = pack.manifest
             roots.append(str(root))
@@ -98,6 +102,8 @@ class ManagedResourceCatalog(RuntimeDependencyCatalog):
     ) -> RuntimeDependencyBinding:
         selected = self.resources.closure(pack_ids)
         for pack_id in selected:
+            if self.resources.pack(pack_id).isolated:
+                raise ResourceError("resource_isolated", "this pack can only be used by its model worker")
             self.resources.verified_catalog(pack_id)
         snapshot = self._projection(selected).model_copy(update={"snapshot_sha256": self._snapshot.snapshot_sha256})
         return self._resolve_with_snapshot(requirements, context_id, snapshot)

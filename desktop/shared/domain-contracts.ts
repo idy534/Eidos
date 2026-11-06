@@ -1,3 +1,4 @@
+import type { QoderModelSettings } from "./qoder.js";
 import type { ProjectDto as GeneratedProject, ProjectRootDto } from "./project-workspaces.generated.js";
 import type { CustomModelSettings } from "./custom-models.js";
 import type { HookActivity, PluginCompatibility, PluginHookReview } from "./hooks.js";
@@ -490,6 +491,7 @@ export interface ModelReasoning {
 }
 
 export interface ModelOption {
+  qoder?: QoderModelSettings | null;
   custom?: CustomModelSettings | null;
   modelId?: string | null;
   contextWindowTokens?: number | null;
@@ -498,7 +500,7 @@ export interface ModelOption {
   name: string;
   vendor: string;
   provider: string;
-  url: string;
+  url?: string | null;
   supportsToolCall: boolean;
   supportsImages: boolean;
   supportsReasoning: boolean;
@@ -524,7 +526,8 @@ export interface ModelPresetsResult {
 }
 
 export interface ModelCreateInput {
-  provider: ModelProviderPreset["id"] | "custom";
+  provider: ModelProviderPreset["id"] | "custom" | "qoder";
+  qoder?: QoderModelSettings;
   custom?: CustomModelSettings;
   modelId: ModelId;
   apiKey?: string;

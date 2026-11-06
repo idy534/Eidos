@@ -195,6 +195,14 @@ PYTHONPATH=runtime uv run --locked python scripts/evaluate-context-compaction.py
 
 报告记录源码 Hash、Provider 返回的输入与输出 Tokens、缺少 Usage 的调用数量和耗时。续接失败会区分请求失败、格式不完整和历史事实回答错误。脚本不推算货币费用，费用以提供商账单为准。
 
+修改核心提示词的 `# Messages and content`、`# Task workflow` 或 `# Communication` 前，维护者用请求与内容回放检查同条消息里的内容是否被直接处理。脚本在临时数据目录和按产品规则命名的临时无项目工作区里运行夹具中的每个案例，默认每例三次。需要直接回答的案例在模型第一次请求工具时就停止，不执行工具；读取文件的对照案例只执行只读工具。脚本使用已配置模型，会产生实际费用：
+
+```bash
+PYTHONPATH=runtime uv run --locked python scripts/evaluate-request-content.py --model deepseek-v4.1-flash --output /absolute/path/request-content.json
+```
+
+维护者可以用 `--case` 只跑指定案例，用 `--repeat` 调整次数，用 `--reasoning` 选择模型已声明的思考档位。报告给出每个案例的通过率和每次回复的前 1,200 字符；检查是启发式的，维护者需要读回复确认结果是否忠实。
+
 ### 自定义子 Agent
 
 用户在 `<EIDOS_DATA_DIR>/agents/` 放置独立 TOML。默认目录是 `~/.eidos/agents/`。完整字段与示例见 [自定义子 Agent 设计](../design/custom-subagents-design.md)。用户需要先通过现有模型设置保存目标模型；TOML 不保存 API Key。用户省略模型表时，子任务继承父模型。
@@ -718,3 +726,34 @@ Workspace 恢复扫描只在受影响目标或需要解除屏障的新副作用�
 CI 将质量、依赖审计、Runtime、Desktop 和原生打包拆为独立 Job。PR 按实际路径选择 Runtime、Desktop 和 native；main push 执行所有边界。静态和审计检查保持独立，不因审计失败跳过回归。汇总 `test` Job 要求所有已选检查成功，无法判定改动范围时不跳过验证。原生 Job 只在 Desktop build、Seatbelt、Electron 和 Bundle 验证通过后复用本 Job 的产物组装 DMG；其他 Job 的测试结果仍由汇总门禁判定。
 
 返回 [开发指南](../../DEVELOPMENT.md) 或 [文档入口](../README.md)。
+
+## Qoder 模型接入
+
+当前行为见[Qoder 模型接入](../current/features/qoder-models.md)。开发者使用独立项目 `resources/runtime-dependencies/qoder/` 维护 SDK 依赖。开发者不能把 SDK 安装进主 Runtime，也不能下调主 Runtime 的 MCP 版本。
+
+开发者可以执行以下定向验证：
+
+```bash
+uv run --locked pytest runtime/tests/test_qoder_model.py runtime/tests/test_qoder_worker.py runtime/tests/test_managed_resources.py
+node scripts/generate-qoder-contracts.mjs
+pnpm build:main
+node --test dist/main/runtime-client-qoder.test.js dist/shared/qoder.test.js
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/QoderModelSettings.behavior.test.tsx
+EIDOS_QODER_SCREENSHOT_DIR=/tmp/eidos-qoder-screenshots pnpm exec electron scripts/test-qoder-models.cjs
+```
+
+Python 与 TypeScript 共用 `protocol/fixtures/qoder-model-v1.json`。生成器以 Python 的配置和连接 DTO 为源。Worker 协议的唯一源码为 `runtime/eidos_runtime/model/qoder_protocol.py`。构建器把它复制到隔离包内。
+
+开发者运行 `pnpm build:runtime:mac` 构建 App 核心与 Qoder 资源包。这个命令会调用 `scripts/build-qoder-worker.py`。开发者可以单独运行 `.venv/bin/python scripts/build-qoder-worker.py` 检查独立依赖安装和 CLI 版本。资源包沿用固定 Release 索引与现有发布验证。维护者不能把本地包构建成功写成远端资源已发布。
+
+真实账号验收会消耗 Credits。开发者需要提供一个已经通过浏览器登录的私有 Qoder 配置目录。脚本只使用临时工作区与 SQLite，并通过真实资源安装器校验本地构建包：
+
+```bash
+PYTHONPATH=runtime .venv/bin/python scripts/qoder-model-smoke.py \
+  --auth-directory /absolute/private/qoder-config \
+  --report /tmp/eidos-qoder-smoke.json
+```
+
+该脚本检查文字生成、双工具请求、严格输出工具、真实 `read_file` 外层循环、Credits 持久化和取消。脚本不打印 Token、模型正文或第三方错误正文。取消不能证明远端消费为零。这个入口不代替所有模型、复杂写入任务、长历史质量、第二台机器或签名发布验收。
+
+维护者在隔离项目目录运行 `uv lock --check`，并用根环境的 Deptry 对 `resources/runtime-dependencies/qoder/src` 和该项目 `pyproject.toml` 做检查。维护者还需要导出该项目的锁定 requirements，并用 `pip-audit --disable-pip -r <导出文件>` 审计。主 Runtime 继续使用原有的 Ruff、Deptry 和审计命令。
