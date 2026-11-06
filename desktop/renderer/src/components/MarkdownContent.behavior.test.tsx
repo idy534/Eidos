@@ -122,3 +122,111 @@ describe("MarkdownContent context updates", () => {
     }
   });
 });
+
+describe("MarkdownContent answer images", () => {
+  const renderAnswer = (markdown: string, actions: ArtifactActions = baseActions) => render(
+    <ArtifactProvider value={actions}><MarkdownContent className="eidos-chat-prose" content={markdown} /></ArtifactProvider>,
+  );
+  const installRuntime = (prepare = vi.fn().mockResolvedValue("eidos-preview://image")) => {
+    const release = vi.fn().mockResolvedValue(undefined);
+    Object.assign(window, { eidosRuntime: { prepareWorkspacePreview: prepare, releaseWorkspacePreview: release } });
+    return { prepare, release };
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("reads absolute images from another Session root and opens them in that root", async () => {
+    const { prepare } = installRuntime();
+    const actions: ArtifactActions = {
+      ...baseActions,
+      openFile: vi.fn(),
+      roots: [
+        { id: "root-a", path: "/workspace" },
+        { id: "root-b", path: "/docs" },
+      ] as ArtifactActions["roots"],
+    };
+
+    renderAnswer("段落\n\n![架构图](</docs/assets/arch.png>)\n\n后续段落", actions);
+
+    fireEvent.click(await screen.findByRole("button", { name: "打开 架构图" }));
+    expect(prepare).toHaveBeenCalledWith("session-a", "assets/arch.png", undefined, "/docs", undefined);
+    expect(actions.openFile).toHaveBeenCalledWith("assets/arch.png", { rootId: "root-b" });
+  });
+
+  it("keeps primary-root images on the original open path", async () => {
+    installRuntime();
+    const actions = { ...baseActions, openFile: vi.fn() };
+
+    renderAnswer("![图表](</workspace/out/chart.png>)", actions);
+
+    fireEvent.click(await screen.findByRole("button", { name: "打开 图表" }));
+    expect(actions.openFile).toHaveBeenCalledWith("out/chart.png");
+  });
+
+  it("does not read images outside every Session root", () => {
+    const { prepare } = installRuntime();
+
+    renderAnswer("![外部图](</tmp/chart.png>)");
+
+    expect(screen.getByText("外部图（不在当前工作区，无法显示）")).toHaveAttribute("title", "/tmp/chart.png");
+    expect(prepare).not.toHaveBeenCalled();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("never fetches remote images and opens them only on request", () => {
+    const { prepare } = installRuntime();
+    const actions = { ...baseActions, openBrowser: vi.fn() };
+
+    const { container } = renderAnswer("![趋势](https://example.com/trend.png?q=1)", actions);
+
+    expect(container.querySelector("img")).toBeNull();
+    expect(prepare).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "在浏览器中打开远程图片 趋势（example.com）" }));
+    expect(actions.openBrowser).toHaveBeenCalledWith("https://example.com/trend.png?q=1");
+  });
+
+  it("shows a fallback when the image cannot be decoded", async () => {
+    installRuntime();
+
+    renderAnswer("![损坏](</workspace/broken.png>)");
+
+    fireEvent.error(await screen.findByRole("img", { name: "损坏" }));
+    expect(screen.getByRole("status")).toHaveTextContent("损坏：图片加载失败，请刷新文件。");
+  });
+
+  it("holds a preview grant only while the image is near the viewport", async () => {
+    const observers: Array<{ callback: IntersectionObserverCallback; disconnect: ReturnType<typeof vi.fn> }> = [];
+    vi.stubGlobal("IntersectionObserver", class {
+      disconnect = vi.fn();
+      constructor(public callback: IntersectionObserverCallback) { observers.push(this); }
+      observe() {}
+      unobserve() {}
+      takeRecords() { return []; }
+    });
+    const { prepare, release } = installRuntime();
+    const notify = (isIntersecting: boolean) => act(() => {
+      observers[0]!.callback([{ isIntersecting } as IntersectionObserverEntry], {} as IntersectionObserver);
+    });
+
+    renderAnswer("![远处的图](</workspace/far.png>)");
+    expect(prepare).not.toHaveBeenCalled();
+
+    notify(true);
+    const image = await screen.findByRole("img", { name: "远处的图" });
+    vi.spyOn(image, "offsetWidth", "get").mockReturnValue(320);
+    vi.spyOn(image, "offsetHeight", "get").mockReturnValue(180);
+    fireEvent.load(image);
+
+    notify(false);
+    await waitFor(() => expect(release).toHaveBeenCalledWith("eidos-preview://image"));
+    const placeholder = screen.getByRole("img", { name: "远处的图" });
+    expect(placeholder.tagName).toBe("SPAN");
+    expect(placeholder).toHaveStyle({ width: "320px", height: "180px" });
+
+    notify(true);
+    await waitFor(() => expect(prepare).toHaveBeenCalledTimes(2));
+  });
+});
