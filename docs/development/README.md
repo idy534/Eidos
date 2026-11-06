@@ -195,6 +195,14 @@ PYTHONPATH=runtime uv run --locked python scripts/evaluate-context-compaction.py
 
 报告记录源码 Hash、Provider 返回的输入与输出 Tokens、缺少 Usage 的调用数量和耗时。续接失败会区分请求失败、格式不完整和历史事实回答错误。脚本不推算货币费用，费用以提供商账单为准。
 
+修改核心提示词的 `# Messages and content`、`# Task workflow` 或 `# Communication` 前，维护者用请求与内容回放检查同条消息里的内容是否被直接处理。脚本在临时数据目录和按产品规则命名的临时无项目工作区里运行夹具中的每个案例，默认每例三次。需要直接回答的案例在模型第一次请求工具时就停止，不执行工具；读取文件的对照案例只执行只读工具。脚本使用已配置模型，会产生实际费用：
+
+```bash
+PYTHONPATH=runtime uv run --locked python scripts/evaluate-request-content.py --model deepseek-v4.1-flash --output /absolute/path/request-content.json
+```
+
+维护者可以用 `--case` 只跑指定案例，用 `--repeat` 调整次数，用 `--reasoning` 选择模型已声明的思考档位。报告给出每个案例的通过率和每次回复的前 1,200 字符；检查是启发式的，维护者需要读回复确认结果是否忠实。
+
 ### 自定义子 Agent
 
 用户在 `<EIDOS_DATA_DIR>/agents/` 放置独立 TOML。默认目录是 `~/.eidos/agents/`。完整字段与示例见 [自定义子 Agent 设计](../design/custom-subagents-design.md)。用户需要先通过现有模型设置保存目标模型；TOML 不保存 API Key。用户省略模型表时，子任务继承父模型。
