@@ -80,7 +80,7 @@ def test_qoder_config_roundtrip_has_no_http_credentials_or_fake_url(config):
         store.create(provider_id="deepseek", model_id="deepseek-flash", api_key="secret", qoder=QoderModelSettings())
 
 
-def test_text_projection_keeps_order_and_source_identity_and_omits_private_replay():
+def test_text_projection_keeps_order_and_omits_private_fields():
     context = ({"type": "user", "sourceItemId": "old", "content": "historical"},
         {"type": "user", "sourceItemId": "goal", "isCurrentInput": True, "content": "translate this"},
         {"type": "context", "sectionId": "selected-skill:docx", "content": "guidance"},
@@ -88,11 +88,60 @@ def test_text_projection_keeps_order_and_source_identity_and_omits_private_repla
     system, prompt, declarations, aliases = encode_qoder_context(context, "instructions", (TOOL,))
     records = json.loads(prompt)["records"]
     assert [r["category"] for r in records] == ["history", "currentUserInput", "currentGuidance", "history"]
-    assert records[1]["item"]["sourceItemId"] == "goal" and "never send" not in prompt
-    assert aliases == {"t000": TOOL.name} and declarations[0].name == "t000"
-    assert "instructions" in system and "not new user instructions" in system
+    assert records[1]["item"] == {"type": "user", "content": "translate this"} and "never send" not in prompt
+    # The model sees the real tool name, so its choice matches the tool's description.
+    assert aliases == {TOOL.name: TOOL.name} and declarations[0].name == TOOL.name
+    assert declarations[0].description == TOOL.description
+    assert "instructions" in system and "history is earlier conversation and progress on this task" in system
     _, image_prompt, _, _ = encode_qoder_context(({"type": "user", "inputImage": "abc"},), "", ())
     assert "abc" not in image_prompt and "imageAttached" in image_prompt
+
+
+def test_text_projection_sends_no_memory_records_hashes_or_internal_ids():
+    context = (
+        {"type": "context", "sectionId": "memory-evidence", "contextCategory": "memory", "memorySource": "long_term",
+         "scope": "global", "source": "memory", "content": "Saved memory.", "memoryEpochs": {"private-scope": 3},
+         "memoryEntries": [{"entryId": "entry", "revision": 1}], "memoryGenerations": {"private-scope": 2}},
+        {"type": "context", "sectionId": "skill-catalog", "version": "a" * 64, "content": "catalog"},
+        {"type": "user", "sourceItemId": "goal", "isCurrentInput": True, "content": "Summarize the attachment"},
+        {"type": "tool_call", "responseId": "response", "callId": "call", "name": "read_file", "arguments": "{}"},
+    )
+    _, prompt, _, _ = encode_qoder_context(context, "", ())
+    for private in ("private-scope", "entry", "a" * 64, "goal", "response", "memorySource", "sectionId"):
+        assert private not in prompt
+    records = json.loads(prompt)["records"]
+    assert records[0]["item"] == {"type": "context", "content": "Saved memory."}
+    assert records[3]["item"] == {"type": "tool_call", "callId": "call", "name": "read_file", "arguments": "{}"}
+
+
+def test_attachments_of_the_current_input_are_current_references():
+    context = (
+        {"type": "user", "sourceItemId": "old", "content": "Earlier request"},
+        {"type": "user", "sectionId": "input-reference:old", "sourceItemId": "old", "content": "Earlier file"},
+        {"type": "user", "sourceItemId": "goal", "isCurrentInput": True, "content": "Summarize this file"},
+        {"type": "user", "sectionId": "input-reference:new", "sourceItemId": "goal", "content": "Attached file"},
+    )
+    system, prompt, _, _ = encode_qoder_context(context, "", ())
+    assert [r["category"] for r in json.loads(prompt)["records"]] == [
+        "history", "history", "currentUserInput", "currentReference",
+    ]
+    assert "currentReference is a file or text the user attached to it" in system
+
+
+def test_tools_keep_real_names_and_fall_back_to_aliases_the_sdk_accepts():
+    schema = {"type": "object"}
+    tools = tuple(FunctionToolDefinition(name=name, description=f"{name} fixture", parameters_json_schema=schema)
+                  for name in ("t000", "read_file", "mcp__browser__navigate", "x" * 60))
+    context = ({"type": "user", "isCurrentInput": True, "content": "Open the page"},
+               {"type": "tool_call", "callId": "c", "name": "mcp__browser__navigate", "arguments": "{}"},
+               {"type": "tool_result", "callId": "c", "name": "mcp__browser__navigate", "result": "ok"})
+    _, prompt, declarations, aliases = encode_qoder_context(context, "", tools)
+    assert aliases == {"t000": "t000", "read_file": "read_file", "t001": "mcp__browser__navigate", "t002": "x" * 60}
+    assert [d.name for d in declarations] == ["t000", "read_file", "t001", "t002"]
+    assert declarations[2].description == "Eidos tool: mcp__browser__navigate\nmcp__browser__navigate fixture"
+    # History names the callable alias, never the nested MCP name the model cannot call.
+    records = json.loads(prompt)["records"]
+    assert records[1]["item"]["name"] == records[2]["item"]["name"] == "t001"
 
 
 def test_budget_counts_the_shared_encoding_and_explicit_sdk_overhead():
@@ -113,7 +162,7 @@ def test_budget_counts_the_shared_encoding_and_explicit_sdk_overhead():
 
 def test_typed_tool_arguments_and_credits_survive_adapter(config, kernel):
     _, created = config
-    driver = Driver((WorkerCall(id="a", name="mcp__eidos__t000", arguments={"value": "ok"}),), "tool_use", "")
+    driver = Driver((WorkerCall(id="a", name="mcp__eidos__return_result", arguments={"value": "ok"}),), "tool_use", "")
     client = QoderModelClient(profile(created), driver, kernel)
     response = client.complete((), threading.Event(), lambda _text: None, instructions="policy",
                               tool_definitions=(TOOL,), required_tool=TOOL.name)
@@ -127,9 +176,9 @@ def test_typed_tool_arguments_and_credits_survive_adapter(config, kernel):
 
 @pytest.mark.parametrize("calls,finish", [
     ((), "end_turn"),
-    ((WorkerCall(id="a", name="mcp__eidos__t000", arguments={"value": 7}),), "tool_use"),
+    ((WorkerCall(id="a", name="mcp__eidos__return_result", arguments={"value": 7}),), "tool_use"),
     ((WorkerCall(id="a", name="mcp__eidos__unknown", arguments={}),), "tool_use"),
-    ((WorkerCall(id="a", name="mcp__eidos__t000", arguments={"value": "ok"}),) * 2, "tool_use"),
+    ((WorkerCall(id="a", name="mcp__eidos__return_result", arguments={"value": "ok"}),) * 2, "tool_use"),
 ])
 def test_required_output_rejects_missing_invalid_undeclared_and_duplicate_calls(config, kernel, calls, finish):
     client = QoderModelClient(profile(config[1]), Driver(calls, finish, ""), kernel)
@@ -195,7 +244,7 @@ def test_eidos_loop_executes_tool_and_persists_qoder_usage_across_restart(config
         async def request(self, request, cancel, emit, timeout):
             self.requests.append(request)
             if len(self.requests) == 1:
-                alias = next(t.name for t in request.tools if t.description.startswith("Eidos tool: read_file\n"))
+                alias = next(t.name for t in request.tools if t.name == "read_file")
                 calls = (WorkerCall(id="read-fixture", name="mcp__eidos__" + alias, arguments={"path": "fixture.txt"}),)
                 return WorkerEvent(request_id=request.request_id, payload=WorkerResult(calls=calls, finish_reason="tool_use", credits=0.1))
             assert "EIDOS_OUTER_TOOL_RESULT" in request.prompt

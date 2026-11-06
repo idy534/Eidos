@@ -14,6 +14,7 @@ from eidos_runtime.model.gateway import ModelGateway
 from eidos_runtime.model.gateway_types import RetryPolicy
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.engine import RuntimeEngine
+from eidos_runtime.runtime.runtime_dependencies import discover_runtime_dependency_catalog
 from eidos_runtime.workspace.projectless import readable_workspace_name
 
 FIXTURE = Path(__file__).resolve().parent / 'fixtures' / 'request-content-cases.json'
@@ -59,7 +60,9 @@ if config is None or not config.supports_tool_call:
     raise SystemExit('configured model unavailable')
 kernel = RuntimeAsyncKernel()
 kernel.start()
-lease = ModelGateway(configs, async_kernel=kernel).acquire_lease(
+# Managed resources let Qoder models start their installed SDK worker, as the Runtime does.
+catalog = discover_runtime_dependency_catalog()
+lease = ModelGateway(configs, async_kernel=kernel, managed_resources=getattr(catalog, 'resources', None)).acquire_lease(
     config, retry_policy=RetryPolicy(max_attempts=1), reasoning_selection=args.reasoning,
 )
 
