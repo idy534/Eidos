@@ -188,13 +188,21 @@ def test_skill_is_available_and_its_resources_remain_scoped(setup):
     (skill / "references" / "layout.md").write_text("Use a readable layout.")
     _, model = execute(store, session, "Create a galacticstar presentation", [
         tool("skill_read", {"qualifiedId": "user:nebula"}),
+        tool("skill_read_resource", {"qualifiedId": "user:nebula", "resourcePath": "references/layot.md"}, "missing"),
+        tool("skill_read_resource", {"qualifiedId": "user:nebula", "resourcePath": "references"}, "directory"),
         tool("skill_read_resource", {"qualifiedId": "user:nebula", "resourcePath": "references/layout.md"}),
         ModelResponse(text="Read the relevant Skill and resource."),
     ])
     results = tool_results(store, session)
-    assert [result["outcome"] for result in results] == ["success", "success"]
+    assert [result["outcome"] for result in results] == ["success", "error", "success", "success"]
     assert "Use the user's supplied facts." in json.dumps(results[0])
-    assert "Use a readable layout." in json.dumps(results[1])
+    assert results[0]["data"]["skillRoot"] == str(skill.resolve())
+    assert results[0]["data"]["resources"] == [{"resourcePath": "references/layout.md", "sizeBytes": 22, "type": "text"}]
+    assert results[1]["code"] == "skill_resource_not_found"
+    assert "references/layout.md" in results[1]["data"]["candidates"]
+    assert results[2]["data"]["resourceType"] == "directory"
+    assert "Use a readable layout." in json.dumps(results[3])
+    assert '"skillRoot"' in str(model.contexts[1])
     assert "user:nebula" in model.instructions_history[0]
     assert "user:nebula" not in str(model.contexts[0])
 
@@ -214,8 +222,15 @@ def test_initial_memory_context_preserves_read_and_write_modes(setup, mode):
 
 def test_explicit_skill_and_plan_mode_keep_their_required_context(setup):
     store, session, workspace = setup
+    skill = store.data_directory / "skills" / "nebula"
+    (skill / "guide.md").write_text("Guide text.")
     _, model = execute(store, session, "Use @user:nebula", [ModelResponse(text="Read the selected instructions.")])
-    assert "Use the user's supplied facts." in str(model.contexts[0])
+    selected = next(item["content"] for item in model.contexts[0] if item.get("sectionId") == "selected-skill:user:nebula")
+    assert "Use the user's supplied facts." in selected
+    assert str(skill.resolve()) in selected
+    assert '"resourcePath":"guide.md"' in selected
+    assert "already fully loaded" in selected
+    assert "Do not search the filesystem for Skills" in model.instructions_history[0]
     assert str(workspace) in model.instructions_history[0]
     _, planned = execute(store, session, "Plan the work", [ModelResponse(text="Plan draft")], work_mode="plan")
     assert "The user selected Plan mode" in planned.instructions_history[0]

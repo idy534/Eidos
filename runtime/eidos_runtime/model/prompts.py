@@ -60,7 +60,7 @@ Report unknown outcomes accurately. Never automatically replay uncertain side ef
 
 SKILLS_INSTRUCTIONS = """# Skills
 Match Skill descriptions to the action the user requested, not to words that appear only in content. Load an applicable Skill with skill_read before following it, unless its instructions are already loaded for this turn.
-Read needed text resources with skill_read_resource, using paths relative to the Skill. Reuse supplied scripts and templates where suitable."""
+skill_read returns the authorized canonical skillRoot and a bounded resources list; already-loaded Skill context provides the same information. Read text with skill_read_resource using relative paths, and run scripts with run_shell using absolute paths under skillRoot. Do not search the filesystem for Skills. Reuse supplied scripts and templates where suitable."""
 
 
 BROWSER_ACCOUNT_INSTRUCTIONS = """# Browser accounts

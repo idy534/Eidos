@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import codecs
+from collections.abc import Iterator
+from contextlib import closing, contextmanager, ExitStack
 from dataclasses import dataclass
 import hashlib
 from html import escape
 import io
+from itertools import islice
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -19,7 +23,8 @@ import uuid
 import zipfile
 from typing import Callable, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
+from rapidfuzz import process, fuzz
 
 from eidos_runtime.extensions.plugins import PluginCatalog, PluginImportError
 from eidos_runtime.db.errors import StorageError
@@ -38,12 +43,15 @@ from eidos_runtime.protocol.schemas import SkillMetadataDto
 from eidos_runtime.tools.registry import ToolProvenance, ToolRegistryEntry, ToolSpec
 from eidos_runtime.tools.contracts import (
     SKILL_READ_PAGE_BYTES,
+    SKILL_RESOURCE_METADATA_BYTES,
+    SKILL_RESOURCE_MAX_ENTRIES,
     SkillChangeResultData,
     SkillCreateInput,
     SkillInstallInput,
     SkillReadInput,
     SkillReadResourceInput,
     SkillReadResultData,
+    SkillResourceEntry,
     SkillResourceResultData,
     result_model,
 )
@@ -62,7 +70,13 @@ SkillSourceKind = Literal["plugin", "user", "system"]
 
 
 class SkillReadError(ValueError):
-    pass
+    def __init__(
+        self, code: str, *, summary: str | None = None,
+        data: SkillResourceResultData | None = None,
+    ) -> None:
+        super().__init__(code)
+        self.summary = summary
+        self.data = data
 
 
 class _FrozenSkillModel(BaseModel):
@@ -379,13 +393,23 @@ class SkillCatalog:
     ) -> tuple[RetainedContextSection, ...]:
         sections: list[RetainedContextSection] = []
         for qualified_id in selected.selected_qualified_ids:
-            skill = self.read_skill(snapshot, qualified_id)
+            skill = self.read_skill(snapshot, qualified_id, include_resources=True)
+            inventory = {
+                key: skill[key] for key in _SKILL_INVENTORY_KEYS if key in skill
+            }
             sections.append(RetainedContextSection(
                 section_id=f"selected-skill:{qualified_id}",
                 version=str(skill["contentHash"]),
                 role="developer",
                 source=str(skill["source"]["pluginId"]),
-                content=str(skill["content"]),
+                content=(
+                    (
+                        "Skill root and resources: " + json.dumps(
+                            inventory, ensure_ascii=False, separators=(",", ":")
+                        ) + "\n"
+                        if inventory else ""
+                    ) + str(skill["content"])
+                ),
             ))
         return tuple(sections)
 
@@ -408,7 +432,16 @@ class SkillCatalog:
         self,
         snapshot: dict[str, object] | SkillCatalogSnapshot,
         qualified_id: str,
+        *,
+        include_resources: bool = False,
     ) -> dict[str, object]:
+        """Return the main instructions.
+
+        The default result is also the wire shape of the Desktop ``skill/read``
+        response, so it carries no resource inventory. Model-facing callers pass
+        ``include_resources`` to add the advisory ``skillRoot``/``resources``
+        discovery data, which never blocks reading the instructions.
+        """
         metadata, source = self._resolve(snapshot, qualified_id)
         content = (
             self._pinned_skill_content.get(snapshot.catalog_hash, {}).get(
@@ -427,6 +460,7 @@ class SkillCatalog:
         return {
             "qualifiedId": qualified_id,
             "content": content,
+            **(_skill_resource_inventory(source.root) if include_resources else {}),
             "contentHash": metadata["contentHash"],
             "source": {
                 "pluginId": source.source_id,
@@ -443,21 +477,59 @@ class SkillCatalog:
     ) -> dict[str, object]:
         _metadata, source = self._resolve(snapshot, qualified_id)
         root = source.root
-        relative = _safe_relative(resource_path)
-        _validate_resource_parent_chain(root, relative)
+        relative = PurePosixPath(".") if resource_path == "." else _safe_relative(resource_path)
         resource_file = root.joinpath(*relative.parts)
-        data = _read_bytes(
-            resource_file,
-            MAX_SKILL_FILE_BYTES,
-        )
         try:
+            _validate_resource_parent_chain(root, relative)
+            metadata = resource_file.lstat()
+            if stat.S_ISLNK(metadata.st_mode) or metadata.st_uid != os.getuid():
+                raise SkillReadError("skill_path_invalid")
+            if stat.S_ISDIR(metadata.st_mode):
+                return {
+                    "qualifiedId": qualified_id,
+                    "resourcePath": relative.as_posix(),
+                    "resourceType": "directory",
+                    **_skill_resource_listing(root, relative, recursive=False),
+                    "source": {"pluginId": source.source_id},
+                }
+            data = _read_bytes(resource_file, MAX_SKILL_FILE_BYTES)
             if _looks_binary_resource(resource_file, data):
                 raise UnicodeDecodeError("utf-8", data, 0, 1, "binary resource")
             text = data.decode("utf-8")
+        except FileNotFoundError:
+            raise SkillReadError(
+                "skill_resource_not_found",
+                summary="Resource not found. Use a candidate path or list its parent directory with skill_read_resource.",
+                data=SkillResourceResultData(
+                    qualifiedId=qualified_id, resourcePath=relative.as_posix(),
+                    candidates=_skill_resource_candidates(root, relative.as_posix()),
+                ),
+            ) from None
         except UnicodeDecodeError:
-            raise SkillReadError("skill_resource_not_text") from None
-        if len(data) > MAX_RESOURCE_BYTES:
-            raise SkillReadError("skill_resource_too_large")
+            raise SkillReadError(
+                "skill_resource_not_text",
+                summary=(
+                    "Binary resource. Use view_image for PNG/JPEG if available; "
+                    "otherwise process the file with the Skill's documented script through run_shell."
+                ),
+                data=SkillResourceResultData(
+                    qualifiedId=qualified_id, resourcePath=relative.as_posix(),
+                    resourceType="binary", absolutePath=str(root.resolve().joinpath(*relative.parts)),
+                    sizeBytes=len(data),
+                ),
+            ) from None
+        except SkillReadError as error:
+            if str(error) != "skill_resource_too_large":
+                raise
+            raise SkillReadError(
+                "skill_resource_too_large",
+                summary="Resource exceeds the file size limit. Process it with the Skill's documented script through run_shell.",
+                data=SkillResourceResultData(
+                    qualifiedId=qualified_id, resourcePath=relative.as_posix(),
+                    absolutePath=str(root.resolve().joinpath(*relative.parts)),
+                    sizeBytes=metadata.st_size, maxBytes=MAX_RESOURCE_BYTES,
+                ),
+            ) from None
         content = _scan(text)
         return {
             "qualifiedId": qualified_id,
@@ -608,17 +680,27 @@ class _SkillReadAdapter:
     ) -> dict[str, object]:
         if cancel.is_set():
             return _skill_error("skill_read", "tool_canceled", "Skill read canceled")
+        activation = None
         if self.activate_model_read is not None:
             try:
-                self.activate_model_read(str(arguments['qualifiedId']))
+                activation = self.activate_model_read(str(arguments['qualifiedId']))
             except (RuntimeError, ValueError):
                 return _skill_error('skill_read', 'skill_access_unavailable', 'Skill filesystem access is unavailable')
+        # The root and resource inventory are discovery data for the first
+        # page. Continuation pages repeat only the instruction text.
         try:
             skill = self.catalog.read_skill(
-                self.snapshot, str(arguments["qualifiedId"])
+                self.snapshot, str(arguments["qualifiedId"]),
+                include_resources=arguments.get("offset", 0) == 0,
             )
         except SkillReadError as error:
             return _skill_error("skill_read", str(error), "Skill is unavailable")
+        active_root = getattr(activation, "canonical_root", None)
+        if (
+            active_root is not None and "skillRoot" in skill
+            and skill["skillRoot"] != str(active_root)
+        ):
+            return _skill_error("skill_read", "skill_snapshot_invalid", "Skill root changed after activation")
         source = skill["source"]
         assert isinstance(source, dict)
         try:
@@ -629,6 +711,7 @@ class _SkillReadAdapter:
             return _skill_error("skill_read", str(error), "Use a returned nextOffset to continue reading")
         return _skill_success("skill_read", {
             "qualifiedId": skill["qualifiedId"],
+            **{key: skill[key] for key in _SKILL_INVENTORY_KEYS if key in skill},
             **page.model_dump(exclude_unset=True),
             "contentHash": skill["contentHash"],
             "pluginId": source["pluginId"],
@@ -668,10 +751,15 @@ class _SkillResourceAdapter:
             )
         except SkillReadError as error:
             return _skill_error(
-                "skill_read_resource", str(error), "Skill resource is unavailable"
+                "skill_read_resource", str(error), error.summary or "Skill resource is unavailable",
+                data=error.data,
             )
         source = resource["source"]
         assert isinstance(source, dict)
+        if resource.get("resourceType") == "directory":
+            return _skill_success("skill_read_resource", {
+                key: value for key, value in resource.items() if key != "source"
+            } | {"pluginId": source["pluginId"]})
         try:
             page = _skill_content_page(
                 str(resource["content"]), arguments.get("offset", 0), arguments.get("maxBytes", SKILL_READ_PAGE_BYTES),
@@ -819,12 +907,15 @@ def _skill_entry(name: str, adapter: object) -> ToolRegistryEntry:
         spec=ToolSpec.model_validate({
             "name": name,
             "description": (
-                "Read a UTF-8 resource from an enabled local Skill. Pass its "
-                "qualifiedId and a resourcePath relative to that Skill; do "
-                "not pass an absolute path or a path containing '..'. Continue with "
-                "offset=nextOffset while nextOffset is present. Read subsequent pages by offset without repeating completed work."
+                "Read a UTF-8 text file bundled with an enabled Skill (references/, scripts/, assets/). "
+                "Call skill_read first unless its instructions are already loaded, and use the relative paths in SKILL.md "
+                "or its resources list; a directory path returns a listing. "
+                "Binary files and running scripts are not handled here: run scripts with run_shell "
+                "using <skillRoot>/scripts/... from skill_read. Continue with offset=nextOffset."
                 if is_resource else
-                "Load the main instructions for an enabled local Skill selected by its exact qualifiedId from the available catalog. Read these instructions before following the workflow; use skill_read_resource for referenced text resources. Continue with offset=nextOffset "
+                "Load the main instructions for an enabled local Skill selected by its exact qualifiedId from the available catalog. "
+                "The first page also returns the activated canonical skillRoot and a bounded resources list. "
+                "Read these instructions before following the workflow; use skill_read_resource for referenced text resources. Continue with offset=nextOffset "
                 "while nextOffset is present. Read subsequent pages by offset without repeating completed work."
             ),
             "sideEffect": "none",
@@ -924,7 +1015,9 @@ def _skill_success(tool_name: str, data: dict[str, object]) -> dict[str, object]
     }
 
 
-def _skill_error(tool_name: str, code: str, summary: str) -> dict[str, object]:
+def _skill_error(
+    tool_name: str, code: str, summary: str, *, data: SkillResourceResultData | None = None,
+) -> dict[str, object]:
     return {
         "toolContractVersion": 1,
         "schemaVersion": 1,
@@ -932,7 +1025,7 @@ def _skill_error(tool_name: str, code: str, summary: str) -> dict[str, object]:
         "outcome": "unavailable" if code == "skill_unavailable" else "error",
         "code": code,
         "summary": summary,
-        "data": {},
+        "data": data.model_dump(mode="json", exclude_unset=True) if data is not None else {},
         "sideEffectsMayExist": False,
         "reconciliationRequired": False,
     }
@@ -1319,6 +1412,203 @@ def _frontmatter(
     return manifest.name, manifest.description
 
 
+_SKILL_INVENTORY_KEYS = ("skillRoot", "resources", "resourcesTruncated")
+# Generated or vendored trees never help the model choose a resource, and
+# pruning them keeps the bounded scan from being spent on cache files.
+_SKILL_RESOURCE_IGNORED_NAMES = frozenset({".DS_Store", "__pycache__", "node_modules", ".git"})
+_SKILL_RESOURCE_IGNORED_SUFFIXES = frozenset({".pyc", ".pyo"})
+# The inventory has room for 40 entries, so list the files a Skill is built
+# around first: top-level documents, scripts, references, then the rest. Static
+# assets and agent metadata come last.
+_SKILL_RESOURCE_RANK = {"scripts": 1, "references": 2, "assets": 4, "agents": 5}
+
+
+def _skill_resource_rank(path: PurePosixPath) -> tuple[int, int, bytes]:
+    rank = 0 if len(path.parts) == 1 else _SKILL_RESOURCE_RANK.get(path.parts[0], 3)
+    return rank, len(path.parts), path.as_posix().encode("utf-8")
+
+
+@contextmanager
+def _skill_directory_fd(root: Path, relative: PurePosixPath) -> Iterator[int]:
+    """Anchor traversal at the known root without following replaced links."""
+    with ExitStack() as stack:
+        descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        stack.callback(os.close, descriptor)
+        if os.fstat(descriptor).st_uid != os.getuid():
+            raise SkillReadError("skill_path_invalid")
+        for part in relative.parts:
+            descriptor = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            stack.callback(os.close, descriptor)
+            if os.fstat(descriptor).st_uid != os.getuid():
+                raise SkillReadError("skill_path_invalid")
+        yield descriptor
+
+
+def _walk_skill_resources(
+    root: Path, relative: PurePosixPath, *, recursive: bool,
+) -> Iterator[tuple[PurePosixPath, os.stat_result, int]]:
+    visited = 0
+
+    def walk(descriptor: int, parent: PurePosixPath) -> Iterator[tuple[PurePosixPath, os.stat_result, int]]:
+        nonlocal visited
+        with os.scandir(descriptor) as scan:
+            entries = list(islice(scan, MAX_SKILL_FILES - visited + 1))
+        for entry in sorted(entries, key=lambda value: value.name):
+            visited += 1
+            if visited > MAX_SKILL_FILES:
+                raise SkillReadError("skill_resource_listing_truncated")
+            path = parent / entry.name
+            try:
+                if (
+                    len(path.as_posix().encode("utf-8")) > 512
+                    or entry.name in _SKILL_RESOURCE_IGNORED_NAMES
+                    or os.path.splitext(entry.name)[1].lower() in _SKILL_RESOURCE_IGNORED_SUFFIXES
+                ):
+                    continue
+                _safe_relative(path.as_posix())
+                metadata = entry.stat(follow_symlinks=False)
+            except (OSError, UnicodeError, SkillReadError):
+                continue
+            if metadata.st_uid != os.getuid():
+                continue
+            is_directory = stat.S_ISDIR(metadata.st_mode)
+            if not is_directory and not stat.S_ISREG(metadata.st_mode):
+                continue
+            yield path, metadata, descriptor
+            if recursive and is_directory:
+                child = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+                try:
+                    opened = os.fstat(child)
+                    if (opened.st_dev, opened.st_ino, opened.st_uid) != (metadata.st_dev, metadata.st_ino, metadata.st_uid):
+                        raise SkillReadError("skill_path_invalid")
+                    yield from walk(child, path)
+                finally:
+                    os.close(child)
+
+    with _skill_directory_fd(root, relative) as descriptor:
+        yield from walk(descriptor, relative)
+
+
+def _skill_resource_type(
+    path: PurePosixPath, metadata: os.stat_result, parent_fd: int,
+) -> Literal["text", "binary", "script", "directory"]:
+    if stat.S_ISDIR(metadata.st_mode):
+        return "directory"
+    descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd)
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino, opened.st_uid) != (metadata.st_dev, metadata.st_ino, metadata.st_uid)
+        ):
+            raise SkillReadError("skill_path_invalid")
+        sample = os.read(descriptor, 4096)
+    finally:
+        os.close(descriptor)
+    if _looks_binary_resource(Path(path), sample):
+        return "binary"
+    try:
+        codecs.getincrementaldecoder("utf-8")().decode(sample, final=len(sample) >= opened.st_size)
+    except UnicodeDecodeError:
+        return "binary"
+    if sample.startswith(b"#!") or path.suffix.lower() in {
+        ".py", ".js", ".cjs", ".mjs", ".ts", ".tsx", ".jsx", ".sh", ".bash", ".zsh", ".rb", ".pl", ".lua", ".ps1",
+    }:
+        return "script"
+    return "text"
+
+
+def _skill_resource_listing(
+    root: Path, relative: PurePosixPath = PurePosixPath("."), *, recursive: bool = True,
+) -> dict[str, object]:
+    result: dict[str, object] = {
+        "skillRoot": str(root.resolve(strict=True)), "resources": [], "resourcesTruncated": False,
+    }
+    resources: list[dict[str, object]] = []
+    result["resources"] = resources
+    if len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > SKILL_RESOURCE_METADATA_BYTES:
+        raise SkillReadError("skill_resource_metadata_too_large")
+    # Scan first (bounded by MAX_SKILL_FILES) so the 40 entries can be chosen by
+    # priority instead of by directory order, then classify only those entries.
+    found: list[tuple[PurePosixPath, os.stat_result]] = []
+    try:
+        # Explicitly close the generator so all traversal descriptors are
+        # released before returning to the runtime.
+        with closing(_walk_skill_resources(root, relative, recursive=recursive)) as entries:
+            for path, metadata, _parent_fd in entries:
+                if recursive and (stat.S_ISDIR(metadata.st_mode) or path.as_posix() == "SKILL.md"):
+                    continue
+                found.append((path, metadata))
+    except SkillReadError as error:
+        if str(error) != "skill_resource_listing_truncated":
+            raise
+        result["resourcesTruncated"] = True
+    except OSError:
+        raise SkillReadError("skill_path_invalid") from None
+    if recursive:
+        found.sort(key=lambda item: _skill_resource_rank(item[0]))
+    for path, metadata in found:
+        if len(resources) >= SKILL_RESOURCE_MAX_ENTRIES:
+            result["resourcesTruncated"] = True
+            break
+        try:
+            entry = SkillResourceEntry.model_validate({
+                "resourcePath": path.as_posix(),
+                "sizeBytes": 0 if stat.S_ISDIR(metadata.st_mode) else metadata.st_size,
+                "type": _skill_resource_kind(root, path, metadata),
+            }).model_dump(mode="json")
+        except (OSError, SkillReadError, ValidationError):
+            # Removed or replaced after the scan: withhold it, never follow it.
+            result["resourcesTruncated"] = True
+            continue
+        resources.append(entry)
+        if len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > SKILL_RESOURCE_METADATA_BYTES:
+            resources.pop()
+            result["resourcesTruncated"] = True
+            break
+    return result
+
+
+def _skill_resource_kind(
+    root: Path, path: PurePosixPath, metadata: os.stat_result,
+) -> Literal["text", "binary", "script", "directory"]:
+    if stat.S_ISDIR(metadata.st_mode):
+        return "directory"
+    with _skill_directory_fd(root, path.parent) as parent_fd:
+        return _skill_resource_type(path, metadata, parent_fd)
+
+
+def _skill_resource_inventory(root: Path) -> dict[str, object]:
+    """Discovery data for the model; a failure must never block SKILL.md.
+
+    The root was verified when the Skill was activated. When the tree cannot be
+    scanned safely the inventory is withheld and marked truncated, so the model
+    can still ask ``skill_read_resource`` to list a directory explicitly.
+    """
+    try:
+        return _skill_resource_listing(root)
+    except (SkillReadError, ValidationError, OSError, RuntimeError):
+        pass
+    try:
+        canonical = str(root.resolve(strict=True))
+    except (OSError, RuntimeError):
+        return {}
+    return {"skillRoot": canonical, "resources": [], "resourcesTruncated": True}
+
+
+def _skill_resource_candidates(root: Path, requested: str) -> list[str]:
+    def choices() -> Iterator[str]:
+        try:
+            with closing(_walk_skill_resources(root, PurePosixPath("."), recursive=True)) as entries:
+                for path, _metadata, _descriptor in entries:
+                    yield path.as_posix()
+        except (OSError, SkillReadError):
+            return
+
+    with closing(choices()) as paths:
+        return [path for path, _score, _index in process.extract(requested, paths, scorer=fuzz.WRatio, limit=5, score_cutoff=40)]
+
+
 def _safe_relative(value: str) -> PurePosixPath:
     path = PurePosixPath(value)
     if (
@@ -1341,6 +1631,8 @@ def _validate_resource_parent_chain(root: Path, relative: PurePosixPath) -> None
         current = current / part
         try:
             metadata = current.lstat()
+        except FileNotFoundError:
+            raise
         except OSError:
             raise SkillReadError("skill_path_invalid") from None
         if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
