@@ -56,6 +56,8 @@ class EventProjector:
             return (self._notification("project/updated", {"id": payload["id"]}),)
         if event_type == "automation.changed" and isinstance(payload, dict) and isinstance(payload.get("id"), str):
             return (self._notification("automation/changed", {"id": payload["id"]}),)
+        if event_type == "goal.changed" and isinstance(payload, dict):
+            return (self._notification("goal/updated", {"sessionId": payload["sessionId"]}),)
         if event_type == "browser.grant_changed" and isinstance(payload, dict):
             return (self._notification("browser/grantChanged", {
                 "sessionId": payload["sessionId"], "active": payload["active"] is True,

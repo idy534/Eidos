@@ -151,6 +151,7 @@ class RunRepository(Repository):
         regenerate_source_run_id: str | None = None,
         personalization: PersonalizationSettings | None = None,
         channel_context: bool = False,
+        internal_input: bool = False,
     ) -> tuple[dict[str, object], dict[str, object]]:
         references = references or []
         references_json = json.dumps([value.to_wire_dict() for value in references], ensure_ascii=False)
@@ -329,7 +330,8 @@ class RunRepository(Repository):
                     now,
                 ),
             )
-            connection.execute(
+            if not internal_input:
+                connection.execute(
                 """
                 INSERT INTO items (
                     id, session_id, run_id, ordinal, kind, status,
@@ -345,6 +347,9 @@ class RunRepository(Repository):
             run = _run_from_row(connection.execute(
                 "SELECT * FROM runs WHERE id = ?", (run_id,)
             ).fetchone())
+            if work_mode == "plan":
+                from eidos_runtime.persistence.goals import pause_goal_for_plan
+                pause_goal_for_plan(connection, session_id, run_id)
             append_event(
                 connection,
                 EventType.RUN_CREATED,
@@ -367,7 +372,7 @@ class RunRepository(Repository):
             item_row = connection.execute(
                 "SELECT * FROM items WHERE id = ?", (item_id,)
             ).fetchone()
-            return {"run": run, "item": _item_from_row(item_row, None)}
+            return {"run": run, "item": _item_from_row(item_row, None) if item_row is not None else {}}
         if transaction_connection is not None:
             result = write(transaction_connection)
             return result["run"], result["item"]
@@ -515,7 +520,8 @@ class RunRepository(Repository):
             raise ResourceNotFoundError("run not found")
         from eidos_runtime.persistence.automations import AutomationRepository
         from eidos_runtime.persistence.channels import ChannelRepository
-        result = _run_from_row(row, channel_origin=ChannelRepository(self.database).origin(run_id), automation_origin=AutomationRepository(self.database).origin(run_id))
+        from eidos_runtime.persistence.goals import GoalRepository
+        result = _run_from_row(row, channel_origin=ChannelRepository(self.database).origin(run_id), automation_origin=AutomationRepository(self.database).origin(run_id), goal_origin=GoalRepository(self.database).origins_for_runs([run_id]).get(run_id))
         from eidos_runtime.persistence.hooks import HookRepository
         activity = HookRepository(self.database).activities(run_id=run_id, limit=8, previews=False).items
         if activity:

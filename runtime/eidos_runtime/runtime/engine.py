@@ -386,6 +386,9 @@ class RuntimeEngine:
         repository_context: RunRepositoryContext,
     ) -> None:
         decisions = LoopDecisionEngine()
+        from eidos_runtime.persistence.goals import GoalRepository
+        goals = GoalRepository(self.store.database)
+        goals.attach(run.run_id)
         guard = LoopGuard.from_signatures(
             self.store.recent_progress_signatures(run.run_id)
         )
@@ -523,6 +526,8 @@ class RuntimeEngine:
             # A recovered request still uses its original input. Leave steering
             # unread until that request finishes and the next normal Step begins.
             injected = () if self.store.has_recovered_model_retry(run.run_id) else self.store.consume_pending_input_facts(run.run_id)
+            if injected:
+                goals.invalidate_candidate(run.run_id)
             if resources.hooks is not None and not CollaborationRepository(self.store.database).child_for_run(run.run_id):
                 for item_id, content in injected:
                     submitted = resources.hooks.dispatch("UserPromptSubmit", "prompt:" + item_id, cancel, fields={"prompt": content})
@@ -737,6 +742,7 @@ class RuntimeEngine:
                 workspace_version=built.facts.workspace_version,
                 new_user_input_ids=tuple(item_id for item_id, _content in injected),
             )
+            goals.bind_sample(run.run_id, built.goal_sample)
             try:
                 recovered_snapshot = self.store.read_running_context_snapshot(run.run_id)
                 if recovered_snapshot is None:
@@ -1328,6 +1334,8 @@ class RuntimeEngine:
                 if checked.stop:
                     raise HookStopRequested
                 if checked.continuation:
+                    from eidos_runtime.persistence.goals import GoalRepository
+                    GoalRepository(self.store.database).invalidate_candidate(run_id)
                     mutation = self.store.complete_assistant_item_committed(str(sampled.assistant_item["id"]))
                     self.events.publish(mutation, item=mutation.value)
                     self.store.complete_current_step(run_id, "completed", reason="hook_continuation")
@@ -1392,7 +1400,9 @@ class RuntimeEngine:
         )
 
     def _emit_started(self, run_id: str, run: dict[str, object]) -> None:
-        user_item = self.store.get_user_item(run_id)
+        origin = run.get("goalOrigin")
+        internal = isinstance(origin, dict) and origin.get("trigger") != "user_input"
+        user_item = None if internal else self.store.get_user_item(run_id)
         self.events.publish_event(
             self.store.read_runtime_start_event(run_id),
             run=run,

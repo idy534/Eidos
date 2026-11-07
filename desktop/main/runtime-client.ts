@@ -21,6 +21,7 @@ import { isAgentDefinitionDocument } from "../shared/agent-definitions.js";
 import { isPlanningReadResponse, isUserInputRequest, isPlanResponse } from "../shared/planning.js";
 import { isSidebarPinsResponse } from "../shared/sidebar.js";
 import { isAutomationResponse, isAutomationOrigin, type AutomationExecuteRequest, type AutomationHistoryRequest, type AutomationRunNowRequest, type AutomationResponse } from "../shared/automation.js";
+import { isGoalView, isGoalChangedNotice, isGoalRunOrigin, type GoalRequest, type GoalView } from "../shared/goals.js";
 import { isQueuedRunChangeResponse, isQueuedRunListResponse } from "../shared/queued-runs.js";
 import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunSteerRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "../shared/queued-runs.js";
 import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "../shared/sidebar.js";
@@ -44,6 +45,8 @@ import { isBuiltinPluginsResponse, isMcpConnectionState, isRemoteMcpInfo, type B
 
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 const RUNTIME_BUSINESS_CODES = new Set([
+  "GOAL_NOT_FOUND", "GOAL_REVISION_CONFLICT", "GOAL_INVALID_STATE",
+  "GOAL_SOURCE_NOT_ALLOWED", "GOAL_SESSION_BUSY",
   "AGENT_DEFINITION_INVALID",
   "AGENT_DEFINITION_EXISTS",
   "AGENT_DEFINITION_CONFLICT",
@@ -566,6 +569,11 @@ export class RuntimeClient {
 
   automation(request: AutomationExecuteRequest): Promise<AutomationResponse> {
     return this.validatedRequest("schedule/execute", { ...request }, isAutomationResponse);
+  }
+
+  goal(request: GoalRequest): Promise<GoalView> {
+    const method = request.action === "get" ? "goal/get" : request.action === "clear" ? "goal/clear" : "goal/update";
+    return this.validatedRequest(method, { ...request }, isGoalView);
   }
 
   automationHistory(request: AutomationHistoryRequest): Promise<AutomationResponse> {
@@ -1585,6 +1593,7 @@ function isNotification(value: unknown): value is RuntimeNotification {
     return false;
   }
   const params = value.params;
+  if (value.method === "goal/updated") return isGoalChangedNotice(params);
   if (value.method === "memory/changed") {
     return isMemoryChangedNotice(params);
   }
@@ -2345,7 +2354,7 @@ function isRun(value: unknown): value is Run {
       "reconciliationRequired",
       "extensionSnapshot",
       "activatedTools",
-      "automationOrigin",
+      "automationOrigin", "goalOrigin",
       "channelOrigin",
       "hookActivity",
     ])
@@ -2371,6 +2380,7 @@ function isRun(value: unknown): value is Run {
     && (value.approvalMode === undefined || ["manual", "auto_review", "full_access"].includes(String(value.approvalMode)))
     && (value.channelOrigin === undefined || isChannelOrigin(value.channelOrigin))
     && (value.automationOrigin === undefined || isAutomationOrigin(value.automationOrigin))
+    && (value.goalOrigin === undefined || isGoalRunOrigin(value.goalOrigin))
     && (value.hookActivity === undefined || Array.isArray(value.hookActivity) && value.hookActivity.length <= 8 && value.hookActivity.every(item => isHookActivity(item)))
     && isModelId(value.modelId)
     && (value.remoteModelId === undefined || (

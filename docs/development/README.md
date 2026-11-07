@@ -89,6 +89,10 @@ pnpm build
 
 ## 专题配置与定向验证
 
+### 目标模式
+
+目标模式的 Runtime、双端协议、Renderer 和隔离 Electron 页面定向命令见[当前目标模式](../current/features/goals.md#当前范围与验证入口)。数据库升级还需验证 `test_storage_schema.py`、`test_persistence_layout.py` 和 `test_data_backup.py`。目标数据使用 Schema v52，普通启动、旧数据分库和备份恢复使用同一目标迁移。v51 的旧预算字段会在升级时移除。隔离页面可通过 `EIDOS_GOAL_SCREENSHOTS` 保存菜单、输入框标签和目标状态截图。
+
 ### GitHub、远程插件与定时任务
 
 设置 → 插件 → 插件市场 → GitHub → 安装，会通过普通受管包入口安装 GitHub。用户再打开 GitHub 的资源详情连接账号。PAT 只在密码输入框中填写，不能写入包或提交到仓库。应用不需要用户安装 Docker、Node、GitHub CLI 或本地 GitHub MCP 二进制。

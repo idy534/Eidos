@@ -184,6 +184,8 @@ class CheckpointRepository(Repository):
             from eidos_runtime.memory.lifecycle import fork_source, invalidate_source
             source_session = connection.execute('SELECT session_id FROM runs WHERE id=?', (checkpoint.run_id,)).fetchone()[0]
             if action == 'rewind':
+                from eidos_runtime.persistence.goals import pause_goal_for_rewind
+                pause_goal_for_rewind(connection, source_session)
                 invalidate_source(connection, source_session, reason='rewind', run_id=checkpoint.run_id, after_ordinal=checkpoint.item_ordinal)
             else:
                 target_session = connection.execute('SELECT session_id FROM runs WHERE id=?', (target_run_id,)).fetchone()[0]

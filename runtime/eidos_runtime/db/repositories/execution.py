@@ -1816,6 +1816,18 @@ class ExecutionRepository(Repository):
             ).fetchone()
             if fact is None:
                 raise InvalidRunStateError("tool item is unavailable")
+            if fact["tool_name"] == "update_goal" and json.loads(result_json).get("outcome") == "success":
+                from eidos_runtime.domain.goal import GoalDeclaration, GoalError
+                from eidos_runtime.persistence.goals import GoalRepository
+                from eidos_runtime.runtime.errors import tool_error
+                arguments = connection.execute("SELECT arguments_json FROM tool_calls WHERE item_id=?", (item_id,)).fetchone()[0]
+                try:
+                    GoalRepository(self.database).declare(str(fact["run_id"]), item_id,
+                        GoalDeclaration.model_validate_json(arguments), connection=connection)
+                except GoalError as error:
+                    result_json = json.dumps(tool_error("update_goal", error.code, str(error)))
+                    model_result_json = ui_result_json = result_json
+                    item_status = tool_status = "failed"
             ensure_transition(
                 ToolCallStatus(fact["tool_status"]), ToolCallStatus(tool_status)
             )

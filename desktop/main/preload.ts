@@ -84,6 +84,7 @@ import type {
 } from "../shared/response-actions.js";
 
 const api: EidosRuntimeAPI = {
+  goal: (request) => ipcRenderer.invoke(IPC.GOAL_EXECUTE, request),
   readWorkspaceFileForFind: (request) => ipcRenderer.invoke(IPC.WORKSPACE_READ_FOR_FIND, request),
   searchSessions: (request) => ipcRenderer.invoke(IPC.SEARCH_SESSIONS, request),
   readSessionAround: (request) => ipcRenderer.invoke(IPC.SESSION_READ_AROUND, request),

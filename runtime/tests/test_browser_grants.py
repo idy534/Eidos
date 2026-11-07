@@ -108,6 +108,8 @@ def _downgrade_to_v47(data_directory, extra_sql: str = "") -> None:
     store.close()
     path = data_directory / "state.sqlite"
     connection = sqlite3.connect(path)
+    from schema_fixtures import remove_goal_schema
+    remove_goal_schema(connection)
     connection.executescript(
         "DROP TABLE session_browser_grants; DROP TABLE browser_settings;" + extra_sql + f"PRAGMA user_version={V47_SCHEMA_VERSION};"
     )

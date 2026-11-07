@@ -22,6 +22,7 @@ from eidos_runtime.domain.run_termination import RunTermination
 from eidos_runtime.domain.queued_runs import QueuedRunChange
 from eidos_runtime.domain.context_management import ContextCompactionRecord
 from eidos_runtime.domain.model_retry import ModelRetryCause, ModelRetryStatus
+from eidos_runtime.domain.goal import GoalStatus
 
 
 EVENT_CONTRACT_VERSION = 1
@@ -51,6 +52,13 @@ class McpConnectionChangedPayload(ClosedModel):
 
 class AutomationChangedPayload(ClosedModel):
     id: str
+
+
+class GoalChangedPayload(ClosedModel):
+    session_id: str = Field(alias="sessionId")
+    status: GoalStatus | None = None
+    kind: Literal["started", "edited", "status", "progress"] = "progress"
+    reason: str | None = None
 
 
 class SessionCreatedPayload(ClosedModel):
@@ -243,6 +251,7 @@ EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.MEMORY_CHANGED: MemoryChangedPayload,
     EventType.BROWSER_GRANT_CHANGED: BrowserGrantChangedPayload,
     EventType.BROWSER_SETTINGS_CHANGED: AutomationChangedPayload,
+    EventType.GOAL_CHANGED: GoalChangedPayload,
 }
 
 
