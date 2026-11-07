@@ -45,6 +45,9 @@ async function checkLayout() {
 
   await setDraft("");
   textarea.focus({ preventScroll: true });
+  // Inline previews load only near the feed viewport.
+  feed.scrollTop = feed.scrollHeight;
+  await frame();
   for (let attempt = 0; attempt < 100; attempt++) {
     if (feed.querySelector(".shiki-code-body") && feed.querySelector("img")?.naturalHeight > 0) break;
     await new Promise((resolve) => setTimeout(resolve, 100));
