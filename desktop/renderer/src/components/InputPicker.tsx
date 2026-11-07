@@ -10,6 +10,7 @@ export type InputPickerMode = "all" | "skill" | "commands";
 interface Candidate { id: string; label: string; detail: string; request?: InputPrepareRequest; action?: string; unavailable?: boolean }
 const commands: Candidate[] = [
   { id: "plan", label: "/plan", detail: "开始 Plan 模式", action: "plan" },
+  { id: "goal", label: "/goal", detail: "设定持续推进的目标", action: "goal" },
   { id: "mcp", label: "/mcp", detail: "查看与管理 MCP", action: "mcp" },
   { id: "plugins", label: "/plugins", detail: "管理 Plugin", action: "plugins" },
 ];
@@ -75,11 +76,12 @@ function measurePickerLayout(surface: HTMLElement, boundary: HTMLElement | null)
   return { top: placement === "above" ? aboveBottom - height : belowTop, left, width, height, placement };
 }
 
-export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, onListId, onSelectPlanMode, onCreateAgent, anchor }: {
+export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, onListId, onSelectPlanMode, onSelectGoalMode, onCreateAgent, anchor }: {
   mode: InputPickerMode; query: string; inline: boolean;
   onQuery(value: string): void; onChoose(request: InputPrepareRequest): void; onClose(): void;
   onCommand(command: string): void; onListId?(id: string, active: string | undefined): void;
   onSelectPlanMode?(): void;
+  onSelectGoalMode?(): void;
   onCreateAgent?: (() => void) | undefined;
   anchor?: RefObject<HTMLElement | null> | undefined;
 }) {
@@ -421,12 +423,15 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
                 <span>Plan</span>
               </button>
             </Tooltip>
-            <Tooltip content="目标模式 (即将推出)">
+            <Tooltip content="开始目标模式">
               <button
                 type="button"
                 className="input-picker__action-btn input-picker__action-btn--goal"
                 aria-label="目标模式"
-                disabled
+                onClick={() => {
+                  onSelectGoalMode?.();
+                  onClose();
+                }}
               >
                 <TargetGoalIcon />
                 <span>目标</span>

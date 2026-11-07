@@ -5,6 +5,7 @@ from eidos_runtime.persistence.agent_catalog import AgentSnapshotRepository
 from eidos_runtime.application.agent_catalog import AgentCatalog
 from eidos_runtime.domain.agents import AgentCatalogSnapshot
 from eidos_runtime.domain.input_reference import InputSnapshot
+from eidos_runtime.domain.goal import GoalError
 from eidos_runtime.domain.automation import AutomationModel, AutomationError
 
 from collections.abc import Callable
@@ -312,8 +313,10 @@ class RunApplication:
         model_id, profile, _config = self._select_model(request, environment=environment)
         return AutomationModel(model_id=model_id, reasoning_selection=profile.reasoning_selection)
 
-    def start(self, request: RunStartRequestDto, *, automation_occurrence_id: str | None = None, regenerate_source_run_id: str | None = None, agent_source_run_id: str | None = None, channel_message_id: str | None = None) -> RunStartOutcome:
+    def start(self, request: RunStartRequestDto, *, automation_occurrence_id: str | None = None, regenerate_source_run_id: str | None = None, agent_source_run_id: str | None = None, channel_message_id: str | None = None, goal_intent_id: str | None = None) -> RunStartOutcome:
         store, runtime, environment, scan_text = self._start_dependencies()
+        if (request.goal_mode or request.goal_revision is not None) and any(value is not None for value in (automation_occurrence_id, regenerate_source_run_id, agent_source_run_id, channel_message_id, goal_intent_id)):
+            raise ApplicationError("INVALID_PARAMS", "只有用户输入可以创建目标。")
         if channel_message_id is not None:
             from eidos_runtime.persistence.channels import ChannelRepository
             snapshot = ChannelRepository(store.database).inbound(channel_message_id).connection
@@ -323,7 +326,7 @@ class RunApplication:
         if not environment.model_is_configured():
             raise ApplicationError("INVALID_STATE", "no model is configured")
         try:
-            user_input = scan_text(request.user_input)
+            user_input = "" if goal_intent_id is not None else scan_text(request.user_input)
         except SensitiveContentDenied as error:
             raise ApplicationError("SENSITIVE_CONTENT_REJECTED", str(error)) from error
         except SensitiveScanError as error:
@@ -392,6 +395,8 @@ class RunApplication:
             "workMode": request.work_mode,
             "planId": request.plan_id,
             "planRevision": request.plan_revision,
+            **({"goalMode": True} if request.goal_mode else {}),
+            **({"goalRevision": request.goal_revision} if request.goal_revision is not None else {}),
             **({"references": [value.reference.id for value in input_snapshots]} if input_snapshots else {}),
             "modelId": model_id,
             "reasoningSelection": model_profile.reasoning_selection,
@@ -467,7 +472,17 @@ class RunApplication:
                     ):
                         self._repository_runtime.activate_workspace(workspace.path)
                     needs_title = "title" not in current_session
-                    if automation_occurrence_id is not None:
+                    if goal_intent_id is not None:
+                        from eidos_runtime.persistence.goals import GoalRepository
+                        from eidos_runtime.db.repositories.runs import RunRepository
+                        created, _user_item = GoalRepository(store.database).accept(goal_intent_id,
+                            lambda connection: RunRepository(store.database).create_run(
+                                request.session_id, "", queued=True, internal_input=True,
+                                model_id=model_id, model_profile=model_profile, approval_mode=request.approval_mode,
+                                extension_snapshot=extension_snapshot, agent_catalog=agent_snapshot,
+                                expected_workspace_identity=expected_workspace_identity, transaction_connection=connection,
+                            ))
+                    elif automation_occurrence_id is not None:
                         from eidos_runtime.persistence.automations import AutomationRepository
                         from eidos_runtime.db.repositories.runs import RunRepository
                         repository = AutomationRepository(store.database)
@@ -502,6 +517,19 @@ class RunApplication:
                             expected_workspace_identity=expected_workspace_identity,
                             regenerate_source_run_id=regenerate_source_run_id,
                         )
+                    elif request.goal_mode or request.goal_revision is not None:
+                        from eidos_runtime.persistence.goals import GoalRepository
+                        from eidos_runtime.db.repositories.runs import RunRepository
+                        created, _user_item = GoalRepository(store.database).admit_input(
+                            request.model_copy(update={"user_input": user_input, "model_id": model_id,
+                                "reasoning_selection": model_profile.reasoning_selection}),
+                            lambda connection: RunRepository(store.database).create_run(
+                                request.session_id, user_input, queued=True,
+                                references=[value.reference for value in input_snapshots],
+                                model_id=model_id, model_profile=model_profile, approval_mode=request.approval_mode,
+                                extension_snapshot=extension_snapshot, agent_catalog=agent_snapshot,
+                                expected_workspace_identity=expected_workspace_identity, transaction_connection=connection,
+                            ), operation_request=operation_request)
                     else:
                         created, _user_item = store.enqueue_run(
                             request.session_id, user_input,
@@ -512,7 +540,7 @@ class RunApplication:
                             extension_snapshot=extension_snapshot, agent_catalog=agent_snapshot,
                             expected_workspace_identity=expected_workspace_identity,
                         )
-        except AutomationError:
+        except (AutomationError, GoalError):
             raise
         except ValueError as error:
             raise ApplicationError("INVALID_STATE", str(error)) from error
@@ -565,7 +593,7 @@ class RunApplication:
                     user_input=user_input or ", ".join(value.reference.label for value in input_snapshots),
                     model_id=model_id,
                 )
-                if needs_title and automation_occurrence_id is None
+                if needs_title and automation_occurrence_id is None and goal_intent_id is None
                 else None
             ),
         )

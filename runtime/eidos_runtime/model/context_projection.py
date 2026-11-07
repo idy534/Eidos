@@ -23,7 +23,7 @@ def _protected_personalization(item: dict[str, object]) -> bool:
 
 def _protected_guidance(item: ModelContextItem) -> bool:
     return item.get("type") in {"user", "context"} and str(item.get("sectionId", "")).startswith((
-        "project-rule:", "selected-skill:", "custom-agent",
+        "project-rule:", "selected-skill:", "custom-agent", "goal-current",
     ))
 
 
@@ -142,7 +142,7 @@ def recovery_context(context: tuple[dict[str, object], ...], byte_limit: int, *,
     for item in messages:
         if (_protected_continuity(item) or (
             item.get("type") == "context" and str(item.get("sectionId", "")).startswith((
-                "project-rule:", "selected-skill:", "custom-agent", "memory-evidence", "workspace-environment", "channel-origin", "automation-origin", "input-origin:",
+                "project-rule:", "selected-skill:", "custom-agent", "memory-evidence", "workspace-environment", "channel-origin", "automation-origin", "input-origin:", "goal-current",
             ))
         )) and item not in retained:
             retained.insert(0, item)

@@ -84,6 +84,10 @@ from eidos_runtime.db.repositories.sessions import SessionRepository
 from eidos_runtime.application.sidebar import SidebarApplication
 from eidos_runtime.application.queued_runs import QueuedRunApplication
 from eidos_runtime.application.automations import AutomationApplication
+from eidos_runtime.application.goals import GoalApplication
+from eidos_runtime.domain.goal import GoalError, GoalView
+from eidos_runtime.persistence.goals import GoalRepository
+from eidos_runtime.protocol.goals import GoalRequest
 from eidos_runtime.domain.automation import AutomationError, AutomationResponse
 from eidos_runtime.protocol.automations import AutomationExecuteRequest, AutomationHistoryRequest, AutomationRunNowRequest, AutomationRefreshRequest
 from eidos_runtime.runtime.automation_scheduler import AutomationScheduler
@@ -298,7 +302,7 @@ def valid_initialize_params(params: object) -> bool:
 
 def _application_error_mapping(error: Exception) -> MethodErrorMapping | None:
     """Map only stable application failures at the protocol boundary."""
-    if isinstance(error, AutomationError):
+    if isinstance(error, (AutomationError, GoalError)):
         if error.code == "invalid_arguments":
             return MethodErrorMapping("INVALID_PARAMS")
         return MethodErrorMapping(error.code.upper())
@@ -972,6 +976,9 @@ class RuntimeServer:
         handlers: tuple[
             tuple[str, type[BaseModel], type[method_dtos.MethodResultDto], Any], ...
         ] = (
+            ("goal/get", GoalRequest, GoalView, lambda _id, request: self._goal_request(request, {"get"})),
+            ("goal/update", GoalRequest, GoalView, lambda _id, request: self._goal_request(request, {"pause", "resume"})),
+            ("goal/clear", GoalRequest, GoalView, lambda _id, request: self._goal_request(request, {"clear"})),
             ("personalization/read", PersonalizationReadRequest, PersonalizationResponse, lambda _id, _request: self._personalization_application().read()),
             ("personalization/save", PersonalizationSaveRequest, PersonalizationResponse, lambda _id, request: self._personalization_save(request)),
             ("shellEnvironment/read", ShellEnvironmentReadRequest, ShellEnvironmentResponse, lambda _id, _request: self._shell_environment_application().read()),
@@ -1901,6 +1908,54 @@ class RuntimeServer:
                 scan_text=self._scan_text)
         return self.store.automations
 
+    def _goal_request(self, request: GoalRequest, actions: set[str]) -> GoalView:
+        if request.action not in actions:
+            raise ApplicationError("INVALID_PARAMS", "目标操作与方法不匹配。")
+        return GoalApplication(self.store, resolve_model=self._applications_or_error().runs.select_automation_model,
+            changed=self._goal_changed).execute(request)
+
+    def _goal_changed(self) -> None:
+        self.supervisor.events.deliver_pending()
+        self._wake_goals()
+
+    def _wake_goals(self) -> None:
+        if not self.initialized or self.supervisor.control_state is not RuntimeControlState.RUNNING:
+            return
+        repository = GoalRepository(self.store.database)
+        for intent_id, goal in repository.ready_continuations():
+            with self.supervisor.lock:
+                preparing = getattr(self, "_preparing_goal_intents", None)
+                if preparing is None:
+                    self._preparing_goal_intents: set[str] = set()
+                if intent_id in self._preparing_goal_intents:
+                    continue
+                self._preparing_goal_intents.add(intent_id)
+            def execute(cancel: threading.Event, intent_id: str = intent_id, goal=goal) -> None:
+                try:
+                    if cancel.is_set():
+                        return
+                    outcome = self._applications_or_error().runs.start(method_dtos.RunStartRequestDto(
+                        sessionId=goal.session_id, userInput=goal.objective, modelId=goal.model.model_id,
+                        reasoningSelection=goal.model.reasoning_selection, approvalMode=goal.approval_mode,
+                        fullAccessConfirmation=goal.full_access_confirmation,
+                        references=list(goal.reference_ids),
+                    ), goal_intent_id=intent_id)
+                    outcome.release_after_commit()
+                except GoalError as error:
+                    if error.code not in {"goal_session_busy", "goal_revision_conflict"}:
+                        repository.fail_preparation(goal.id, goal.sample(), error.code)
+                except Exception as error:
+                    logger.exception("Goal Run preparation failed goal_id=%s", goal.id)
+                    repository.fail_preparation(goal.id, goal.sample(), getattr(error, "code", "MODEL_UNAVAILABLE"))
+                finally:
+                    with self.supervisor.lock:
+                        self._preparing_goal_intents.discard(intent_id)
+                    self.supervisor.events.deliver_pending()
+                    self._wake_goals()
+            if not self.supervisor.start_managed_task("goal-prepare", execute):
+                with self.supervisor.lock:
+                    self._preparing_goal_intents.discard(intent_id)
+
     def _publish_automation_change(self) -> None:
         # The plan is committed. Transport retries must not keep waking the timer.
         if self.automation_scheduler is not None:
@@ -2156,6 +2211,7 @@ class RuntimeServer:
                     managed_resources=self.managed_resources.manager,
                 )
                 self.supervisor.bind_async_kernel(self.async_kernel)
+                self.supervisor.on_session_idle = self._wake_goals
                 with startup_phase("restart_verification"):
                     self.supervisor.verify_restart_state()
                 with startup_phase("applications_and_handoffs"):
@@ -2585,6 +2641,15 @@ class _TitleCancellation(threading.Event):
 
 def _model_from_environment() -> ModelClient | None:
     fixture = os.environ.get("EIDOS_FAKE_MODEL")
+    if fixture == "goal":
+        return ScriptedModel([
+            ModelResponse(text="目标仍在推进，下一轮继续核对完成条件。"),
+            ModelResponse(tool_calls=(ModelToolCall("fake-goal-complete", "update_goal", {
+                "status": "complete", "summary": "目标测试已完成。",
+                "evidence": [{"requirement": "返回完成状态", "proof": "隔离测试模型已返回结构化声明。"}],
+            }),)),
+            ModelResponse(text="目标测试已完成。"),
+        ])
     if fixture == "write":
         return ScriptedModel(
             [

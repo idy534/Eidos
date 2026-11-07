@@ -1,5 +1,9 @@
 # Eidos 当前架构
 
+## 目标模式（2026-11-07）
+
+目标模式从 Composer 的“＋”菜单或 `/goal` 开启，标签与 Plan 模式互斥。用户直接提交输入，通过 `typed IPC → run/start → RunApplication → GoalRepository → SQLite` 原子保存真实用户消息、首轮 Run 和目标。目标管理继续使用 `goal/*`。Schema v51 保存目标、Run 来源和一次性续跑意图，v52 移除旧目标预算。Supervisor 使用现有受管理任务准备下一轮；Run 终态事务决定目标结算和续跑意图。模型声明只形成候选；Stop Hook、子任务、取消、新输入和版本检查继续决定最终提交。ContextBuilder 单独投影完整目标。目标不增加执行权限，也不设置跨 Session 配额。具体行为和恢复范围见[目标模式](features/goals.md)。
+
 ## 任务理解与提示词边界（2026-10-31）
 
 主 Agent 使用通用助手身份。system-safety 层定义指令来源、优先级、材料用途与真实边界。base-agent 层按任务、行动、证据和沟通组织通用原则。runtime-policy 层负责工具发现、依赖顺序与失败恢复。核心文本不列举任务类型、历史故障或示例。独立审批模型继续只评估具体操作。

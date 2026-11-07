@@ -93,7 +93,14 @@ class InputContextRepository:
                 "SELECT input_references_json FROM items WHERE run_id = ? AND kind = 'user_message' ORDER BY ordinal LIMIT 1",
                 (run_id,),
             ).fetchone()
-            return [self.read(value['id']) for value in json.loads(row[0])] if row else []
+            if row:
+                return [self.read(value['id']) for value in json.loads(row[0])]
+            # Automatic goal Runs have no user-message Item. Their admitted
+            # reference snapshot keeps the original selections available.
+            origin = self.database.connection().execute(
+                "SELECT reference_ids_json FROM goal_runs WHERE run_id=?", (run_id,),
+            ).fetchone()
+            return [self.read(identifier) for identifier in json.loads(origin[0])] if origin else []
 
     def read_draft(self, key: str) -> InputDraft:
         with self.database.lock:

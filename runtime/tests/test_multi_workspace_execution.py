@@ -419,6 +419,10 @@ def test_v45_project_session_migration_pins_git_metadata_before_replacement(
     legacy.execute("ALTER TABLE worktrees DROP COLUMN git_dir_uid")
     legacy.execute("ALTER TABLE worktrees DROP COLUMN git_dir_inode")
     legacy.execute("ALTER TABLE worktrees DROP COLUMN git_dir_dev")
+    legacy.execute("DROP TABLE session_browser_grants")
+    legacy.execute("DROP TABLE browser_settings")
+    from schema_fixtures import remove_goal_schema
+    remove_goal_schema(legacy)
     legacy.execute("PRAGMA user_version = 45")
     legacy.commit()
     legacy.close()
@@ -1010,6 +1014,10 @@ def test_v46_migration_pins_existing_worktree_gitdir_identity(
         connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_uid")
         connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_inode")
         connection.execute("ALTER TABLE worktrees DROP COLUMN git_dir_dev")
+        connection.execute("DROP TABLE session_browser_grants")
+        connection.execute("DROP TABLE browser_settings")
+        from schema_fixtures import remove_goal_schema
+        remove_goal_schema(connection)
         connection.execute("PRAGMA user_version=46")
         connection.commit()
         data_directory = store.data_directory

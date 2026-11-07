@@ -1,5 +1,9 @@
 # Eidos 当前能力
 
+## 目标模式（2026-11-07）
+
+用户可以通过 `/goal` 设定持续目标。Runtime 在每轮正常结束后接纳新的普通 Run，直到模型按要求声明完成、系统记录受阻或用户暂停、清除目标。Desktop 通过输入框的“＋”菜单和 `/goal` 开启目标模式。目标标签位于访问模式右边，并与 Plan 互斥。用户在输入框中直接填写目标，状态区域展示完成证据。目标的权限、取消、工具执行、未知结果和恢复继续使用现有链路。当前 P0 边界见[目标模式](features/goals.md)。
+
 Eidos 支持多目录项目、一个主要文件夹和侧栏项目编辑。会话固定创建时的目录绑定。Files 和 Review 分别选择文件夹与 Git checkout。主仓库 Worktree 映射其源 checkout 内的目录，其他目录继续共享。系统的 Checkpoint 仍只覆盖主仓库的现有范围。具体行为和限制见 [多目录项目](features/projects.md)。
 
 用户可以在“设置 → 网页搜索”配置 DeepSeek Search、LangSearch 和豆包搜索 Custom 版，并手动勾选默认服务。三家可以同时保存，用户也可以全部取消。没有默认服务或可用本地 Key 时，新 Run 不发布 `web_search`。系统不会自动切换服务。Run 固定创建时的配置。用户选择默认服务后，搜索不再逐次审批，仍保留 Durable Intent、取消和有界结果投影；请求可能计费。实现已接入，真实账户 Key 验证仍未进行。配置、持久化和验证边界见[当前网页搜索](features/web-search.md)。
@@ -467,6 +471,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 有项目的 Session 会收到独立的文件引用提示词。提示词提供文件、行号、行列号的标准 Markdown 格式和示例，要求模型使用当前 execution root 内已经确认的绝对路径，并用尖括号包住链接目标。无项目的 Session 不加入这段提示词。标准示例为 `[app.ts (line 42)](</workspace/My Project/src/app.ts:42>)`；列号示例为 `[app.ts (line 42, column 5)](</workspace/My Project/src/app.ts:42:5>)`。示例路径只说明格式，模型必须替换为实际路径。
 - Conversation 只把显式 Markdown 绝对路径链接作为文件跳转入口。系统从链接目标提取路径和位置，显示标签不参与寻址。裸文件名、行内代码和相对文件链接保持文字。文件链接复用现有图标和蓝色文字样式，不依赖扩展名白名单，也不按文件名搜索或猜测子目录。系统支持 `:line[:column]`，并兼容显式链接中的 `#Lline[Ccolumn]`；行列号从 1 开始。普通文本和代码预览会滚动到目标行，并选中该行或指定列的字符；同一文件再次点击不同位置时会重新定位。带位置的 HTML 链接会打开源码。渲染后的 Markdown 按源文本位置滚动到对应块，文档内相对链接仍按文档所在目录解析。目标行超出当前预览时，系统会显示提示。Renderer、Runtime 自动化测试和构建已通过；完整结果见 `docs/current/limitations.md`。人工 Desktop 验收尚未执行。
 - Files 支持 PNG、JPEG、WebP、GIF、SVG、PDF 和 HTML，Markdown 支持 Workspace 内的相对图片和文件链接。界面提供加载失败提示和有界预览。预览版本来自文件身份、大小和修改时间，不是内容快照。
+- 最终回答可以图文混排。基础提示词要求模型用 `![说明](<绝对路径>)` 把需要给用户看的工作区图片嵌在相关段落里，并说明远程图片不显示；有项目和无项目会话都会收到这条要求。Renderer 先按当前执行目录解析图片，绝对路径不在执行目录时再匹配 Session 的其他根目录，并把对应根目录交给现有 `workspace/readAsset` 核验；相对路径只按当前执行目录解析。所有根目录之外的路径显示“不在当前工作区，无法显示”，不发起读取。远程 `http(s)` 图片不会自动加载，显示为带域名的占位按钮，用户点击后才在浏览器面板打开。回答图片按块级显示，聊天中最大高度为 `min(32rem, 70vh)`，点击进入 Files 预览；解码失败时显示失败说明。图片只在距滚动视口 1200px 内时持有预览授权，离开后释放授权并保留已测量的占位尺寸，避免长会话超过 Main 的 256 个预览授权上限。图片仍按当前文件版本显示，不是回答时的内容快照；历史回答仍按当前执行目录解析。
 - Desktop 会把预览请求中的 `WORKSPACE_FILE_NOT_FOUND` 转成“暂无预览”，不再让该错误触发 Electron IPC handler 异常日志。其他错误仍按原有路径返回。`view_image` 卡片只对成功调用且位于当前 Workspace 内的路径请求预览；历史文件删除后，卡片不会恢复原文件。
 - PDF 预览使用已打包的 PDF.js 和本地 worker 绘制页面。页面外侧沿用预览区的 `--surface-muted` 底色，不再显示 Chromium 内嵌查看器的黑色外框。加载和失败状态也沿用同一底色，系统「预览」打开入口保留。底部工具栏不显示“PDF 预览”文字；多页文件保留页码，页码和打开按钮始终单行显示。总页数直接读取当前 PDF 文档，滚动条复用统一样式。主 Renderer 不再保留 PDF iframe 样式或 iframe 加载许可。
 - `workspace/readAsset` 每次最多读取 192 KiB，总文件上限是 32 MiB。文本资源必须完整通过敏感扫描，文本上限是 2 MiB。Main 通过短期 `eidos-preview` 授权地址提供资源，Runtime 在每次读取时重新核验 Workspace 和文件版本。

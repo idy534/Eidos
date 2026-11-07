@@ -156,6 +156,7 @@ class InstructionResolver:
         has_project: bool = False,
         git_repository: bool = False,
         personalization: PersonalizationPreferences | None = None,
+        goal_mode: bool = False,
     ) -> ResolvedInstructions:
         layers: list[InstructionLayer] = [
             InstructionLayer.create(
@@ -226,6 +227,10 @@ class InstructionResolver:
                 id="memory-policy", authority=RUNTIME_AUTHORITY, role="developer", source="eidos:memory-policy",
                 content="\n".join(("# Memory", *memory_content)),
             ))
+        if goal_mode:
+            from eidos_runtime.domain.goal import GOAL_POLICY
+            layers.append(InstructionLayer.create(id="goal-policy", authority=RUNTIME_AUTHORITY,
+                role="developer", source="eidos:goal-policy", content=GOAL_POLICY))
         if work_mode == "plan":
             layers.append(InstructionLayer.create(
                 id="work-mode", authority=RUNTIME_AUTHORITY, role="developer", source="eidos:plan",

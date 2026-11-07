@@ -91,6 +91,8 @@ class QueuedRunRepository(Repository):
             if item is None:
                 raise InvalidRunStateError("queued message is unavailable")
             now = max(now_ms(), row["updated_at"] + 1)
+            from eidos_runtime.persistence.goals import goal_for_queued_input, remove_queued_goal_input, update_queued_goal
+            goal = goal_for_queued_input(connection, run_id)
             change: QueuedRunChange
             events = []
             if target_run_id is not None:
@@ -143,6 +145,8 @@ class QueuedRunRepository(Repository):
                     "WHERE execution_run_id = ? AND status = 'accepted'", (now, run_id),
                 )
                 connection.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+                if goal is not None:
+                    remove_queued_goal_input(connection, goal, target_run_id=target_run_id)
                 change = (
                     QueuedRunSteered(kind="steered", session_id=session_id, run_id=run_id,
                                      target_run_id=target_run_id, item_id=input_id)
@@ -157,6 +161,8 @@ class QueuedRunRepository(Repository):
                     (user_input, now, run_id),
                 )
                 connection.execute("UPDATE items SET content = ? WHERE id = ?", (user_input, item["id"]))
+                if goal is not None:
+                    update_queued_goal(connection, goal, run_id, user_input)
                 change = QueuedRunUpdated(
                     kind="updated",
                     session_id=session_id, run_id=run_id, user_input=user_input, updated_at=now,

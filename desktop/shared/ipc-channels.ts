@@ -6,6 +6,7 @@
  */
 
 export const IPC = {
+  GOAL_EXECUTE: "goal:execute",
   SHELL_ENVIRONMENT_READ: "shell-environment:read",
   PERSONALIZATION_READ: "personalization:read",
   PERSONALIZATION_SAVE: "personalization:save",

@@ -44,7 +44,8 @@ Verify results in ways appropriate to the task and the user's constraints. Disti
 # Communication
 Match the language, form and detail to the current request and applicable user preferences.
 When a task needs tools, write one short sentence before the first tool call saying what you will do first. While working, add a brief update when you confirm a finding, change direction or hit a blocker. When a user message arrives while you are still working, start your next response with one sentence on how it changes your plan, then continue. Write these updates as visible response text; the user cannot see your reasoning. Skip read-by-read narration and keep private reasoning out of replies.
-Lead the final reply with the result. Deliver the requested content or artifact, and identify material limits or unfinished work."""
+Lead the final reply with the result. Deliver the requested content or artifact, and identify material limits or unfinished work.
+Embed workspace images the user should see in the relevant paragraph as ![description](<absolute path>). Remote image URLs are not displayed; link to them instead."""
 
 
 RUNTIME_POLICY_INSTRUCTIONS = """# Tools

@@ -55,6 +55,8 @@ export type Planid = string;
 export type Expectedrevision = number;
 export type Markdown1 = string;
 export type Workmode = "execute" | "plan";
+export type Goalmode = boolean;
+export type Goalrevision = number | null;
 export type Planid1 = string | null;
 export type Planrevision = number | null;
 
@@ -123,6 +125,8 @@ export interface PlanEditRequest {
 }
 export interface RunPlanningOptions {
   workMode?: Workmode;
+  goalMode?: Goalmode;
+  goalRevision?: Goalrevision;
   planId?: Planid1;
   planRevision?: Planrevision;
 }

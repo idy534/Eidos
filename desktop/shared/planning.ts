@@ -62,8 +62,12 @@ export function isPlanEditRequest(value: unknown): value is PlanEditRequest {
     && text(value.planId, 128, 1) && positive(value.expectedRevision) && text(value.markdown, 65536, 1);
 }
 export function isRunPlanningOptions(value: unknown): value is RunPlanningOptions {
-  return record(value) && keys(value, ["workMode", "planId", "planRevision"])
+  return record(value) && keys(value, ["workMode", "planId", "planRevision", "goalMode", "goalRevision"])
     && (value.workMode === undefined || ["execute", "plan"].includes(String(value.workMode)))
     && (value.planId == null || text(value.planId, 128, 1)) && (value.planRevision == null || positive(value.planRevision))
-    && ((value.planId == null) === (value.planRevision == null));
+    && ((value.planId == null) === (value.planRevision == null))
+    && (value.goalMode === undefined || typeof value.goalMode === "boolean")
+    && (value.goalRevision == null || positive(value.goalRevision) && Number.isSafeInteger(value.goalRevision))
+    && (value.goalMode !== true || value.workMode !== "plan" && value.planId == null)
+    && (value.goalRevision == null || value.workMode !== "plan" && value.planId == null);
 }

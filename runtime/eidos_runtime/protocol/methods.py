@@ -439,6 +439,8 @@ class EventListRequestDto(_CanonicalIdRequest):
 
 class RunStartRequestDto(_OperationRequest):
     work_mode: Literal["execute", "plan"] = Field(default="execute", alias="workMode")
+    goal_mode: bool = Field(default=False, alias="goalMode")
+    goal_revision: int | None = Field(default=None, alias="goalRevision", ge=1, le=9_007_199_254_740_991)
     plan_id: str | None = Field(default=None, alias="planId")
     plan_revision: int | None = Field(default=None, alias="planRevision", ge=1)
     references: list[InputReferenceId] = Field(default_factory=list, max_length=20)
@@ -463,6 +465,12 @@ class RunStartRequestDto(_OperationRequest):
             raise ValueError("full access confirmation does not match approval mode")
         if not self.user_input.strip() and not self.references:
             raise ValueError("userInput must not be blank")
+        if self.goal_mode and (self.work_mode != "execute" or self.plan_id is not None or self.plan_revision is not None):
+            raise ValueError("goal mode and plan mode are mutually exclusive")
+        if self.goal_mode and (not self.user_input.strip() or len(self.user_input) > 4000):
+            raise ValueError("goal requires 1 to 4000 characters of input")
+        if self.goal_revision is not None and (self.work_mode != "execute" or self.plan_id is not None or self.plan_revision is not None):
+            raise ValueError("goal continuation and plan mode are mutually exclusive")
         return self
 
 

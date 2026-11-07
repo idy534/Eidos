@@ -99,10 +99,19 @@ def transition_run(
         run_id=run_id,
     )
     if target_status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.STOPPED, RunStatus.CANCELED, RunStatus.INTERRUPTED}:
+        from eidos_runtime.persistence.goals import settle_goal_run
+        settle_goal_run(connection, run_id, target_status.value, reason)
         connection.execute("UPDATE agent_waits SET status='canceled' WHERE run_id=? AND status='pending'", (run_id,))
         owner = connection.execute('SELECT p.id,p.session_id FROM agent_delegations d JOIN runs p ON p.id=d.parent_run_id WHERE d.child_session_id=?', (run['sessionId'],)).fetchone()
         if owner is not None:
             append_event(connection, EventType.RUN_UPDATED, now, {'reason': 'agent_result_available'}, session_id=owner['session_id'], run_id=owner['id'])
+    elif target_status is RunStatus.RUNNING:
+        from eidos_runtime.persistence.goals import attach_goal_run
+        attach_goal_run(connection, run_id)
+    origin = connection.execute("SELECT goal_id,trigger,sequence FROM goal_runs WHERE run_id=?", (run_id,)).fetchone()
+    if origin is not None:
+        from eidos_runtime.domain.goal import GoalRunOrigin
+        run["goalOrigin"] = GoalRunOrigin(goal_id=origin["goal_id"], trigger=origin["trigger"], sequence=origin["sequence"]).to_wire_dict()
     return run, event
 
 def transition_segments(

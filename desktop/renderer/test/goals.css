@@ -1,0 +1,6 @@
+body { margin: 0; background: var(--surface); }
+.goal-preview { box-sizing: border-box; width: 100%; max-width: 920px; min-height: 100vh; margin: auto; padding: 24px; display: flex; flex-direction: column; color: var(--text); font: var(--font-size-body) var(--font-ui); }
+.goal-preview header { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
+.goal-preview header span { color: var(--muted); font-size: var(--font-size-caption); }
+.goal-preview article { flex: 1; padding: 24px 0; line-height: 1.7; }
+@media(max-width: 600px) { .goal-preview { padding: 12px; } }

@@ -3,7 +3,8 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { ArtifactImage, ArtifactLink, artifactPath, useArtifacts } from "./ArtifactContext.js";
+import { ArtifactImage, ArtifactLink, resolveImageTarget, useArtifacts } from "./ArtifactContext.js";
+import { Tooltip } from "./Tooltip.js";
 import { CodeBlock } from "./CodeBlock.js";
 
 interface HastTextNode {
@@ -134,10 +135,39 @@ const REMARK_PLUGINS: MarkdownRemarkPlugins = [
   remarkMath,
 ];
 
+/** Remote images never load automatically: a fetch would expose the URL to that host. */
+function RemoteImage({ src, alt }: { src: string; alt: string }) {
+  const actions = useArtifacts();
+  let host = src;
+  try { host = new URL(src).host; } catch { /* keep the literal source */ }
+  const content = <>
+    <span className="markdown-remote-image-label">{alt}</span>
+    <span className="markdown-remote-image-host">{host}</span>
+  </>;
+  if (!actions) return <span className="markdown-remote-image">{content}</span>;
+  return (
+    <Tooltip content={src} className="eidos-link-tooltip">
+      <button
+        type="button"
+        className="markdown-remote-image"
+        aria-label={`在浏览器中打开远程图片 ${alt}（${host}）`}
+        onClick={() => actions.openBrowser(src)}
+      >
+        {content}
+      </button>
+    </Tooltip>
+  );
+}
+
 function MarkdownImage({ src, alt, documentPath }: ComponentProps<"img"> & { documentPath?: string }) {
   const actions = useArtifacts();
-  const path = actions && typeof src === "string" ? artifactPath(src, actions.executionRoot, documentPath) : undefined;
-  return path ? <ArtifactImage path={path} alt={alt || "图片"} /> : <span className="markdown-image-alt">{alt || "图片"}</span>;
+  const label = alt || "图片";
+  if (typeof src === "string" && /^https?:\/\/[^/]/i.test(src)) return <RemoteImage src={src} alt={label} />;
+  const target = actions && typeof src === "string" ? resolveImageTarget(src, actions, documentPath) : undefined;
+  if (target) {
+    return <ArtifactImage path={target.path} alt={label} root={target.root} {...(target.rootId === undefined || target.root === actions?.executionRoot ? {} : { rootId: target.rootId })} />;
+  }
+  return <span className="markdown-image-alt" {...(typeof src === "string" && src ? { title: src } : {})}>{actions && !documentPath && src ? `${label}（不在当前工作区，无法显示）` : label}</span>;
 }
 
 export const MarkdownContent = memo(function MarkdownContent({

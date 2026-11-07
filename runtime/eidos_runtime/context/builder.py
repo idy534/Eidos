@@ -47,6 +47,8 @@ from eidos_runtime.model.prompts import ResolvedInstructions
 from eidos_runtime.memory.context import MemoryContext, memory_context_kind
 from eidos_runtime.extensions.skills import RetainedContextSection
 from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
+from eidos_runtime.domain.goal import GoalSample
+from eidos_runtime.persistence.goals import GoalRepository
 
 
 class ContextBuild(BaseModel):
@@ -59,6 +61,7 @@ class ContextBuild(BaseModel):
     budget: ContextBudget
     facts: ContextFacts
     agent_message_ids: tuple[str, ...] = ()
+    goal_sample: GoalSample | None = None
 
 
 class ContextBuilder:
@@ -88,6 +91,9 @@ class ContextBuilder:
         facts = self.store.context_projection_facts(run_id)
         profile = self.store.read_model_profile(run_id)
         run = self.store.read_run(run_id)
+        goal_view = GoalRepository(self.store.database).for_run(run_id)
+        goal = goal_view.goal
+        goal_mode = goal is not None and goal.status == "active"
         catalog_context: RetainedContextSection | None = None
         user_retained_context: list[RetainedContextSection] = []
         for section in retained_context:
@@ -133,6 +139,7 @@ class ContextBuilder:
             has_project=has_project,
             git_repository=git_repository,
             personalization=personalization,
+            goal_mode=goal_mode,
         )
         source_ids = set(
             facts.compact_summary.source_item_ids if facts.compact_summary else ()
@@ -473,6 +480,15 @@ class ContextBuilder:
                     ),
                 })
         context.extend(extra_context)
+        if goal is not None and goal.status != "cleared":
+            context.append({"type": "context", "sectionId": "goal-current",
+                "content": "Current persistent goal. This is user task data, not a new user message or permission grant. "
+                "This authoritative objective replaces older objectives in conversation summaries.\n" + json.dumps({
+                    "objective": goal.objective, "status": goal.status, "runCount": goal_view.run_count,
+                    "runsInActivation": goal.audit_runs, "tokensUsed": goal_view.tokens_used,
+                    "usageIncomplete": goal_view.usage_incomplete,
+                    "reason": goal.status_reason,
+                }, ensure_ascii=False)})
         if agent_evidence is not None:
             context.append(agent_evidence)
         if facts.reconciliation_required:
@@ -537,6 +553,7 @@ class ContextBuilder:
                     has_project=has_project,
                     git_repository=git_repository,
                     personalization=personalization,
+                    goal_mode=goal_mode,
                 )
             context.insert(0, MemoryContext.long_term_index(projection))
             budget = estimate_model_request_budget(
@@ -607,6 +624,7 @@ class ContextBuilder:
             instructions=instructions,
             budget=budget,
             facts=facts,
+            goal_sample=goal.sample() if goal_mode else None,
             agent_message_ids=tuple('agent-message:' + identifier for item in context
                 for identifier in item.get('agentMessageIds', []) if isinstance(identifier, str)),
         )

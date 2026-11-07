@@ -1,0 +1,16 @@
+.goal-panel { min-width: 0; margin: 0 0 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-raised); color: var(--text); font-size: var(--font-size-caption); }
+.goal-panel__header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; padding: 4px 8px; }
+.goal-panel__toggle { display: inline-flex; align-items: center; gap: 8px; padding: 4px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.goal-panel__toggle:focus-visible { outline: var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
+.goal-panel__toggle:hover { background: var(--surface-hover); border-radius: var(--radius-sm); }
+.goal-panel__metrics { flex: 1; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.goal-panel__body { padding: 8px 12px; border-top: 1px solid var(--line); max-height: 240px; overflow: auto; }
+.goal-panel__objective, .goal-panel__detail { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.goal-panel__hint { color: var(--muted); margin: 4px 0; line-height: 1.5; }
+.goal-panel__actions { display: flex; gap: 8px; margin-top: 8px; }
+.goal-panel__evidence { padding-left: 20px; }
+.goal-panel__evidence p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.goal-panel__error { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--danger); padding: 4px 12px; }
+.goal-panel[data-status="complete"] .goal-panel__toggle { color: var(--accent); }
+.goal-panel[data-status="blocked"] .goal-panel__toggle { color: var(--danger); }
+@media (max-width: 600px) { .goal-panel__metrics { display: none; } .goal-panel__header { justify-content: space-between; gap: 4px; } }

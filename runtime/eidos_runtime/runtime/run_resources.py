@@ -263,6 +263,14 @@ class RunResources:
         channel_origin = ChannelRepository(self.store.database).origin(self.run_id)
         automation_origin = AutomationRepository(self.store.database).origin(self.run_id)
         automation_tools = ()
+        from eidos_runtime.persistence.goals import GoalRepository
+        from eidos_runtime.tools.goal import goal_entry
+        goals = GoalRepository(self.store.database)
+        goal = goals.for_run(self.run_id).goal
+        goal_origin = self.store.read_run(self.run_id).get("goalOrigin")
+        automatic_goal = isinstance(goal_origin, dict) and goal_origin.get("trigger") != "user_input"
+        goal_tools = (goal_entry(goals),) if (not self.is_child and goal is not None
+            and goal.status == "active" and self.store.read_run(self.run_id).get("workMode", "execute") == "execute") else ()
         if self.store.automations is not None and not self.is_child and channel_origin is None:
             if automation_origin is None:
                 automation_tools = (automation_entry(self.store.automations),)
@@ -287,6 +295,7 @@ class RunResources:
         base = ToolRegistry.build(
             builtin_entries=(
                 *automation_tools,
+                *goal_tools,
                 *search_tools,
                 *self.tool_executor.registry.entries,
                 read_tool_output_entry(self.store, self.run_id, self.shell_process_manager),
@@ -295,7 +304,7 @@ class RunResources:
                 *memory_entries(
                     child=self.is_child,
                     read_enabled=memory_access.read_enabled,
-                    write_enabled=memory_access.writable and automation_origin is None and channel_origin is None,
+                    write_enabled=memory_access.writable and automation_origin is None and channel_origin is None and not automatic_goal,
                 ),
                 *(collaboration_entries(self.collaboration, child=self.is_child) if self.collaboration else ()),
                 *planning_entries(include_plan=self.store.read_run(self.run_id).get("workMode") == "plan"),

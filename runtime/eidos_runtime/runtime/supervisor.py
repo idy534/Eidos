@@ -172,6 +172,7 @@ class RunSupervisor:
         self._agent_maintenance: RuntimeAsyncTask[None] | None = None
         self._channel_maintenance: RuntimeAsyncTask[None] | None = None
         self._automation_maintenance: RuntimeAsyncTask[None] | None = None
+        self.on_session_idle: Callable[[], None] | None = None
 
     def start_channel_service(self, target: Callable[[], Awaitable[None]]) -> None:
         with self.lock:
@@ -1061,6 +1062,8 @@ class RunSupervisor:
                 handle.resource.close()
             if should_schedule:
                 self.schedule_next()
+                if self.on_session_idle is not None:
+                    self.on_session_idle()
 
     def _fail_worker(self, run_id: str) -> None:
         try:

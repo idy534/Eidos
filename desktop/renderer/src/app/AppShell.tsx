@@ -4,6 +4,7 @@ import { ProjectEditorDialog } from "../components/ProjectEditorDialog.js";
 import { AgentList, AgentWorkspacePanel, useAgentState } from "../components/AgentPanel.js";
 import type { AgentSummary } from "../../../shared/collaboration.generated.js";
 import { PlanPanel } from "../components/PlanPanel.js";
+import type { RunPlanningOptions } from "../../../shared/planning.generated.js";
 import type { PlanDocument } from "../../../shared/planning.generated.js";
 import type { SettingsCategory } from "../components/settings/settings-types.js";
 import { InputContextProvider, InputDropZone } from "../components/InputContext.js";
@@ -32,9 +33,11 @@ import { HandoffDialog } from "../components/HandoffDialog.js";
 import { ProjectPicker } from "../components/ProjectPicker.js";
 import { CreateProjectDialog } from "../components/CreateProjectDialog.js";
 import { ComposerSlot } from "../components/ComposerSlot.js";
-import { Composer } from "../components/Composer.js";
+import { Composer, type ComposerWorkMode } from "../components/Composer.js";
 import { SessionCanvas } from "../components/SessionCanvas.js";
 import { QueuedMessages } from "../components/QueuedMessages.js";
+import { GoalPanel } from "../components/goals/GoalPanel.js";
+import { useGoal } from "../components/goals/useGoal.js";
 import { TextReviewPanel } from "../components/TextReviewPanel.js";
 import { GitChangesPanel } from "../components/GitChangesPanel.js";
 import { GitWorkflowControls } from "../components/GitWorkflowControls.js";
@@ -153,9 +156,24 @@ export function AppShell({ runtime }: AppShellProps) {
     : runDefaults.approvalMode ?? "manual";
   const approvalMode = (approvalSessionId ? approvalModes[approvalSessionId] : undefined)
     ?? sessionApprovalMode;
-  const [workModes, setWorkModes] = useState<Record<string, "execute" | "plan">>({});
-  const latestUserRun = sessionState.snapshot?.runs.filter((run) => !run.inherited && !run.automationOrigin).at(-1);
-  const workMode = (approvalSessionId ? workModes[approvalSessionId] : undefined) ?? latestUserRun?.workMode ?? "execute";
+  const goals = useGoal(sessionState.snapshot?.session.id, runtimeStatus.state === "ready" && isStorageReady);
+  const [workModes, setWorkModes] = useState<Record<string, ComposerWorkMode>>({});
+  const latestUserRun = sessionState.snapshot?.runs.filter((run) => !run.inherited && !run.automationOrigin
+    && (!run.goalOrigin || run.goalOrigin.trigger === "user_input")).at(-1);
+  const workMode = (approvalSessionId ? workModes[approvalSessionId] : undefined)
+    ?? (goals.view.goal?.status === "active" ? "goal" : latestUserRun?.workMode ?? "execute");
+  const previousGoalStatus = useRef<{ id: string; status: string } | undefined>(undefined);
+  useEffect(() => {
+    const goal = goals.view.goal;
+    if (!goal) return;
+    // Any settled goal leaves goal mode, so a follow-up message stays an
+    // ordinary Run instead of silently starting a new autonomous goal.
+    if (previousGoalStatus.current?.id === goal.id && previousGoalStatus.current.status === "active"
+        && goal.status !== "active") {
+      setWorkModes((previous) => previous[goal.sessionId] === "goal" ? { ...previous, [goal.sessionId]: "execute" } : previous);
+    }
+    previousGoalStatus.current = { id: goal.id, status: goal.status };
+  }, [goals.view.goal]);
   const contextRun = runState.activeRun ?? latestRun;
   const contextRunId = contextRun?.id;
   const [contextUsageState, contextUsageActions] = useContextUsageController({
@@ -900,8 +918,53 @@ export function AppShell({ runtime }: AppShellProps) {
   // -----------------------------------------------------------------------
   // Run submission and revision
   // -----------------------------------------------------------------------
+  async function changeWorkMode(mode: ComposerWorkMode): Promise<boolean> {
+    if (!approvalSessionId || goals.busy) return false;
+    let goal = goals.view.goal;
+    if (sessionState.snapshot && (!goals.loaded || goals.error)) {
+      const refreshed = await goals.refresh(true);
+      if (!refreshed) return false;
+      goal = refreshed.goal;
+    }
+    if (mode !== "goal" && goal?.status === "active") {
+      if (!await goals.execute({ action: "pause", expectedRevision: goal.revision })) return false;
+    }
+    setWorkModes((previous) => ({ ...previous, [approvalSessionId]: mode }));
+    return true;
+  }
+
+  async function changeGoal(action: "pause" | "resume" | "clear"): Promise<void> {
+    const goal = goals.view.goal;
+    if (!goal || !approvalSessionId) return;
+    if (action === "resume" && !modelState.selectedModelId) return;
+    if (await goals.execute({ action, expectedRevision: goal.revision,
+      ...(action === "resume" ? { model: { modelId: modelState.selectedModelId!, ...(modelState.reasoningSelection ? { reasoningSelection: modelState.reasoningSelection } : {}) },
+        approvalMode, ...(approvalMode === "full_access" ? { fullAccessConfirmation: "full-access-v1" as const } : {}) } : {}) })) {
+      setWorkModes((previous) => ({ ...previous, [approvalSessionId]: action === "resume" ? "goal" : "execute" }));
+    }
+  }
+
   async function handleSubmit(): Promise<void> {
     if (!modelState.selectedModelId) return;
+    const command = /^\/(goal|plan)(?:\s|$)/.exec(runState.input.trim());
+    const submissionMode = command?.[1] === "goal" ? "goal" : command?.[1] === "plan" ? "plan" : workMode;
+    if (command && !await changeWorkMode(submissionMode)) return;
+    if (!command && submissionMode !== "goal" && goals.view.goal?.status === "active"
+        && !await changeWorkMode(submissionMode)) return;
+    if (command?.[1] === "goal" && !runState.input.trim().replace(/^\/goal(?:\s+|$)/, "").trim()) {
+      runActions.setInput("");
+      return;
+    }
+    let currentGoal = goals.view.goal;
+    if (submissionMode === "goal" && sessionState.snapshot && (!goals.loaded || goals.error)) {
+      const refreshed = await goals.refresh(true);
+      if (!refreshed) return;
+      currentGoal = refreshed.goal;
+    }
+    const startsGoal = submissionMode === "goal" && currentGoal?.status !== "active";
+    const submissionOptions: RunPlanningOptions = { workMode: submissionMode === "plan" ? "plan" : "execute",
+      ...(startsGoal ? { goalMode: true } : {}),
+      ...(submissionMode === "goal" && currentGoal ? { goalRevision: currentGoal.revision } : {}) };
     const draftSnapshot = sessionState.draft;
     if (draftSnapshot && !sessionState.snapshot) {
       const draftInput = runState.input;
@@ -920,12 +983,13 @@ export function AppShell({ runtime }: AppShellProps) {
           selectedModelId: modelState.selectedModelId,
           reasoningSelection: modelState.reasoningSelection,
           approvalMode,
-          planning: { workMode },
+          planning: submissionOptions,
           isStorageReady,
           inputOverride: draftInput,
           referencesOverride: draftReferences,
           onRunProjected: (sessionId, run) => {
             sessionActions.projectRun(sessionId, run);
+            setWorkModes((previous) => ({ ...previous, [sessionId]: submissionMode }));
             if (draftSnapshot.runs.length === 0) {
               setRunDefaults(saveRunDefaults(run));
             }
@@ -944,20 +1008,26 @@ export function AppShell({ runtime }: AppShellProps) {
       return;
     }
     if (!sessionState.snapshot) return;
-    await runActions.submitInput({
+    const submitted = await runActions.submitInput({
       snapshot: sessionState.snapshot,
       selectedModelId: modelState.selectedModelId,
       reasoningSelection: modelState.reasoningSelection,
       approvalMode,
-      planning: { workMode },
+      planning: submissionOptions,
       isStorageReady,
-      onRunProjected: sessionActions.projectRun,
+      onRunProjected: (sessionId, run) => {
+        sessionActions.projectRun(sessionId, run);
+        setWorkModes((previous) => ({ ...previous, [sessionId]: submissionMode }));
+        void goals.refresh();
+      },
     });
+    if (!submitted && submissionMode === "goal") void goals.refresh();
   }
 
   async function submitPlan(plan: PlanDocument, feedback?: string): Promise<boolean> {
     if (!sessionState.snapshot || !modelState.selectedModelId) return false;
     const mode = feedback === undefined ? "execute" : "plan";
+    if (!await changeWorkMode(mode)) return false;
     const started = await runActions.submitInput({
       snapshot: sessionState.snapshot,
       selectedModelId: modelState.selectedModelId,
@@ -1772,6 +1842,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   onEnsureItemMounted={sessionActions.ensureItemLoaded}
                   contextCompactions={currentSnapshot.contextCompactions}
                   modelRetries={currentSnapshot.modelRetries}
+                  goalActivities={goals.view.activities}
                   liveThinking={liveThinking}
                   onOpenModelSettings={() => { setAutomationsOpen(false); setSettingsCategory("model"); setSettingsOpen(true); setDockOpen(false); setDockExpanded(false); }}
                   runs={feedVisibleRuns}
@@ -1808,6 +1879,9 @@ export function AppShell({ runtime }: AppShellProps) {
                   }}
                   onRefresh={() => void sessionActions.refreshCompletedSession(currentSnapshot.session.id)}
                 />}
+                {!isDraft && <GoalPanel key={`goal-${currentSnapshot.session.id}`} view={goals.view}
+                  ready={isStorageReady && runtimeStatus.state === "ready"} busy={goals.busy} error={goals.error}
+                  activeRun={activeRun} onAction={(action) => void changeGoal(action)} onRefresh={() => void goals.refresh(true)} />}
                 <ComposerSlot
                   run={activeRun}
                   approval={approvals.find((a) => a.runId === activeRun?.id)}
@@ -1832,9 +1906,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   modelList={modelState.list}
                   selectedModelId={modelState.selectedModelId}
                   workMode={workMode}
-                  onWorkModeChange={(mode) => {
-                    if (approvalSessionId) setWorkModes((previous) => ({ ...previous, [approvalSessionId]: mode }));
-                  }}
+                  onWorkModeChange={(mode) => void changeWorkMode(mode)}
                   approvalMode={approvalMode}
                   onApprovalModeChange={(mode) => {
                     if (approvalSessionId) setApprovalModes((previous) => ({ ...previous, [approvalSessionId]: mode }));
@@ -1846,7 +1918,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   showContextIndicator={Boolean(contextRun)}
                   modelConfigured={Boolean(modelState.list?.models.length)}
                   modelLoading={modelState.loading}
-                  isSubmitting={runState.isSubmitting || sessionState.pending.creatingSession === true || handoffBusy || restoreBusy}
+                  isSubmitting={runState.isSubmitting || goals.busy || sessionState.pending.creatingSession === true || handoffBusy || restoreBusy}
                   submitKind={runState.submitKind}
                   cancelingRunId={runState.cancelingRunId}
                   onInputChange={runActions.setInput}

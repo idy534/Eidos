@@ -272,6 +272,7 @@ export type ApprovalMode = "manual" | "auto_review" | "full_access";
 export interface Run {
   hookActivity?: HookActivity[];
   channelOrigin?: import("./channels.generated.js").ChannelOrigin;
+  goalOrigin?: import("./goals.generated.js").GoalRunOrigin;
   automationOrigin?: import("./automation.generated.js").AutomationOrigin;
   inherited?: boolean;
   approvalMode?: ApprovalMode;
@@ -754,6 +755,7 @@ export interface RunThinkingParams {
 }
 
 export type RuntimeNotification =
+  | { method: "goal/updated"; params: import("./goals.generated.js").GoalChangedNotice }
   | { method: "memory/changed"; params: import("./memory.generated.js").MemoryChangedNotice }
   | { method: "context/compactionUpdated"; params: { sessionId: string; activity: ContextCompactionActivity } }
   | { method: "model/retryUpdated"; params: { sessionId: string; activity: ModelRetryActivity } }

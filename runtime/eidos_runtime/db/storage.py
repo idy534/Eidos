@@ -156,6 +156,8 @@ class SessionStore:
             )
             self._persistence_layout.initialize(self._database)
             with startup_phase("storage.runtime_recovery"), self._database.transaction() as connection:
+                from eidos_runtime.persistence.goals import recover_goals
+                recover_goals(connection)
                 recover_runtime_facts(connection)
             with startup_phase("storage.projectless_alpha_reset"):
                 if discard_legacy_projectless_sessions(self._database):

@@ -9,6 +9,7 @@ import type { CustomProviderRequest, CustomProviderResult } from "./custom-model
 import type { ChannelResponse, ChannelSaveRequest, ChannelReadRequest } from "./channels.js";
 import type { SessionForkRequest } from "./session-fork.generated.js";
 import type { AutomationExecuteRequest, AutomationHistoryRequest, AutomationRunNowRequest, AutomationResponse } from "./automation.js";
+import type { GoalRequest, GoalView } from "./goals.js";
 import type { MemoryMethods } from "./memory.js";
 import type { AgentCatalogResponse, CollaborationState } from "./collaboration.generated.js";
 import type { AgentDefinitionDocument, AgentDefinitionSaveRequest, AgentDefinitionRemoveRequest } from "./collaboration.generated.js";
@@ -105,6 +106,7 @@ export interface EidosRuntimeAPI {
   readChannel(request?: ChannelReadRequest): Promise<ChannelResponse>;
   saveChannel(request: ChannelSaveRequest): Promise<ChannelResponse>;
   automation(request: AutomationExecuteRequest): Promise<AutomationResponse>;
+  goal(request: GoalRequest): Promise<GoalView>;
   automationHistory(request: AutomationHistoryRequest): Promise<AutomationResponse>;
   automationRunNow(request: AutomationRunNowRequest): Promise<AutomationResponse>;
   backupData(): Promise<void>;
