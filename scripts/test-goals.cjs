@@ -30,7 +30,7 @@ app.whenReady().then(async () => {
     if (directory) await mkdir(directory, { recursive: true });
     const capture = async (name) => { await evaluate("Promise.all(document.getAnimations().filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {})))"); if (directory) await writeFile(path.join(directory, name), (await win.webContents.capturePage()).toPNG()); };
     await until("Boolean(document.querySelector('.composer-add'))");
-    assert.equal(await evaluate("Boolean(document.querySelector('.goal-panel'))"), false);
+    assert.equal(await evaluate("Boolean(document.querySelector('.goal-card'))"), false);
     await evaluate("document.querySelector('.composer-add').click()"); await settle();
     await until("Boolean(document.querySelector('.input-picker__action-btn--goal'))");
     assert.equal(await evaluate("document.querySelector('.input-picker__action-btn--goal').disabled"), false);
@@ -64,9 +64,9 @@ app.whenReady().then(async () => {
       if ([1100, 420].includes(width)) await capture(`composer-${width}.png`);
       for (const state of ["active", "waiting_approval", "blocked", "paused", "complete"]) {
         await evaluate(`window.goalTest.state(${JSON.stringify(state)})`); await settle();
-        const expanded = await evaluate("document.querySelector('.goal-panel__toggle').getAttribute('aria-expanded') === 'true'");
-        if (!expanded) { await evaluate("document.querySelector('.goal-panel__toggle').click()"); await settle(); }
-        const dimensions = await evaluate("({width:innerWidth, scroll:document.documentElement.scrollWidth, text:document.querySelector('.goal-panel').textContent})");
+        const expanded = await evaluate("document.querySelector('.goal-card__summary').getAttribute('aria-expanded') === 'true'");
+        if (!expanded) { await evaluate("document.querySelector('.goal-card__summary').click()"); await settle(); }
+        const dimensions = await evaluate("({width:innerWidth, scroll:document.documentElement.scrollWidth, text:document.querySelector('.goal-card').textContent})");
         assert.ok(dimensions.scroll <= dimensions.width + 1, `Horizontal overflow at ${width}px: ${JSON.stringify(dimensions)}`);
         assert.equal(await evaluate("Boolean(document.querySelector('[role=alertdialog], .goal-editor, input[type=number]'))"), false);
         if (state === "waiting_approval") assert.ok(dimensions.text.includes("等待审批"));

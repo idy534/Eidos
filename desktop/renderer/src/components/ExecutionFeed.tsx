@@ -54,6 +54,7 @@ import { HookActivityRows } from "./HookActivityRows.js";
 import { ConversationRunRail } from "./ConversationRunRail.js";
 import type { ContextCompactionActivity, ModelRetryActivity } from "../../../shared/context.generated.js";
 import type { GoalActivity } from "../../../shared/goals.js";
+import { GoalActivityMarkers, GoalRunMarker } from "./goals/GoalFeedMarkers.js";
 export { isFeedAtBottom } from "./useFeedScroll.js";
 
 
@@ -310,9 +311,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
             const modelName = models.find((model) => model.id === run.modelId)?.name ?? run.remoteModelId ?? run.modelId;
             return (
               <Fragment key={runId}>
-                {run.goalOrigin && run.goalOrigin.trigger !== "user_input" && <p className="feed-label">
-                  {run.goalOrigin.trigger === "goal_set" ? "目标执行" : "目标续跑"} · 第 {run.goalOrigin.sequence} 轮
-                </p>}
+                <GoalRunMarker origin={run.goalOrigin} />
                 {segments.map((segment, index) => (
                   <RunSegment
                     key={`${runId}:${segment.user?.id ?? index}`}
@@ -345,10 +344,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
                   />
                 ))}
                 <RunNotice run={run} retry={runRetries.at(-1)} onOpenModelSettings={onOpenModelSettings} />
-                {goalActivities.filter((activity) => activity.runId === runId).map((activity) => <p key={`goal-${activity.eventId}`} className="feed-label">
-                  {activity.kind === "started" ? "目标已设定" : activity.kind === "edited" ? "目标已更新" : ({ active: "目标已继续", paused: "目标已暂停续跑",
-                    blocked: "目标已受阻", complete: "目标已完成 · 模型声明", cleared: "目标已清除" })[activity.status]}
-                </p>)}
+                <GoalActivityMarkers activities={goalActivities.filter((activity) => activity.runId === runId)} />
                 <HookActivityRows run={run} />
               </Fragment>
             );
