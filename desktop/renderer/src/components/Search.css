@@ -388,17 +388,6 @@
   font-size: 13px;
 }
 
-.chat-search-error {
-  margin: 0.4rem 0.5rem;
-  padding: 0.6rem 0.85rem;
-  border-radius: var(--radius-sm);
-  background: var(--status-danger-bg);
-  border: 1px solid rgba(158, 53, 43, 0.15);
-  color: var(--status-danger);
-  font-size: 12.5px;
-  line-height: 1.4;
-}
-
 /* Quick Project Filters */
 .chat-search-projects {
   display: flex;

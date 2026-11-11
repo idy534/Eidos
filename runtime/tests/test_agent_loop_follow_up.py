@@ -18,7 +18,7 @@ from eidos_runtime.model.client import (  # noqa: E402
     ModelToolCall,
     ScriptedModel,
 )
-from eidos_runtime.runtime.loop import RuntimeLoop  # noqa: E402
+from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
 
 
 class AgentLoopFollowUpTests(unittest.TestCase):
@@ -47,7 +47,7 @@ class AgentLoopFollowUpTests(unittest.TestCase):
     ) -> tuple[dict[str, object], ScriptedModel, dict[str, object]]:
         run, _ = self.store.create_run(self.session["id"], user_input)
         model = ScriptedModel(responses)
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
         return run, model, self.store.read_session_snapshot(self.session["id"])

@@ -5,7 +5,6 @@ import { ConfirmDialog } from "../ConfirmDialog.js";
 import { MarkdownEditor } from "../MarkdownEditor.js";
 import { SettingRow } from "./SettingRow.js";
 import { SettingSection } from "./SettingSection.js";
-import "./PersonalizationSettings.css";
 import { usePersonalizationSettings } from "./usePersonalizationSettings.js";
 export { discardPersonalizationDraft } from "./usePersonalizationSettings.js";
 

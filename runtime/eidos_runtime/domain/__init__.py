@@ -16,7 +16,6 @@ from eidos_runtime.domain.long_task import (
     SafePoint,
     ResumeOutcome,
 )
-from eidos_runtime.domain.checkpoint import Checkpoint
 from eidos_runtime.domain.project import Project
 from eidos_runtime.domain.run import (
     Run,
@@ -60,7 +59,6 @@ from eidos_runtime.domain.worktree import (
 )
 
 __all__ = [
-    "Checkpoint",
     "Approval",
     "ApprovalKind",
     "ApprovalStatus",

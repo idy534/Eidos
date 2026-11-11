@@ -16,7 +16,7 @@ from eidos_runtime.model.client import (  # noqa: E402
     ModelToolCall,
     ScriptedModel,
 )
-from eidos_runtime.runtime.loop import RuntimeLoop  # noqa: E402
+from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
 
 
 class ProgressCommentaryTests(unittest.TestCase):
@@ -51,7 +51,7 @@ class ProgressCommentaryTests(unittest.TestCase):
         ])
         notifications: list[dict[str, object]] = []
 
-        RuntimeLoop(self.store, model, notifications.append).run(
+        RuntimeEngine(self.store, model, notifications.append).run(
             run["id"], threading.Event()
         )
 
@@ -98,7 +98,7 @@ class ProgressCommentaryTests(unittest.TestCase):
             ModelResponse(text="The staged inspection is complete."),
         ])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -143,7 +143,7 @@ class ProgressCommentaryTests(unittest.TestCase):
         ])
         notifications: list[dict[str, object]] = []
 
-        RuntimeLoop(self.store, model, notifications.append).run(
+        RuntimeEngine(self.store, model, notifications.append).run(
             run["id"], threading.Event()
         )
 
@@ -170,7 +170,7 @@ class ProgressCommentaryTests(unittest.TestCase):
             ModelResponse(text="Read complete."),
         ])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -184,7 +184,7 @@ class ProgressCommentaryTests(unittest.TestCase):
         run, _ = self.store.create_run(self.session["id"], "Answer directly")
         model = ScriptedModel([ModelResponse(text="This is the final answer.")])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 

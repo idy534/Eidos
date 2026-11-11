@@ -87,6 +87,10 @@ pnpm build
 
 `pnpm test:desktop` 和 `pnpm test:main` 会运行完整 Desktop 或 Main 测试层。用户明确要求 Full Suite 或要求执行完整套件命令时，执行者才运行完整层级。普通 Desktop 修改优先运行相关测试文件；没有合适的定向入口时，执行者再运行 Fast。
 
+### 生成的协议契约
+
+`desktop/shared/*.generated.ts` 由 `scripts/generate-*-contracts.mjs` 从 Python DTO 生成，开发者不手工修改这些文件。`pnpm test:contracts` 会重新运行全部生成器并与已提交的文件比较，发现差异、未提交的输出或没有生成器的文件时失败，检查结束后工作区保持原样。CI 的 Runtime 任务也执行这项检查。开发者修改 Python DTO 后运行 `node scripts/check-generated-contracts.mjs --write`，并提交更新后的文件。该检查需要仓库 `.venv`。
+
 ## 专题配置与定向验证
 
 ### 目标模式
@@ -116,7 +120,7 @@ pnpm exec electron scripts/test-plugin-resources.cjs
 
 插件更新与兼容解析的定向入口是 `uv run --locked pytest runtime/tests/test_plugin_upgrades.py runtime/tests/test_plugin_packages.py runtime/tests/test_plugins.py runtime/tests/test_plugin_protocol.py runtime/tests/test_extension_storage.py`。数据库变更还需覆盖 `test_storage_schema.py` 和 `test_persistence_layout.py`。展示契约变更后运行 `node scripts/generate-plugin-contracts.mjs`。`pnpm build:main` 后，`node --test dist/main/runtime-client-hooks.test.js dist/main/runtime-client-mcp-details.test.js` 验证 Main/Runtime；插件页使用 `PluginSettings.behavior.test.tsx` 和 `electron scripts/test-plugin-resources.cjs` 验证。插件版本身份从 schema v37 开始保存，远程连接从 v38 开始保存。两者沿用已有升级与备份流程，不改变启动命令。这些入口不属于 Full Suite。
 
-定时任务的 Runtime 定向入口是 `uv run --locked pytest runtime/tests/test_automations.py runtime/tests/test_automation_scheduler.py runtime/tests/test_automation_time.py`。调度测试覆盖五分钟兜底、到期唤醒、计划变更打断等待、扫描期间变更、时钟变化、休眠不补跑、准备中的一次性任务和取消退出。Desktop 在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-automations.test.js` 验证真实跨进程链路。页面入口是 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/automations/AutomationPage.behavior.test.tsx desktop/renderer/src/components/automations/automation-time.behavior.test.tsx`。时间边界测试覆盖主机时区切换、秒和毫秒保留、夏令时跳过与重复时间、半小时切换和跨午夜展示。`node_modules/.bin/electron scripts/test-automations.cjs` 使用临时 user-data 和隔离页面验证生产组件、键盘与四种窗口宽度，不读取真实任务。EIDOS_AUTOMATION_SCREENSHOT 可以指定截图位置，EIDOS_AUTOMATION_TIMEZONE_SCREENSHOT 保存窄窗口下的重复时间选项。
+定时任务的 Runtime 定向入口是 `uv run --locked pytest runtime/tests/test_automations.py runtime/tests/test_automation_scheduler.py runtime/tests/test_automation_time.py`。调度测试覆盖五分钟兜底、到期唤醒、计划变更打断等待、扫描期间变更、时钟变化、休眠不补跑、准备中的一次性任务和取消退出。Desktop 在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-automations.test.js` 验证真实跨进程链路。页面入口是 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/automations/AutomationPage.behavior.test.tsx desktop/renderer/src/components/automations/automation-time.behavior.test.tsx`。时间边界测试覆盖主机时区切换、秒和毫秒保留、夏令时跳过与重复时间、半小时切换和跨午夜展示。
 
 Runtime 随现有启动运行受管调度服务，并随 Supervisor 关闭，无需系统 cron、launchd 或额外守护进程。v27→v28 升级新增任务、触发和来源表。croniter 与 tzdata 已进入 pyproject.toml 和 uv.lock，打包沿用现有流程。
 
@@ -124,9 +128,9 @@ Runtime 随现有启动运行受管调度服务，并随 Supervisor 关闭，无
 
 `pnpm test:composer-layout` 使用真实 Electron、隔离的临时 user-data 和本地 Vite 测试页面。该定向测试检查输入框自动高度和历史记录滚动位置，不启动 Runtime，也不读取真实 Session 数据。测试记录包含代码块和图片，预览上下文随草稿编辑更新。测试覆盖单行输入、全选删除、等高编辑、多行删除、组合输入事件、窄窗口换行、窗口宽度变化和输入框内部滚动。该入口不属于完整测试套件。
 
-`node_modules/.bin/electron scripts/test-feed-scroll.cjs` 使用隔离的真实 Electron 页面验证 Session 滚动。该定向测试覆盖 320、768、1024、1440 四种宽度，检查空列表首次加载、处理过程和嵌套工具展开、动画期间持续输出、历史阅读、折叠后的暂停状态、向下滚动、到底按钮、延迟图片和 Run 结束自动折叠。测试不启动 Runtime，不读取真实 Session，也不调用模型。定向行为测试入口是 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/useFeedScroll.behavior.test.tsx desktop/renderer/src/components/ExecutionFeed.behavior.test.tsx`。
+Session 滚动的定向行为测试入口是 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/useFeedScroll.behavior.test.tsx desktop/renderer/src/components/ExecutionFeed.behavior.test.tsx`。
 
-`node_modules/.bin/electron scripts/test-queued-messages.cjs` 使用真实 Electron 和隔离页面检查输入框上方的消息队列。该定向测试覆盖 320、420、768、1024、1100、1440px 下的对齐、长消息、队列内部滚动、编辑、删除、键盘转为引导、引导消费状态和主草稿保留，不读取真实 Session。`EIDOS_QUEUE_SCREENSHOT_DIR` 可以指定截图目录。Runtime 定向入口是 `uv run --locked pytest runtime/tests/test_queued_runs.py`；Main → Runtime 验证在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-queued-runs.test.js`。这项跨进程测试使用临时工作区和测试模型，原生环境需要可用的 Seatbelt，测试不会放行等待中的网络 Shell。
+消息队列的 Runtime 定向入口是 `uv run --locked pytest runtime/tests/test_queued_runs.py`；Main → Runtime 验证在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-queued-runs.test.js`。这项跨进程测试使用临时工作区和测试模型，原生环境需要可用的 Seatbelt，测试不会放行等待中的网络 Shell。
 
 `pnpm test:sidebar-pinning` 使用真实 Electron、隔离的临时 user-data 和生产侧栏组件。该定向测试检查项目右键置顶、Session 的 Shift+F10 置顶、混合显示、无 Run 分叉的即时显示和悬停图标、分叉气泡的来源名称与点击跳转、取消置顶、唯一高亮、状态图标、项目浏览时的滚动位置，以及 1100px 和 420px 窗口中的菜单边界。测试页沿用禁止 JavaScript eval 的 CSP。该页面使用测试 API，不启动 Runtime，也不读取真实 Project 或 Session。Main → Runtime 持久化验证使用 `pnpm build:main` 后的 `node --test dist/main/runtime-client-sidebar.test.js`。开发者可以通过 `EIDOS_SIDEBAR_SCREENSHOT` 指定置顶截图输出路径，也可以通过 `EIDOS_FORK_HOVER_SCREENSHOT` 指定分叉来源气泡截图路径。这两个入口不属于完整测试套件。
 
@@ -143,10 +147,9 @@ uv run --locked pytest runtime/tests/test_chat_search.py runtime/tests/test_stor
 pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/Search.behavior.test.tsx desktop/renderer/src/components/WorkspaceExplorer.behavior.test.tsx desktop/renderer/src/app/session-controller.behavior.test.tsx
 pnpm build:main
 node --test dist/main/runtime-client-search.test.js
-node_modules/.bin/electron scripts/test-search.cjs
 ```
 
-Electron 搜索页使用临时 user-data、生产 AppShell 和内存 API。该测试检查全局搜索、旧消息定位、文件 Worker、高亮、快捷键、索引刷新、查找与图片预览关闭图标的居中，以及 320、768、1024、1440px 下的单行浮层和正文布局。该页面不读取真实会话或调用模型。开发者可以用 `EIDOS_SEARCH_SCREENSHOT` 指定截图路径。Main 跨进程测试使用真实 Runtime、临时数据库和临时文件，检查共享 Fixture、搜索范围、分块读取、截断与文件版本校验。搜索 DTO 由 `node scripts/generate-search-contracts.mjs` 从 Python Schema 生成。
+Main 跨进程测试使用真实 Runtime、临时数据库和临时文件，检查共享 Fixture、搜索范围、分块读取、截断与文件版本校验。搜索 DTO 由 `node scripts/generate-search-contracts.mjs` 从 Python Schema 生成。
 
 ### 上下文与压缩
 
@@ -175,12 +178,11 @@ pnpm exec electron scripts/test-context-details.cjs
 
 Electron 验证使用隔离 userData，检查 320、768、1024、1440 四种宽度、键盘打开、焦点返回和手动请求。测试还检查 100K 设置上限下的 181.4% 用量、压缩后 18% 用量，以及圆环、详情与分项同步更新。`EIDOS_CONTEXT_SCREENSHOT` 可以指定截图路径。
 
-处理过程中的压缩静态行使用以下定向验证。Runtime 测试覆盖持久事件、开始事件及时交付、重启、取消、分页与原子提交后的中断；Electron 测试覆盖四种宽度的行插入、原位更新与滚动。`EIDOS_FEED_SCREENSHOT` 可以指定过程截图路径。
+处理过程中的压缩静态行使用以下定向验证。Runtime 测试覆盖持久事件、开始事件及时交付、重启、取消、分页与原子提交后的中断。
 
 ```bash
 uv run --locked pytest runtime/tests/test_context_compaction_feed.py runtime/tests/test_context_model_compaction.py runtime/tests/test_runtime_state_authority.py
 pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/ContextCompactionFeed.behavior.test.tsx desktop/renderer/src/components/ExecutionFeed.behavior.test.tsx desktop/renderer/src/app/session-controller.behavior.test.tsx
-pnpm exec electron scripts/test-feed-scroll.cjs
 ```
 
 离线回放使用六类合成资料与五种长度，共 30 组，每组默认连续压缩三次。脚本检查约束、路径与 Symbol、失败和未验证状态、累计来源、已有延续记录与原始结果 Hash。无模型的规则回放没有模型延续记录；20 轮脚本模型保留回归由 `test_context_compaction_continuity.py` 单独覆盖。脚本不读取真实聊天，也不代表真实仓库任务成功率：
@@ -235,11 +237,9 @@ uv run --locked pytest runtime/tests/test_channels.py runtime/tests/test_channel
 pnpm build:main
 node --test dist/main/runtime-client-channels.test.js
 pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/ChannelSettings.behavior.test.tsx
-pnpm build
-pnpm exec electron scripts/test-channels.cjs
 ```
 
-`test-channels.cjs` 使用隔离的 Electron userData、模拟渠道 API 和四种窗口宽度。它检查保存、键盘操作和完全访问的二次确认，不读取真实钉钉凭证，也不发送真实消息。设置 `EIDOS_CHANNEL_SCREENSHOT=/absolute/path.png` 可以保存页面截图，设置 `EIDOS_CHANNEL_FULL_ACCESS_SCREENSHOT=/absolute/path.png` 可以保存完全访问确认截图。修改渠道服务生命周期时还需要执行既有 Electron smoke；修改 Python 生产依赖时还需要执行 Ruff、Deptry、pip-audit 和 Runtime Bundle 验证。
+修改渠道服务生命周期时还需要执行既有 Electron smoke；修改 Python 生产依赖时还需要执行 Ruff、Deptry、pip-audit 和 Runtime Bundle 验证。
 
 真实钉钉应用的创建、权限、消息投递与待验收清单见 [钉钉渠道方案](../design/dingtalk-channel-design.md)。
 
@@ -256,7 +256,6 @@ pnpm build:main
 node --test dist/main/runtime-client-channels.test.js
 pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/ChannelSettings.behavior.test.tsx
 pnpm build
-pnpm exec electron scripts/test-channels.cjs
 pnpm test:electron-smoke
 ```
 
@@ -325,7 +324,7 @@ EIDOS_BROWSER_E2E_NODE=<node 可执行文件> EIDOS_BROWSER_E2E_ENTRY=<node_modu
 
 设置页的“沙盒环境设置”位于现有 Runtime 页面内。区块只有继承方式和重新读取两个设置，用户可以通过小问号查看说明。用户修改继承方式后自动保存；保存影响后续启动的 Agent Shell，正在运行的进程不受影响。重新读取环境只清除快照，下一次命令仍在当前有效权限下捕获。Schema v34→v35 增加配置表，只保存继承模式和版本，不保存变量名和值；回退旧版本需要恢复升级前备份。
 
-定向验证入口为 `uv run --locked pytest runtime/tests/test_shell_environment_settings.py`、`pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/ShellEnvironmentSettings.behavior.test.tsx` 和构建 Main 后的 `node --test dist/main/runtime-client-shell-environment.test.js`。`node_modules/.bin/electron scripts/test-shell-environment-settings.cjs` 使用隔离设置页面和测试配置，验证 320、768、1024、1440px 布局、小问号、自动保存与重新读取，不读取真实环境值。`EIDOS_SHELL_ENVIRONMENT_SCREENSHOT_DIR` 可以指定截图目录。
+定向验证入口为 `uv run --locked pytest runtime/tests/test_shell_environment_settings.py`、`pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/ShellEnvironmentSettings.behavior.test.tsx` 和构建 Main 后的 `node --test dist/main/runtime-client-shell-environment.test.js`。
 
 Shell 手工验收应使用临时 Workspace。正常 Finder 启动时，Agent Shell 的 `HOME` 应与用户 Terminal 的真实 HOME 一致。测试者不要直接在真实 HOME 创建探针文件。默认 Workspace Shell 不需要 Approval，additional write、network 和 unsandboxed attempt 仍需要 Approval。
 
@@ -436,7 +435,7 @@ node --test dist/main/memory-contract.test.js dist/main/memory-export.test.js di
 pnpm test:contracts
 ```
 
-开发者可以运行 `pnpm exec electron scripts/test-memory-settings.cjs` 检查独立位置选择、项目/全局切换、读取失败重试和 320、768、1024、1440px 下的顶部控件布局。开发者可以用 `EIDOS_MEMORY_SCREENSHOT_DIR` 指定截图目录。测试使用临时 user-data 和合成记忆，不读取真实聊天或调用 Provider。Runtime 目标测试还覆盖无 Session 项目、项目隔离、重启、版本冲突、归档恢复、失效项目和旧操作重放。
+Runtime 目标测试还覆盖无 Session 项目、项目隔离、重启、版本冲突、归档恢复、失效项目和旧操作重放。
 
 模型工具结果另用 `protocol/fixtures/memory-tool-model-v1.json` 校验。该视图不改变 Desktop DTO，也不需要重新生成 Desktop 记忆契约。修改投影或私有读取保护时，开发者运行：
 

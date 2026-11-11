@@ -287,7 +287,8 @@ def test_custom_model_rpc_roundtrip_and_fixture(tmp_path, automatic):
     ("chat_completions", "deepseek", "high", {"thinking": {"type": "enabled"}, "reasoning_effort": "high"}, False),
     ("chat_completions", "minimax", "thinking", {"thinking": {"type": "adaptive"}}, False),
     ("chat_completions", "openai", None, {}, False),
-    ("openai_responses", "openai", "high", {"reasoning": {"effort": "high"}}, False),
+    # Responses requests with an effort also ask for the live-only summary.
+    ("openai_responses", "openai", "high", {"reasoning": {"effort": "high", "summary": "auto"}}, False),
     ("chat_completions", "openai", None, {}, True),
     ("openai_responses", "openai", None, {}, True),
 ])

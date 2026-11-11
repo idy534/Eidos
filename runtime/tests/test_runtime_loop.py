@@ -23,7 +23,8 @@ from eidos_runtime.model.client import (  # noqa: E402
     ModelToolCall,
     ScriptedModel,
 )
-from eidos_runtime.runtime.loop import ApprovalDecision, RuntimeLoop  # noqa: E402
+from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
+from eidos_runtime.runtime.approval import ApprovalDecision  # noqa: E402
 from eidos_runtime.db.storage import ActiveRunError, SessionStore  # noqa: E402
 from eidos_runtime.sandbox.seatbelt import (  # noqa: E402
     SeatbeltUnavailableError,
@@ -77,7 +78,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
         notifications: list[dict[str, object]] = []
 
-        RuntimeLoop(self.store, model, notifications.append).run(
+        RuntimeEngine(self.store, model, notifications.append).run(
             run["id"], threading.Event()
         )
 
@@ -130,7 +131,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
         model = ScriptedModel([ModelResponse(text="done")])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -147,7 +148,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
         model = ScriptedModel([ModelResponse(text="checked")])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -180,7 +181,7 @@ class RuntimeLoopTests(unittest.TestCase):
             ]
         )
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -199,7 +200,7 @@ class RuntimeLoopTests(unittest.TestCase):
         run, _ = self.store.create_run(self.session["id"], "Invalid responses")
         model = ScriptedModel([ModelResponse(), ModelResponse()])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -226,7 +227,7 @@ class RuntimeLoopTests(unittest.TestCase):
             + [ModelResponse(text="The saved file result is enough to continue.")]
         )
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -259,7 +260,7 @@ class RuntimeLoopTests(unittest.TestCase):
         model = ScriptedModel([ModelResponse(text="continued")])
         notifications: list[dict[str, object]] = []
 
-        RuntimeLoop(self.store, model, notifications.append).run(
+        RuntimeEngine(self.store, model, notifications.append).run(
             run["id"], threading.Event()
         )
 
@@ -278,7 +279,7 @@ class RuntimeLoopTests(unittest.TestCase):
         notifications: list[dict[str, object]] = []
         cancellation = threading.Event()
         worker = threading.Thread(
-            target=RuntimeLoop(self.store, model, notifications.append).run,
+            target=RuntimeEngine(self.store, model, notifications.append).run,
             args=(run["id"], cancellation),
         )
         worker.start()
@@ -330,7 +331,7 @@ class RuntimeLoopTests(unittest.TestCase):
         approvals: list[dict[str, object]] = []
 
         notifications: list[dict[str, object]] = []
-        RuntimeLoop(
+        RuntimeEngine(
             self.store,
             model,
             notifications.append,
@@ -389,7 +390,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
 
         approvals: list[object] = []
-        RuntimeLoop(
+        RuntimeEngine(
             self.store,
             model,
             lambda _message: None,
@@ -440,7 +441,7 @@ class RuntimeLoopTests(unittest.TestCase):
             (self.workspace / "hello.txt").write_text("external change\n")
             return ApprovalDecision("approve")
 
-        RuntimeLoop(
+        RuntimeEngine(
             self.store,
             model,
             lambda _message: None,
@@ -475,7 +476,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
         approvals: list[object] = []
 
-        RuntimeLoop(
+        RuntimeEngine(
             self.store,
             model,
             lambda _message: None,
@@ -510,7 +511,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
         approvals: list[object] = []
 
-        RuntimeLoop(
+        RuntimeEngine(
             self.store,
             model,
             lambda _message: None,
@@ -548,7 +549,7 @@ class RuntimeLoopTests(unittest.TestCase):
                 )
                 approvals: list[object] = []
 
-                RuntimeLoop(
+                RuntimeEngine(
                     self.store,
                     model,
                     lambda _message: None,
@@ -602,7 +603,7 @@ class RuntimeLoopTests(unittest.TestCase):
                 ])
                 approvals: list[object] = []
 
-                RuntimeLoop(
+                RuntimeEngine(
                     self.store,
                     model,
                     lambda _message: None,
@@ -683,7 +684,7 @@ class RuntimeLoopTests(unittest.TestCase):
         ])
         approvals: list[object] = []
 
-        RuntimeLoop(
+        RuntimeEngine(
             self.store,
             model,
             lambda _message: None,
@@ -751,7 +752,7 @@ class RuntimeLoopTests(unittest.TestCase):
         model = PollingModel([ModelResponse(tool_calls=(ModelToolCall(
             "start-command", "run_shell", {"command": "printf 'ready\\n'; i=0; while [ ! -e allow-command-finish ]; do i=$((i + 1)); [ \"$i\" -ge 200 ] && exit 1; sleep 0.05; done; printf 'done\\n'", "yieldTimeMs": 250},
         ),))])
-        RuntimeLoop(self.store, model, lambda _message: None, shell_available=True).run(run["id"], threading.Event())
+        RuntimeEngine(self.store, model, lambda _message: None, shell_available=True).run(run["id"], threading.Event())
         snapshot = self.store.read_session_snapshot(session_id)
         self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
         self.assertTrue((self.workspace / "must-not-exist").exists())
@@ -842,7 +843,7 @@ class RuntimeLoopTests(unittest.TestCase):
             ]
         )
         with mock_patch.object(ToolExecutor, "__init__", initialize):
-            RuntimeLoop(self.store, model, lambda _message: None).run(
+            RuntimeEngine(self.store, model, lambda _message: None).run(
                 run["id"], threading.Event()
             )
 
@@ -877,7 +878,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
 
         approvals: list[object] = []
-        RuntimeLoop(
+        RuntimeEngine(
             self.store,
             model,
             lambda _message: None,
@@ -928,7 +929,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
         approvals: list[object] = []
 
-        RuntimeLoop(
+        RuntimeEngine(
             self.store,
             model,
             lambda _message: None,
@@ -970,7 +971,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
         approvals: list[object] = []
 
-        RuntimeLoop(
+        RuntimeEngine(
             self.store,
             model,
             lambda _message: None,
@@ -1045,7 +1046,7 @@ class RuntimeLoopTests(unittest.TestCase):
                 side_effect=WorkspacePathError("WORKSPACE_INDEX_INCOMPLETE"),
             ),
         ):
-            RuntimeLoop(
+            RuntimeEngine(
                 self.store,
                 model,
                 lambda _message: None,
@@ -1126,7 +1127,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
         approvals: list[object] = []
 
-        RuntimeLoop(
+        RuntimeEngine(
             self.store,
             model,
             lambda _message: None,
@@ -1177,7 +1178,7 @@ class RuntimeLoopTests(unittest.TestCase):
                 side_effect=AssertionError("process must not start"),
             ),
         ):
-            RuntimeLoop(
+            RuntimeEngine(
                 self.store,
                 model,
                 lambda _message: None,
@@ -1243,7 +1244,7 @@ class RuntimeLoopTests(unittest.TestCase):
                 side_effect=AssertionError("process must not start"),
             ) as popen,
         ):
-            RuntimeLoop(
+            RuntimeEngine(
                 self.store,
                 model,
                 lambda _message: None,
@@ -1297,7 +1298,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
 
         approvals: list[dict[str, object]] = []
-        RuntimeLoop(
+        RuntimeEngine(
             self.store,
             model,
             lambda _message: None,
@@ -1353,7 +1354,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
         approvals: list[dict[str, object]] = []
 
-        RuntimeLoop(
+        RuntimeEngine(
             self.store,
             model,
             lambda _message: None,
@@ -1450,7 +1451,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
         approvals: list[dict[str, object]] = []
 
-        RuntimeLoop(
+        RuntimeEngine(
             self.store,
             model,
             lambda _message: None,
@@ -1533,7 +1534,7 @@ class RuntimeLoopTests(unittest.TestCase):
             side_effect=rebind_on_second_prepare,
             autospec=True,
         ):
-            RuntimeLoop(
+            RuntimeEngine(
                 self.store,
                 model,
                 lambda _message: None,
@@ -1568,7 +1569,7 @@ class RuntimeLoopTests(unittest.TestCase):
             ]
         )
 
-        RuntimeLoop(
+        RuntimeEngine(
             self.store,
             model,
             lambda _message: None,
@@ -1612,7 +1613,7 @@ class RuntimeLoopTests(unittest.TestCase):
             ]
         )
 
-        RuntimeLoop(
+        RuntimeEngine(
             self.store,
             model,
             lambda _message: None,
@@ -1659,7 +1660,7 @@ class RuntimeLoopTests(unittest.TestCase):
             ]
         )
 
-        RuntimeLoop(
+        RuntimeEngine(
             self.store,
             model,
             lambda _message: None,
@@ -1695,7 +1696,7 @@ class RuntimeLoopTests(unittest.TestCase):
             "eidos_runtime.runtime.run_resources.ToolExecutor.prepare_shell",
             side_effect=ToolCancelled(),
         ):
-            RuntimeLoop(
+            RuntimeEngine(
                 self.store,
                 model,
                 lambda _message: None,
@@ -1735,7 +1736,7 @@ class RuntimeLoopTests(unittest.TestCase):
             side_effect=cancel_on_second_scan,
             autospec=True,
         ):
-            RuntimeLoop(
+            RuntimeEngine(
                 self.store,
                 model,
                 lambda _message: None,

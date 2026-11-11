@@ -119,7 +119,7 @@ def test_approval_application_maps_missing_approval_to_application_error(
         database.close()
 
 
-def test_approval_application_submits_approve_reject_and_feedback_through_runtime_port(
+def test_approval_application_submits_approve_and_reject_through_runtime_port(
     tmp_path: Path,
 ) -> None:
     database, repository = _pending_approval_repository(tmp_path)
@@ -129,15 +129,12 @@ def test_approval_application_submits_approve_reject_and_feedback_through_runtim
 
         approved = application.approve("request-approve")
         rejected = application.reject("request-reject", feedback="do not write")
-        feedback = application.submit_feedback("request-feedback", "show a diff")
 
         assert approved.accepted is True
         assert rejected.accepted is True
-        assert feedback.accepted is True
         assert runtime.responses == [
             ("request-approve", ApprovalDecision.APPROVE, None),
             ("request-reject", ApprovalDecision.REJECT, "do not write"),
-            ("request-feedback", ApprovalDecision.REJECT, "show a diff"),
         ]
     finally:
         database.close()

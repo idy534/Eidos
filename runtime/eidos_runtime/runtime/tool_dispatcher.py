@@ -43,14 +43,6 @@ class ToolDispatchPlan:
         return self.binding.descriptor if self.binding is not None else None
 
     @property
-    def requires_approval(self) -> bool:
-        return bool(
-            self.descriptor
-            and self.descriptor.execution_policy
-            and self.descriptor.execution_policy.approval_required
-        )
-
-    @property
     def timeout_seconds(self) -> int:
         return (
             self.descriptor.execution_policy.timeout_seconds
@@ -72,37 +64,14 @@ class ToolDispatchPlan:
             else "external"
         )
 
-    @property
-    def contract_hash(self) -> str | None:
-        return (
-            self.binding.contract_fingerprint
-            if self.binding is not None else None
-        )
-
-    @property
-    def is_shell(self) -> bool:
-        return self.side_effect == "shell"
-
-    @property
-    def is_external(self) -> bool:
-        return self.side_effect == "external"
-
-    @property
-    def is_eidos_state(self) -> bool:
-        return self.side_effect == "eidos_state"
-
-    @property
-    def is_network_eidos_state(self) -> bool:
-        return bool(
-            self.descriptor and self.descriptor.spec.name == "skill_install"
-        )
-
-
 class ToolDispatcher:
     """Owns model ToolCall validation and batch invariants for RuntimeEngine."""
 
     def __init__(self, registry: ToolRegistry) -> None:
         self._registry = registry
+
+    def has_tool(self, name: str) -> bool:
+        return self._registry.get(name) is not None
 
     def validate(
         self,

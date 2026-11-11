@@ -10,19 +10,15 @@ from uuid import uuid4
 
 import pytest
 
-from eidos_runtime.application.checkpoints import CheckpointApplication
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.application.projects import ProjectApplication
 from eidos_runtime.application.sessions import SessionApplication
-from eidos_runtime.application.worktree_retention import WorktreeRetentionService
 from eidos_runtime.application.workspace import WorkspaceExplorerApplication
 from eidos_runtime.db.storage import SessionStore, WorkspaceIdentity
 from eidos_runtime.db.errors import WorkspaceIdentityChangedError
 from eidos_runtime.db.database import DATABASE_NAME
 from eidos_runtime.git import WorktreeManager
 from eidos_runtime.protocol.methods import (
-    CheckpointCreateRequestDto,
-    CheckpointListRequestDto,
     SessionCreateRequestDto,
     SessionGitStatusRequestDto,
     WorkspaceListDirectoryRequestDto,
@@ -464,98 +460,6 @@ def test_v45_project_session_migration_pins_git_metadata_before_replacement(
         assert error.value.code == "WORKSPACE_IDENTITY_CHANGED"
     finally:
         migrated.close()
-
-
-def test_primary_switch_keeps_existing_worktree_and_checkpoint_on_original_repo(
-    tmp_path: Path,
-) -> None:
-    primary = _repository(tmp_path / "primary", "original primary\n")
-    secondary = _repository(tmp_path / "secondary", "future primary\n")
-    store, manager, projects, sessions = _runtime(tmp_path)
-    retention = WorktreeRetentionService(store.database, manager)
-    checkpoints = CheckpointApplication(
-        store,
-        store.checkpoint_repository(),
-        worktree_manager=manager,
-        retention=retention,
-    )
-
-    try:
-        project = _create_project(
-            projects,
-            [("root-primary", primary), ("root-secondary", secondary)],
-            "root-primary",
-        )
-        session = sessions.create(
-            SessionCreateRequestDto(
-                projectId=project.id,
-                executionMode="worktree",
-            )
-        ).root
-        session_id = session["id"]
-        worktree_id = session["worktree"]["worktreeId"]
-        worktree_root = Path(session["worktree"]["worktreeRoot"])
-        run, _item = store.enqueue_run(session_id, "checkpoint original repository")
-        checkpoint = checkpoints.create(
-            CheckpointCreateRequestDto(
-                runId=run["id"],
-                operationId=str(uuid4()),
-            )
-        ).checkpoint
-        assert checkpoint.git_snapshot_id is not None
-        snapshot = checkpoints.snapshot_service.snapshots.read(
-            checkpoint.git_snapshot_id
-        )
-        assert snapshot is not None
-        assert snapshot.repository_root == str(primary.resolve())
-
-        update = projects.update(
-            ProjectUpdateRequest(
-                projectId=project.id,
-                operationId=str(uuid4()),
-                expectedRevision=1,
-                name=project.name,
-                roots=[
-                    ProjectRootInput(id="root-primary", path=str(primary)),
-                    ProjectRootInput(id="root-secondary", path=str(secondary)),
-                ],
-                primaryRootId="root-secondary",
-            )
-        )
-        stored_session = store.typed_runtime_repository().read_session(session_id)
-        stored_worktree = manager.read_worktree(worktree_id)
-        run_identity = store.workspace_for_run(run["id"])
-
-        assert update.workspace_root == str(secondary.resolve())
-        assert update.primary_root_id == "root-secondary"
-        assert stored_session is not None
-        assert stored_session.workspace_root == str(primary.resolve())
-        assert stored_session.worktree_id == worktree_id
-        assert {root.id: root.path for root in stored_session.roots} == {
-            "root-primary": str(primary.resolve()),
-            "root-secondary": str(secondary.resolve()),
-        }
-        assert stored_worktree.repository_root == str(primary.resolve())
-        assert run_identity.path == worktree_root.resolve()
-        assert len(run_identity.additional_roots) == 1
-        assert run_identity.additional_roots[0].root_id == "root-secondary"
-        assert run_identity.additional_roots[0].path == secondary.resolve()
-        checkpoints.snapshot_service.verify(snapshot)
-        from eidos_runtime.protocol.methods import CheckpointForkRequestDto
-        forked = checkpoints.fork(CheckpointForkRequestDto(checkpointId=checkpoint.id, operationId=str(uuid4())))
-        forked_session = store.typed_runtime_repository().read_session(forked.run.session_id)
-        assert forked_session is not None
-        assert [root.id for root in forked_session.roots] == ["root-primary", "root-secondary"]
-        assert manager.source_project(forked_session.worktree_id).workspace_root == str(primary)
-        assert len(manager.repository.list_projects()) == 1
-        assert manager.open(worktree_id).id == worktree_id
-        manager.recover()
-        assert manager.open(worktree_id).id == worktree_id
-        assert checkpoints.list(
-            CheckpointListRequestDto(runId=run["id"])
-        ).checkpoints[0].git_snapshot_id == checkpoint.git_snapshot_id
-    finally:
-        store.close()
 
 
 def test_new_sessions_discover_git_created_after_the_project_was_saved(tmp_path: Path) -> None:

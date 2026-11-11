@@ -67,7 +67,6 @@ from eidos_runtime.application.approvals import (
 from eidos_runtime.application.context import ContextApplication
 from eidos_runtime.domain.context_management import ContextDetails, ContextCompactionRecord
 from eidos_runtime.persistence.context_management import ContextManagementRepository
-from eidos_runtime.application.checkpoints import CheckpointApplication
 from eidos_runtime.application.extensions import (
     DeferredPluginImport,
     ExtensionApplication,
@@ -87,7 +86,7 @@ from eidos_runtime.application.automations import AutomationApplication
 from eidos_runtime.application.goals import GoalApplication
 from eidos_runtime.domain.goal import GoalError, GoalView
 from eidos_runtime.persistence.goals import GoalRepository
-from eidos_runtime.protocol.goals import GoalRequest
+from eidos_runtime.protocol.goals import GoalClearRequest, GoalGetRequest, GoalRequest, GoalUpdateRequest
 from eidos_runtime.domain.automation import AutomationError, AutomationResponse
 from eidos_runtime.protocol.automations import AutomationExecuteRequest, AutomationHistoryRequest, AutomationRunNowRequest, AutomationRefreshRequest
 from eidos_runtime.runtime.automation_scheduler import AutomationScheduler
@@ -721,7 +720,6 @@ class _RuntimeApplications:
     repository_factory: RepositoryApplicationFactory
     repository_runtime: RepositoryWorkspaceRuntime
     context: ContextApplication
-    checkpoints: CheckpointApplication
     task_lifecycle: TaskLifecycleApplication
     workspace: WorkspaceExplorerApplication
     review: ReviewApplication
@@ -789,14 +787,6 @@ class _ServerApprovalRuntime:
 class _ServerTaskLifecycleRuntime:
     def __init__(self, supervisor: RunSupervisor) -> None:
         self._supervisor = supervisor
-
-    def pause_run(self, run_id: str) -> LifecycleResult:
-        progress = self._supervisor.pause_run(run_id)
-        return LifecycleResult(
-            action=LifecycleAction.PAUSE,
-            accepted=progress.status.value == "paused",
-            reason=None if progress.status.value == "paused" else progress.status.value,
-        )
 
     def resume_run(self, run_id: str) -> LifecycleResult:
         progress = self._supervisor.resume_run(run_id)
@@ -976,9 +966,9 @@ class RuntimeServer:
         handlers: tuple[
             tuple[str, type[BaseModel], type[method_dtos.MethodResultDto], Any], ...
         ] = (
-            ("goal/get", GoalRequest, GoalView, lambda _id, request: self._goal_request(request, {"get"})),
-            ("goal/update", GoalRequest, GoalView, lambda _id, request: self._goal_request(request, {"pause", "resume"})),
-            ("goal/clear", GoalRequest, GoalView, lambda _id, request: self._goal_request(request, {"clear"})),
+            ("goal/get", GoalGetRequest, GoalView, lambda _id, request: self._goal_request(request)),
+            ("goal/update", GoalUpdateRequest, GoalView, lambda _id, request: self._goal_request(request)),
+            ("goal/clear", GoalClearRequest, GoalView, lambda _id, request: self._goal_request(request)),
             ("personalization/read", PersonalizationReadRequest, PersonalizationResponse, lambda _id, _request: self._personalization_application().read()),
             ("personalization/save", PersonalizationSaveRequest, PersonalizationResponse, lambda _id, request: self._personalization_save(request)),
             ("shellEnvironment/read", ShellEnvironmentReadRequest, ShellEnvironmentResponse, lambda _id, _request: self._shell_environment_application().read()),
@@ -1368,12 +1358,6 @@ class RuntimeServer:
                 lambda _id, request: self._applications_or_error().runs.cancel(request),
             ),
             (
-                "run/status",
-                method_dtos.RunStatusRequestDto,
-                method_dtos.RunStatusResponseDto,
-                lambda _id, request: self._applications_or_error().runs.status(request),
-            ),
-            (
                 "context/usage",
                 method_dtos.ContextUsageRequestDto,
                 method_dtos.ContextUsageResponseDto,
@@ -1386,40 +1370,10 @@ class RuntimeServer:
             ("context/compact", method_dtos.ContextCompactRequestDto, ContextCompactionRecord,
              lambda _id, request: self._applications_or_error().context.request_compaction(request.run_id)),
             (
-                "run/pause",
-                method_dtos.RunPauseRequestDto,
-                method_dtos.RunPauseResponseDto,
-                lambda _id, request: self._applications_or_error().runs.pause(request),
-            ),
-            (
                 "run/resume",
                 method_dtos.RunResumeRequestDto,
                 method_dtos.RunResumeResponseDto,
                 lambda _id, request: self._applications_or_error().runs.resume(request),
-            ),
-            (
-                "checkpoint/create",
-                method_dtos.CheckpointCreateRequestDto,
-                method_dtos.CheckpointCreateResponseDto,
-                lambda _id, request: self._applications_or_error().checkpoints.create(request),
-            ),
-            (
-                "checkpoint/list",
-                method_dtos.CheckpointListRequestDto,
-                method_dtos.CheckpointListResponseDto,
-                lambda _id, request: self._applications_or_error().checkpoints.list(request),
-            ),
-            (
-                "checkpoint/rewind",
-                method_dtos.CheckpointRewindRequestDto,
-                method_dtos.CheckpointRewindResponseDto,
-                lambda _id, request: self._applications_or_error().checkpoints.rewind(request),
-            ),
-            (
-                "checkpoint/fork",
-                method_dtos.CheckpointForkRequestDto,
-                method_dtos.CheckpointForkResponseDto,
-                lambda _id, request: self._applications_or_error().checkpoints.fork(request),
             ),
             (
                 "model/presets",
@@ -1535,15 +1489,6 @@ class RuntimeServer:
                 method_dtos.SkillRemoveRequestDto,
                 method_dtos.SkillRemoveResponseDto,
                 lambda _id, request: self._applications_or_error().extensions.remove_skill(
-                    qualified_id=request.qualified_id
-                ),
-            ),
-            (
-                "skill/read",
-                method_dtos.SkillReadRequestDto,
-                method_dtos.SkillReadResponseDto,
-                lambda _id,
-                request: self._applications_or_error().extensions.read_skill(
                     qualified_id=request.qualified_id
                 ),
             ),
@@ -1908,9 +1853,8 @@ class RuntimeServer:
                 scan_text=self._scan_text)
         return self.store.automations
 
-    def _goal_request(self, request: GoalRequest, actions: set[str]) -> GoalView:
-        if request.action not in actions:
-            raise ApplicationError("INVALID_PARAMS", "目标操作与方法不匹配。")
+    def _goal_request(self, request: GoalRequest) -> GoalView:
+        # Each method's request type only accepts its own actions.
         return GoalApplication(self.store, resolve_model=self._applications_or_error().runs.select_automation_model,
             changed=self._goal_changed).execute(request)
 
@@ -2119,13 +2063,6 @@ class RuntimeServer:
             context=ContextApplication(
                 snapshots=self.store.context_snapshot_repository(),
                 management=ContextManagementRepository(self.store.database),
-            ),
-            checkpoints=CheckpointApplication(
-                self.store,
-                self.store.checkpoint_repository(),
-                worktree_manager=self.worktree_manager,
-                lifecycle=session_lifecycle,
-                retention=self.worktree_retention,
             ),
             task_lifecycle=task_lifecycle,
             workspace=WorkspaceExplorerApplication(

@@ -72,10 +72,6 @@ class SkillScriptInvocation:
     runner: str
     script_path: Path
 
-    @property
-    def invocation_type(self) -> str:
-        return "implicit"
-
 
 def parse_skill_script_invocation(
     command: str,
@@ -129,9 +125,3 @@ def parse_skill_script_invocation(
             else candidate.resolve(strict=False),
         )
     return None
-
-
-# These aliases make the boundary easy to discover for future callers while
-# keeping one implementation and one parser contract.
-parse_script_invocation = parse_skill_script_invocation
-detect_skill_script_invocation = parse_skill_script_invocation

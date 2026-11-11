@@ -800,22 +800,6 @@
   padding: 0.6rem 0;
 }
 
-.automation-preview-block {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  align-items: flex-start;
-}
-
-.automation-preview {
-  margin: 0;
-  padding-left: 1.25rem;
-  font-size: 12px;
-  color: var(--muted);
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-
 .automation-form-actions {
   display: flex;
   align-items: center;

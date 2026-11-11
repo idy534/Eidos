@@ -64,6 +64,38 @@ export const sessionForkSchema = {
       "title": "ChannelOrigin",
       "type": "object"
     },
+    "GoalRunOrigin": {
+      "additionalProperties": false,
+      "properties": {
+        "goalId": {
+          "title": "Goalid",
+          "type": "string"
+        },
+        "trigger": {
+          "enum": [
+            "goal_set",
+            "continuation",
+            "user_input",
+            "resume"
+          ],
+          "title": "Trigger",
+          "type": "string"
+        },
+        "sequence": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "goalId",
+        "trigger",
+        "sequence"
+      ],
+      "title": "GoalRunOrigin",
+      "type": "object"
+    },
     "HookActivity": {
       "additionalProperties": false,
       "properties": {
@@ -816,6 +848,17 @@ export const sessionForkSchema = {
     "RunDto": {
       "additionalProperties": false,
       "properties": {
+        "goalOrigin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GoalRunOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "hookActivity": {
           "items": {
             "$ref": "#/$defs/HookActivity"

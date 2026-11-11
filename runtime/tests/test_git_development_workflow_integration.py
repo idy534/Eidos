@@ -5,16 +5,11 @@ import subprocess
 import threading
 from uuid import uuid4
 
-from eidos_runtime.application.checkpoints import CheckpointApplication
 from eidos_runtime.application.sessions import SessionApplication
 from eidos_runtime.application.workspace import WorkspaceExplorerApplication
-from eidos_runtime.application.worktree_retention import WorktreeRetentionService
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.git import WorktreeManager
 from eidos_runtime.protocol.methods import (
-    CheckpointCreateRequestDto,
-    CheckpointForkRequestDto,
-    CheckpointRewindRequestDto,
     SessionCreateBranchRequestDto,
     SessionCreateRequestDto,
     SessionGitCommitRequestDto,
@@ -74,13 +69,6 @@ def test_complete_git_development_workflow_converges_across_boundaries(
         store,
         scan_text=lambda value: value,
         worktree_manager=manager,
-    )
-    retention = WorktreeRetentionService(store.database, manager)
-    checkpoints = CheckpointApplication(
-        store,
-        store.checkpoint_repository(),
-        worktree_manager=manager,
-        retention=retention,
     )
     explorer = WorkspaceExplorerApplication(
         store.typed_runtime_repository(),
@@ -257,53 +245,6 @@ def test_complete_git_development_workflow_converges_across_boundaries(
                 operationId=str(uuid4()),
                 sessionId=session_id,
             )
-        )
-
-        (root / "integration.txt").write_text("staged\n", encoding="utf-8")
-        _git(root, "add", "integration.txt")
-        (root / "integration.txt").write_text("staged\nunstaged\n", encoding="utf-8")
-        (root / "checkpoint.txt").write_text("checkpoint\n", encoding="utf-8")
-        run, _item = store.enqueue_run(session_id, "checkpoint")
-        checkpoint = checkpoints.create(
-            CheckpointCreateRequestDto(
-                operationId=str(uuid4()),
-                runId=str(run["id"]),
-            )
-        ).checkpoint
-        store.connection.execute(
-            "UPDATE runs SET status = 'succeeded' WHERE id = ?", (run["id"],)
-        )
-        (root / "integration.txt").write_text("later\n", encoding="utf-8")
-        (root / "checkpoint.txt").unlink()
-        checkpoints.rewind(
-            CheckpointRewindRequestDto(
-                operationId=str(uuid4()),
-                checkpointId=checkpoint.id,
-            )
-        )
-        fork = checkpoints.fork(
-            CheckpointForkRequestDto(
-                operationId=str(uuid4()),
-                checkpointId=checkpoint.id,
-            )
-        )
-
-        assert _git(root, "show", ":integration.txt") == "staged"
-        assert (root / "integration.txt").read_text(encoding="utf-8") == (
-            "staged\nunstaged\n"
-        )
-        assert (root / "checkpoint.txt").read_text(encoding="utf-8") == ("checkpoint\n")
-        fork_projection = store.typed_runtime_repository().read_session_projection(
-            fork.run.session_id
-        )
-        assert fork_projection is not None and fork_projection.worktree is not None
-        fork_root = Path(fork_projection.worktree.worktree_root)
-        assert _git(fork_root, "show", ":integration.txt") == "staged"
-        assert (fork_root / "integration.txt").read_text(encoding="utf-8") == (
-            "staged\nunstaged\n"
-        )
-        assert (fork_root / "checkpoint.txt").read_text(encoding="utf-8") == (
-            "checkpoint\n"
         )
     finally:
         store.close()

@@ -13,7 +13,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.tools.contracts import (  # noqa: E402
     ApplyPatchInput,
-    DeleteFileInput,
     ListFilesInput,
     ReadFileInput,
     ReadFileRangeInput,
@@ -21,10 +20,9 @@ from eidos_runtime.tools.contracts import (  # noqa: E402
     RunShellInput,
     SearchTextInput,
     WorkspaceResultData,
-    WriteFileInput,
-    project_tool_result,
     result_model,
 )
+from tool_projection import project_tool_result  # noqa: E402
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 
 
@@ -50,7 +48,6 @@ class Phase4B1ContractTests(unittest.TestCase):
             (ReadFileRangeInput, {"path": "a", "startLine": 1, "endLine": 2001}),
             (SearchTextInput, {"query": "a\nb"}),
             (SearchTextInput, {"query": "界" * 171}),
-            (WriteFileInput, {"path": "a", "content": "界" * 87_382}),
             (ApplyPatchInput, {"patch": False}),
             (RunShellInput, {"command": "界" * 5_462}),
         ):
@@ -58,7 +55,7 @@ class Phase4B1ContractTests(unittest.TestCase):
                 with self.assertRaises(ValidationError):
                     model.model_validate(value)
 
-    def test_read_and_shell_path_contract_accepts_absolute_paths_but_writes_do_not(
+    def test_read_and_shell_path_contract_accepts_absolute_paths(
         self,
     ) -> None:
         absolute = "/tmp/workspace/src/file.py"
@@ -77,11 +74,6 @@ class Phase4B1ContractTests(unittest.TestCase):
             "cwd": absolute,
         })
         self.assertEqual(shell.cwd, absolute)
-
-        with self.assertRaises(ValidationError):
-            WriteFileInput.model_validate({"path": absolute, "content": "new"})
-        with self.assertRaises(ValidationError):
-            DeleteFileInput.model_validate({"path": absolute})
 
     def test_success_result_semantics_are_structural(self) -> None:
         range_model = result_model(ReadFileRangeResultData)

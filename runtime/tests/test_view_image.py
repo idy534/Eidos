@@ -20,7 +20,7 @@ from eidos_runtime.model.client import ModelProfileSnapshot
 from eidos_runtime.model.config import MODEL_CATALOG, ModelConfig, ModelProfileSpec
 from eidos_runtime.model.pydantic_ai_client import PydanticAIModelClient, encode_context
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
-from eidos_runtime.tools.contracts import project_tool_result
+from tool_projection import project_tool_result
 from eidos_runtime.tools.registry import ToolRegistry, VerifiedToolOutput
 from eidos_runtime.domain.tool_content import ToolBinaryContent, ToolContentSnapshot
 from eidos_runtime.tools.view_image import (

@@ -6,7 +6,6 @@ import { CloseIcon, FinderIcon } from "../MenuIcons.js";
 import { PluginsSettingsIcon, githubIcon } from "./SettingsIcons.js";
 import { chromeIconSrc } from "../ChromeIcon.js";
 import { BROWSER_PLUGIN_ID } from "./BrowserSettingsSection.js";
-import "./PluginMarketplaceDialog.css";
 
 export interface PluginMarketplaceDialogProps {
   open: boolean;

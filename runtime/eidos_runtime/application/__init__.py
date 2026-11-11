@@ -5,7 +5,6 @@ from eidos_runtime.application.approvals import (
     ApprovalRuntimePort,
 )
 from eidos_runtime.application.context import ContextApplication
-from eidos_runtime.application.checkpoints import CheckpointApplication
 from eidos_runtime.application.results import ApplicationResult
 from eidos_runtime.application.repository import (
     RepositoryAnalysisSnapshot,
@@ -28,7 +27,6 @@ __all__ = [
     "ApprovalRuntimePort",
     "ApplicationResult",
     "ContextApplication",
-    "CheckpointApplication",
     "LifecycleAction",
     "LifecycleResult",
     "RunApplication",

@@ -353,8 +353,6 @@ export function applyQueuedRunChange(
   };
 }
 
-export type RunStatusTone = "success" | "error" | "neutral" | "warning";
-
 const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   PROJECT_CONFIGURATION_CONFLICT: "项目配置已经变化，请关闭并重新打开编辑窗口。",
   AGENT_DEFINITION_INVALID: "智能体配置无效，请检查名称、用途说明、指令和 TOML 格式。",
@@ -437,16 +435,10 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   WORKTREE_BRANCH_CREATE_FAILED: "分支创建失败，请查看 Runtime 日志。",
   WORKTREE_BRANCH_STATE_CHANGED: "Worktree 的分支状态发生变化，请恢复后重试。",
   LOCAL_REQUIRED: "只有 Local 任务可以切换或创建本地分支。",
-  CHECKPOINT_GIT_STATE_UNAVAILABLE: "Checkpoint 的 Git 状态不可用。",
   SESSION_FORK_FAILED: "会话分叉未能保存，请重试。",
   SESSION_FORK_WORKTREE_FAILED: "分叉工作树未能创建，请查看工作区状态后重试。",
   SESSION_FORK_CANCELED: "会话分叉已取消。",
   SESSION_FORK_HISTORY_LIMIT: "会话历史超过分叉上限（20,000 条记录或 128 MiB）。",
-  CHECKPOINT_FORK_WORKTREE_FAILED: "Checkpoint Fork 的 Managed Worktree 创建失败。",
-  CHECKPOINT_REWIND_FAILED: "Checkpoint Rewind 无法恢复 Git 工作区状态。",
-  CHECKPOINT_WORKFLOW_BUSY: "当前任务仍在运行。请等待或取消 Run 后再恢复 Checkpoint。",
-  DIRECT_CHECKPOINT_FORK_PATH_FORBIDDEN: "Direct Workspace Fork 使用原 Project 工作空间。",
-  MANAGED_CHECKPOINT_FORK_PATH_FORBIDDEN: "Managed Worktree Fork 不接受外部工作空间路径。",
   GIT_OBSERVATION_UNAVAILABLE: "Git 状态暂时无法完整读取，请稍后重试。",
   GIT_WORKTREE_NOT_FOUND: "任务绑定的 Worktree 记录已不存在。",
   GIT_WORKTREE_MISSING: "任务绑定的 Worktree 目录已不存在。",

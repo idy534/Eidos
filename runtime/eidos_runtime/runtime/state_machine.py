@@ -212,5 +212,3 @@ class RuntimePhaseTracker:
         ensure_transition(self.state, target)
         self.track(target, reason)
 
-
-StateMachine = RuntimePhaseTracker

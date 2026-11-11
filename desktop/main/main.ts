@@ -38,7 +38,7 @@ import { isGoalRequest } from "../shared/goals.js";
 import { resolveRuntimePaths } from "./runtime-paths.js";
 import "./response-runtime-client.js";
 import { redactLogLine, sanitizeLogValue } from "./log-redaction.js";
-import { dispatchAppCommand as dispatchCommand, ensureAppWindow as ensureWindow } from "./app-command-dispatch.js";
+import { dispatchAppCommand as dispatchCommand } from "./app-command-dispatch.js";
 import { QuitFlowController, type ActiveRunProjection, type QuitFlowDependencies } from "./quit-flow.js";
 import { shutdownRuntime } from "./runtime-shutdown.js";
 import { resolveWorkspaceFileForOpen } from "./workspace-open.js";
@@ -330,10 +330,6 @@ const windowDeps = {
   getExistingWindow: () => BrowserWindow.getAllWindows()[0],
   createWindow,
 };
-
-export function ensureMainWindow(): BrowserWindow {
-  return ensureWindow(windowDeps) as BrowserWindow;
-}
 
 export async function dispatchAppCommand(command: AppShortcut): Promise<void> {
   await dispatchCommand(command, windowDeps);

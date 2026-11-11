@@ -1,4 +1,4 @@
-# Session 消息队列检查
+# Session 消息队列设计检查（2026-10-14）
 
 final result: passed
 
@@ -6,10 +6,12 @@ final result: passed
 
 ## 视觉证据
 
-- 用户草图：`/var/folders/vm/1k9rv81d38jgggql67_1fz_h0000gn/T/codex-clipboard-3b3c345b-ed8a-4f9a-9f8b-f88b81cddc67.png`，1466×114 像素。草图没有标明 CSS 宽度和截图密度，所以检查没有声称像素完全一致。
-- 桌面截图：`/Users/xielei/.codex/visualizations/2026/10/14/01a138f2-9293-7d21-9b7d-c7139a64fc52/queued-messages-desktop.png`，2200×1600 像素，对应 1100×800 CSS 像素、2 倍密度。
-- 局部截图：`/Users/xielei/.codex/visualizations/2026/10/14/01a138f2-9293-7d21-9b7d-c7139a64fc52/queued-messages-detail.png`，1600×342 像素，对应 800×171 CSS 像素、2 倍密度。该图直接由 Electron 对队列与输入框区域截图生成。
-- 窄窗口截图：`/Users/xielei/.codex/visualizations/2026/10/14/01a138f2-9293-7d21-9b7d-c7139a64fc52/queued-messages-narrow.png`，840×1400 像素，对应 420×700 CSS 像素、2 倍密度。
+以下截图当时保存在本机，没有提交到仓库。这里只保留每张图的内容和尺寸。
+
+- 用户草图：1466×114 像素。草图没有标明 CSS 宽度和截图密度，所以检查没有声称像素完全一致。
+- 桌面截图：2200×1600 像素，对应 1100×800 CSS 像素、2 倍密度。
+- 局部截图：1600×342 像素，对应 800×171 CSS 像素、2 倍密度。该图直接由 Electron 对队列与输入框区域截图生成。
+- 窄窗口截图：840×1400 像素，对应 420×700 CSS 像素、2 倍密度。
 
 检查在同一次对照输入中打开了草图、桌面与窄窗口截图。检查又在同一次对照输入中打开了草图与局部截图。局部检查覆盖单条消息预览、编辑和删除按钮、队列与主输入框的相接位置。窄窗口检查覆盖长消息、八条队列和打开编辑器的状态。
 

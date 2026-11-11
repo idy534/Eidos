@@ -45,6 +45,7 @@ from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
 from eidos_runtime.tools.contracts import GENERIC_PROJECTOR, RunShellInput
+from eidos_runtime.tools.search import TOOL_SEARCH_NAME
 from eidos_runtime.tools.registry import (
     ToolArgumentValidationResult,
     ToolConcurrencyPolicy,
@@ -568,8 +569,13 @@ class ToolExecutionController:
                         call.name,
                         "tool_not_activated",
                         f"Tool {call.name} is not activated. No tool was executed. "
-                        "This historical call was outside its original step tool set. "
-                        "Use the tools advertised for a new step; do not replay this call.",
+                        + (
+                            f'Call {TOOL_SEARCH_NAME} with query="{call.name}", wait for its result, '
+                            "then call the tool in a later step."
+                            if self.dispatcher.has_tool(TOOL_SEARCH_NAME) else
+                            "This historical call was outside its original step tool set. "
+                            "Use the tools advertised for a new step; do not replay this call."
+                        ),
                     ),
                     "completed",
                 )

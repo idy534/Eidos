@@ -149,23 +149,6 @@ class RepositoryApplication:
             persisted_snapshot=persisted,
         )
 
-    def initialize_recovery(self) -> RepositoryIndexStatus:
-        """Verify persisted inventory metadata and report recovery state."""
-
-        status = self.read_recovery_status()
-        identity = status.workspace_identity
-        restored = self.repository.read_latest_complete(
-            identity.repository_id, identity
-        )
-        if restored is None:
-            return status
-        return status.model_copy(update={
-            "reconciliation_required": (
-                status.reconciliation_required
-                or _inventory_metadata_changed(self.inventory_builder.root, restored.inventory)
-            ),
-        })
-
     def read_recovery_status(self) -> RepositoryIndexStatus:
         """Read persisted recovery state without scanning workspace files."""
 
@@ -647,22 +630,6 @@ class RepositoryWorkspaceRuntime:
         if active is not None:
             active.invalidate(changes)
 
-    def shutdown_workspace(self, root: Path) -> None:
-        canonical = str(root.resolve(strict=False))
-        with self._lock:
-            active = self._active_by_root.get(canonical)
-            if active is None:
-                return
-            active.close(timeout=self._watcher_shutdown_timeout)
-            self._active_by_root.pop(canonical, None)
-        logger.info(
-            "repository_workspace_shutdown",
-            extra={
-                "workspace_root": active.workspace_identity.root,
-                "repository_id": active.workspace_identity.repository_id,
-            },
-        )
-
     def discard_cached_generations(self) -> None:
         with self._lock:
             for active in self._active_by_root.values():
@@ -705,27 +672,6 @@ class RepositoryWorkspaceRuntime:
                     "repository_watcher_failed",
                     extra={"workspace_root": active.workspace_identity.root},
                 )
-
-
-def _inventory_metadata_changed(root: Path, inventory: RepositoryInventory) -> bool:
-    for record in inventory.files:
-        try:
-            metadata = (root / record.path).lstat()
-        except OSError:
-            return True
-        if (
-            metadata.st_dev,
-            metadata.st_ino,
-            metadata.st_size,
-            metadata.st_mtime_ns,
-        ) != (
-            record.device,
-            record.inode,
-            record.size_bytes,
-            record.mtime_ns,
-        ):
-            return True
-    return False
 
 
 __all__ = [

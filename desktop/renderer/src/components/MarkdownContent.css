@@ -35,8 +35,6 @@
 .markdown-body a { color: var(--link-color, #2b5da7); text-decoration: none; }
 .markdown-body a:hover,
 .markdown-body a:focus-visible { color: var(--link-hover, #1e447b); text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
-.markdown-link { color: var(--link-color, #2b5da7); text-decoration: none; cursor: help; }
-.markdown-link:hover { color: var(--link-hover, #1e447b); text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 0.15em; }
 .markdown-image-alt { color: var(--muted); font-size: var(--font-size-caption); }
 .markdown-body .artifact-image { display: block; margin: 0.75rem 0; max-width: 100%; }
 .markdown-body .artifact-image-button { width: fit-content; }
@@ -149,8 +147,6 @@ button.markdown-remote-image:focus-visible { color: var(--link-hover, #1e447b); 
   word-break: normal;
 }
 .eidos-chat-prose .code-block-content .line { line-height: inherit; }
-.markdown-body.eidos-chat-prose :where(a, .markdown-link):not(:where(.mermaid-container *)) { font-weight: 500; }
-.markdown-body.eidos-chat-prose :where(a, .markdown-link):is(:hover, :focus-visible):not(:where(.mermaid-container *)) { text-decoration-style: solid; }
 .eidos-chat-prose > :first-child { margin-top: 0; }
 .eidos-chat-prose > :last-child { margin-bottom: 0; }
 /* Inline File Link with Official SVG Icon (Figs 3 & 4) */
@@ -206,20 +202,4 @@ button.markdown-remote-image:focus-visible { color: var(--link-hover, #1e447b); 
   text-decoration: underline !important;
   text-decoration-style: dotted !important;
   text-underline-offset: 3px !important;
-}
-.markdown-file-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  color: var(--link-color, #2b5da7);
-  cursor: pointer;
-  vertical-align: -0.15em;
-  text-decoration: none;
-}
-.markdown-file-pill:hover,
-.markdown-file-pill:focus-visible {
-  color: var(--link-hover, #1e447b);
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-underline-offset: 3px;
 }

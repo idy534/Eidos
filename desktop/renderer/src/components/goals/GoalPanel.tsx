@@ -5,7 +5,6 @@ import { ChevronDownIcon } from "../MenuIcons.js";
 import { Tooltip } from "../Tooltip.js";
 import { GoalBlockedIcon, GoalCheckIcon, GoalClearIcon, GoalClockIcon, GoalLoopIcon, GoalMarkIcon, GoalPauseIcon,
   GoalPausedIcon, GoalPlayIcon, GoalTokenIcon } from "./GoalIcons.js";
-import "./goals.css";
 
 interface Props {
   view: GoalView;
@@ -24,7 +23,7 @@ const icons: Record<Tone, ReactNode> = {
 };
 const reasons: Record<string, string> = { idle_runs: "连续三轮没有新的有效工具结果。", runtime_restarted: "应用重启后，目标等待你继续。",
   run_failed: "上一轮执行失败，请查看执行记录。", run_stopped: "上一轮执行已停止。", run_canceled: "你停止了执行，目标已暂停续跑。",
-  preparation_failed: "续跑准备失败，请检查模型和工作区。", workspace_rewound: "工作区已回退，目标等待你确认后继续。",
+  preparation_failed: "续跑准备失败，请检查模型和工作区。",
   plan_selected: "切换到 Plan 模式后，目标已暂停续跑。", user_paused: "你暂停了续跑，当前执行会继续完成。",
   legacy_budget_removed: "旧版预算功能已移除，目标等待你手动继续。" };
 

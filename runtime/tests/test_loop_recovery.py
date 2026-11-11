@@ -10,7 +10,7 @@ from unittest.mock import patch as mock_patch
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
-from eidos_runtime.runtime.loop import RuntimeLoop
+from eidos_runtime.runtime.engine import RuntimeEngine
 from eidos_runtime.runtime.errors import tool_result
 from eidos_runtime.runtime.tool_execution import HandlerOutcome
 
@@ -59,7 +59,7 @@ class LoopRecoveryTests(unittest.TestCase):
 
         # Exercise Loop progress separately from the macOS-only file identity layer.
         with mock_patch("eidos_runtime.runtime.tool_runtime.ReadOnlyToolHandler.execute", side_effect=read_evidence):
-            RuntimeLoop(self.store, model, lambda _message: None).run(run["id"], threading.Event())
+            RuntimeEngine(self.store, model, lambda _message: None).run(run["id"], threading.Event())
 
         interrupted = self.store.read_run(run["id"])
         self.assertEqual(interrupted["status"], "succeeded")
@@ -84,7 +84,7 @@ class LoopRecoveryTests(unittest.TestCase):
             ModelResponse(text="Inspection can continue with the evidence already collected."),
         ])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -112,7 +112,7 @@ class LoopRecoveryTests(unittest.TestCase):
             for index in range(3)
         ] + [ModelResponse(text="The saved listing provides the required evidence.")])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -142,7 +142,7 @@ class LoopRecoveryTests(unittest.TestCase):
             ModelResponse(text="The alternate search completed the investigation."),
         ])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -194,7 +194,7 @@ class LoopRecoveryTests(unittest.TestCase):
                 return_value=completed,
             ) as start,
         ):
-            RuntimeLoop(
+            RuntimeEngine(
                 self.store,
                 model,
                 lambda _message: None,

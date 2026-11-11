@@ -4,7 +4,7 @@ import copy
 import json
 import unittest
 
-from eidos_runtime.tools.contracts import project_tool_result
+from tool_projection import project_tool_result
 
 
 _MODEL_TOTAL_BYTES = 64 * 1024

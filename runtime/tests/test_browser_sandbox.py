@@ -54,6 +54,19 @@ class BrowserSeatbeltTests(unittest.TestCase):
             self.accepted += 1
             connection.close()
 
+    def reachable_remote_probe(self) -> list[str]:
+        """Return a connect probe that succeeds outside the sandbox, or skip the test."""
+        # TEST-NET-1 is never this host. Only a reachable route proves denial.
+        # macOS nc bounds the connect with -G; -w alone lets an unanswered SYN hang.
+        remote = ["nc", "-z", "-G", "3", "-w", "3", "192.0.2.1", "443"]
+        try:
+            reachable = subprocess.run(remote, capture_output=True, timeout=20, check=False).returncode == 0
+        except subprocess.TimeoutExpired:
+            reachable = False
+        if not reachable:
+            self.skipTest("this machine has no route to a non-local address")
+        return remote
+
     def run_sandboxed(self, command: str, profile: Path = PROFILE) -> subprocess.CompletedProcess[str]:
         return subprocess.run([
             SANDBOX_EXEC, "-f", str(profile),
@@ -83,11 +96,7 @@ class BrowserSeatbeltTests(unittest.TestCase):
     def test_loopback_is_reachable_but_other_hosts_are_not(self) -> None:
         loopback = self.run_sandboxed(f"nc -z -w 3 127.0.0.1 {self.port}")
         self.assertEqual(loopback.returncode, 0, loopback.stderr)
-        # TEST-NET-1 is never this host. Only a reachable route proves denial.
-        remote = ["nc", "-z", "-w", "3", "192.0.2.1", "443"]
-        if subprocess.run(remote, capture_output=True, timeout=20, check=False).returncode != 0:
-            self.skipTest("this machine has no route to a non-local address")
-        denied = self.run_sandboxed(" ".join(remote))
+        denied = self.run_sandboxed(" ".join(self.reachable_remote_probe()))
         self.assertNotEqual(denied.returncode, 0)
 
     def test_default_profile_cannot_listen_but_extension_profile_can_on_loopback(self) -> None:
@@ -123,7 +132,5 @@ class BrowserSeatbeltTests(unittest.TestCase):
             for child in short.iterdir():
                 child.unlink()
             short.rmdir()
-        remote = ["nc", "-z", "-w", "3", "192.0.2.1", "443"]
-        if subprocess.run(remote, capture_output=True, timeout=20, check=False).returncode != 0:
-            self.skipTest("this machine has no route to a non-local address")
+        remote = self.reachable_remote_probe()
         self.assertNotEqual(self.run_sandboxed(" ".join(remote), EXTENSION_PROFILE).returncode, 0)

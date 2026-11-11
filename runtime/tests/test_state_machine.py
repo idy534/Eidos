@@ -11,14 +11,14 @@ from eidos_runtime.runtime.state_machine import (  # noqa: E402
     ApprovalStatus,
     RunStatus,
     RuntimeState,
-    StateMachine,
+    RuntimePhaseTracker,
     ensure_transition,
 )
 
 
 class StateMachineTests(unittest.TestCase):
     def test_runtime_state_machine_records_valid_reasons(self) -> None:
-        machine = StateMachine()
+        machine = RuntimePhaseTracker()
         machine.transition(RuntimeState.TOOL_EXECUTING, "tools")
         machine.transition(RuntimeState.WAITING_APPROVAL, "approval")
         machine.transition(RuntimeState.TOOL_EXECUTING, "approved")

@@ -80,9 +80,3 @@ def _file_sha256(path: Path) -> str | None:
         return hashlib.sha256(stream.read()).hexdigest()
 
 
-def browser_runtime_ready(manager: ManagedResourceManager | None) -> bool:
-    try:
-        resolve_browser_runtime(manager)
-    except BrowserRuntimeUnavailable:
-        return False
-    return True

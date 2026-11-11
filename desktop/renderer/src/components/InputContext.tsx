@@ -13,11 +13,6 @@ import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 
 export { isInlineReference, isShelfReference };
 
-export function useInlineTokenMetrics(
-  _editorRef: { current: HTMLElement | null },
-  _inlineReferences: readonly InputReference[],
-): void {}
-
 export interface InputEditorSelectionBridge {
   getSelectionRange(): { start: number; end: number } | undefined;
   onInsertedCaret(offset: number): void;

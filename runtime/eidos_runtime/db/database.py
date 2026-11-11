@@ -1067,10 +1067,6 @@ def now_ms() -> int:
     return time.time_ns() // 1_000_000
 
 
-def verify_integrity(connection: sqlite3.Connection) -> None:
-    _verify_integrity(connection)
-
-
 def _default_data_directory() -> Path:
     configured = os.environ.get("EIDOS_DATA_DIR")
     if configured:

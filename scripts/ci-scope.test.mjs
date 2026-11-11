@@ -17,6 +17,10 @@ test("renderer, shared contracts, runtime implementation and runtime tests selec
   assert.deepEqual(selectCiScopes(["runtime/tests/test_collaboration.py"]), { runtime: true, desktop: false, native: false });
   assert.deepEqual(selectCiScopes(["runtime/eidos_runtime/protocol/schemas.py"]), { runtime: true, desktop: true, native: true });
 });
+test("packaging config changes run the packaging tests and the DMG build", () => {
+  for (const file of ["electron-builder.yml", "packaging/entitlements.mac.plist"])
+    assert.deepEqual(selectCiScopes([file]), { runtime: false, desktop: true, native: true });
+});
 test("lockfiles, CI, scripts and main pushes require all boundaries", () => {
   for (const file of ["uv.lock", "pnpm-lock.yaml", ".github/workflows/ci.yml", "scripts/ci-scope.mjs"])
     assert.deepEqual(selectCiScopes([file]), { runtime: true, desktop: true, native: true });

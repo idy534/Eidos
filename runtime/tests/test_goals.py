@@ -379,6 +379,21 @@ def test_stop_hook_continuation_invalidates_completion_candidate(tmp_path):
         store.close()
 
 
+def test_each_goal_method_only_accepts_its_own_actions():
+    from pydantic import ValidationError
+    from eidos_runtime.protocol.goals import GoalClearRequest, GoalGetRequest, GoalUpdateRequest
+    session = "11111111-1111-1111-1111-111111111111"
+    accepted = {GoalGetRequest: {"get"}, GoalUpdateRequest: {"pause", "resume"}, GoalClearRequest: {"clear"}}
+    for request_type, actions in accepted.items():
+        for action in ("get", "pause", "clear"):
+            value = {"action": action, "sessionId": session, **({} if action == "get" else {"expectedRevision": 1})}
+            if action in actions:
+                assert request_type.model_validate(value).action == action
+            else:
+                with pytest.raises(ValidationError):
+                    request_type.model_validate(value)
+
+
 def test_shared_goal_fixtures_match_python_contracts():
     from pathlib import Path
     from eidos_runtime.domain.goal import GoalRunOrigin, GoalView
@@ -462,26 +477,6 @@ def test_restart_cancels_an_admitted_automatic_run_before_dispatch(goals):
         recover_runtime_facts(connection)
     assert repository.view(session).goal.status == "paused"
     assert store.read_run(run["id"])["status"] == "canceled"
-
-
-def test_checkpoint_rewind_pauses_goal_and_fork_requires_a_new_goal(goals):
-    from eidos_runtime.application.checkpoints import CheckpointApplication
-    from eidos_runtime.protocol.methods import CheckpointCreateRequestDto, CheckpointForkRequestDto, CheckpointRewindRequestDto
-
-    store, session, repository = goals
-    seed_goal(goals)
-    run, _item = store.enqueue_run(session, "检查当前工作区。")
-    identity = store.workspace_for_run(run["id"])
-    store.long_task_repository().initialize(run_id=run["id"], workspace_path=str(identity.path),
-        workspace_device=identity.device, workspace_inode=identity.inode, workspace_owner=identity.owner,
-        rule_snapshot_id="rule", inventory_snapshot_id="inventory", index_snapshot_id="index", permission_snapshot_hash="permission")
-    application = CheckpointApplication(store, store.checkpoint_repository())
-    created = application.create(CheckpointCreateRequestDto(runId=run["id"]))
-    application.rewind(CheckpointRewindRequestDto(checkpointId=created.checkpoint.id))
-    assert repository.view(session).goal.status_reason == "workspace_rewound"
-    assert repository.pending() == ()
-    forked = application.fork(CheckpointForkRequestDto(checkpointId=created.checkpoint.id))
-    assert repository.view(forked.run.session_id).goal is None
 
 
 @pytest.mark.parametrize("boundary", ["direct", "startup"])

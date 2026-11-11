@@ -5,15 +5,11 @@ import subprocess
 
 import pytest
 
-from eidos_runtime.application.checkpoints import CheckpointApplication
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.application.sessions import SessionApplication
-from eidos_runtime.application.worktree_retention import WorktreeRetentionService
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.git import WorktreeManager
 from eidos_runtime.protocol.methods import (
-    CheckpointCreateRequestDto,
-    CheckpointForkRequestDto,
     GitContextRequestDto,
     SessionCreateRequestDto,
     SessionDeleteRequestDto,
@@ -249,41 +245,6 @@ def test_detached_worktree_validation_rejects_external_branch_attachment(
         assert validation.valid is False
         assert validation.code == "worktree_invalid"
         assert manager.repository.read_worktree(worktree.id).branch is None
-    finally:
-        store.close()
-
-
-def test_checkpoint_managed_fork_is_detached_at_checkpoint_head(tmp_path: Path) -> None:
-    repository = _repository(tmp_path)
-    store, manager, sessions = _setup(tmp_path)
-    checkpoints = CheckpointApplication(
-        store,
-        store.checkpoint_repository(),
-        worktree_manager=manager,
-        retention=WorktreeRetentionService(store.database, manager),
-    )
-    try:
-        parent = _create(application=sessions, workspace=repository, execution_mode="worktree")
-        parent_root = Path(parent["worktree"]["worktreeRoot"])
-        (parent_root / "checkpoint.txt").write_text("checkpoint\n", encoding="utf-8")
-        _git(parent_root, "add", "checkpoint.txt")
-        _git(parent_root, "commit", "-qm", "checkpoint")
-        run, _ = store.create_run(str(parent["id"]), "fork", queued=True)
-        checkpoint = checkpoints.create(
-            CheckpointCreateRequestDto(runId=str(run["id"]))
-        ).checkpoint
-
-        result = checkpoints.fork(
-            CheckpointForkRequestDto(checkpointId=checkpoint.id)
-        )
-        fork_projection = store.typed_runtime_repository().read_session_projection(
-            result.run.session_id
-        )
-        assert fork_projection is not None and fork_projection.worktree is not None
-        assert fork_projection.worktree.branch is None
-        fork_root = Path(fork_projection.worktree.worktree_root)
-        assert _git(fork_root, "branch", "--show-current") == ""
-        assert _git(fork_root, "rev-parse", "HEAD") == checkpoint.git_head
     finally:
         store.close()
 

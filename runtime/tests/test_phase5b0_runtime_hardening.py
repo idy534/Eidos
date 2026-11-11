@@ -22,7 +22,6 @@ from eidos_runtime.model.pydantic_ai_client import ModelClientLease  # noqa: E40
 from eidos_runtime.protocol.server import RuntimeServer  # noqa: E402
 from eidos_runtime.runtime.supervisor import (  # noqa: E402
     RunSupervisor,
-    RuntimeControlState,
     RuntimeShutdownTimeout,
 )
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle  # noqa: E402
@@ -134,40 +133,6 @@ class SupervisorRaceTests(unittest.TestCase):
             thread.join(1)
 
         self.assertNotIn(run["id"], supervisor._handles)
-
-    def test_configure_and_prepare_next_are_mutually_exclusive(self) -> None:
-        self.store.enqueue_run(self.session["id"], "queued")
-        supervisor = self._supervisor()
-        self.assertTrue(supervisor.begin_reconfiguration())
-        started: list[object] = []
-
-        thread = threading.Thread(target=lambda: started.append(supervisor.prepare_next()))
-        thread.start()
-        thread.join(1)
-
-        self.assertEqual(started, [None])
-        self.assertEqual(supervisor.control_state, RuntimeControlState.RECONFIGURING)
-        supervisor.end_reconfiguration()
-        start = supervisor.prepare_next()
-        self.assertIsNotNone(start)
-        supervisor.abort(start)
-        supervisor.wait(1)
-
-    def test_worker_cannot_acquire_lease_during_factory_swap(self) -> None:
-        self.store.enqueue_run(self.session["id"], "queued")
-        acquired = threading.Event()
-        supervisor = self._supervisor(
-            lambda _model_id: (acquired.set(), ModelClientLease(object()))[1]
-        )
-
-        self.assertTrue(supervisor.begin_reconfiguration())
-        supervisor.schedule_next()
-        self.assertFalse(acquired.wait(0.05))
-        supervisor.end_reconfiguration()
-        supervisor.schedule_next()
-        self.assertTrue(acquired.wait(1))
-        supervisor.shutdown()
-
 
 class CommittedMutationOrderTests(unittest.TestCase):
     def setUp(self) -> None:

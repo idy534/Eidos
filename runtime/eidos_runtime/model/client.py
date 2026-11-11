@@ -49,7 +49,6 @@ class CustomToolDefinition(_FrozenModel):
     format: CustomToolFormat | None = None
 
 
-ModelToolDefinition = FunctionToolDefinition
 ModelToolDefinitionLike = Annotated[
     FunctionToolDefinition | CustomToolDefinition,
     Field(discriminator="kind"),

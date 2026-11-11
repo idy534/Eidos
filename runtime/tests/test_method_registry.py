@@ -32,6 +32,8 @@ from eidos_runtime.protocol.shell_environment import ShellEnvironmentResponse
 from eidos_runtime.protocol.web_search import WebSearchResponse
 from eidos_runtime.protocol.personalization import PersonalizationResponse
 from eidos_runtime.protocol.schemas import ProjectDto
+from eidos_runtime.domain.goal import GoalView
+from eidos_runtime.models.browser import BrowserExtensionTokenResponse
 
 
 class Params(RootModel[dict[str, object]]):
@@ -230,6 +232,8 @@ def test_production_method_registrations_do_not_use_generic_object_models(
         PersonalizationResponse,
         ProjectDto,
         method_dtos.SessionReadResponseDto,
+        GoalView,
+        BrowserExtensionTokenResponse,
     }
     assert all(
         not registration.response_type.__pydantic_root_model__
@@ -276,11 +280,9 @@ def test_method_responses_validate_nested_business_contracts() -> None:
         })
 
 
-def test_lifecycle_checkpoint_and_repository_responses_are_specific_models() -> None:
+def test_lifecycle_and_repository_responses_are_specific_models() -> None:
     assert {
         "run",
         "task",
         "resume_verification",
-    } <= set(method_dtos.RunStatusResponseDto.model_fields)
-    assert "checkpoint" in method_dtos.CheckpointCreateResponseDto.model_fields
-    assert "snapshots" in method_dtos.RepositoryStatusResponseDto.model_fields
+    } <= set(method_dtos.RunResumeResponseDto.model_fields)

@@ -168,12 +168,6 @@ def recover_goals(connection: sqlite3.Connection) -> None:
     connection.execute("UPDATE goal_runs SET candidate_json=NULL,candidate_item_id=NULL")
 
 
-def pause_goal_for_rewind(connection: sqlite3.Connection, session_id: str) -> None:
-    goal = _current(connection, session_id)
-    if goal is not None and goal.status == "active":
-        _save(connection, goal.model_copy(update={"status": "paused", "status_reason": "workspace_rewound"}))
-
-
 def pause_goal_for_plan(connection: sqlite3.Connection, session_id: str, run_id: str) -> None:
     goal = _current(connection, session_id)
     if goal is not None and goal.status == "active":

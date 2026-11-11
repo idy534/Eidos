@@ -80,12 +80,6 @@ class ApprovalApplication:
         self._validate_feedback(feedback)
         return self._submit(request_id, ApprovalDecision.REJECT, feedback)
 
-    def submit_feedback(
-        self, request_id: str, feedback: str
-    ) -> ApprovalActionResult:
-        self._validate_feedback(feedback)
-        return self._submit(request_id, ApprovalDecision.REJECT, feedback)
-
     def _submit(
         self,
         request_id: str,

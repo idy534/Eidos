@@ -25,10 +25,6 @@ def _bounded_message(value: str) -> str:
     return value
 
 
-AGENT_TOOLS = frozenset({
-    "spawn_agent", "send_message", "followup_task", "wait_agents", "list_agents", "stop_agent",
-    "read_agent_result", "read_agent_message",
-})
 ACTIVE_STATUSES = ("queued", "running", "waiting_approval", "waiting_input", "waiting_agents", "finalizing")
 
 

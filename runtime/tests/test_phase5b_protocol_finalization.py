@@ -264,20 +264,6 @@ class AsyncTitleTests(unittest.TestCase):
             for resource in self.server.supervisor.resources.active_resources()
         ))
 
-    def test_reconfiguration_rejects_active_managed_task(self) -> None:
-        entered = threading.Event()
-        release = threading.Event()
-
-        def block(_cancel: threading.Event) -> None:
-            entered.set()
-            release.wait(1)
-
-        self.assertTrue(self.server.supervisor.start_managed_task("title", block))
-        self.assertTrue(entered.wait(1))
-        self.assertFalse(self.server.supervisor.begin_reconfiguration())
-        release.set()
-        self.assertTrue(self.server.supervisor.wait_managed_tasks(1))
-
     def test_noncooperative_managed_task_keeps_truthful_shutdown_timeout(self) -> None:
         entered = threading.Event()
         release = threading.Event()

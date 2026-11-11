@@ -219,10 +219,6 @@ class SkillAccess:
             return record.result_data() if record is not None else None
 
 
-# Concise aliases for callers that use "activation" as the domain term.
-SkillActivation = SkillAccessRecord
-
-
 def _stronger_activation(
     current: SkillActivationKind | None,
     requested: SkillActivationKind,

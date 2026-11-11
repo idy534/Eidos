@@ -14,8 +14,6 @@ from eidos_runtime.domain.execution import (
     Item,
     ItemKind,
     ItemStatus,
-    ModelAttempt,
-    ModelAttemptStatus,
     Step,
     StepStatus,
 )
@@ -24,8 +22,6 @@ from eidos_runtime.domain.tool import (
     Approval,
     ApprovalKind,
     ApprovalStatus,
-    ToolCall,
-    ToolCallStatus,
 )
 from eidos_runtime.persistence.conversion import RowReader, RowValues
 from eidos_runtime.persistence.errors import PersistenceCorruptionError
@@ -118,37 +114,6 @@ def item_from_row(row: RowValues | Mapping[str, object]) -> Item:
     })
 
 
-def tool_call_from_row(row: RowValues | Mapping[str, object]) -> ToolCall:
-    values = _reader(row, "tool_call")
-    approval_status_value = values.optional_text("approval_status")
-    return _build("tool_call", ToolCall, {
-        "id": values.text("id"),
-        "item_id": values.text("item_id"),
-        "model_step_index": values.integer("model_step_index"),
-        "batch_order": values.integer("batch_order"),
-        "provider_call_id": values.text("provider_call_id"),
-        "tool_name": values.text("tool_name"),
-        "status": _enum(ToolCallStatus, values.text("status"), record="tool_call", field="status"),
-        "payload_kind": values.text("payload_kind"),
-        "arguments_json": values.json_text("arguments_json"),
-        "result_json": values.optional_json_text("result_json"),
-        "model_result_json": values.optional_json_text("model_result_json"),
-        "approval_status": (
-            _enum(ApprovalStatus, approval_status_value, record="tool_call", field="approval_status")
-            if approval_status_value is not None else None
-        ),
-        "approval_decision": values.optional_text("approval_decision"),
-        "approval_feedback": values.optional_text("approval_feedback"),
-        "approval_diff": values.optional_text("approval_diff"),
-        "base_sha256": values.optional_text("base_sha256"),
-        "provenance_json": values.optional_json_text("provenance_json"),
-        "tool_set_hash": values.optional_text("tool_set_hash"),
-        "started_at": values.integer("started_at"),
-        "duration_ms": values.optional_integer("duration_ms"),
-        "completed_at": values.optional_integer("completed_at"),
-    })
-
-
 def approval_from_row(row: RowValues | Mapping[str, object]) -> Approval:
     values = _reader(row, "approval")
     return _build("approval", Approval, {
@@ -166,43 +131,4 @@ def approval_from_row(row: RowValues | Mapping[str, object]) -> Approval:
         "feedback": values.optional_text("feedback"),
         "created_at": values.integer("created_at"),
         "decided_at": values.optional_integer("decided_at"),
-    })
-
-
-def model_attempt_from_row(
-    row: RowValues | Mapping[str, object],
-) -> ModelAttempt:
-    values = _reader(row, "model_attempt")
-    return _build("model_attempt", ModelAttempt, {
-        "id": values.text("id"),
-        "step_id": values.text("step_id"),
-        "ordinal": values.integer("ordinal"),
-        "status": _enum(ModelAttemptStatus, values.text("status"), record="model_attempt", field="status"),
-        "provider_name": values.optional_text("provider_name"),
-        "configured_provider_id": values.optional_text("configured_provider_id"),
-        "resolved_model_name": values.optional_text("resolved_model_name"),
-        "finish_reason": values.optional_text("finish_reason"),
-        "provider_response_id": values.optional_text("provider_response_id"),
-        "lease_id": values.optional_text("lease_id"),
-        "wire_api": values.optional_text("wire_api"),
-        "model_id": values.optional_text("model_id"),
-        "request_timeout": values.optional_real("request_timeout"),
-        "context_snapshot_id": values.optional_text("context_snapshot_id"),
-        "retry_decision_json": values.optional_json_text("retry_decision_json"),
-        "usage_json": values.optional_json_text("usage_json"),
-        "error_code": values.optional_text("error_code"),
-        "http_status": values.optional_integer("http_status"),
-        "ttft_ms": values.optional_integer("ttft_ms"),
-        "duration_ms": values.optional_integer("duration_ms"),
-        "had_progress": values.boolean("had_progress"),
-        "response_state": values.optional_text("response_state"),
-        "phase": values.optional_text("phase"),
-        "tool_call_count": values.integer("tool_call_count"),
-        "response_text_sha256": values.optional_text("response_text_sha256"),
-        "response_text_bytes": values.integer("response_text_bytes"),
-        "protocol_diagnostics_json": values.optional_json_text(
-            "protocol_diagnostics_json"
-        ),
-        "started_at": values.integer("started_at"),
-        "completed_at": values.optional_integer("completed_at"),
     })

@@ -85,7 +85,6 @@
   white-space: nowrap;
 }
 
-.turn-result-card__stats,
 .turn-result__stats {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
@@ -317,10 +316,7 @@
 
 .turn-result-card__more:hover:not(:disabled) { background: var(--surface-hover); }
 .artifact-result-card--compact { background: transparent; }
-
-.turn-result-card__title-link { min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
-.turn-result-card__main strong,
-.turn-result-card__title-link strong { display: block; }
+.turn-result-card__main strong { display: block; }
 
 .turn-results__artifacts {
   display: grid;

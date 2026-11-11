@@ -11,7 +11,7 @@ import pytest
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
-from eidos_runtime.runtime.loop import RuntimeLoop
+from eidos_runtime.runtime.engine import RuntimeEngine
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.runtime.shell_process_manager import ShellProcessManager
 from eidos_runtime.sandbox.shell import ShellLaunchSpec
@@ -161,7 +161,7 @@ def test_run_keeps_a_background_service_until_it_finishes(tmp_path):
         model = ServiceModel([ModelResponse(tool_calls=(ModelToolCall(
             "service", "run_shell", {"command": command, "yieldTimeMs": 10_000},
         ),))])
-        RuntimeLoop(store, model, lambda _: None).run(run["id"], threading.Event())
+        RuntimeEngine(store, model, lambda _: None).run(run["id"], threading.Event())
         running = observed["running"]
         assert running["data"]["executionStatus"] == "running", running
         assert running["data"]["backgroundProcesses"] is True
@@ -196,7 +196,7 @@ def test_run_end_still_marks_an_interrupted_foreground_command_uncertain(tmp_pat
             ModelResponse(tool_calls=(ModelToolCall("long", "run_shell", {"command": "sleep 30", "yieldTimeMs": 250}),)),
             ModelResponse(text="Stopped waiting"),
         ])
-        RuntimeLoop(store, model, lambda _: None).run(run["id"], threading.Event())
+        RuntimeEngine(store, model, lambda _: None).run(run["id"], threading.Event())
         row = store.connection.execute(
             "SELECT result_json FROM tool_calls WHERE provider_call_id='long'",
         ).fetchone()

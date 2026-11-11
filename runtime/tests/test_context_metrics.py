@@ -76,7 +76,7 @@ def test_current_total_and_sections_share_provider_usage_and_frozen_reduced_wind
         run, _ = store.create_run(session["id"], "检查上下文", model_profile=profile)
         runtime = RuntimeEngine(store, ScriptedModel([ModelResponse(text="完成", usage=ModelUsage(input_tokens=181_376, output_tokens=2018))]), lambda _: None)
         runtime.run(run["id"], threading.Event())
-        reference = store.read_latest_context_budget(run["id"])[1]
+        reference = store.context_snapshot_repository().read_latest_budget_for_run(run["id"])[1]
         def reject_blob(*_args, **_kwargs):
             raise AssertionError("metrics must not read request bodies")
         monkeypatch.setattr(store.database.json_blobs, "read", reject_blob)

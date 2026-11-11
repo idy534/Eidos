@@ -571,32 +571,6 @@
   color: var(--text);
 }
 
-.plugin-hook-matcher-tag {
-  font-family: var(--font-code);
-  font-size: 0.71875rem;
-  padding: 0.1rem 0.35rem;
-  border-radius: var(--radius-xs);
-  background: rgba(0, 0, 0, 0.04);
-  color: var(--muted);
-}
-
-.plugin-hook-handler-tag {
-  font-size: 0.71875rem;
-  padding: 0.1rem 0.45rem;
-  border-radius: var(--radius-pill);
-  background: var(--surface-muted);
-  color: var(--muted);
-}
-
-.plugin-hook-bg-tag {
-  font-size: 0.6875rem;
-  font-weight: 500;
-  padding: 0.08rem 0.4rem;
-  border-radius: var(--radius-pill);
-  background: var(--status-info-bg);
-  color: var(--status-info);
-}
-
 .plugin-hook-body {
   padding: 0 1rem 0.85rem;
 }

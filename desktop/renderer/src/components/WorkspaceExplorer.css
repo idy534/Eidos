@@ -162,15 +162,12 @@
 .workspace-tree-loading { margin-left: auto; color: var(--muted); }
 
 .workspace-tree-note,
-.workspace-explorer-error,
 .workspace-empty-state {
   margin: 0;
   padding: 0.45rem 0.9rem;
   color: var(--muted);
   font-size: var(--font-size-caption);
 }
-
-.workspace-explorer-error { color: var(--danger); }
 
 .workspace-preview-pane {
   min-width: 0;

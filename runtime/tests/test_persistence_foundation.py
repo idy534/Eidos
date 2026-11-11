@@ -4,7 +4,6 @@ import ast
 from datetime import UTC, datetime
 from pathlib import Path
 import sqlite3
-import threading
 
 import pytest
 from pydantic import ValidationError
@@ -19,12 +18,9 @@ from eidos_runtime.persistence.conversion import (
     ReadTransaction,
     RowReader,
     WriteTransaction,
-    decode_json_object,
-    read_transaction,
     sqlite_safe_integer,
     utc_datetime_from_millis,
     utc_datetime_to_millis,
-    write_transaction,
 )
 from eidos_runtime.persistence.errors import PersistenceCorruptionError
 from eidos_runtime.persistence.mappers.session import session_from_row
@@ -69,7 +65,7 @@ def test_session_domain_records_are_strict_frozen_and_preserve_nullable_title(
         })
 
 
-def test_row_reader_and_json_decoder_fail_closed_with_stable_diagnostics() -> None:
+def test_row_reader_fails_closed_with_stable_diagnostics() -> None:
     reader = RowReader(
         {
             "name": "session",
@@ -83,9 +79,6 @@ def test_row_reader_and_json_decoder_fail_closed_with_stable_diagnostics() -> No
     assert reader.text("name") == "session"
     assert reader.optional_text("optional") is None
     assert reader.integer("count") == 4
-    assert decode_json_object(
-        reader.value("payload"), record="session", field="payload"
-    ) == {"items": [1, True, None]}
 
     for column, code in (
         ("missing", "persistence_column_missing"),
@@ -97,12 +90,6 @@ def test_row_reader_and_json_decoder_fail_closed_with_stable_diagnostics() -> No
         assert captured.value.record == "session"
         assert captured.value.field == column
         assert str(captured.value) == code
-
-    with pytest.raises(PersistenceCorruptionError) as captured:
-        decode_json_object("{", record="session", field="payload")
-    assert captured.value.code == "persistence_json_invalid"
-    assert captured.value.record == "session"
-    assert captured.value.field == "payload"
 
 
 def test_sqlite_integer_and_utc_millisecond_conversion_are_exact() -> None:
@@ -132,37 +119,6 @@ def test_transaction_protocols_accept_sqlite_connections() -> None:
         assert isinstance(connection, ReadTransaction)
         assert isinstance(connection, WriteTransaction)
     finally:
-        connection.close()
-
-
-def test_read_and_write_transaction_helpers_preserve_commit_and_rollback(
-    tmp_path: Path,
-) -> None:
-    database_path = tmp_path / "transactions.db"
-    connection = sqlite3.connect(database_path)
-    observer = sqlite3.connect(database_path)
-    lock = threading.RLock()
-    try:
-        connection.execute("CREATE TABLE facts (value TEXT NOT NULL)")
-        connection.commit()
-
-        connection.execute("INSERT INTO facts VALUES ('uncommitted')")
-        with read_transaction(lock, connection) as transaction:
-            assert transaction.execute("SELECT COUNT(*) FROM facts").fetchone()[0] == 1
-        assert observer.execute("SELECT COUNT(*) FROM facts").fetchone()[0] == 0
-        connection.rollback()
-
-        with write_transaction(lock, connection) as transaction:
-            transaction.execute("INSERT INTO facts VALUES ('committed')")
-        assert observer.execute("SELECT COUNT(*) FROM facts").fetchone()[0] == 1
-
-        with pytest.raises(RuntimeError, match="rollback"):
-            with write_transaction(lock, connection) as transaction:
-                transaction.execute("INSERT INTO facts VALUES ('rolled-back')")
-                raise RuntimeError("rollback")
-        assert observer.execute("SELECT COUNT(*) FROM facts").fetchone()[0] == 1
-    finally:
-        observer.close()
         connection.close()
 
 

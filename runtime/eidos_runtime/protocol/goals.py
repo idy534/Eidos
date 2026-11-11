@@ -36,8 +36,26 @@ class GoalRequest(_OperationRequest):
         return self
 
 
+class GoalGetRequest(GoalRequest):
+    """`goal/get` only reads."""
+    action: Literal["get"]
+
+
+class GoalUpdateRequest(GoalRequest):
+    """`goal/update` pauses or resumes."""
+    action: Literal["pause", "resume"]
+
+
+class GoalClearRequest(GoalRequest):
+    """`goal/clear` only clears."""
+    action: Literal["clear"]
+
+
 class GoalChangedNotice(EidosFrozenStrictModel):
     session_id: str = Field(min_length=36, max_length=36)
 
 
-__all__ = ["GoalRequest", "GoalView", "GoalChangedNotice"]
+__all__ = [
+    "GoalRequest", "GoalGetRequest", "GoalUpdateRequest", "GoalClearRequest",
+    "GoalView", "GoalChangedNotice",
+]

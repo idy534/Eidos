@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import type { GoalActivity, GoalRunOrigin } from "../../../../shared/goals.js";
 import { GoalBlockedIcon, GoalCheckIcon, GoalClearIcon, GoalLoopIcon, GoalPausedIcon, GoalPlayIcon } from "./GoalIcons.js";
-import "./goals.css";
 
 /** Quiet line before an automatic goal Run. The user's own Runs need no marker. */
 export function GoalRunMarker({ origin }: { origin: GoalRunOrigin | undefined }) {

@@ -5,6 +5,8 @@ import sqlite3
 import pytest
 from pathlib import Path
 
+from schema_fixtures import remove_goal_schema
+
 
 @pytest.fixture(autouse=True)
 def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -14,8 +16,10 @@ def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 @pytest.fixture
 def downgrade_project_workspaces_schema():
-    """Remove v45, v47 and v48 additions before fixtures rebuild a legacy database."""
+    """Remove v45, v47, v48 and v51 additions before fixtures rebuild a legacy database."""
     def downgrade(connection: sqlite3.Connection) -> None:
+        # Goal triggers refer to memory tables that older fixtures drop next.
+        remove_goal_schema(connection)
         connection.execute("DROP TABLE IF EXISTS session_browser_grants")
         connection.execute("DROP TABLE IF EXISTS browser_settings")
         connection.execute("DROP TABLE IF EXISTS project_roots")
@@ -246,8 +250,6 @@ INTEGRATION_FILES = frozenset(
         "test_application_boundary.py",
         "test_application_protocol_routing.py",
         "test_approval_application.py",
-        "test_checkpoint_lineage.py",
-        "test_checkpoint_managed_worktree.py",
         "test_collaboration.py",
         "test_custom_agents.py",
         "test_corrective_integration.py",
@@ -309,10 +311,8 @@ INTEGRATION_FILES = frozenset(
         "test_session_managed_worktree.py",
         "test_session_run_application.py",
         "test_shell.py",
-        "test_storage_compatibility.py",
         "test_storage_schema.py",
         "test_sidebar_pins.py",
-        "test_tool_execution.py",
         "test_tool_orchestrator.py",
         "test_worktree_lifecycle.py",
     }
@@ -320,7 +320,6 @@ INTEGRATION_FILES = frozenset(
 
 PLATFORM_FILES = frozenset(
     {
-        "test_checkpoint_managed_worktree.py",
         "test_git_backend.py",
         "test_git_observation_integrity.py",
         "test_git_process_hardening.py",
@@ -345,7 +344,6 @@ PLATFORM_FILES = frozenset(
 SLOW_FILES = frozenset(
     {
         "test_async_kernel.py",
-        "test_checkpoint_managed_worktree.py",
         "test_event_delivery_recovery.py",
         "test_git_backend.py",
         "test_git_typed_backend_closure.py",

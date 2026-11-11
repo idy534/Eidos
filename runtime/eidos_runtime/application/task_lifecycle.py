@@ -10,7 +10,6 @@ from eidos_runtime.domain.long_task import LongTaskProgress
 
 
 class LifecycleAction(StrEnum):
-    PAUSE = "pause"
     RESUME = "resume"
     CANCEL = "cancel"
 
@@ -25,8 +24,6 @@ class LifecycleResult(ApplicationResult):
 @runtime_checkable
 class RuntimeLifecyclePort(Protocol):
     """Runtime-owned lifecycle commands used by the application boundary."""
-
-    def pause_run(self, run_id: str) -> LifecycleResult: ...
 
     def resume_run(self, run_id: str) -> LifecycleResult: ...
 
@@ -52,8 +49,6 @@ class TaskLifecycleApplication:
     ) -> LifecycleResult:
         if not run_id:
             raise ApplicationError("INVALID_STATE", "run_id is required")
-        if action is LifecycleAction.PAUSE:
-            return self._runtime.pause_run(run_id)
         if action is LifecycleAction.RESUME:
             return self._runtime.resume_run(run_id)
         if action is LifecycleAction.CANCEL:

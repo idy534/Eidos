@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+from typing import ClassVar
 import unittest
 from unittest.mock import patch
 
@@ -32,12 +33,8 @@ from eidos_runtime.runtime.tool_execution import (  # noqa: E402
     ToolInfrastructureError,
 )
 from eidos_runtime.sandbox.sensitive import default_scanner  # noqa: E402
-from eidos_runtime.tools.contracts import (  # noqa: E402
-    EmptyResultData,
-    ListFilesInput,
-    project_tool_result,
-    result_model,
-)
+from eidos_runtime.tools.contracts import ListFilesInput, StrictToolModel, result_model  # noqa: E402
+from tool_projection import project_tool_result  # noqa: E402
 from eidos_runtime.tools.registry import (  # noqa: E402
     StepToolBinding,
     ToolArgumentValidationResult,
@@ -45,6 +42,12 @@ from eidos_runtime.tools.registry import (  # noqa: E402
     ToolRegistryEntry,
     ToolSpec,
 )
+
+
+class EmptyResultData(StrictToolModel):
+    """A result with no required data, for the state-machine fixture tool."""
+
+    SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = ()
 
 
 _SUCCESS = {

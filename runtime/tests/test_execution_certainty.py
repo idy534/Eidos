@@ -11,7 +11,7 @@ from eidos_runtime.runtime.shell_process_manager import ShellProcessManager
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
 from eidos_runtime.runtime.engine import RuntimeEngine
-from eidos_runtime.workspace.reader import WorkspacePathError, WorkspaceReader, capture_workspace_identity
+from eidos_runtime.workspace.reader import capture_workspace_identity
 
 
 def test_full_access_accepts_verified_external_cwd(tmp_path: Path) -> None:
@@ -69,41 +69,3 @@ def test_full_access_shell_external_cwd_can_finish_run(tmp_path: Path) -> None:
         assert len(model.contexts) == 2
     finally:
         store.close()
-
-
-def test_recovery_reads_only_targets_and_accepts_verified_absence(tmp_path: Path) -> None:
-    (tmp_path / "target.txt").write_text("current contents")
-    (tmp_path / "unrelated").mkdir()
-    (tmp_path / "unrelated" / "unsafe-link").symlink_to("/etc")
-    with WorkspaceReader(tmp_path) as reader:
-        observations = reader.observe_files(frozenset({"target.txt", "missing/target.txt"}), cancel=threading.Event())
-    assert {item.path for item in observations} == {"target.txt", "missing/target.txt"}
-    assert next(item for item in observations if item.path == "target.txt").sha256 is not None
-    assert next(item for item in observations if item.path == "missing/target.txt").version is None
-
-
-def test_recovery_keeps_target_symlinks_and_hardlinks_closed(tmp_path: Path) -> None:
-    (tmp_path / "regular.txt").write_text("content")
-    (tmp_path / "link.txt").symlink_to("regular.txt")
-    with WorkspaceReader(tmp_path) as reader:
-        with pytest.raises(WorkspacePathError):
-            reader.observe_files(frozenset({"link.txt"}), cancel=threading.Event())
-    (tmp_path / "hard.txt").hardlink_to(tmp_path / "regular.txt")
-    with WorkspaceReader(tmp_path) as reader:
-        with pytest.raises(WorkspacePathError, match="unsupported_file_hardlink"):
-            reader.observe_files(frozenset({"hard.txt"}), cancel=threading.Event())
-
-
-def test_recovery_detects_a_target_changing_after_observation(tmp_path: Path) -> None:
-    target = tmp_path / "target.txt"
-    target.write_text("before")
-    with WorkspaceReader(tmp_path) as reader:
-        original_stat = reader.stat_file
-
-        def changed(path, **kwargs):
-            target.write_text("after")
-            return original_stat(path, **kwargs)
-
-        with patch.object(reader, "stat_file", side_effect=changed):
-            with pytest.raises(WorkspacePathError, match="workspace_changed"):
-                reader.observe_files(frozenset({"target.txt"}), cancel=threading.Event())

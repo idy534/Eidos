@@ -10,6 +10,23 @@ import {
 const EMPTY: InputDraft = { text: "", references: [] };
 const storageKey = (id: string): string => id.startsWith("draft-") ? "new-conversation" : id;
 
+function isSameReferenceTarget(existing: InputReference, incoming: InputReference): boolean {
+  if (existing.id === incoming.id) return true;
+  if (
+    existing.source === "clipboard:image"
+    || incoming.source === "clipboard:image"
+    || existing.kind === "excerpt"
+    || incoming.kind === "excerpt"
+  ) {
+    return false;
+  }
+  return (
+    existing.kind === incoming.kind
+    && existing.source === incoming.source
+    && existing.label === incoming.label
+  );
+}
+
 /** Serializes writes per draft. A late hydration cannot replace local edits. */
 export function useInputDrafts(sessionId: string | undefined, storageReady: boolean) {
   const [drafts, setDrafts] = useState<Record<string, InputDraft>>({});
@@ -68,7 +85,7 @@ export function useInputDrafts(sessionId: string | undefined, storageReady: bool
 
   const add = useCallback((id: string, reference: InputReference) => update(id, (draft) => ({
     ...draft,
-    references: [...draft.references.filter((value) => value.id !== reference.id && !(value.kind === reference.kind && value.source === reference.source && value.label === reference.label)), reference],
+    references: [...draft.references.filter((value) => !isSameReferenceTarget(value, reference)), reference],
   })), [update]);
 
   const insert = useCallback((
@@ -82,15 +99,7 @@ export function useInputDrafts(sessionId: string | undefined, storageReady: bool
     }
     let caretOffset: number | undefined;
     update(id, (draft) => {
-      const duplicate = draft.references.find(
-        (value) =>
-          value.id === reference.id
-          || (
-            value.kind === reference.kind
-            && value.source === reference.source
-            && value.label === reference.label
-          ),
-      );
+      const duplicate = draft.references.find((value) => isSameReferenceTarget(value, reference));
       const nextReferences = [
         ...draft.references.filter((value) => value !== duplicate && value.id !== reference.id),
         reference,

@@ -617,8 +617,6 @@ span.tool-file-link:hover {
 .shell-error-summary { margin: 0; font-size: var(--font-size-body); line-height: var(--line-height-body); }
 .shell-error-code { color: var(--danger); font-weight: 600; }
 .shell-error-summary { color: var(--text-secondary); }
-.shell-diagnostic--facts { display: flex; flex-wrap: wrap; gap: 0.2rem 0.75rem; margin: 0 0 0.65rem; font-size: var(--font-size-body); line-height: var(--line-height-body); }
-.shell-diagnostic--facts > span { white-space: nowrap; }
 .shell-diagnostic--warning { color: var(--status-warning); }
 .shell-empty { margin: 0; font-size: var(--font-size-body); line-height: var(--line-height-body); }
 .shell-status {

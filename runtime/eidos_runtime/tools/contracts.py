@@ -252,21 +252,6 @@ class SearchTextWaitInput(StrictToolModel):
     )
 
 
-class WriteFileInput(ReadFileInput):
-    path: StrictStr = Field(description="Workspace-relative UTF-8 file path.")
-    content: StrictStr = Field(description="Complete replacement UTF-8 content.")
-
-    @field_validator("path")
-    @classmethod
-    def validate_workspace_path(cls, value: str) -> str:
-        return _relative_path(value)
-
-    @field_validator("content")
-    @classmethod
-    def validate_content(cls, value: str) -> str:
-        return _utf8_limit(value, 256 * 1024, "content_too_large")
-
-
 class ApplyPatchInput(StrictToolModel):
     patch: StrictStr = Field(
         min_length=1,
@@ -280,15 +265,6 @@ class ApplyPatchInput(StrictToolModel):
     @classmethod
     def validate_patch_bytes(cls, value: str) -> str:
         return _utf8_limit(value, MAX_PATCH_BYTES, "patch_too_large")
-
-
-class DeleteFileInput(ReadFileInput):
-    path: StrictStr = Field(description="Workspace-relative UTF-8 file path.")
-
-    @field_validator("path")
-    @classmethod
-    def validate_workspace_path(cls, value: str) -> str:
-        return _relative_path(value)
 
 
 class NetworkAccess(StrEnum):
@@ -746,10 +722,6 @@ class ToolSearchHit(StrictToolModel):
     description: StrictStr
     provenance: dict[str, object]
     score: StrictInt = Field(ge=0)
-
-
-class EmptyResultData(StrictToolModel):
-    SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = ()
 
 
 class ListFilesResultData(StrictToolModel):
@@ -1247,34 +1219,6 @@ _SHELL_RAW_FACT_FIELDS = frozenset(_SHELL_MODEL_FACT_FIELDS - {
     "modelProjectionTruncated", "modelProjectionContinuation",
     "modelProjectionOmittedBytes",
 })
-
-
-def project_tool_result(
-    tool_name: str, canonical_result: dict[str, object]
-) -> ToolResultProjection:
-    policy_id = {
-        "list_files": "list_files",
-        "read_file": "read_file",
-        "read_file_range": "read_file_range",
-        "search_text": "search_text",
-        "search_text_wait": "search_text",
-        "write_file": "file_change",
-        "apply_patch": "file_change",
-        "delete_file": "file_change",
-        "run_shell": "run_shell",
-        "write_stdin": "run_shell",
-        "control_shell": "run_shell",
-        "skill_read": "skill_read",
-        "skill_read_resource": "skill_resource",
-        "skill_create": "skill_change",
-        "skill_install": "skill_change",
-        "tool_search": "tool_search",
-        "view_image": "view_image",
-    }.get(tool_name, "mcp" if tool_name.startswith("mcp__") else "generic")
-    projector = PROJECTORS[policy_id]
-    return _project_tool_result(
-        tool_name, canonical_result, set_fields=set(projector.set_fields)
-    )
 
 
 def _project_tool_result(

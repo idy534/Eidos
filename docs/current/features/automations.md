@@ -8,7 +8,7 @@ Eidos 的定时任务在本机运行。SQLite 是计划、触发和执行来源�
 
 左侧常驻“即将执行”和“已完成与暂停”两个分组。前者展示启用中的周期任务，以及尚未执行的一次性任务。后者展示暂停任务，以及已经触发的一次性任务。系统依据保存的 status 和 one_shot_fired 来源分组，不依据日期猜测执行结果。“已结束”表示一次性计划不再触发，具体执行结果仍以 Run 历史为准。搜索同时作用于两个分组，分页继续加载同一任务列表。用户暂停、恢复或收到任务变化通知后，列表会重新分组，并保留当前详情。已经删除的计划继续遵循现有隐藏规则。
 
-模型只使用一个 deferred 工具 automation。模型先通过 tool_search 激活，下一 Step 再取得完整定义。mode 支持 view / create / update / delete / preview。view 有 ID 时读详情，无 ID 时分页查找。模型不能通过描述或配置文件代替保存操作。
+模型只使用一个 automation 工具，它和其他工具一样从首轮直接提供。mode 支持 view / create / update / delete / preview。view 有 ID 时读详情，无 ID 时分页查找。模型不能通过描述或配置文件代替保存操作。
 
 创建时提供 sessionId，任务复用已有普通 Session。不提供时，任务每次触发新建 Session。projectId 字符串指定项目，null 明确无项目，省略则继承创建对话的项目。已有 Session 的项目从该 Session 解析，额外 projectId 必须一致。新会话支持 Local 或 Git Worktree，无项目任务使用独立私有 Workspace。工作树不默认带入未提交修改或联网 fetch。
 

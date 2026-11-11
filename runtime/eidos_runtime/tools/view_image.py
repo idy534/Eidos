@@ -84,10 +84,6 @@ class ViewImageRootAuthority:
     def roots(self) -> tuple[Path, ...]:
         return tuple(dict.fromkeys((self.workspace_root, *(root.path for root in self.workspace_identities), *self.active_skill_roots)))
 
-# These aliases make the authority seam discoverable to callers that describe
-# the same object as image roots rather than a view-image authority.
-ImageRootAuthority = ViewImageRootAuthority
-ViewImageRoots = ViewImageRootAuthority
 ViewImageAuthorityProvider: TypeAlias = Callable[[], ViewImageRootAuthority]
 ViewImageAuthority: TypeAlias = ViewImageRootAuthority | ViewImageAuthorityProvider
 
@@ -192,17 +188,6 @@ def view_image_entry(
         adapter=ViewImageTool(authority),
         input_model=ViewImageInput,
         result_data_model=ViewImageResultData,
-    )
-
-
-def build_view_image_entry(
-    *,
-    supports_images: bool,
-    authority: ViewImageAuthority,
-) -> ToolRegistryEntry | None:
-    return view_image_entry(
-        supports_images=supports_images,
-        authority=authority,
     )
 
 

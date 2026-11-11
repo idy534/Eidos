@@ -725,8 +725,6 @@ export function SkillIcon({
   );
 }
 
-export const SparklesIcon = SkillIcon;
-
 export function MemoryIcon({
   width = 14,
   height = 14,

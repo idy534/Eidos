@@ -290,26 +290,6 @@ class RuntimeDependencyBinding(EidosFrozenStrictModel):
         default=(), max_length=MAX_MANIFEST_ROOTS
     )
 
-    @property
-    def binding_hash(self) -> str:
-        return self.binding_id
-
-    @property
-    def resolved_executables(self) -> tuple[RuntimeDependencyExecutablePath, ...]:
-        return self.executables
-
-    @property
-    def resolved_python_package_roots(
-        self,
-    ) -> tuple[RuntimeDependencyPackageRoot, ...]:
-        return self.python_package_roots
-
-    @property
-    def resolved_node_package_roots(
-        self,
-    ) -> tuple[RuntimeDependencyPackageRoot, ...]:
-        return self.node_package_roots
-
 
 __all__ = [
     "RuntimeDependencyDiagnostic",

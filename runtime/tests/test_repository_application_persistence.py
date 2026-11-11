@@ -48,13 +48,9 @@ def test_repository_application_persists_complete_build_and_restores_it_on_start
         assert built.repository_map is not None
         assert built.persisted_snapshot is not None
         assert built.persisted_snapshot.repository_map == built.repository_map
-        assert application.initialize_recovery().complete is True
-        assert application.initialize_recovery().reconciliation_required is False
         assert application.restore_latest_complete() == built.persisted_snapshot
 
         source.write_text("def main() -> str:\n    return 'changed'\n", encoding="utf-8")
-
-        assert application.initialize_recovery().reconciliation_required is True
 
         restarted = RepositoryApplication(root, repository=repository)
         rebuilt = restarted.build()

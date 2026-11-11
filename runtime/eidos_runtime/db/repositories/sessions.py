@@ -51,7 +51,6 @@ from eidos_runtime.runtime.state_machine import EventType
 from eidos_runtime.workspace.projectless import projectless_root
 
 DEFAULT_LIST_LIMIT = 50
-MAX_LIST_LIMIT = 200
 SESSION_CURSOR_PREFIX = "session-v2:"
 MAX_SNAPSHOT_BYTES = 768 * 1024
 

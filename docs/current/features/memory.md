@@ -159,7 +159,7 @@ Python 严格 DTO 生成 Desktop 类型与 JSON Schema。两端共同验证 `pro
 - `uv run --locked pytest runtime/tests/test_memory_management_target.py runtime/tests/test_memory.py runtime/tests/test_memory_flow.py runtime/tests/test_memory_runtime.py -q`：72 项通过。测试覆盖无 Session 项目、已有范围复用、项目隔离、全局共享、重启、CAS、归档恢复、失效目标、旧操作重放及原有撤销/恢复路径。
 - `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/MemorySettings.behavior.test.tsx desktop/renderer/src/app/AppShell.behavior.test.tsx`：54 项通过。补充键盘焦点断言后，记忆页 22 项再次通过。测试覆盖 Session/草稿独立、位置记忆、目标切换、草稿保护、迟到响应和失败重试。
 - `pnpm build` 和构建后的 `node --test dist/main/memory-contract.test.js dist/main/memory-export.test.js dist/main/runtime-client-memory.test.js`：构建和 8 项测试通过。Main 测试包含真实 stdio 的无 Session 项目管理与重启，以及原有两种模式的记忆审批。
-- `pnpm test:contracts`：4 项测试及两端结构检查通过。`pnpm exec electron scripts/test-memory-settings.cjs`：隔离页面的 320、768、1024、1440px 顶部控件、范围切换、读取失败重试和控制台检查通过；开发者已检查 320 与 1440px 截图。
+- `pnpm test:contracts`：4 项测试及两端结构检查通过。
 - Ruff、生产代码 Deptry、两组 Python 依赖审计、`pnpm test:electron-smoke` 和 `git diff --check` 通过。Node 生产依赖审计退出 0，仍报告 2 项 low 和 2 项 moderate。
 
 独立 Agent 只读审查未发现已确认问题。本次没有运行 Full Suite、真实 Provider 质量评测、日常数据人工验收或安装包验证。所有运行验证使用临时数据。回退时可以还原本次源码并重新构建；本次没有数据迁移，已有记忆仍由原有范围保存。

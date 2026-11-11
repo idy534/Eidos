@@ -403,26 +403,6 @@ class RunSupervisor:
         self.store.read_run(run_id)
         return self.store.long_task_progress(run_id)
 
-    def pause_run(self, run_id: str) -> LongTaskProgress:
-        self.store.read_run(run_id)
-        repository = self.store.long_task_repository()
-        current = repository.read(run_id)
-        if current is None:
-            current = self._initialize_long_task(run_id)
-        requested = repository.request_pause(run_id)
-        deadline = time.monotonic() + self.cancel_timeout
-        while requested.status is LongTaskStatus.PAUSE_REQUESTED:
-            with self.lock:
-                handle = self._handles.get(run_id)
-            if handle is None:
-                requested = repository.mark_paused(run_id, requested.safe_point)
-                break
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(0.02)
-            requested = repository.read(run_id) or requested
-        return requested
-
     def resume_run(self, run_id: str) -> LongTaskProgress:
         repository = self.store.long_task_repository()
         current = repository.request_resume(run_id)
@@ -812,34 +792,6 @@ class RunSupervisor:
             if include_services or not task.persistent:
                 task.async_task_handle.wait(max(0.0, deadline - time.monotonic()))
         return not self.has_active_managed_tasks(include_services=include_services)
-
-    def begin_reconfiguration(self) -> bool:
-        hit_fault("configure_worker_race")
-        with self.lock:
-            if (
-                self.lifecycle is not RuntimeLifecycle.RUNNING
-                or self.control_state is not RuntimeControlState.RUNNING
-                or any(
-                    handle.state is not RunWorkerState.FINISHED
-                    or (
-                        handle.model_lease is not None and not handle.model_lease.closed
-                    )
-                    for handle in self._handles.values()
-                )
-                or any(
-                    not task.async_task_handle.done()
-                    for task in self._managed_tasks.values()
-                    if not task.persistent
-                )
-            ):
-                return False
-            self.control_state = RuntimeControlState.RECONFIGURING
-            return True
-
-    def end_reconfiguration(self) -> None:
-        with self.lock:
-            if self.control_state is RuntimeControlState.RECONFIGURING:
-                self.control_state = RuntimeControlState.RUNNING
 
     def _shutdown_diagnostics(
         self,

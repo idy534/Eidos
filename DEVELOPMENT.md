@@ -43,7 +43,7 @@ EIDOS_DATA_DIR=/private/tmp/eidos-dev-data EIDOS_PROJECTLESS_ROOT=/private/tmp/e
 | 命令 | 用途 |
 | --- | --- |
 | `pnpm check:python` | 执行 Python 静态检查与依赖检查、审计。 |
-| `pnpm test:contracts` | 检查 Python / TypeScript 协议契约。 |
+| `pnpm test:contracts` | 检查 Python / TypeScript 协议契约，并确认生成的 TypeScript 契约与 Python DTO 一致。 |
 | `pnpm build` | 构建 Desktop，并执行对应类型检查。 |
 | `git diff --check` | 检查 Diff 中的空白错误。 |
 

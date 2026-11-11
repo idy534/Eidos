@@ -1,11 +1,6 @@
 from __future__ import annotations
 
-from eidos_runtime.context.facts import CompactSummary, ContextFacts
 from eidos_runtime.context.plan import ContextPlan, ContextPlanner, ContextSnapshot
-from eidos_runtime.context.verified_compaction import (
-    ContextCompactionVerifier,
-    VerifiedCompactSummary,
-)
 from eidos_runtime.model.client import ModelProfileSnapshot
 from eidos_runtime.model.client import ModelContextItem, ModelToolDefinitionLike
 from eidos_runtime.context.budget import ContextBudget
@@ -19,18 +14,16 @@ from eidos_runtime.application.errors import ApplicationError
 
 
 class ContextApplication:
-    """Coordinates immutable context planning and compaction verification."""
+    """Coordinates immutable context planning and snapshot persistence."""
 
     def __init__(
         self,
         *,
         planner: ContextPlanner | None = None,
-        compaction_verifier: ContextCompactionVerifier | None = None,
         snapshots: ContextSnapshotRepository | None = None,
         management: ContextManagementRepository | None = None,
     ) -> None:
         self.planner = planner or ContextPlanner()
-        self.compaction_verifier = compaction_verifier or ContextCompactionVerifier()
         self.snapshots = snapshots
         self.management = management
 
@@ -56,29 +49,6 @@ class ContextApplication:
         if self.snapshots is None:
             raise RuntimeError("context snapshot persistence is not configured")
         self.snapshots.persist_projection(run_id, plan, retrieval)
-
-    def verify_compaction(
-        self,
-        summary: CompactSummary,
-        facts: ContextFacts,
-        *,
-        input_range: tuple[int, int],
-        source_event_ids: tuple[str, ...] = (),
-        source_tool_call_ids: tuple[str, ...] = (),
-        source_evidence_ids: tuple[str, ...] = (),
-        pending_approval_facts: tuple[str, ...] = (),
-        reconciliation_facts: tuple[str, ...] = (),
-    ) -> VerifiedCompactSummary:
-        return self.compaction_verifier.verify(
-            summary,
-            facts,
-            input_range=input_range,
-            source_event_ids=source_event_ids,
-            source_tool_call_ids=source_tool_call_ids,
-            source_evidence_ids=source_evidence_ids,
-            pending_approval_facts=pending_approval_facts,
-            reconciliation_facts=reconciliation_facts,
-        )
 
     def persist_for_model_attempt(
         self,

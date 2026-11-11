@@ -107,4 +107,87 @@ describe("useInputDrafts behavior", () => {
       references: [skillReference],
     }));
   });
+
+  it("keeps multiple distinct pasted clipboard images and deduplicates identical ones by id", async () => {
+    const firstPastedImage: InputReference = {
+      id: "1".repeat(64),
+      kind: "image",
+      label: "粘贴的图片",
+      source: "clipboard:image",
+      sha256: "2".repeat(64),
+      status: "content",
+      size: 1024,
+    };
+    const secondPastedImage: InputReference = {
+      id: "3".repeat(64),
+      kind: "image",
+      label: "粘贴的图片",
+      source: "clipboard:image",
+      sha256: "4".repeat(64),
+      status: "content",
+      size: 2048,
+    };
+    setupRuntime({
+      readInputDraft: vi.fn().mockResolvedValue({ text: "", references: [] }),
+    });
+    const { result } = renderHook(() => useInputDrafts("session-1", true));
+
+    await waitFor(() => expect(result.current.ready).toBe(true));
+
+    act(() => {
+      result.current.add("session-1", firstPastedImage);
+      result.current.add("session-1", secondPastedImage);
+    });
+
+    expect(result.current.drafts["session-1"]?.references).toEqual([
+      firstPastedImage,
+      secondPastedImage,
+    ]);
+
+    act(() => {
+      result.current.add("session-1", firstPastedImage);
+    });
+
+    expect(result.current.drafts["session-1"]?.references).toEqual([
+      secondPastedImage,
+      firstPastedImage,
+    ]);
+  });
+
+  it("keeps multiple distinct text excerpts from the same session selection source", async () => {
+    const firstExcerpt: InputReference = {
+      id: "5".repeat(64),
+      kind: "excerpt",
+      label: "选中内容",
+      source: "session:session-1:selection",
+      sha256: "6".repeat(64),
+      status: "content",
+      size: 24,
+    };
+    const secondExcerpt: InputReference = {
+      id: "7".repeat(64),
+      kind: "excerpt",
+      label: "选中内容",
+      source: "session:session-1:selection",
+      sha256: "8".repeat(64),
+      status: "content",
+      size: 32,
+    };
+    setupRuntime({
+      readInputDraft: vi.fn().mockResolvedValue({ text: "", references: [] }),
+    });
+    const { result } = renderHook(() => useInputDrafts("session-1", true));
+
+    await waitFor(() => expect(result.current.ready).toBe(true));
+
+    act(() => {
+      result.current.add("session-1", firstExcerpt);
+      result.current.add("session-1", secondExcerpt);
+    });
+
+    expect(result.current.drafts["session-1"]?.references).toEqual([
+      firstExcerpt,
+      secondExcerpt,
+    ]);
+  });
 });

@@ -33,6 +33,7 @@ from eidos_runtime.models.browser import (
 from eidos_runtime.persistence.browser_grants import BrowserGrantRepository
 from eidos_runtime.runtime import browser_launch
 from eidos_runtime.runtime.browser_launch import browser_client_name, resolve_browser_launch
+from schema_fixtures import remove_goal_schema
 
 TOKEN = "Abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE"
 RELAY = "ws%3A%2F%2F127.0.0.1%3A50123%2Fextension%2F5733f635-0f0a-41ef-9972-305b283803db"
@@ -257,6 +258,8 @@ def _downgrade_to_v49(data: Path, target: str | None, extra_sql: str = "") -> No
     store.initialize()
     store.close()
     connection = sqlite3.connect(data / "state.sqlite")
+    # v51 added the goal tables; a real v49 database does not have them.
+    remove_goal_schema(connection)
     rows = f"INSERT INTO browser_settings VALUES (1, '{target}', 1);" if target else ""
     connection.executescript(
         "DROP TABLE browser_settings;"
@@ -274,7 +277,7 @@ def test_v49_database_upgrades_browser_settings(tmp_path, before, after):
     store = SessionStore(data)
     store.initialize()
     try:
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 50
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         repository = BrowserGrantRepository(store.database)
         assert repository.target() == after
         assert repository.extension_credential() is None

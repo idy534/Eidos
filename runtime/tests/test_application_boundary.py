@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from eidos_runtime.application.context import ContextApplication
 from eidos_runtime.application.repository import RepositoryApplication
 from eidos_runtime.application.runs import RunApplication
 from eidos_runtime.application.sessions import SessionApplication
@@ -13,8 +12,6 @@ from eidos_runtime.domain.run import Run
 from eidos_runtime.persistence.repository_intelligence import (
     RepositoryIntelligenceRepository,
 )
-from eidos_runtime.context.facts import CompactSummary, ContextFacts
-from eidos_runtime.context.plan import ContextPlanner
 from eidos_runtime.protocol.methods import (
     SessionCreateRequestDto,
     SessionListRequestDto,
@@ -98,33 +95,3 @@ def test_repository_application_returns_an_immutable_complete_analysis(tmp_path:
         assert retrieval.results
     finally:
         database.close()
-
-
-def test_context_application_delegates_typed_plan_and_compaction_verification() -> None:
-    application = ContextApplication(planner=ContextPlanner())
-    summary = CompactSummary(
-        task_goal="goal",
-        constraints=(),
-        completed_actions=(),
-        workspace_changes=(),
-        important_facts=(),
-        unresolved_problems=(),
-        next_actions=(),
-        source_item_ids=("item-1",),
-    )
-    facts = ContextFacts(
-        run_id="run-1",
-        session_id="session-1",
-        items=(
-            {
-                "item_id": "item-1",
-                "run_id": "run-1",
-                "kind": "user_message",
-                "status": "completed",
-            },
-        ),
-    )
-
-    verified = application.verify_compaction(summary, facts, input_range=(0, 1))
-
-    assert verified.verification_result == "verified"

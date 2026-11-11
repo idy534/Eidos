@@ -122,11 +122,6 @@ if TYPE_CHECKING:
 class RepositoryWorkspaceRuntimePort(Protocol):
     def activate_workspace(self, root: Path) -> object: ...
 
-    def ensure_ready(
-        self, root: Path, *, cancel: threading.Event | None = None
-    ) -> object: ...
-
-
 class RuntimeEngine:
     def __init__(
         self,
@@ -1642,9 +1637,6 @@ def _loop_recovery_context(reason: str) -> dict[str, object]:
             "evidence already collected."
         ),
     }
-
-
-RuntimeLoop = RuntimeEngine
 
 
 def _build_step_policy(

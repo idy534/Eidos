@@ -53,14 +53,10 @@ from eidos_runtime.protocol.methods import (
     MethodResultDto,
     RunCancelRequestDto,
     RunCancelResponseDto,
-    RunPauseRequestDto,
-    RunPauseResponseDto,
     RunResumeRequestDto,
     RunResumeResponseDto,
     RunStartRequestDto,
     RunStartResponseDto,
-    RunStatusRequestDto,
-    RunStatusResponseDto,
     ContextUsageRequestDto,
     ContextUsageResponseDto,
 )
@@ -671,11 +667,6 @@ class RunApplication:
             raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
         return _result(RunCancelResponseDto, current)
 
-    def status(self, request: RunStatusRequestDto) -> RunStatusResponseDto:
-        return self._lifecycle_response(
-            RunStatusResponseDto, request.run_id, action=None
-        )
-
     def context_usage(
         self, request: ContextUsageRequestDto
     ) -> ContextUsageResponseDto:
@@ -692,38 +683,15 @@ class RunApplication:
             )
         )
 
-    def pause(self, request: RunPauseRequestDto) -> RunPauseResponseDto:
-        return self._lifecycle_response(
-            RunPauseResponseDto,
-            request.run_id,
-            action=LifecycleAction.PAUSE,
-            operation_id=request.operation_id,
-        )
-
     def resume(self, request: RunResumeRequestDto) -> RunResumeResponseDto:
-        return self._lifecycle_response(
-            RunResumeResponseDto,
-            request.run_id,
-            action=LifecycleAction.RESUME,
-            operation_id=request.operation_id,
-        )
-
-    def _lifecycle_response(
-        self,
-        result_type: type[
-            RunStatusResponseDto | RunPauseResponseDto | RunResumeResponseDto
-        ],
-        run_id: str,
-        *,
-        action: LifecycleAction | None,
-        operation_id: str | None = None,
-    ) -> RunStatusResponseDto | RunPauseResponseDto | RunResumeResponseDto:
+        run_id = request.run_id
         store, _runtime = self._cancel_dependencies()
         try:
             if self._lifecycle is None:
                 raise RuntimeError("Run lifecycle application is not configured")
-            if action is not None:
-                self._lifecycle.execute(action, run_id, operation_id=operation_id)
+            self._lifecycle.execute(
+                LifecycleAction.RESUME, run_id, operation_id=request.operation_id
+            )
             progress = self._lifecycle.status(run_id)
             run = store.read_run(run_id)
         except ResourceNotFoundError as error:
@@ -741,7 +709,7 @@ class RunApplication:
                 else None
             ),
         }
-        return _result(result_type, payload)
+        return _result(RunResumeResponseDto, payload)
 
     def _select_model(
         self,

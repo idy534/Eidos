@@ -5,8 +5,9 @@ import sqlite3
 
 
 def remove_goal_schema(connection: sqlite3.Connection) -> None:
-    connection.execute("DROP TRIGGER goal_item_no_learning")
-    connection.execute("DROP TRIGGER goal_run_no_learning")
-    connection.execute("DROP TABLE goal_continuations")
-    connection.execute("DROP TABLE goal_runs")
-    connection.execute("DROP TABLE session_goals")
+    """Drop the v51 objects. Safe to call twice, so shared downgrade fixtures can use it."""
+    connection.execute("DROP TRIGGER IF EXISTS goal_item_no_learning")
+    connection.execute("DROP TRIGGER IF EXISTS goal_run_no_learning")
+    connection.execute("DROP TABLE IF EXISTS goal_continuations")
+    connection.execute("DROP TABLE IF EXISTS goal_runs")
+    connection.execute("DROP TABLE IF EXISTS session_goals")

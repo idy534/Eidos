@@ -20,11 +20,11 @@ from eidos_runtime.model.client import (  # noqa: E402
     ModelRequestFailure,
     ModelResponse,
     ScriptedModel,
-    ModelToolDefinition,
+    FunctionToolDefinition,
     ModelUsage,
 )
 from eidos_runtime.tools.declare_outputs import declare_outputs_entry  # noqa: E402
-from eidos_runtime.tools.workspace import model_tool_definitions  # noqa: E402
+from eidos_runtime.tools.workspace import TOOL_SPECS  # noqa: E402
 from eidos_runtime.workspace.reader import capture_workspace_identity  # noqa: E402
 from eidos_runtime.model.instructions import InstructionResolver  # noqa: E402
 from eidos_runtime.model.prompts import (  # noqa: E402
@@ -39,7 +39,7 @@ from eidos_runtime.model.prompts import (  # noqa: E402
 
 class ModelContractTests(unittest.TestCase):
     def test_contracts_are_strict_frozen_and_closed(self) -> None:
-        tool = ModelToolDefinition(
+        tool = FunctionToolDefinition(
             name="read_file",
             description="Read a file.",
             parameters_json_schema={
@@ -51,7 +51,7 @@ class ModelContractTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             tool.name = "changed"  # type: ignore[misc]
         with self.assertRaises(ValidationError):
-            ModelToolDefinition.model_validate({
+            FunctionToolDefinition.model_validate({
                 **tool.model_dump(),
                 "unexpected": True,
             })
@@ -103,7 +103,7 @@ class ModelContractTests(unittest.TestCase):
 
     def test_operational_guidance_is_delivered_with_the_relevant_tool(self) -> None:
         core = "\n".join((SYSTEM_SAFETY_INSTRUCTIONS, BASE_AGENT_INSTRUCTIONS, RUNTIME_POLICY_INSTRUCTIONS))
-        tools = {value["function"]["name"]: value["function"] for value in model_tool_definitions()}
+        tools = {spec.name: {"description": spec.description, "parameters": spec.input_schema} for spec in TOOL_SPECS}
 
         for detail in ("pipefail", "outputCallId", "includeGlobs", "tool_not_activated", "declare_outputs"):
             self.assertNotIn(detail, core)

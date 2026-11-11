@@ -200,5 +200,3 @@ export const IPC = {
   APP_NEW_TASK: "app:new-task",
   APP_OPEN_WORKSPACE: "app:open-workspace",
 } as const;
-
-export type IPCChannel = (typeof IPC)[keyof typeof IPC];

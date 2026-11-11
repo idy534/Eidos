@@ -10,7 +10,7 @@ Eidos 支持多目录项目、一个主要文件夹和侧栏项目编辑。会�
 
 Eidos 支持钉钉、飞书和企业微信文字消息。用户可以在“设置 → 助理”为各平台配置凭证、模型、项目和审批模式。各渠道按平台的群机器人提及规则接收消息，不设置额外用户和群白名单。渠道支持经 Desktop 确认并保存的完全访问模式。Runtime 使用普通 Session / Run 执行，并向原会话回复。现有记录包含钉钉真实收发验证；飞书、企业微信与长期重连仍需真实平台验收。配置和验证边界见 [当前渠道接入](features/channels.md)。
 
-本地定时任务已接入 Runtime、automation 延迟工具与侧栏管理页面。计划默认使用替我审批，支持已有 Session 或每次新 Session。时间限制、持久化、来源、权限和验证边界见 [当前本地定时任务](features/automations.md)。
+本地定时任务已接入 Runtime、automation 工具与侧栏管理页面。计划默认使用替我审批，支持已有 Session 或每次新 Session。时间限制、持久化、来源、权限和验证边界见 [当前本地定时任务](features/automations.md)。
 
 > 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。Eidos 私有数据读取与修改、Runtime、系统 Skill 和受管资源修改继续要求高危人工确认。普通 Git、项目 metadata 与沙盒外执行按实际操作走普通审批，auto_review 可以判断。沙盒外进程使用宿主权限，系统不能继续承诺 Seatbelt 路径保护。full_access 直接执行，不创建逐项 Approval。所有模式仍保留身份、版本、取消、Durable Intent、结果核验和未知结果记录。详细范围见 [审批策略](features/approval-policy.md)。
 
@@ -252,8 +252,8 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 已应用的文件 Diff 会进入 ToolCall 持久事实，并在 Execution Feed 中展示。
 - 已有普通文件通过 stdin 把有界候选内容交给受控 helper，原地写入并保留 inode；这条路径不创建候选临时文件，系统管理 xattr 和 ACL。Runtime 不再克隆、复制或逐项比较元数据。helper 在截断前检查普通文件、owner、链接和 Base Hash，写入后执行 fsync 和最终验证。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
 - 工作区外的普通文件写入复用现有扩权审批和 Run Grant。审批包含目标路径、权限范围、完整 Diff 和版本；审批通过后重新核验身份和版本。沙盒不可用时，无沙盒写入需要单独明确批准；受保护路径需要高危人工确认后才可扩权。
-- `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
-- 模型调用当前目录中存在但尚未激活的延迟 Tool 时，Runtime 返回 `tool_not_activated`，提示使用工具完整名称搜索激活，并在收到搜索结果后的下一 Step 重试。该调用不会执行工具、申请审批、创建 Durable Intent 或建立结果未知状态，也不会消耗协议修复次数或单独终止 Run。未知、禁用和未授权工具继续按原有检查拒绝。重复调用仍受现有 LoopGuard 限制。
+- 当前可用的工具从首轮直接提供。Runtime 不注册 `tool_search`，也不要求先搜索再激活，见 [系统提示词](features/system-prompts.md)。旧激活记录和快照字段只保留读取兼容。
+- 历史 Step 中未激活的延迟 Tool 调用返回 `tool_not_activated`，提示改用新 Step 提供的工具，不重放该调用。该调用不会执行工具、申请审批、创建 Durable Intent 或建立结果未知状态，也不会消耗协议修复次数或单独终止 Run。未知、禁用和未授权工具继续按原有检查拒绝。重复调用仍受现有 LoopGuard 限制。
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
 - `skill_create` 使用独立的参数预算，不再受普通工具的 64 KiB JSON 参数上限限制。创建路径保留单文件 4 MiB、整棵 Skill 8 MiB、最多 512 个文件的边界；512 个文件包含自动生成的 `SKILL.md`。安装与目录加载允许更大的完整 Skill tree：单文件 4 MiB、整棵 64 MiB、最多 20,000 个文件。`skill_install` 的整次工具超时为 300 秒。Runtime 将 YAML、标题和正文一起计入 `SKILL.md` 大小，将文件路径、metadata 和 JSON 转义计入独立参数预算。工具可以一次提交完整文本资源，无需为了旧的 64 KiB 上限省略文件。`skill_read` 与 `skill_read_resource` 每页仍最多返回 24,000 UTF-8 bytes，offset 可以覆盖整个 4 MiB 文件。审批、Durable Intent、取消、路径保护和 Run 固定目录快照保持原有语义。
 - ToolCallRuntime 和 ToolExecutionController 会按工具类型执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。普通读取和 Shell 聚合输出不因可识别敏感内容阻断；展示层只做 best-effort 脱敏。
@@ -519,7 +519,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - **行内提及标签（Inline Mention Tokens，在光标位置插入并内嵌于输入框与已发送消息气泡正文任意位置）**：承载 `skill`（琥珀色，点击打开只读 `SkillDetailDialog`）、`agent`（青绿色，点击打开只读 `AgentDefinitionDialog`）、`mcp`（翠绿色，点击打开 `McpDetailDialog` 或快照预览）、`plugin`（紫罗兰色，点击打开只读详情预览弹窗）和 `history`（群青色，点击跳转到原会话）。通过 `@` / `$` / `/` 或左下角 `+` 选择器添加时，标签直接插入当前光标处并将光标置于新标签右侧，与前后普通文字流式共排（不展示悬停 `×` 移除按钮）；光标紧贴标签前后时按 `Backspace` / `Delete` 可将整个标签作为原子文本删除，方向键整块跳过标签。草稿与提交正文通过内联引用标记持久化精确位置，旧消息未带位置标记时兼容回退至句首展示。
 - 工作区文件树提供引用按钮。历史选择器可以选择具体消息；消息区域也提供单条引用。非编辑区域的选中文字可以通过原生右键菜单加入草稿。
 
-Runtime 保存每个 Session 的草稿。界面恢复完成前不允许覆盖草稿。提交时，界面只清除已经成功提交且没有继续修改的那一版输入。用户可以只发送附件。界面和 Runtime 都会拒绝向不支持图片的模型提交新的图片引用。消息流展示已发送引用，编辑重发保留引用并允许移除。
+Runtime 保存每个 Session 的草稿。界面恢复完成前不允许覆盖草稿。文件、目录和扩展引用按来源替换同目标旧快照，剪贴板图片与选中文本摘录按内容 ID 去重并支持在草稿中保留多条不同内容。提交时，界面只清除已经成功提交且没有继续修改的那一版输入。用户可以只发送附件。界面和 Runtime 都会拒绝向不支持图片的模型提交新的图片引用。消息流展示已发送引用，编辑重发保留引用并允许移除。
 
 Runtime 在构建模型上下文时，会把当前消息引用集合中唯一匹配的内联标记转换成简短提及。例如，`[$github](ref:内部引用ID前缀)` 在模型正文中显示为 `$github`，其他内联类型显示为 `@名称`。转换使用已保存引用的名称；Runtime 不按标记中的显示名称猜测目标。完整 ID 或至少 8 位的唯一前缀可以匹配，未匹配、有歧义和附件类型的标记保持原文。每条消息只使用自己的引用集合。引用说明单独保留正文提及、类型和来源，因此同名 Skill、Plugin 和 MCP 仍可区分。原始消息、Run 输入、草稿和引用快照继续保存原值，数据库与 Desktop 协议没有变化。
 

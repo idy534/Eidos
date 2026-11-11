@@ -12,7 +12,7 @@ from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedMod
 from eidos_runtime.model.context_projection import generated_summary_view, project_context, recovery_context, without_verification_metadata
 from eidos_runtime.runtime.engine import RuntimeEngine
 from eidos_runtime.runtime.errors import bounded_tool_result
-from eidos_runtime.tools.contracts import project_tool_result
+from tool_projection import project_tool_result
 from eidos_runtime.tools.read_tool_output import read_tool_output_entry
 
 

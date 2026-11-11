@@ -47,7 +47,6 @@ _ALLOWED_SCHEMA_KEYS = {
 MAX_ACTIVATED_TOOLS = 16
 MAX_ACTIVATED_SCHEMA_BYTES = 128 * 1024
 MAX_SINGLE_DEFINITION_BYTES = 32 * 1024
-MAX_SINGLE_SCHEMA_BYTES = MAX_SINGLE_DEFINITION_BYTES
 
 
 class ToolSpec(ClosedModel):
@@ -829,6 +828,19 @@ def _hash_json(value: object) -> str:
         value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def fits_activation_budget(entries: tuple[ToolRegistryEntry, ...]) -> bool:
+    """Whether all entries could be active together under the deferred-tool limits."""
+    if len(entries) > MAX_ACTIVATED_TOOLS:
+        return False
+    total = 0
+    for entry in entries:
+        size = _definition_size(entry.model_definition())
+        if size > MAX_SINGLE_DEFINITION_BYTES:
+            return False
+        total += size
+    return total <= MAX_ACTIVATED_SCHEMA_BYTES
 
 
 def _definition_size(definition: ModelToolDefinitionLike) -> int:
