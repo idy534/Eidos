@@ -2317,6 +2317,63 @@ test("summarizes a tool group by action with a failure count", () => {
   assert.equal(summary.failed, 1);
 });
 
+test("splits two or more adjacent view_image calls into their own image group", () => {
+  const entries = [
+    groupToolItem("a", 1, "read_file", { path: "a.ts" }),
+    groupToolItem("b", 2, "view_image", { path: "one.png" }),
+    groupToolItem("c", 3, "view_image", { path: "two.png" }),
+    groupToolItem("d", 4, "run_shell", { command: "ls" }),
+    groupToolItem("e", 5, "view_image", { path: "three.png" }),
+  ].map((entry) => ({ kind: "item" as const, item: entry }));
+  const nodes = groupProcessEntries(entries);
+  // A lone view_image stays with its neighbours instead of forming a group of one.
+  assert.deepEqual(nodes.map((node) => node.kind), ["item", "images", "tools"]);
+  assert.deepEqual(nodes[1]!.kind === "images" ? nodes[1]!.items.map((entry) => entry.id) : [], ["b", "c"]);
+  assert.deepEqual(nodes[2]!.kind === "tools" ? nodes[2]!.items.map((entry) => entry.id) : [], ["d", "e"]);
+
+  const summary = summarizeToolGroup([
+    groupToolItem("d", 4, "run_shell", { command: "ls" }),
+    groupToolItem("e", 5, "view_image", { path: "three.png" }),
+  ]);
+  assert.deepEqual(summary.parts.map((part) => part.text), ["查看 1 张图像", "运行 1 条命令"]);
+});
+
+test("renders an image group header with one tile per view_image call", () => {
+  const done = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        groupToolItem("a", 1, "view_image", { path: "one.png" }),
+        groupToolItem("b", 2, "view_image", { path: "two.png" }),
+        groupToolItem("c", 3, "view_image", { path: "missing.png" }, "failed"),
+      ]}
+      runs={[run]}
+      approvals={[]}
+    />,
+  );
+  assert.match(done, /<details class="tool-group tool-image-group"><summary>/);
+  assert.doesNotMatch(done, /<details class="tool-group tool-image-group" open=""><summary>/);
+  assert.match(done, /<span class="tool-group-label">已查看 2 张图像<\/span><span class="tool-group-fail">1 失败<\/span>/);
+  assert.equal(done.match(/class="tool-image-tile"/g)?.length, 3);
+  assert.match(done, /data-state="failed"><span class="tool-image-tile__note" role="img" aria-label="missing\.png 查看失败"/);
+  assert.doesNotMatch(done, /已查看图像 · one\.png|调用 \d+ 项工具/);
+
+  const running = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        groupToolItem("a", 1, "view_image", { path: "one.png" }),
+        groupToolItem("b", 2, "view_image", { path: "two.png" }, "in_progress"),
+      ]}
+      runs={[{ ...run, status: "running" }]}
+      approvals={[]}
+    />,
+  );
+  // The live line names the running call; the header stays static.
+  assert.doesNotMatch(running, /data-running/);
+  assert.doesNotMatch(running, /<details class="tool-group tool-image-group" open="">/);
+  assert.match(running, /<span class="tool-group-label">正在查看 2 张图像<\/span>/);
+  assert.match(running, /<span class="live-activity-text"[^>]*>正在查看图像 · two\.png<\/span>/);
+});
+
 test("renders a collapsed tool group summary and a live action while running", () => {
   const done = renderToStaticMarkup(
     <ExecutionFeed

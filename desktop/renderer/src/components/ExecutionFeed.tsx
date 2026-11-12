@@ -14,14 +14,14 @@ import { InlineRichEditor } from "./InlineRichEditor.js";
 import { ToolTextView } from "./ToolTextView.js";
 import { LiveActivityLine } from "./LiveActivityLine.js";
 import type { LiveThinking, LiveThinkingMap } from "../live-thinking.js";
-import { BrowserToolBody, McpPluginNamesContext, McpToolBody, browserPageHost, mcpToolTitle } from "./McpToolDetails.js";
+import { BrowserToolBody, McpPluginNamesContext, McpToolBody, browserPageHost, mcpToolTitle, toolAttachments, useToolContentPreview } from "./McpToolDetails.js";
+import { ImageLightbox, type LightboxImage } from "./ImageLightbox.js";
 import { toolFilePaths } from "./ResultFiles.js";
 import { createContext, Fragment, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { SyntheticEvent } from "react";
 import type { ReactNode } from "react";
-import { createPortal } from "react-dom";
 import stripAnsi from "strip-ansi";
-import { artifactPath, useArtifacts, usePreviewUrl } from "./ArtifactContext.js";
+import { artifactPath, useArtifacts, useNearViewport, usePreviewUrl } from "./ArtifactContext.js";
 
 import type {
   ApprovalRequest,
@@ -37,7 +37,7 @@ import { terminalRunPresentation } from "../session-state.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
 import { DropdownMenu } from "./DropdownMenu.js";
-import { CopyIcon, CheckmarkIcon, AutomationsIcon, CloseIcon, ChevronDownIcon, GlobeIcon } from "./MenuIcons.js";
+import { CopyIcon, CheckmarkIcon, AutomationsIcon, ChevronDownIcon, GlobeIcon } from "./MenuIcons.js";
 import { ForkIcon } from "./ForkIcon.js";
 import { TurnResults } from "./TurnResults.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
@@ -442,7 +442,7 @@ const RunSegment = memo(function RunSegment({
   // A standalone tool row already names and animates its own action, so the live
   // line only repeats a tool that is hidden inside a collapsed group.
   const groupedActiveTool = showLive
-    ? processNodes.flatMap((node) => (node.kind === "tools" ? node.items : []))
+    ? processNodes.flatMap((node) => (node.kind === "tools" || node.kind === "images" ? node.items : []))
       .reverse().find((item) => !item.inherited && item.status === "in_progress")
     : undefined;
   const standaloneToolRunning = showLive && !groupedActiveTool && processNodes.some((node) => (
@@ -497,6 +497,9 @@ const RunSegment = memo(function RunSegment({
               />
             );
             if (node.kind === "item") return renderItem(node.item);
+            if (node.kind === "images") {
+              return <ViewImageGroup key={`images:${node.items[0]!.id}`} items={node.items} liveLineShown={showLive} />;
+            }
             return (
               <ToolGroup
                 key={`tools:${node.items[0]!.id}`}
@@ -621,19 +624,41 @@ type ProcessNode =
   | { kind: "compaction"; activity: ContextCompactionActivity }
   | { kind: "retry"; activity: ModelRetryActivity }
   | { kind: "item"; item: Item }
-  | { kind: "tools"; items: Item[] };
+  | { kind: "tools"; items: Item[] }
+  | { kind: "images"; items: Item[] };
 
 function isToolEntryItem(item: Item): boolean {
   return Boolean(item.toolCall) && item.kind !== "user_message" && item.kind !== "assistant_message";
 }
 
-/** Presentation-only: two or more adjacent tool calls fold into one ToolGroup. */
+/**
+ * Presentation-only: two or more adjacent tool calls fold into one ToolGroup.
+ * Inside such a run, two or more adjacent view_image calls become their own
+ * image group; a lone view_image stays with its neighbours.
+ */
 export function groupProcessEntries(entries: readonly ProcessEntry[]): ProcessNode[] {
   const nodes: ProcessNode[] = [];
   let run: Item[] = [];
   const flush = () => {
-    if (run.length === 1) nodes.push({ kind: "item", item: run[0]! });
-    else if (run.length > 1) nodes.push({ kind: "tools", items: run });
+    let tools: Item[] = [];
+    const flushTools = () => {
+      if (tools.length === 1) nodes.push({ kind: "item", item: tools[0]! });
+      else if (tools.length > 1) nodes.push({ kind: "tools", items: tools });
+      tools = [];
+    };
+    for (let index = 0; index < run.length;) {
+      let end = index;
+      while (end < run.length && run[end]!.toolCall?.toolName === "view_image") end += 1;
+      if (end - index >= 2) {
+        flushTools();
+        nodes.push({ kind: "images", items: run.slice(index, end) });
+        index = end;
+      } else {
+        tools.push(run[index]!);
+        index += 1;
+      }
+    }
+    flushTools();
     run = [];
   };
   for (const entry of entries) {
@@ -648,18 +673,19 @@ export function groupProcessEntries(entries: readonly ProcessEntry[]): ProcessNo
   return nodes;
 }
 
-type ToolGroupKind = "read" | "search" | "edit" | "shell" | "other";
+type ToolGroupKind = "read" | "image" | "search" | "edit" | "shell" | "other";
 
 function toolGroupKind(toolName: string): ToolGroupKind {
   if (toolName === "run_shell") return "shell";
   if (["read_file", "read_file_range"].includes(toolName)) return "read";
+  if (toolName === "view_image") return "image";
   if (["search_text", "tool_search", "web_search"].includes(toolName)) return "search";
   if (["write_file", "apply_patch", "delete_file"].includes(toolName)) return "edit";
   return "other";
 }
 
 export function summarizeToolGroup(items: readonly Item[]): { parts: Array<{ kind: ToolGroupKind; text: string }>; failed: number } {
-  const counts: Record<ToolGroupKind, number> = { read: 0, search: 0, edit: 0, shell: 0, other: 0 };
+  const counts: Record<ToolGroupKind, number> = { read: 0, image: 0, search: 0, edit: 0, shell: 0, other: 0 };
   const editedPaths = new Set<string>();
   let editsWithoutPath = 0;
   let failed = 0;
@@ -678,6 +704,7 @@ export function summarizeToolGroup(items: readonly Item[]): { parts: Array<{ kin
   counts.edit = editedPaths.size + editsWithoutPath;
   const parts: Array<{ kind: ToolGroupKind; text: string }> = [];
   if (counts.read) parts.push({ kind: "read", text: `读取 ${counts.read} 个文件` });
+  if (counts.image) parts.push({ kind: "image", text: `查看 ${counts.image} 张图像` });
   if (counts.search) parts.push({ kind: "search", text: `搜索 ${counts.search} 次` });
   if (counts.edit) parts.push({ kind: "edit", text: `编辑 ${counts.edit} 个文件` });
   if (counts.shell) parts.push({ kind: "shell", text: `运行 ${counts.shell} 条命令` });
@@ -1741,12 +1768,59 @@ function formatMime(mime: string): string {
   return mime.replace(/^image\//i, "").toUpperCase();
 }
 
+/** What a view_image call says about its image, read from its arguments and result. */
+function viewImageFacts(toolCall: ToolCall, executionRoot: string | undefined) {
+  const args = parseObject(toolCall.argumentsJson);
+  const result = parseObject(toolCall.resultJson);
+  const data = objectField(result, "data");
+  const rawPath = stringField(args, "path") || stringField(data, "path");
+  const displayName = rawPath ? pathBasename(rawPath) : "图像";
+  const meta = [formatMime(stringField(data, "mime")), formatFileSize(numberField(data, "size"))].filter(Boolean).join(" · ");
+  const absolutePath = stringField(data, "path")
+    || (executionRoot && rawPath && !rawPath.startsWith("/")
+      ? `${executionRoot.replace(/\/+$/, "")}/${rawPath.replace(/^\.?\/+/, "")}`
+      : rawPath);
+  return {
+    rawPath,
+    displayName,
+    tooltip: [absolutePath, meta].filter(Boolean).join(" · ") || `预览 ${displayName}`,
+    /** The image saved with the result; absent on results recorded before attachments existed. */
+    savedIndex: toolAttachments(result)[0]?.index,
+    /** Path inside the current Workspace, for results without a saved image. */
+    workspacePath: executionRoot && rawPath ? artifactPath(rawPath, executionRoot, undefined, true) : undefined,
+  };
+}
+
+type ViewImageFacts = ReturnType<typeof viewImageFacts>;
+
+/**
+ * A view_image preview shows the image saved with the result, so it survives
+ * the file being deleted or living outside the Workspace. Results without a
+ * saved image fall back to the current Workspace file. `enabled` false holds
+ * no preview grant.
+ */
+function useViewImagePreview(item: Item, toolCall: ToolCall, facts: ViewImageFacts, enabled: boolean) {
+  const fromFile = facts.savedIndex === undefined;
+  const saved = useToolContentPreview(item.sessionId, toolCall.id, enabled ? facts.savedIndex : undefined);
+  const file = usePreviewUrl(enabled && fromFile ? facts.workspacePath : undefined);
+  const [brokenUrl, setBrokenUrl] = useState<string>();
+  const url = fromFile ? file.url : saved.url;
+  const broken = url !== undefined && url === brokenUrl;
+  return {
+    url: broken ? undefined : url,
+    unavailable: broken || (fromFile ? Boolean(file.error) || !facts.workspacePath : saved.error),
+    markBroken: () => setBrokenUrl(url),
+  };
+}
+
 function ViewImageViewer({
+  item,
   toolCall,
   onOpenFile,
   isError,
   errorSummary,
 }: {
+  item: Item;
   toolCall: ToolCall;
   onOpenFile?: ((path: string) => void) | undefined;
   isError: boolean;
@@ -1754,28 +1828,9 @@ function ViewImageViewer({
 }) {
   const actions = useArtifacts();
   const [lightboxOpen, setLightboxOpen] = useState(false);
-
-  useEffect(() => {
-    if (!lightboxOpen) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setLightboxOpen(false);
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [lightboxOpen]);
-
-  const args = parseObject(toolCall.argumentsJson);
-  const result = parseObject(toolCall.resultJson);
-  const data = objectField(result, "data");
-  const rawPath = stringField(args, "path") || stringField(data, "path");
-  const mime = stringField(data, "mime");
-  const size = numberField(data, "size");
-  const displayName = rawPath ? pathBasename(rawPath) : "图像";
-
-  const targetPath = actions?.executionRoot && rawPath
-    ? artifactPath(rawPath, actions.executionRoot, undefined, true)
-    : undefined;
-  const { url: previewUrl, error: previewError } = usePreviewUrl(isError ? undefined : targetPath);
+  const facts = viewImageFacts(toolCall, actions?.executionRoot);
+  const preview = useViewImagePreview(item, toolCall, facts, !isError);
+  const { rawPath, displayName, tooltip } = facts;
 
   if (isError) {
     return (
@@ -1801,29 +1856,20 @@ function ViewImageViewer({
     );
   }
 
-  const metaParts = [formatMime(mime), formatFileSize(size)].filter(Boolean);
-  const metaText = metaParts.join(" · ");
-  const absolutePath = stringField(data, "path")
-    || (actions?.executionRoot && rawPath && !rawPath.startsWith("/")
-      ? `${actions.executionRoot.replace(/\/+$/, "")}/${rawPath.replace(/^\.?\/+/, "")}`
-      : rawPath);
-  const tooltipDetails = [absolutePath, metaText].filter(Boolean).join(" · ");
-  const imageTooltip = tooltipDetails || `预览 ${displayName}`;
-
   return (
-    <div className="tool-image-container" title={imageTooltip}>
+    <div className="tool-image-container" title={tooltip}>
       <div className="tool-image-preview-card">
-        {previewUrl ? (
+        {preview.url ? (
           <button
             type="button"
             className="tool-image-thumbnail-btn"
             onClick={() => setLightboxOpen(true)}
-            title={imageTooltip}
+            title={tooltip}
             aria-label={`预览 ${displayName}`}
           >
-            <img src={previewUrl} alt={displayName} loading="lazy" />
+            <img src={preview.url} alt={displayName} loading="lazy" onError={preview.markBroken} />
           </button>
-        ) : previewError || !targetPath ? (
+        ) : preview.unavailable ? (
           <p className="tool-image-empty" role="status">暂无预览</p>
         ) : (
           <div className="tool-image-loading">
@@ -1832,35 +1878,157 @@ function ViewImageViewer({
         )}
       </div>
 
-      {lightboxOpen && typeof document !== "undefined" && createPortal(
-        <div
-          className="artifact-image-preview"
-          role="dialog"
-          aria-modal="true"
-          aria-label={`${displayName} 图片预览`}
-          onClick={(event) => {
-            if (event.target === event.currentTarget) setLightboxOpen(false);
-          }}
-        >
-          <button
-            type="button"
-            className="artifact-image-preview__close"
-            aria-label="关闭图片预览"
-            autoFocus
-            onClick={() => setLightboxOpen(false)}
-          >
-            <CloseIcon />
-          </button>
-          {previewUrl ? (
-            <img src={previewUrl} alt={displayName} />
-          ) : (
-            <p role="status">暂无预览</p>
-          )}
-        </div>,
-        document.body,
+      {lightboxOpen && (
+        <ImageLightbox
+          images={[{ name: displayName, url: preview.url, status: "暂无预览" }]}
+          onClose={() => setLightboxOpen(false)}
+        />
       )}
     </div>
   );
+}
+
+/**
+ * Presentation-only: adjacent view_image calls share one thumbnail strip, and
+ * the enlarged preview steps through the images of this group.
+ */
+const ViewImageGroup = memo(function ViewImageGroup({ items, liveLineShown }: {
+  items: readonly Item[];
+  /** The live activity line carries the motion, so the header stays static. */
+  liveLineShown: boolean;
+}) {
+  const actions = useArtifacts();
+  const details = useLazyDetails(false);
+  const [openId, setOpenId] = useState<string>();
+  const [previews, setPreviews] = useState<Readonly<Record<string, { url: string | undefined; unavailable: boolean }>>>({});
+  const reportPreview = useCallback((id: string, url: string | undefined, unavailable: boolean) => {
+    setPreviews((current) => {
+      const known = current[id] ?? { url: undefined, unavailable: false };
+      return known.url === url && known.unavailable === unavailable ? current : { ...current, [id]: { url, unavailable } };
+    });
+  }, []);
+
+  const executionRoot = actions?.executionRoot;
+  const entries = useMemo(() => items.map((item) => {
+    const toolCall = item.toolCall!;
+    return {
+      item,
+      toolCall,
+      failed: toolCallFailed(item, toolCall, parseObject(toolCall.resultJson)),
+      facts: viewImageFacts(toolCall, executionRoot),
+    };
+  }), [items, executionRoot]);
+  // Failed calls have no image, so the enlarged preview steps past them.
+  const viewable = entries.filter((entry) => !entry.failed);
+  const failedCount = entries.length - viewable.length;
+  const running = entries.some(({ item }) => !item.inherited && item.status === "in_progress");
+  const active = running && !liveLineShown;
+  const label = running
+    ? `正在查看 ${entries.length} 张图像`
+    : viewable.length > 0 ? `已查看 ${viewable.length} 张图像` : "未能查看图像";
+  const openIndex = openId === undefined ? -1 : viewable.findIndex(({ item }) => item.id === openId);
+  const slides: LightboxImage[] = openIndex < 0 ? [] : viewable.map(({ item, facts }) => {
+    const preview = previews[item.id];
+    return { name: facts.displayName, url: preview?.url, status: preview?.unavailable ? "暂无预览" : "正在加载图像…" };
+  });
+
+  return (
+    <>
+      <details
+        className="tool-group tool-image-group"
+        data-running={active ? "true" : undefined}
+        open={details.open}
+        onToggle={details.onToggle}
+      >
+        <summary>
+          <span className="tool-group-lead" aria-hidden="true">
+            {active ? <ToolGroupSpinnerIcon /> : <ImageIcon />}
+          </span>
+          <span className="tool-group-label">{label}</span>
+          {!running && failedCount > 0 && <span className="tool-group-fail">{failedCount} 失败</span>}
+        </summary>
+        {details.mounted && (
+          <div className="tool-image-strip">
+            {entries.map(({ item, toolCall, failed, facts }) => {
+              const position = viewable.findIndex((entry) => entry.item.id === item.id);
+              return (
+                <ViewImageTile
+                  key={item.id}
+                  item={item}
+                  toolCall={toolCall}
+                  facts={facts}
+                  failed={failed}
+                  // The open image and its neighbours load even when scrolled out of the strip.
+                  eager={openIndex >= 0 && position >= 0 && Math.abs(position - openIndex) <= 1}
+                  onOpen={setOpenId}
+                  onPreview={reportPreview}
+                />
+              );
+            })}
+          </div>
+        )}
+      </details>
+      {openIndex >= 0 && (
+        <ImageLightbox
+          images={slides}
+          index={openIndex}
+          onIndexChange={(next) => setOpenId(viewable[next]?.item.id)}
+          onClose={() => setOpenId(undefined)}
+        />
+      )}
+    </>
+  );
+});
+
+function ViewImageTile({ item, toolCall, facts, failed, eager, onOpen, onPreview }: {
+  item: Item;
+  toolCall: ToolCall;
+  facts: ViewImageFacts;
+  failed: boolean;
+  eager: boolean;
+  onOpen(itemId: string): void;
+  onPreview(itemId: string, url: string | undefined, unavailable: boolean): void;
+}) {
+  // Preview grants are bounded in Main, so a tile holds one only while it is near the viewport.
+  const [ref, near] = useNearViewport<HTMLDivElement>();
+  const pending = item.status === "in_progress";
+  const preview = useViewImagePreview(item, toolCall, facts, !failed && !pending && (near || eager));
+  const { displayName } = facts;
+  useEffect(() => {
+    onPreview(item.id, preview.url, preview.unavailable);
+  }, [item.id, onPreview, preview.url, preview.unavailable]);
+
+  let state: "ready" | "failed" | "empty" | "loading";
+  let body: ReactNode;
+  if (failed) {
+    const reason = safeToolSummary(toolCall.resultJson, item.status);
+    state = "failed";
+    body = (
+      <span className="tool-image-tile__note" role="img" aria-label={`${displayName} 查看失败`} title={[displayName, reason].filter(Boolean).join(" · ")}>
+        <ImageIcon />
+        <span>失败</span>
+      </span>
+    );
+  } else if (preview.url) {
+    state = "ready";
+    body = (
+      <button type="button" className="tool-image-tile__open" title={facts.tooltip} aria-label={`预览 ${displayName}`} onClick={() => onOpen(item.id)}>
+        <img src={preview.url} alt={displayName} loading="lazy" decoding="async" onError={preview.markBroken} />
+      </button>
+    );
+  } else if (preview.unavailable) {
+    state = "empty";
+    body = (
+      <span className="tool-image-tile__note" role="img" aria-label={`${displayName} 暂无预览`} title={facts.tooltip}>
+        <ImageIcon />
+        <span>暂无预览</span>
+      </span>
+    );
+  } else {
+    state = "loading";
+    body = <span className="tool-image-tile__note" role="status" aria-label={`正在加载 ${displayName}`} title={facts.tooltip} />;
+  }
+  return <div ref={ref} className="tool-image-tile" data-state={state}>{body}</div>;
 }
 
 function WebSearchResultsViewer({
@@ -2304,16 +2472,7 @@ const ToolItem = memo(function ToolItem({
   const isViewImage = toolCall.toolName === "view_image";
   const isWebSearch = toolCall.toolName === "web_search";
   const isToolSearch = toolCall.toolName === "tool_search";
-  const isError = Boolean(
-    result.outcome === "error"
-    || (typeof result.code === "string" && result.code && result.code !== "ok" && !(toolCall.toolName === "request_permissions" && ["permission_granted", "already_granted"].includes(result.code)))
-    || item.status === "failed"
-    || item.status === "declined"
-    || item.status === "canceled"
-    || toolCall.status === "failed"
-    || toolCall.status === "canceled"
-    || isReconciliationGate(result),
-  );
+  const isError = toolCallFailed(item, toolCall, result);
 
   if (toolCall.toolName === "request_permissions" && !isError) {
     const summaryText = toolSummary(toolCall, item.status, agents);
@@ -2349,6 +2508,7 @@ const ToolItem = memo(function ToolItem({
       {details.mounted && <div className="tool-body">
         {isViewImage ? (
           <ViewImageViewer
+            item={item}
             toolCall={toolCall}
             onOpenFile={onOpenFile}
             isError={isError}
@@ -3131,6 +3291,19 @@ function safeToolSummary(value: string | undefined, status: Item["status"]): str
   const parsed = parseObject(value);
   if (isReconciliationGate(parsed)) return "未执行：与尚未确认的操作冲突";
   return stringField(parsed, "summary") || stringField(parsed, "code") || statusLabel(status);
+}
+
+function toolCallFailed(item: Item, toolCall: ToolCall, result: Record<string, unknown>): boolean {
+  return Boolean(
+    result.outcome === "error"
+    || (typeof result.code === "string" && result.code && result.code !== "ok" && !(toolCall.toolName === "request_permissions" && ["permission_granted", "already_granted"].includes(result.code)))
+    || item.status === "failed"
+    || item.status === "declined"
+    || item.status === "canceled"
+    || toolCall.status === "failed"
+    || toolCall.status === "canceled"
+    || isReconciliationGate(result),
+  );
 }
 
 function isReconciliationGate(result: Record<string, unknown>): boolean {

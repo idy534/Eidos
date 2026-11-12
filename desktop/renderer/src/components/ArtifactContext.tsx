@@ -189,7 +189,7 @@ function scrollParent(element: Element): Element | null {
  * Preview grants are a bounded Main resource and the Conversation stays mounted,
  * so images hold a grant only while they are near the scrolled viewport.
  */
-function useNearViewport<T extends Element>() {
+export function useNearViewport<T extends Element>() {
   const ref = useRef<T>(null);
   const [near, setNear] = useState(() => typeof IntersectionObserver === "undefined");
   useEffect(() => {

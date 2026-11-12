@@ -1533,6 +1533,115 @@ describe("ExecutionFeed view_image tool rendering and lightbox", () => {
       else delete (window as Partial<Window>).eidosRuntime;
     }
   });
+
+  function viewImageItem(name: string, ordinal: number, options: { saved?: boolean; failed?: boolean } = {}): Item {
+    const failed = options.failed === true;
+    return {
+      id: `image-${name}`, sessionId: baseRun.sessionId, runId: baseRun.id, ordinal,
+      kind: "tool_call", status: failed ? "failed" : "completed", createdAt: 1000,
+      toolCall: {
+        id: `tool-${name}`, itemId: `image-${name}`, modelStepIndex: 1, batchOrder: ordinal,
+        providerCallId: `call-${name}`, toolName: "view_image", status: failed ? "failed" : "completed",
+        argumentsJson: JSON.stringify({ path: `shots/${name}.png` }),
+        resultJson: JSON.stringify(failed
+          ? { outcome: "error", code: "image_not_found", summary: "Image file was not found", data: {} }
+          : {
+            outcome: "success", code: "ok", summary: "Image loaded",
+            data: { path: `/workspace/shots/${name}.png`, mime: "image/png", size: 2048 },
+            ...(options.saved === false ? {} : { attachments: [{ index: 0, kind: "image", mime: "image/png", bytes: 2048 }] }),
+          }),
+      },
+    };
+  }
+
+  it("shows the saved image for a single view_image whose file is outside the workspace", async () => {
+    const prepareToolContentPreview = vi.fn(async () => "eidos-preview://token/tool/0.png");
+    const prepareWorkspacePreview = vi.fn();
+    vi.stubGlobal("eidosRuntime", { prepareToolContentPreview, prepareWorkspacePreview, releaseInputPreview: vi.fn(async () => undefined) });
+    const item = viewImageItem("outside", 1);
+    item.toolCall!.argumentsJson = JSON.stringify({ path: "/skills/demo/outside.png" });
+    try {
+      const { container } = render(<ArtifactProvider value={{ sessionId: baseRun.sessionId, executionRoot: "/workspace", openFile: vi.fn(), openBrowser: vi.fn() }}>
+        <ExecutionFeed items={[item]} runs={[baseRun]} approvals={[]} />
+      </ArtifactProvider>);
+      await expandDetails(container, "details.tool-item");
+      expect(await screen.findByRole("button", { name: "预览 outside.png" })).toBeInTheDocument();
+      expect(prepareToolContentPreview).toHaveBeenCalledWith(baseRun.sessionId, "tool-outside", 0);
+      expect(prepareWorkspacePreview).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("groups adjacent view_image calls into a strip and steps through them in the preview", async () => {
+    const prepareToolContentPreview = vi.fn(async (_sessionId: string, toolCallId: string) => `eidos-preview://token/${toolCallId}.png`);
+    const prepareWorkspacePreview = vi.fn(async (_sessionId: string, path: string) => `eidos-preview://file/${path}`);
+    vi.stubGlobal("eidosRuntime", {
+      onNotification: vi.fn().mockReturnValue(vi.fn()),
+      prepareToolContentPreview,
+      prepareWorkspacePreview,
+      releaseInputPreview: vi.fn(async () => undefined),
+      releaseWorkspacePreview: vi.fn(async () => undefined),
+    });
+    const items = [
+      viewImageItem("one", 1),
+      viewImageItem("two", 2),
+      viewImageItem("missing", 3, { failed: true }),
+      // Recorded before results carried a saved image: falls back to the Workspace file.
+      viewImageItem("legacy", 4, { saved: false }),
+    ];
+    try {
+      const { container } = render(<ArtifactProvider value={{ sessionId: baseRun.sessionId, executionRoot: "/workspace", openFile: vi.fn(), openBrowser: vi.fn() }}>
+        <ExecutionFeed items={items} runs={[baseRun]} approvals={[]} />
+      </ArtifactProvider>);
+
+      // The group starts collapsed: only the summary is visible and no preview is requested.
+      expect(screen.getByText("已查看 3 张图像")).toBeInTheDocument();
+      expect(screen.getByText("1 失败")).toBeInTheDocument();
+      expect(container.querySelector<HTMLDetailsElement>("details.tool-image-group")?.open).toBe(false);
+      expect(container.querySelectorAll("details.tool-item")).toHaveLength(0);
+      expect(container.querySelectorAll(".tool-image-tile")).toHaveLength(0);
+      expect(prepareToolContentPreview).not.toHaveBeenCalled();
+      expect(prepareWorkspacePreview).not.toHaveBeenCalled();
+
+      await expandDetails(container, "details.tool-image-group");
+      expect(container.querySelector<HTMLDetailsElement>("details.tool-image-group")?.open).toBe(true);
+      expect(container.querySelectorAll(".tool-image-tile")).toHaveLength(4);
+      expect(screen.getByRole("img", { name: "missing.png 查看失败" })).toHaveAttribute("title", "missing.png · Image file was not found");
+
+      const second = await screen.findByRole("button", { name: "预览 two.png" });
+      expect(await screen.findByRole("button", { name: "预览 legacy.png" })).toBeInTheDocument();
+      expect(prepareToolContentPreview).toHaveBeenCalledWith(baseRun.sessionId, "tool-one", 0);
+      expect(prepareToolContentPreview).toHaveBeenCalledWith(baseRun.sessionId, "tool-two", 0);
+      expect(prepareToolContentPreview).toHaveBeenCalledTimes(2);
+      expect(prepareWorkspacePreview.mock.calls.map((call) => call[1])).toEqual(["shots/legacy.png"]);
+
+      fireEvent.click(second);
+      expect(screen.getByRole("dialog", { name: "two.png 图片预览" })).toBeInTheDocument();
+      expect(screen.getByText("2 / 3")).toBeInTheDocument();
+      expect(within(screen.getByRole("dialog")).getByRole("img", { name: "two.png" })).toHaveAttribute("src", "eidos-preview://token/tool-two.png");
+
+      // The failed call is skipped: the next image is the legacy one.
+      fireEvent.click(screen.getByRole("button", { name: "下一张" }));
+      expect(screen.getByRole("dialog", { name: "legacy.png 图片预览" })).toBeInTheDocument();
+      expect(screen.getByText("3 / 3")).toBeInTheDocument();
+      expect(within(screen.getByRole("dialog")).getByRole("img", { name: "legacy.png" })).toHaveAttribute("src", "eidos-preview://file/shots/legacy.png");
+      expect(screen.getByRole("button", { name: "下一张" })).toHaveAttribute("aria-disabled", "true");
+
+      fireEvent.keyDown(window, { key: "ArrowLeft" });
+      fireEvent.keyDown(window, { key: "ArrowLeft" });
+      expect(screen.getByRole("dialog", { name: "one.png 图片预览" })).toBeInTheDocument();
+      expect(screen.getByText("1 / 3")).toBeInTheDocument();
+
+      fireEvent.keyDown(window, { key: "Escape" });
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      // Stepping reused the thumbnails' previews instead of requesting them again.
+      expect(prepareToolContentPreview).toHaveBeenCalledTimes(2);
+      expect(prepareWorkspacePreview).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe("ExecutionFeed memory tools static rendering", () => {

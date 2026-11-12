@@ -544,6 +544,72 @@ span.tool-file-link:hover {
   flex-direction: column;
   gap: 0.25rem;
 }
+/* Image group: adjacent view_image calls share one thumbnail strip */
+.tool-image-strip {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0.3rem 0 0.1rem;
+  padding: 0.15rem 0.15rem 0.35rem;
+  overflow-x: auto;
+  /* Not a vertical scroller: tiles pick the feed as their lazy-load viewport by its vertical overflow. */
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.tool-image-tile {
+  flex: none;
+  width: 4.5rem;
+  height: 4.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  background: var(--surface-muted);
+  overflow: hidden;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+.tool-image-tile[data-state="ready"]:hover,
+.tool-image-tile[data-state="ready"]:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.tool-image-tile__open {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  background: var(--surface-raised);
+  cursor: zoom-in;
+}
+.tool-image-tile__open:focus-visible { outline: none; }
+.tool-image-tile__open img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.tool-image-tile__note {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  width: 100%;
+  height: 100%;
+  font-size: var(--font-size-xs);
+  line-height: 1;
+}
+.tool-image-tile[data-state="failed"] {
+  border-color: transparent;
+  color: var(--status-danger);
+  background: var(--danger-soft);
+}
+.tool-image-tile[data-state="loading"] {
+  background: linear-gradient(100deg, var(--surface-muted) 35%, var(--surface-hover) 50%, var(--surface-muted) 65%) 0 0 / 220% 100%;
+  animation: tool-image-tile-shimmer 1.6s ease-in-out infinite;
+}
+@keyframes tool-image-tile-shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
 .shell-result {
   position: relative;
   margin-top: 0.45rem;
@@ -555,7 +621,8 @@ span.tool-file-link:hover {
 .shell-command-zone {
   position: relative;
   margin: 0 0 0.5rem;
-  padding: 0.5rem 0.65rem;
+  padding: 0;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface-muted);
@@ -563,7 +630,7 @@ span.tool-file-link:hover {
 .shell-copy-button {
   position: absolute;
   top: 0.35rem;
-  right: 0.4rem;
+  right: 0.5rem;
   z-index: 1;
   width: 24px;
   height: 24px;
@@ -608,7 +675,7 @@ span.tool-file-link:hover {
 }
 .shell-command {
   max-height: 6.5rem;
-  padding-right: 1.65rem;
+  padding: 0.5rem 2.25rem 0.5rem 0.65rem;
   color: var(--text-secondary);
 }
 .shell-command-prompt {
@@ -784,7 +851,8 @@ span.tool-file-link:hover {
     transition: none !important;
   }
   .tool-group[data-running="true"] .tool-group-lead svg,
-  .tool-group[data-running="true"] .tool-group-label {
+  .tool-group[data-running="true"] .tool-group-label,
+  .tool-image-tile[data-state="loading"] {
     animation: none;
   }
   .streaming::after { animation: none; }

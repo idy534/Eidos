@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseDiff } from "react-diff-view";
-import { createPortal } from "react-dom";
 import type { Item, Run } from "../contracts.js";
 import { committedFileDiff, projectNetFileDiff, type ParsedFileDiff } from "../persisted-file-diff.js";
 import { displayFilePath, useArtifacts, usePreviewUrl } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
 import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
-import { PreviewIcon, ExternalLinkIcon, FinderIcon, CloseIcon, ChevronDownIcon } from "./MenuIcons.js";
+import { PreviewIcon, ExternalLinkIcon, FinderIcon, ChevronDownIcon } from "./MenuIcons.js";
+import { ImageLightbox } from "./ImageLightbox.js";
 import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
 import { Tooltip } from "./Tooltip.js";
 
@@ -434,15 +434,6 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
     }
   }, [actions, htmlOpenHandled, htmlOpenPending, previewError, previewUrl, wrongWorkspace]);
 
-  useEffect(() => {
-    if (!imageOpen) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setImageOpen(false);
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [imageOpen]);
-
   const open = async (external = false) => {
     if (!actions || wrongWorkspace || opening) return;
     const sequence = ++openSequence.current;
@@ -524,20 +515,11 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
       {(wrongWorkspace || openError) && <p className="turn-result-card__note" role={openError ? "alert" : "status"}>
         {wrongWorkspace ? "此产物属于其他执行目录，当前工作区无法打开。" : openError}
       </p>}
-      {imageOpen && typeof document !== "undefined" && createPortal(
-        <div
-          className="artifact-image-preview"
-          role="dialog"
-          aria-modal="true"
-          aria-label={`${displayName} 图片预览`}
-          onClick={(event) => {
-            if (event.target === event.currentTarget) setImageOpen(false);
-          }}
-        >
-          <button type="button" className="artifact-image-preview__close" aria-label="关闭图片预览" autoFocus onClick={() => setImageOpen(false)}><CloseIcon /></button>
-          {previewUrl ? <img src={previewUrl} alt={displayName} /> : <p role={previewError ? "alert" : "status"}>{previewError || "正在读取图片预览…"}</p>}
-        </div>,
-        document.body,
+      {imageOpen && (
+        <ImageLightbox
+          images={[{ name: displayName, url: previewUrl, status: previewError || "正在读取图片预览…", failed: Boolean(previewError) }]}
+          onClose={() => setImageOpen(false)}
+        />
       )}
     </>
   );
