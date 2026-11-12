@@ -211,4 +211,3 @@ class RuntimePhaseTracker:
             return
         ensure_transition(self.state, target)
         self.track(target, reason)
-

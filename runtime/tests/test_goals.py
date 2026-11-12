@@ -10,7 +10,7 @@ import pytest
 from eidos_runtime.context.builder import ContextBuilder
 from eidos_runtime.db.goal_migration import migrate_goals
 from eidos_runtime.db.repositories.runs import RunRepository
-from eidos_runtime.db.schema import V50_SCHEMA_SQL
+from eidos_runtime.db.schema import SCHEMA_VERSION, V50_SCHEMA_SQL
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.db.transitions import transition_run
 from eidos_runtime.domain.goal import GoalError, GoalDeclaration, SessionGoal
@@ -511,7 +511,9 @@ def test_v51_goal_budgets_are_removed_without_automatic_resume(goals, boundary):
         assert current.status == "paused" and current.status_reason == "legacy_budget_removed"
         assert current.id == goal.id and current.objective == goal.objective
         assert "token_budget" not in json.loads(connection.execute("SELECT goal_json FROM session_goals").fetchone()[0])
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 52
+        # A restart continues through every later migration; the direct call stops at v52.
+        expected_version = SCHEMA_VERSION if boundary == "startup" else 52
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == expected_version
         assert repository.pending() == ()
     finally:
         if replacement:

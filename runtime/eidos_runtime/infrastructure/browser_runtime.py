@@ -78,5 +78,3 @@ def _file_sha256(path: Path) -> str | None:
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_size > 16 * 1024**2:
             return None
         return hashlib.sha256(stream.read()).hexdigest()
-
-

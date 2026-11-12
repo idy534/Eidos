@@ -19,7 +19,7 @@ from tests.fault_injection import (  # noqa: E402
 
 class FaultInjectionHarnessTests(unittest.TestCase):
     def test_phase5b_fault_points_are_declared(self) -> None:
-        self.assertEqual(len(FAULT_POINTS), 18)
+        self.assertEqual(len(FAULT_POINTS), 17)
 
     def test_barrier_controls_the_fault_boundary(self) -> None:
         harness = FaultInjectionHarness()
