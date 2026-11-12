@@ -324,6 +324,7 @@ class ContextRepository(Repository):
                         SELECT item_id, provider_call_id, tool_name,
                                payload_kind,
                                substr(arguments_json, 1, ?) AS arguments_json,
+                               display_intent,
                                status,
                                substr(result_json, 1, ?) AS result_json,
                                substr(model_result_json, 1, ?) AS model_result_json
@@ -428,6 +429,7 @@ class ContextRepository(Repository):
                 tool_name=str(tool["tool_name"]) if tool else None,
                 payload_kind=str(tool["payload_kind"]) if tool else None,
                 arguments_json=str(tool["arguments_json"]) if tool else None,
+                display_intent=tool["display_intent"] if tool else None,
                 result_json=(
                     str(tool["result_json"])
                     if tool

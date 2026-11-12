@@ -367,6 +367,8 @@ export interface ToolCall {
   status: "running" | "completed" | "failed" | "canceled";
   payloadKind?: "function" | "custom";
   argumentsJson?: string;
+  displayIntent?: string;
+  displayCommand?: string;
   resultJson?: string;
   approvalStatus?: "pending" | "resolved" | "canceled";
   approvalDecision?: "approve" | "reject";
@@ -574,6 +576,7 @@ export interface FileApprovalRequest extends ApprovalRequestBase {
 export interface CommandApprovalRequest extends ApprovalRequestBase {
   kind: "command_execution";
   command: string;
+  displayIntent?: string | undefined;
   cwd: string;
   networkEnabled: boolean;
   timeoutSeconds: number;

@@ -174,7 +174,7 @@ if (runtimeClientText) {
       network_access: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "requiresHumanConfirmation", "riskWarning", "toolName", "hosts", "target"],
       command_execution: [
         "id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "requiresHumanConfirmation", "riskWarning",
-        "command", "cwd", "networkEnabled", "timeoutSeconds", "executionMode",
+        "command", "cwd", "networkEnabled", "timeoutSeconds", "executionMode", "displayIntent",
         "sandboxPermissions", "additionalReadAccess", "additionalWriteAccess",
         "additionalExecutableAccess", "additionalFileSystemAccess", "reason", "escalationReason", "attemptOrdinal",
       ],

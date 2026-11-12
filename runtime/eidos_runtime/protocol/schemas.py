@@ -347,6 +347,8 @@ class ToolCallDto(ClosedModel):
         default=None, alias="payloadKind"
     )
     arguments_json: StrictStr | None = Field(default=None, alias="argumentsJson")
+    display_intent: StrictStr | None = Field(default=None, alias="displayIntent", max_length=120)
+    display_command: StrictStr | None = Field(default=None, alias="displayCommand", max_length=16 * 1024)
     result_json: StrictStr | None = Field(default=None, alias="resultJson")
     approval_status: Literal["pending", "resolved", "canceled"] | None = Field(default=None, alias="approvalStatus")
     approval_decision: Literal["approve", "reject"] | None = Field(default=None, alias="approvalDecision")

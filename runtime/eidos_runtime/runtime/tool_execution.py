@@ -500,6 +500,24 @@ class ToolExecutionController:
                 payload = CustomToolPayload(input=str(updated["patch"])) if isinstance(call.payload, CustomToolPayload) else FunctionToolPayload(arguments=updated)
                 call = ModelToolCall(call.provider_call_id, call.name, payload, raw_payload=call.raw_payload or call.payload)
                 plan = self.dispatcher.plan(call, plan.binding)
+                if call.name == "run_shell" and isinstance(tool_call, dict):
+                    rewritten = self.dispatcher.validate_execution(call, plan)
+                    if rewritten is not None and rewritten.valid:
+                        before = validation.normalized_arguments or {}
+                        after = rewritten.normalized_arguments or {}
+                        command = after.get("command")
+                        command_changed = isinstance(command, str) and command != before.get("command")
+                        cwd_changed = after.get("cwd", ".") != before.get("cwd", ".")
+                        if command_changed or cwd_changed:
+                            # Keep the original execution record for approval recovery.
+                            display_command = (
+                                self.sensitive.redact_for_presentation(command).text[:16 * 1024]
+                                if isinstance(command, str) and command_changed else None
+                            )
+                            if tool_call.get("displayIntent") or tool_call.get("displayCommand") != display_command:
+                                mutation = self.store.record_shell_display_rewrite(str(item["id"]), display_command)
+                                item = mutation.value
+                                self.events.publish(mutation, item=item)
         call_id = call.provider_call_id
         if isinstance(tool_call, dict) and isinstance(tool_call.get("id"), str):
             call_id = tool_call["id"]

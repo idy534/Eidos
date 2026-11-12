@@ -153,6 +153,7 @@ from eidos_runtime.runtime.browser_tools import (
 )
 from eidos_runtime.tools.contracts import (
     GitWriteAccess,
+    MAX_SHELL_DISPLAY_INTENT_LENGTH,
     RunShellInput,
     WriteStdinInput,
     ControlShellInput,
@@ -217,6 +218,12 @@ def _scan_tool_payload(
             raise SensitiveScanError("sensitive tool input")
         return CustomToolPayload(input=call.payload.input)
     raise SensitiveScanError("unsupported tool payload")
+
+
+def _fit_shell_display_intent(text: str) -> str:
+    if len(text) <= MAX_SHELL_DISPLAY_INTENT_LENGTH:
+        return text
+    return text[: MAX_SHELL_DISPLAY_INTENT_LENGTH - 1].rstrip() + "…"
 
 
 def _serialize_tool_payload(payload: ToolPayload) -> str:
@@ -2055,6 +2062,12 @@ class ToolCallRuntime:
             )
         if not result.tool_calls:
             return ToolBatchOutcome(status="no_tools")
+        for provider_call_id, reason in result.dropped_display_intents:
+            # The stored record cannot tell an omitted description from a dropped one.
+            logger.info("shell_display_intent_dropped", extra={
+                "run_id": step.run_id, "provider_call_id": provider_call_id,
+                "reason_code": reason,
+            })
         return ToolBatchOutcome(status="ready", tool_calls=result.tool_calls)
 
     def execute(
@@ -2122,6 +2135,12 @@ class ToolCallRuntime:
                     },),
                 )
             self.store.clear_sensitive_tool_inputs(step.run_id)
+            display_intent = None
+            if call.display_intent is not None:
+                # Redact the whole text first; see MAX_SHELL_DISPLAY_INTENT_INPUT_LENGTH.
+                display_intent = _fit_shell_display_intent(
+                    self.sensitive.redact_for_presentation(call.display_intent).text
+                )
             mutation = self.store.create_tool_item_committed(
                 step.run_id,
                 step.step_index,
@@ -2130,6 +2149,7 @@ class ToolCallRuntime:
                 call.name,
                 _serialize_tool_payload(payload),
                 raw_arguments_json=_serialize_tool_payload(raw_payload),
+                display_intent=display_intent,
                 payload_kind=call.payload_kind,
                 provenance=self.dispatcher.provenance(call.name),
                 tool_set_hash=step.tool_snapshot.tool_set_hash,

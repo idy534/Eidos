@@ -25,6 +25,7 @@ from eidos_runtime.persistence.input_context import InputContextRepository
 from eidos_runtime.persistence.tool_content import ToolContentRepository
 from eidos_runtime.domain.tool_content import MAX_CONTEXT_CONTENT_BYTES, ToolContentSnapshot
 from eidos_runtime.context.facts import ContextFacts
+from eidos_runtime.tools.contracts import SHELL_DISPLAY_INTENT_FIELD
 from eidos_runtime.context.input_references import inline_reference_mention, project_input_mentions
 from eidos_runtime.infrastructure.automation_time import local_timezone
 from eidos_runtime.domain.automation import AutomationError
@@ -408,7 +409,9 @@ class ContextBuilder:
                             "type": "tool_call",
                             "callId": item.provider_call_id,
                             "name": item.tool_name or "",
-                            "arguments": item.arguments_json or "{}",
+                            "arguments": _replayed_function_arguments(
+                                item.arguments_json, item.display_intent
+                            ),
                             **response_metadata,
                         },
                         {
@@ -633,6 +636,25 @@ class ContextBuilder:
 _CONTEXT_DEDUPE_READ_TOOLS = frozenset({
     "list_files", "read_file", "read_file_range", "search_text"
 })
+
+
+def _replayed_function_arguments(
+    arguments_json: str | None, display_intent: str | None
+) -> str:
+    """A model that sees its earlier calls without the description stops writing one."""
+    arguments = arguments_json or "{}"
+    if not display_intent:
+        return arguments
+    try:
+        decoded = json.loads(arguments)
+    except json.JSONDecodeError:
+        return arguments
+    if not isinstance(decoded, dict) or not decoded:
+        return arguments
+    return json.dumps(
+        {SHELL_DISPLAY_INTENT_FIELD: display_intent, **decoded},
+        ensure_ascii=False, separators=(",", ":"),
+    )
 
 
 def _canonical_json(value: str) -> str:

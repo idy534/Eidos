@@ -360,6 +360,10 @@ def _item_from_row(
             "argumentsJson": tool_row["arguments_json"],
             "startedAt": tool_row["started_at"],
         }
+        if "display_intent" in tool_row.keys() and tool_row["display_intent"]:
+            tool_call["displayIntent"] = tool_row["display_intent"]
+        if "display_command" in tool_row.keys() and tool_row["display_command"]:
+            tool_call["displayCommand"] = tool_row["display_command"]
         public_result = (
             tool_row["ui_result_json"]
             if "ui_result_json" in tool_row.keys()

@@ -314,6 +314,8 @@ export function applyNotification(
     : incoming;
   if (existing?.toolCall && incoming.toolCall) {
     const mergedToolCall = { ...existing.toolCall, ...incoming.toolCall };
+    if (incoming.toolCall.displayIntent === undefined) delete mergedToolCall.displayIntent;
+    if (incoming.toolCall.displayCommand === undefined) delete mergedToolCall.displayCommand;
     if (mergedToolCall.argumentsJson === undefined || mergedToolCall.argumentsJson === "{}" || mergedToolCall.argumentsJson === "") {
       if (existing.toolCall.argumentsJson && existing.toolCall.argumentsJson !== "{}" && existing.toolCall.argumentsJson !== "") {
         mergedToolCall.argumentsJson = existing.toolCall.argumentsJson;

@@ -189,10 +189,10 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.feed-item--assistant\s*\{[^}]*overflow-anchor:\s*none;/s);
   });
 
-  it("aligns run_shell background with the markdown code block surface", () => {
+  it("frames run_shell command input with a minimalist border while keeping output open", () => {
     expect(styles).toMatch(/\.markdown-body pre\s*\{[^}]*background:\s*var\(--surface-muted\);/s);
-    expect(styles).toMatch(/\.shell-result\s*\{[^}]*background:\s*var\(--surface-muted\);/s);
-    expect(styles).toMatch(/\.shell-result\s*\{[^}]*border:\s*1px solid var\(--line\);/s);
+    expect(styles).toMatch(/\.shell-result\s*\{[^}]*background:\s*transparent;[^}]*border:\s*0;/s);
+    expect(styles).toMatch(/\.shell-command-zone\s*\{[^}]*border:\s*1px solid var\(--line\);[^}]*background:\s*var\(--surface-muted\);/s);
   });
 
   it("centers git review toolbar icon buttons and avoids dual hover backgrounds", () => {

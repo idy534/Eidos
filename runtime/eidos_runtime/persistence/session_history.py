@@ -120,6 +120,7 @@ class HistoryRecord(EidosFrozenStrictModel):
             tool_name=tool.tool_name if tool else None,
             payload_kind=tool.payload_kind if tool else None,
             arguments_json=tool.arguments_json if tool else None,
+            display_intent=tool.display_intent if tool else None,
             result_json=tool.result_json if tool else None,
             model_result_json=self.model_result_json,
         )

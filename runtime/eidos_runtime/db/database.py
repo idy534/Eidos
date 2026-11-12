@@ -33,6 +33,7 @@ from eidos_runtime.db.schema import (
     LEGACY_SCHEMA_VERSION,
     SCHEMA_SQL,
     SCHEMA_VERSION,
+    V52_SCHEMA_VERSION,
     V5_SCHEMA_VERSION,
     V6_SCHEMA_VERSION,
     V7_SCHEMA_VERSION,
@@ -226,6 +227,7 @@ class Database:
                     V49_SCHEMA_VERSION,
                     V50_SCHEMA_VERSION,
                     V51_SCHEMA_VERSION,
+                    V52_SCHEMA_VERSION,
                     SCHEMA_VERSION,
                     4,
                 }
@@ -567,6 +569,12 @@ class Database:
                 from eidos_runtime.db.goal_migration import migrate_goal_composer
                 try:
                     migrate_goal_composer(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V52_SCHEMA_VERSION:
+                from eidos_runtime.db.shell_display_migration import migrate_shell_display
+                try:
+                    migrate_shell_display(connection)
                 except sqlite3.Error as error:
                     raise StorageError("schema_migration_failed") from error
             self._verify_startup_integrity(

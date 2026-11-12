@@ -17,6 +17,15 @@ function show(approval: ApprovalRequest) {
 }
 
 describe("Approval decision details", () => {
+  it("shows the model's intent next to the command, and hides blank intents", () => {
+    const { rerender } = show({ ...command, displayIntent: "检查网页能否访问" });
+    expect(screen.getByText("模型说明")).toBeVisible();
+    expect(screen.getByText("检查网页能否访问")).toBeVisible();
+    expect(screen.getByLabelText("完整命令")).toHaveTextContent(command.command);
+    expect(screen.getByText(command.reason!)).toBeVisible();
+    rerender(<ApprovalComposer run={run} approval={{ ...command, displayIntent: "  " }} onApprove={vi.fn()} onReject={vi.fn()} />);
+    expect(screen.queryByText("模型说明")).toBeNull();
+  });
   it("keeps the complete command and actual network scope, and folds observation settings", () => {
     show(command);
     expect(screen.getByText(command.command)).toBeVisible();

@@ -716,7 +716,7 @@ const ToolGroup = memo(function ToolGroup({
   const active = liveLineShown
     ? undefined
     : [...items].reverse().find((item) => !item.inherited && item.status === "in_progress");
-  const activeText = active?.toolCall ? activeToolText(active.toolCall, agents, mcpNames) : undefined;
+  const activeText = active?.toolCall ? activeToolText(active.toolCall, agents, mcpNames, needsApproval) : undefined;
   const label = activeText ?? summary.parts.map((part) => part.text).join(" · ");
   const failedLabel = !active && summary.failed > 0 ? `${summary.failed} 失败` : undefined;
 
@@ -743,10 +743,14 @@ function activeToolText(
   toolCall: ToolCall,
   agents: AgentSummary[] | undefined,
   mcpNames: ReadonlyMap<string, string>,
+  waitingApproval = false,
 ): string {
   if (toolCall.toolName === "run_shell") {
     const args = parseObject(toolCall.argumentsJson);
-    return shellSummary("in_progress", stringField(args, "command") || stringArrayField(args, "argv").join(" ") || "Shell 命令");
+    const intent = toolCall.displayIntent?.trim();
+    return intent
+      ? `${waitingApproval || toolCall.approvalStatus === "pending" ? "等待批准" : "运行中"} · ${intent}`
+      : shellSummary("in_progress", shellCommand(toolCall, args));
   }
   return toolSummary(toolCall, "in_progress", agents, mcpNames);
 }
@@ -1415,7 +1419,7 @@ const ProcessItem = memo(function ProcessItem({
   }
 
   const toolItem = item.toolCall.toolName === "run_shell"
-    ? <ShellItem item={item} toolCall={item.toolCall} />
+    ? <ShellItem item={item} toolCall={item.toolCall} waitingApproval={Boolean(approval)} />
     : <ToolItem item={item} toolCall={item.toolCall} onOpenFile={onOpenFile} agents={agents} onOpenSubagent={onOpenSubagent} />;
 
   if (approval && run.approvalMode !== "full_access") {
@@ -1461,12 +1465,79 @@ export function shellOutputSegments(
   ].filter((segment) => Boolean(segment.content));
 }
 
-const ShellItem = memo(function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
+const SHELL_HIGHLIGHT_CACHE_LIMIT = 200;
+const shellCommandHighlightCache = new Map<string, string>();
+
+function extractShikiCodeInnerHtml(renderedHtml: string): string | undefined {
+  const match = /<code[^>]*>([\s\S]*?)<\/code>/i.exec(renderedHtml);
+  return match?.[1];
+}
+
+function cacheShellCommandHighlight(command: string, html: string): void {
+  if (shellCommandHighlightCache.has(command)) {
+    shellCommandHighlightCache.delete(command);
+  } else if (shellCommandHighlightCache.size >= SHELL_HIGHLIGHT_CACHE_LIMIT) {
+    const oldestKey = shellCommandHighlightCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      shellCommandHighlightCache.delete(oldestKey);
+    }
+  }
+  shellCommandHighlightCache.set(command, html);
+}
+
+function useShellCommandHighlight(command: string, enabled: boolean): string | undefined {
+  const [highlightedHtml, setHighlightedHtml] = useState<string | undefined>(() =>
+    command ? shellCommandHighlightCache.get(command) : undefined,
+  );
+
+  useEffect(() => {
+    if (!enabled || !command) {
+      setHighlightedHtml(undefined);
+      return;
+    }
+    const cached = shellCommandHighlightCache.get(command);
+    if (cached !== undefined) {
+      setHighlightedHtml(cached);
+      return;
+    }
+    let active = true;
+    void import("shiki")
+      .then(async ({ codeToHtml }) => {
+        try {
+          const rendered = await codeToHtml(command, {
+            lang: "bash",
+            theme: "github-light-default",
+          });
+          const inner = extractShikiCodeInnerHtml(rendered);
+          if (inner !== undefined) {
+            cacheShellCommandHighlight(command, inner);
+            if (active) setHighlightedHtml(inner);
+          }
+        } catch {
+          // Keep plain-text command fallback if highlighting fails.
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+    };
+  }, [command, enabled]);
+
+  return command ? (shellCommandHighlightCache.get(command) ?? highlightedHtml) : undefined;
+}
+
+const ShellItem = memo(function ShellItem({ item, toolCall, waitingApproval }: {
+  item: Item;
+  toolCall: ToolCall;
+  waitingApproval: boolean;
+}) {
   const args = useMemo(() => parseObject(toolCall.argumentsJson), [toolCall.argumentsJson]);
   const result = useMemo(() => parseObject(toolCall.resultJson), [toolCall.resultJson]);
   const data = objectField(result, "data");
   const running = !item.inherited && (item.status === "in_progress" || stringField(data, "executionStatus") === "running");
-  const command = stringField(args, "command") || stringArrayField(args, "argv").join(" ") || "Shell 命令";
+  const command = shellCommand(toolCall, args);
+  const intent = toolCall.displayIntent?.trim();
   const stdout = stringField(data, "stdout");
   const stderr = stringField(data, "stderr");
   const exitCode = numberField(data, "exitCode");
@@ -1515,6 +1586,12 @@ const ShellItem = memo(function ShellItem({ item, toolCall }: { item: Item; tool
             ? "失败"
             : statusLabel(item.status);
   const details = useLazyDetails(false);
+  const highlightedCommandHtml = useShellCommandHighlight(command, details.mounted);
+  const intentStatus = waitingApproval || toolCall.approvalStatus === "pending"
+    ? "等待批准"
+    : item.status === "declined" || item.status === "canceled"
+      ? statusLabel(item.status)
+      : success ? "已完成" : statusText;
 
   const isExitNonzero = code === "shell_exit_nonzero" || code === "nonzero_exit";
   const showErrorCode = !running
@@ -1544,15 +1621,19 @@ const ShellItem = memo(function ShellItem({ item, toolCall }: { item: Item; tool
         <span className="tool-icon tool-icon--terminal" aria-hidden="true">
           <ShellIcon />
         </span>
-        <span>{shellSummary(running ? "in_progress" : item.status, command)}</span>
+        <span>{intent ? `${intentStatus} · ${intent}` : shellSummary(running ? "in_progress" : item.status, command)}</span>
       </summary>
       {details.mounted && <div className="shell-result">
         <div className="shell-command-zone">
-          <div className="shell-command-header">
-            <p className="shell-label">Shell</p>
-            {command && <ShellCopyButton command={command} />}
-          </div>
-          <pre className="shell-command"><span aria-hidden="true">$ </span>{command}</pre>
+          {command && <ShellCopyButton command={command} />}
+          <pre className="shell-command">
+            <span className="shell-command-prompt" aria-hidden="true">$ </span>
+            {highlightedCommandHtml !== undefined ? (
+              <code className="shell-command-code" dangerouslySetInnerHTML={{ __html: highlightedCommandHtml }} />
+            ) : (
+              <code className="shell-command-code">{command}</code>
+            )}
+          </pre>
         </div>
         {outputSegments.map((segment, index) => (
           <pre
@@ -2457,6 +2538,10 @@ function activeRunPresentation(run: Run) {
     case "waiting_approval": return { label: "等待批准", tone: "warning" as const };
     default: return undefined;
   }
+}
+
+function shellCommand(toolCall: ToolCall, args: Record<string, unknown>): string {
+  return toolCall.displayCommand || stringField(args, "command") || stringArrayField(args, "argv").join(" ") || "Shell 命令";
 }
 
 function shellSummary(status: Item["status"], command: string): string {

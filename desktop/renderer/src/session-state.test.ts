@@ -217,6 +217,30 @@ test("an item update preserves content and merges the latest tool evidence", () 
   assert.equal(result?.items[0]?.toolCall?.resultJson, '{"ok":true}');
 });
 
+test("a Shell rewrite removes the old intent and carries the displayed command", () => {
+  const toolCall = {
+    id: "shell-tool", itemId: "shell-item", modelStepIndex: 1, batchOrder: 0,
+    providerCallId: "shell-provider", toolName: "run_shell", status: "running",
+    startedAt: 1, argumentsJson: '{"command":"true"}',
+  } as const;
+  const existing: Item = {
+    id: "shell-item", sessionId: session.id, runId: "run-1", ordinal: 1,
+    kind: "command_execution", status: "in_progress", createdAt: 1,
+    toolCall: { ...toolCall, displayIntent: "检查 Shell 是否可用" },
+  };
+  const snapshot = { session, runs: [], items: [existing], stepResolutions: [] };
+  const updated = applyNotification(snapshot, {
+    method: "item/updated",
+    params: {
+      sessionId: session.id, runId: existing.runId,
+      item: { ...existing, toolCall: { ...toolCall, displayCommand: "pwd" } },
+    },
+  });
+  assert.equal(updated?.items[0]?.toolCall?.displayIntent, undefined);
+  assert.equal(updated?.items[0]?.toolCall?.displayCommand, "pwd");
+  assert.equal(updated?.items[0]?.toolCall?.argumentsJson, toolCall.argumentsJson);
+});
+
 test("permission updates retain known arguments when display arguments are empty", () => {
   const argumentsJson = JSON.stringify({ permissions: { network: { enabled: true } } });
   const existing: Item = {

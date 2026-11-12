@@ -31,6 +31,7 @@ from eidos_runtime.db.schema import (
     V49_SCHEMA_VERSION,
     V50_SCHEMA_VERSION,
     V51_SCHEMA_VERSION,
+    V52_SCHEMA_VERSION,
 )
 from eidos_runtime.memory.publication import MemoryFiles
 from eidos_runtime.memory.repository import MemoryRejected
@@ -194,6 +195,7 @@ def restore(archive_path: Path, destination: Path) -> None:
                 V49_SCHEMA_VERSION,
                 V50_SCHEMA_VERSION,
                 V51_SCHEMA_VERSION,
+                V52_SCHEMA_VERSION,
                 SCHEMA_VERSION,
             }:
                 raise MemoryRejected("data_restore_format_unsupported")
@@ -287,6 +289,9 @@ def restore(archive_path: Path, destination: Path) -> None:
             if connection.execute("PRAGMA user_version").fetchone()[0] == V51_SCHEMA_VERSION:
                 from eidos_runtime.db.goal_migration import migrate_goal_composer
                 migrate_goal_composer(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V52_SCHEMA_VERSION:
+                from eidos_runtime.db.shell_display_migration import migrate_shell_display
+                migrate_shell_display(connection)
             connection.execute("UPDATE memory_scopes SET mode='read',privacy_epoch=privacy_epoch+1")
             connection.execute(
                 "UPDATE memory_metadata SET value='0' WHERE key='legacy_cleanup_pending'"

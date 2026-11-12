@@ -205,8 +205,8 @@ class VerifiedCompactionRepository(Repository):
                 SELECT items.*, tool_calls.id AS tool_call_id,
                        tool_calls.provider_call_id, tool_calls.tool_name,
                        tool_calls.payload_kind,
-                       tool_calls.arguments_json, tool_calls.result_json,
-                       tool_calls.model_result_json
+                       tool_calls.arguments_json, tool_calls.display_intent,
+                       tool_calls.result_json, tool_calls.model_result_json
                 FROM items LEFT JOIN tool_calls ON tool_calls.item_id = items.id
                 WHERE items.session_id = ? ORDER BY items.creation_seq
                 """,
@@ -261,6 +261,7 @@ class VerifiedCompactionRepository(Repository):
                 input_references=tuple(InputReference.model_validate(value) for value in json.loads(row["input_references_json"])),
                 provider_call_id=row["provider_call_id"],
                 tool_name=row["tool_name"], arguments_json=row["arguments_json"],
+                display_intent=row["display_intent"],
                 payload_kind=row["payload_kind"],
                 result_json=row["result_json"],
                 model_result_json=row["model_result_json"],

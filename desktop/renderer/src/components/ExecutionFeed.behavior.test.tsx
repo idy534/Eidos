@@ -52,6 +52,35 @@ function renderFeed(item: Item, run: Run = baseRun) {
   );
 }
 
+describe("Shell display intent", () => {
+  it("shows the intent with real status and keeps the command inside details", async () => {
+    const shell = shellItem();
+    const toolCall = { ...shell.toolCall!, displayIntent: "检查项目测试是否通过" };
+    const { container, rerender } = renderFeed({ ...shell, toolCall });
+    const summary = screen.getByText("运行中 · 检查项目测试是否通过");
+    const details = summary.closest("details")!;
+    expect(details).not.toHaveAttribute("open");
+    await expandDetails(container);
+    expect(within(details).getByText("pnpm test:fast")).toBeVisible();
+    expect(within(details).getByRole("button", { name: /复制/ })).toBeVisible();
+
+    rerender(<ExecutionFeed runs={[baseRun]} approvals={[]} items={[{
+      ...shell, status: "failed", toolCall: { ...toolCall, status: "failed" },
+    }]} />);
+    expect(screen.getByText("失败 · 检查项目测试是否通过")).toBeVisible();
+  });
+
+  it("uses the existing command summary for absent and blank intents", () => {
+    const shell = shellItem();
+    const { rerender } = renderFeed(shell);
+    expect(screen.getByText("正在运行 pnpm test:fast")).toBeVisible();
+    rerender(<ExecutionFeed runs={[baseRun]} approvals={[]} items={[{
+      ...shell, toolCall: { ...shell.toolCall!, displayIntent: "   " },
+    }]} />);
+    expect(screen.getByText("正在运行 pnpm test:fast")).toBeVisible();
+  });
+});
+
 describe("response model label", () => {
   it("uses the configured name, then the saved remote ID, then the legacy ID", () => {
     const run: Run = {
@@ -478,6 +507,33 @@ describe("ExecutionFeed shell output", () => {
     await waitFor(() => {
       expect(copyButton?.title).toBe("已复制命令");
     });
+  });
+
+  it("highlights the shell command with bash syntax tokens while keeping output plain text", async () => {
+    const item = shellItem({
+      status: "completed",
+      content: "output line\n",
+      toolCall: {
+        ...shellItem().toolCall!,
+        status: "completed",
+        argumentsJson: JSON.stringify({ command: 'cd "/workspace" && git checkout -q HEAD' }),
+      },
+    });
+
+    const { container } = renderFeed(item);
+    await expandDetails(container);
+
+    const prompt = container.querySelector(".shell-command-prompt");
+    expect(prompt?.textContent).toBe("$ ");
+
+    await waitFor(() => {
+      const coloredTokens = container.querySelectorAll(".shell-command-code span[style*='color']");
+      expect(coloredTokens.length).toBeGreaterThan(0);
+    }, { timeout: 3000 });
+
+    const output = container.querySelector(".shell-output");
+    expect(output?.textContent).toBe("output line\n");
+    expect(output?.querySelectorAll("span[style*='color']").length ?? 0).toBe(0);
   });
 
   it("starts a shell details group collapsed and preserves manual expansion", () => {

@@ -96,6 +96,29 @@
       }
     }
   },
+  "shellDisplayIntent": {
+    "item": {
+      "id": "shell-display-item",
+      "sessionId": "shell-display-session",
+      "runId": "shell-display-run",
+      "kind": "command_execution",
+      "ordinal": 1,
+      "status": "in_progress",
+      "createdAt": 1000,
+      "toolCall": {
+        "id": "shell-display-tool",
+        "itemId": "shell-display-item",
+        "modelStepIndex": 1,
+        "batchOrder": 0,
+        "providerCallId": "shell-display-provider",
+        "toolName": "run_shell",
+        "status": "running",
+        "argumentsJson": "{\"command\":\"git status --short\"}",
+        "displayIntent": "检查当前工作区有哪些未提交的改动",
+        "startedAt": 1000
+      }
+    }
+  },
   "workspaceExplorer": {
     "listDirectoryRequest": {
       "jsonrpc": "2.0",

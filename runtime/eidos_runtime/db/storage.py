@@ -1112,6 +1112,7 @@ class SessionStore:
         arguments_json: str,
         *,
         raw_arguments_json: str | None = None,
+        display_intent: str | None = None,
         payload_kind: Literal["function", "custom"] = "function",
         provenance: dict[str, object] | None = None,
         tool_set_hash: str | None = None,
@@ -1124,9 +1125,17 @@ class SessionStore:
             tool_name,
             arguments_json,
             raw_arguments_json=raw_arguments_json,
+            display_intent=display_intent,
             payload_kind=payload_kind,
             provenance=provenance,
             tool_set_hash=tool_set_hash,
+        )
+
+    def record_shell_display_rewrite(
+        self, item_id: str, display_command: str | None,
+    ) -> CommittedMutation[dict[str, object]]:
+        return self._repository(self._execution).record_shell_display_rewrite(
+            item_id, display_command,
         )
 
     def complete_tool_item(

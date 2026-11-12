@@ -2551,6 +2551,8 @@ function isToolCall(value: unknown): value is ToolCall {
       "status",
       "payloadKind",
       "argumentsJson",
+      "displayIntent",
+      "displayCommand",
       "resultJson",
       "startedAt",
       "completedAt",
@@ -2576,6 +2578,8 @@ function isToolCall(value: unknown): value is ToolCall {
     && ["running", "completed", "failed", "canceled"].includes(String(value.status))
     && (value.payloadKind === undefined || ["function", "custom"].includes(String(value.payloadKind)))
     && (value.argumentsJson === undefined || typeof value.argumentsJson === "string")
+    && (value.displayIntent === undefined || isShellDisplayIntent(value.displayIntent))
+    && (value.displayCommand === undefined || typeof value.displayCommand === "string" && Array.from(value.displayCommand).length <= 16 * 1024)
     && (value.resultJson === undefined || typeof value.resultJson === "string")
     && isNonNegativeInteger(value.startedAt)
     && (value.completedAt === undefined || isNonNegativeInteger(value.completedAt))
@@ -3034,6 +3038,7 @@ function approvalRequestFrom(
       command: params.command as string,
       cwd: params.cwd as string,
       networkEnabled: params.networkEnabled as boolean,
+      displayIntent: isShellDisplayIntent(params.displayIntent) ? params.displayIntent : undefined,
       timeoutSeconds: params.timeoutSeconds as number,
       executionMode: (params.executionMode ?? "default_sandbox") as NonNullable<CommandApprovalRequest["executionMode"]>,
       sandboxPermissions: (params.sandboxPermissions ?? "use_default") as NonNullable<CommandApprovalRequest["sandboxPermissions"]>,
@@ -3047,6 +3052,10 @@ function approvalRequestFrom(
     };
   }
   return undefined;
+}
+
+function isShellDisplayIntent(value: unknown): value is string {
+  return typeof value === "string" && Array.from(value).length <= 120;
 }
 import { isContextDetails, isContextCompactionRecord, isContextCompactionActivity, isModelRetryActivity } from "../shared/context-management.js";
 import type { ContextDetails, ContextCompactionRecord } from "../shared/context-management.js";

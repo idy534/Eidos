@@ -1828,6 +1828,32 @@ export const sessionForkSchema = {
           "default": null,
           "title": "Argumentsjson"
         },
+        "displayIntent": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Displayintent"
+        },
+        "displayCommand": {
+          "anyOf": [
+            {
+              "maxLength": 16384,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Displaycommand"
+        },
         "resultJson": {
           "anyOf": [
             {

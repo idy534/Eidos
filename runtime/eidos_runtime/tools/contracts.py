@@ -277,6 +277,13 @@ class GitWriteAccess(StrEnum):
     REQUEST = "request"
 
 
+SHELL_DISPLAY_INTENT_FIELD = "display_intent"
+MAX_SHELL_DISPLAY_INTENT_LENGTH = 120
+# Longer text is shortened after redaction; cutting first could split a
+# credential so that the remaining part is no longer recognized.
+MAX_SHELL_DISPLAY_INTENT_INPUT_LENGTH = 2_000
+
+
 class RunShellInput(StrictToolModel):
     # Keep the advertised contract closed while tolerating unused model arguments.
     model_config = ConfigDict(

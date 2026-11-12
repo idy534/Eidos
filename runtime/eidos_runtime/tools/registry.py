@@ -31,8 +31,10 @@ from eidos_runtime.model.client import (
 )
 from eidos_runtime.tools.contracts import (
     GENERIC_PROJECTOR,
+    MAX_SHELL_DISPLAY_INTENT_LENGTH,
     PROJECTORS,
     RunShellInput,
+    SHELL_DISPLAY_INTENT_FIELD,
     ToolResultProjector,
 )
 
@@ -501,10 +503,43 @@ class ToolRegistryEntry:
                 format=self.spec.input_format,
             )
         assert self.spec.input_schema is not None
+        schema = self.spec.input_schema
+        description = self.spec.description
+        if self.input_model is RunShellInput:
+            # Presentation-only input must not change a saved execution contract.
+            description += (
+                " Include display_intent for every run_shell call, including follow-up calls, "
+                "so the user can understand what the command is for."
+            )
+            properties = schema["properties"]
+            required = schema.get("required", [])
+            assert isinstance(properties, dict)
+            assert isinstance(required, list)
+            # Models write arguments in schema order and skip trailing optional
+            # ones, so the description is advertised first and as required.
+            # Execution still accepts a call that leaves it out.
+            schema = {
+                **schema,
+                "properties": {
+                    SHELL_DISPLAY_INTENT_FIELD: {
+                        "type": "string",
+                        "maxLength": MAX_SHELL_DISPLAY_INTENT_LENGTH,
+                        "description": (
+                            "One-line description of what this command is meant to do, "
+                            "in the user's language. State the action and its main target. "
+                            "Mention material side effects and avoid claiming an outcome, "
+                            "quoting the command, or including secrets. "
+                            "For git status --short: Check for uncommitted changes."
+                        ),
+                    },
+                    **properties,
+                },
+                "required": [SHELL_DISPLAY_INTENT_FIELD, *required],
+            }
         return FunctionToolDefinition(
             name=self.spec.name,
-            description=self.spec.description,
-            parameters_json_schema=self.spec.input_schema,
+            description=description,
+            parameters_json_schema=schema,
         )
 
     @property
