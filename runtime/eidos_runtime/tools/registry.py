@@ -865,17 +865,18 @@ def _hash_json(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def can_be_activated(entry: ToolRegistryEntry) -> bool:
+    """Whether a deferred entry could ever be activated; larger definitions are skipped."""
+    return _definition_size(entry.model_definition()) <= MAX_SINGLE_DEFINITION_BYTES
+
+
 def fits_activation_budget(entries: tuple[ToolRegistryEntry, ...]) -> bool:
     """Whether all entries could be active together under the deferred-tool limits."""
     if len(entries) > MAX_ACTIVATED_TOOLS:
         return False
-    total = 0
-    for entry in entries:
-        size = _definition_size(entry.model_definition())
-        if size > MAX_SINGLE_DEFINITION_BYTES:
-            return False
-        total += size
-    return total <= MAX_ACTIVATED_SCHEMA_BYTES
+    return sum(
+        _definition_size(entry.model_definition()) for entry in entries
+    ) <= MAX_ACTIVATED_SCHEMA_BYTES
 
 
 def _definition_size(definition: ModelToolDefinitionLike) -> int:

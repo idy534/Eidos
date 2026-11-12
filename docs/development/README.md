@@ -306,6 +306,10 @@ pnpm test:composer-layout
 
 `node_modules/.bin/electron scripts/test-mcp-details.cjs` 使用隔离 user-data 和生产组件，检查 320、768、1024、1440px、10→20→23 条的真实滚动追加、展开状态和焦点返回。`EIDOS_MCP_SCREENSHOT` 可以指定截图路径。该 UI 验证使用测试数据，不读取真实 MCP 配置，也不启动真实第三方服务。这些入口都不属于 Full Suite。
 
+### MCP 工具搜索
+
+`uv run --locked pytest runtime/tests/test_tool_search.py` 覆盖哪些 MCP 工具改为搜索后提供（数量预算、字节预算、始终直接提供的来源、无法激活的超大定义）、搜索排序与截断、命中项激活和取消。真实引擎链路在 `runtime/tests/test_mcp.py`：`uv run --locked pytest runtime/tests/test_mcp.py -k "unlisted_mcp_tool or attached_to_the_message"` 检查未提供的工具先返回 `tool_not_activated`、搜索后下一 Step 可调用，以及输入框附加的 MCP 服务从首轮提供。这两个引擎用例用补丁把夹具服务标记为延后，不依赖预算数值。规则说明见 [系统提示词](../current/features/system-prompts.md#工具与-skill)。
+
 ### 浏览器操作
 
 定向入口：`uv run --locked pytest runtime/tests/test_browser_runtime.py runtime/tests/test_browser_sandbox.py runtime/tests/test_browser_mcp.py runtime/tests/test_browser_host.py runtime/tests/test_browser_grants.py runtime/tests/test_browser_tools.py runtime/tests/test_browser_context.py runtime/tests/test_user_chrome.py`。`test_browser_sandbox` 使用真实 Seatbelt；本机安装 Google Chrome 时，`test_browser_host` 会启动一次 headless Chrome。修改浏览器 DTO 后运行 `node scripts/generate-browser-contracts.mjs`。Main 入口是 `pnpm build:main` 后的 `node --test dist/main/runtime-client-browser.test.js`。

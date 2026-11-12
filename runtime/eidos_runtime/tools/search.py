@@ -18,6 +18,7 @@ from eidos_runtime.tools.registry import (
     ToolRegistryEntry,
     ToolSpec,
     VerifiedToolOutput,
+    can_be_activated,
     fits_activation_budget,
 )
 
@@ -37,10 +38,13 @@ def deferred_tool_names(
     activated tools: deferring a set that could be activated whole saves nothing.
     Past that budget, sending every definition with every request costs more
     context than one search step, so the whole set is deferred.
+
+    A tool whose own definition is too large to activate stays listed. Unlisting
+    it would leave it findable but never callable.
     """
     candidates = tuple(
         entry for entry in entries
-        if entry.provenance.kind == "mcp" and not always_listed(entry)
+        if entry.provenance.kind == "mcp" and not always_listed(entry) and can_be_activated(entry)
     )
     if not candidates or fits_activation_budget(candidates):
         return frozenset()
