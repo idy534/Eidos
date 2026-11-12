@@ -43,33 +43,41 @@ describe("WorktreeSettings Component", () => {
     }
   });
 
-  it("renders the layout with page header, summary cards, and configuration sections", async () => {
+  it("renders only the header and the two cleanup controls", async () => {
     render(<WorktreeSettings />);
 
-    // Should display the loaded header and subtitle
-    expect(await screen.findByText(/基于独立 Git Worktree 为会话提供代码执行与分支隔离/)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "清理策略" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Git 工作树" })).toBeInTheDocument();
+    expect(screen.getByText("管理 Eidos 为会话创建的工作树目录。")).toBeInTheDocument();
+    expect(screen.getByText("清理前保存改动，可在会话中恢复。")).toBeInTheDocument();
 
-    // Summary cards
-    expect(screen.getByText("执行隔离机制")).toBeInTheDocument();
-    expect(screen.getByText("Git Worktree (Detached HEAD)")).toBeInTheDocument();
-    expect(screen.getByText("清理保留策略")).toBeInTheDocument();
-    expect(screen.getByText("保留最近 15 个")).toBeInTheDocument();
-    expect(screen.getByText("数据安全性保障")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "自动清理旧工作树" })).toBeChecked();
+    expect(screen.getByRole("textbox", { name: "保留上限" })).toHaveValue("15");
+    expect(screen.getByRole("textbox", { name: "保留上限" })).toBeEnabled();
 
-    // Section 1: 目录回收与保留配额
-    expect(screen.getByRole("heading", { level: 2, name: "目录回收与保留配额" })).toBeInTheDocument();
-    expect(screen.getByText("自动清理 managed Worktree")).toBeInTheDocument();
-    expect(screen.getByText("保留最近的 Worktree 数量")).toBeInTheDocument();
+    // The page no longer repeats state in badges, summary cards, presets or explainer sections.
+    expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(1);
+    expect(screen.queryByRole("group", { name: "Worktree 数量预设" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/自动清理开启中/)).not.toBeInTheDocument();
+    expect(screen.queryByText("工作机制与安全性保障")).not.toBeInTheDocument();
+  });
 
-    // Presets
-    expect(screen.getByRole("button", { name: "15 个 (默认)" })).toBeInTheDocument();
+  it("locks the limit while cleanup is off and unlocks it when cleanup is turned on", async () => {
+    readWorktreeSettingsMock.mockResolvedValueOnce({ automaticCleanup: false, managedWorktreeLimit: 15 });
+    const user = userEvent.setup();
+    render(<WorktreeSettings />);
 
-    // Section 2: 工作机制与安全性保障
-    expect(screen.getByRole("heading", { level: 2, name: "工作机制与安全性保障" })).toBeInTheDocument();
-    expect(screen.getByText("自动快照保护（Worktree Snapshot）")).toBeInTheDocument();
-    expect(screen.getByText("会话与历史持久化（Durable Session）")).toBeInTheDocument();
-    expect(screen.getByText("主代码库零污染")).toBeInTheDocument();
+    const toggle = await screen.findByRole("switch", { name: "自动清理旧工作树" });
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByRole("textbox", { name: "保留上限" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "增加 1 个" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "减少 1 个" })).toBeDisabled();
+
+    await user.click(toggle);
+
+    expect(updateWorktreeSettingsMock).toHaveBeenCalledWith({ automaticCleanup: true, managedWorktreeLimit: 15 });
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "保留上限" })).toBeEnabled());
+    expect(screen.getByRole("button", { name: "增加 1 个" })).toBeEnabled();
   });
 
   it("toggles automatic cleanup and triggers toast", async () => {
@@ -79,7 +87,7 @@ describe("WorktreeSettings Component", () => {
 
     await screen.findByRole("heading", { level: 1, name: "Git 工作树" });
 
-    const toggle = screen.getByRole("switch", { name: "自动清理 managed Worktree" });
+    const toggle = screen.getByRole("switch", { name: "自动清理旧工作树" });
     expect(toggle).toBeChecked();
 
     await user.click(toggle);
@@ -88,7 +96,7 @@ describe("WorktreeSettings Component", () => {
       automaticCleanup: false,
       managedWorktreeLimit: 15,
     });
-    expect(onShowToast).toHaveBeenCalledWith("Worktree 设置已更新", "success");
+    expect(onShowToast).toHaveBeenCalledWith("工作树设置已更新", "success");
   });
 
   it("increments limit using the stepper '+' button", async () => {
@@ -105,7 +113,7 @@ describe("WorktreeSettings Component", () => {
       automaticCleanup: true,
       managedWorktreeLimit: 16,
     });
-    expect(onShowToast).toHaveBeenCalledWith("Worktree 设置已更新", "success");
+    expect(onShowToast).toHaveBeenCalledWith("工作树设置已更新", "success");
   });
 
   it("decrements limit using the stepper '−' button", async () => {
@@ -122,24 +130,7 @@ describe("WorktreeSettings Component", () => {
       automaticCleanup: true,
       managedWorktreeLimit: 14,
     });
-    expect(onShowToast).toHaveBeenCalledWith("Worktree 设置已更新", "success");
-  });
-
-  it("selects a preset chip", async () => {
-    const user = userEvent.setup();
-    const onShowToast = vi.fn();
-    render(<WorktreeSettings onShowToast={onShowToast} />);
-
-    await screen.findByRole("heading", { level: 1, name: "Git 工作树" });
-
-    const chip30 = screen.getByRole("button", { name: "30 个" });
-    await user.click(chip30);
-
-    expect(updateWorktreeSettingsMock).toHaveBeenCalledWith({
-      automaticCleanup: true,
-      managedWorktreeLimit: 30,
-    });
-    expect(onShowToast).toHaveBeenCalledWith("Worktree 设置已更新", "success");
+    expect(onShowToast).toHaveBeenCalledWith("工作树设置已更新", "success");
   });
 
   it("handles manual input commit on Enter key", async () => {
@@ -149,7 +140,7 @@ describe("WorktreeSettings Component", () => {
 
     await screen.findByRole("heading", { level: 1, name: "Git 工作树" });
 
-    const input = screen.getByRole("textbox", { name: "保留最近的 Worktree 数量" });
+    const input = screen.getByRole("textbox", { name: "保留上限" });
     expect(input).toHaveValue("15");
 
     await user.clear(input);
@@ -159,7 +150,7 @@ describe("WorktreeSettings Component", () => {
       automaticCleanup: true,
       managedWorktreeLimit: 25,
     });
-    expect(onShowToast).toHaveBeenCalledWith("Worktree 设置已更新", "success");
+    expect(onShowToast).toHaveBeenCalledWith("工作树设置已更新", "success");
   });
 
   it("clamps out-of-range input between 1 and 100", async () => {
@@ -168,7 +159,7 @@ describe("WorktreeSettings Component", () => {
 
     await screen.findByRole("heading", { level: 1, name: "Git 工作树" });
 
-    const input = screen.getByRole("textbox", { name: "保留最近的 Worktree 数量" });
+    const input = screen.getByRole("textbox", { name: "保留上限" });
 
     await user.clear(input);
     await user.type(input, "999{Enter}");
@@ -185,14 +176,14 @@ describe("WorktreeSettings Component", () => {
 
     render(<WorktreeSettings />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("无法读取 Worktree 设置。");
+    expect(await screen.findByRole("alert")).toHaveTextContent("无法读取工作树设置。");
     const retryBtn = screen.getByRole("button", { name: "重试" });
     expect(retryBtn).toBeInTheDocument();
 
     readWorktreeSettingsMock.mockResolvedValueOnce(initialSettings);
     await user.click(retryBtn);
 
-    expect(await screen.findByRole("heading", { level: 2, name: "目录回收与保留配额" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "清理策略" })).toBeInTheDocument();
   });
 
   it("displays error toast and error banner when saving fails", async () => {
@@ -207,7 +198,20 @@ describe("WorktreeSettings Component", () => {
     const plusBtn = screen.getByRole("button", { name: "增加 1 个" });
     await user.click(plusBtn);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Worktree 设置保存失败。");
-    expect(onShowToast).toHaveBeenCalledWith("Worktree 设置保存失败", "error");
+    expect(await screen.findByRole("alert")).toHaveTextContent("工作树设置保存失败。");
+    expect(onShowToast).toHaveBeenCalledWith("工作树设置保存失败", "error");
+  });
+
+  it("restores the saved limit in the input when a typed value fails to save", async () => {
+    updateWorktreeSettingsMock.mockRejectedValueOnce(new Error("Save Error"));
+    const user = userEvent.setup();
+    render(<WorktreeSettings />);
+
+    const input = await screen.findByRole("textbox", { name: "保留上限" });
+    await user.clear(input);
+    await user.type(input, "25{Enter}");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("工作树设置保存失败。");
+    await waitFor(() => expect(input).toHaveValue("15"));
   });
 });

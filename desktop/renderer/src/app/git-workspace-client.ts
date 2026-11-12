@@ -44,3 +44,19 @@ export function gitFileTarget(path: string, repositoryPath: string, roots: reado
   }
   return undefined;
 }
+
+export function switchDraftGitBranch({ rootId, draftId, ...parameters }: {
+  rootId: string;
+  draftId: string;
+  projectId: string;
+  branch: string;
+  operationId: string;
+  expectedBranch: string | null;
+  expectedHead: string | null;
+}): Promise<unknown> {
+  return window.eidosRuntime.repositoryGit({
+    rootId,
+    method: "session/gitSwitchBranch",
+    parameters: { sessionId: draftId, ...parameters },
+  });
+}

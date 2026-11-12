@@ -10,6 +10,8 @@ from eidos_runtime.db.errors import SessionActiveError
 from eidos_runtime.domain.session import Session, SessionExecutionMode
 from eidos_runtime.git.backend import GitBackend
 from eidos_runtime.git.errors import (
+    GitBranchOccupiedError,
+    GitCheckoutConflictError,
     GitError,
     GitCommandFailedError,
     GitCommandTimeoutError,
@@ -113,6 +115,7 @@ class GitBranchPlan:
     before: GitStatusSnapshot
     branch: str
     create: bool
+    target_commit: str | None = None
 
 
 class GitWorkflowSessionRepository(Protocol):
@@ -189,34 +192,47 @@ class GitWorkflowApplication:
         self, request: SessionGitSwitchBranchRequestDto
     ) -> GitBranchPlan:
         session, before = self._prepare_local_branch(request.session_id)
+        if request.project_id is not None and (
+            before.branch != request.expected_branch or before.head != request.expected_head
+        ):
+            raise ApplicationError("GIT_BRANCH_CHANGED")
+        root = Path(before.worktree_root)
         try:
             GitRefValidator.branch(request.branch)
-            branches = self._worktrees.git.local_branches(Path(before.worktree_root))
+            target_commit = self._worktrees.git.branch_commit(root, request.branch)
         except ValueError as error:
             raise ApplicationError("BRANCH_INVALID") from error
         except GitError as error:
             raise _workflow_error(error) from error
-        if request.branch not in branches:
+        if target_commit is None:
             raise ApplicationError("GIT_BRANCH_NOT_FOUND")
         return GitBranchPlan(
             session=session,
-            root=Path(before.worktree_root),
+            root=root,
             before=before,
             branch=request.branch,
             create=False,
+            target_commit=target_commit,
         )
 
     def switch_branch(self, plan: GitBranchPlan) -> SessionGitSwitchBranchResponseDto:
         if plan.create:
             raise AssertionError("switch branch plan must not create a branch")
+        _, current = self._prepare_local_branch(plan.session.id)
+        if (current.worktree_root, current.branch, current.head) != (
+            plan.before.worktree_root, plan.before.branch, plan.before.head
+        ):
+            raise ApplicationError("GIT_BRANCH_CHANGED")
         try:
+            if self._worktrees.git.branch_commit(plan.root, plan.branch) != plan.target_commit:
+                raise ApplicationError("GIT_BRANCH_CHANGED")
             self._worktrees.git.switch_branch(plan.root, plan.branch)
         except ValueError as error:
             raise ApplicationError("BRANCH_INVALID") from error
         except GitError as error:
             raise _workflow_error(error) from error
         after = self._status(plan.session)
-        if after.branch != plan.branch:
+        if after.branch != plan.branch or after.head != plan.target_commit or after.dirty:
             raise ApplicationError("GIT_BRANCH_SWITCH_FAILED")
         return _mutation_result(SessionGitSwitchBranchResponseDto, after)
 
@@ -759,7 +775,7 @@ class GitWorkflowApplication:
             raise ApplicationError(
                 "LOCAL_REQUIRED", "Local branch operations require a Local Session"
             )
-        if self._repository.has_active_run_for_workspace(session.workspace_root):
+        if self._repository.has_active_run_for_workspace(status.worktree_root):
             raise ApplicationError("GIT_WORKFLOW_BUSY")
         try:
             state = self._worktrees.git.operation_state(Path(status.worktree_root))
@@ -895,6 +911,10 @@ def _remote_mutation_result(
 
 
 def _workflow_error(error: GitError | WorktreeError) -> ApplicationError:
+    if isinstance(error, GitBranchOccupiedError):
+        return ApplicationError("GIT_BRANCH_OCCUPIED")
+    if isinstance(error, GitCheckoutConflictError):
+        return ApplicationError("GIT_CHECKOUT_CONFLICT")
     if isinstance(error, GitNothingStagedError):
         return ApplicationError("GIT_NOTHING_STAGED")
     if isinstance(error, GitIdentityUnavailableError):

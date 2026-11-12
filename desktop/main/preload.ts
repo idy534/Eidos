@@ -231,8 +231,8 @@ const api: EidosRuntimeAPI = {
     automaticCleanup: boolean;
     managedWorktreeLimit: number;
   }): Promise<WorktreeSettings> => ipcRenderer.invoke(IPC.WORKTREE_SETTINGS_UPDATE, input),
-  readProjectGitContext: (workspaceRoot: string): Promise<ProjectGitContext> =>
-    ipcRenderer.invoke(IPC.PROJECT_GIT_CONTEXT, workspaceRoot),
+  readProjectGitContext: (target: Parameters<EidosRuntimeAPI["readProjectGitContext"]>[0]): Promise<ProjectGitContext> =>
+    ipcRenderer.invoke(IPC.PROJECT_GIT_CONTEXT, target),
   renameSession: (sessionId: string, title: string): Promise<Session> =>
     ipcRenderer.invoke(IPC.SESSION_RENAME, sessionId, title),
   deleteSession: (sessionId: string): Promise<DeleteSessionResult> =>

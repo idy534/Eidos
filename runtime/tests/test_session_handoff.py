@@ -246,6 +246,38 @@ def test_handoff_rejects_an_active_run_without_changing_binding(
         store.close()
 
 
+def test_handoff_to_local_waits_for_other_sessions_using_the_target(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    store, _manager, application = _setup(tmp_path)
+    try:
+        local = application.create(
+            SessionCreateRequestDto(workspaceRoot=str(repository))
+        ).root
+        managed = application.create(
+            SessionCreateRequestDto(workspaceRoot=str(repository), executionMode="worktree")
+        ).root
+        run, _item = store.enqueue_run(str(local["id"]), "uses the target")
+        checkout = Path(managed["worktree"]["worktreeRoot"])
+        (checkout / "README.md").write_text("managed\n", encoding="utf-8")
+        request = SessionHandoffRequestDto(
+            sessionId=managed["id"], target="local",
+            operationId="00000000-0000-0000-0000-000000000020",
+        )
+
+        with pytest.raises(ApplicationError) as error:
+            application.handoff(request)
+        assert error.value.code == "GIT_WORKFLOW_BUSY"
+        assert (repository / "README.md").read_text(encoding="utf-8") == "main\n"
+        assert (checkout / "README.md").read_text(encoding="utf-8") == "managed\n"
+        assert store.session_handoff_repository().list_unfinished() == ()
+
+        store.cancel_run(run["id"])
+        assert application.handoff(request).root["executionMode"] == "local"
+        assert (repository / "README.md").read_text(encoding="utf-8") == "managed\n"
+    finally:
+        store.close()
+
+
 def test_local_dirty_state_transfers_to_a_new_worktree(
     tmp_path: Path,
 ) -> None:

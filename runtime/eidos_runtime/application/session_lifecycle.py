@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Iterable, Iterator
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
@@ -32,8 +32,15 @@ class SessionLifecycleCoordinator:
 
     @contextmanager
     def hold_workspace(self, workspace_root: str | Path) -> Iterator[None]:
-        key = Path(workspace_root).resolve(strict=False).as_posix()
-        with self._hold_key(f"workspace\0{key}"):
+        with self.hold_workspaces((workspace_root,)):
+            yield
+
+    @contextmanager
+    def hold_workspaces(self, workspace_roots: Iterable[str | Path]) -> Iterator[None]:
+        keys = {Path(root).resolve(strict=False).as_posix() for root in workspace_roots}
+        with ExitStack() as locks:
+            for key in sorted(keys):
+                locks.enter_context(self._hold_key(f"workspace\0{key}"))
             yield
 
     @contextmanager

@@ -640,11 +640,13 @@ describe("useSessionController real Hook behavior", () => {
     expect(result.current[0].draft?.session.roots?.[0]?.path).toBe("/workspace/new");
     expect(result.current[0].draft?.session.executionMode).toBe("worktree");
     await act(async () => {
-      await result.current[1].materializeDraft();
+      await result.current[1].materializeDraft(undefined, { baseRef: "refs/heads/topic", includeLocalChanges: true });
     });
     expect(createSession).toHaveBeenCalledWith("/workspace/new", {
       executionMode: "worktree",
       projectId: "project-edit",
+      baseRef: "refs/heads/topic",
+      includeLocalChanges: true,
     });
   });
 

@@ -1,5 +1,5 @@
 import type { QoderModelSettings } from "./qoder.js";
-import type { ProjectDto as GeneratedProject, ProjectRootDto } from "./project-workspaces.generated.js";
+import type { GitContextResponseDto, ProjectDto as GeneratedProject, ProjectRootDto } from "./project-workspaces.generated.js";
 import type { CustomModelSettings } from "./custom-models.js";
 import type { HookActivity, PluginCompatibility, PluginHookReview } from "./hooks.js";
 import type { PluginPresentation } from "./plugins.js";
@@ -174,14 +174,7 @@ export interface GitMergeResult extends SessionGitMutationResult {
 
 export type GitRebaseResult = GitMergeResult;
 
-export interface ProjectGitContext {
-  gitAvailable: boolean;
-  currentBranch: string | null;
-  head: string | null;
-  branches: string[];
-  dirty: boolean;
-  changedFileCount: number;
-}
+export type ProjectGitContext = GitContextResponseDto;
 
 export interface SessionGitDiff {
   scope: GitDiffScope;

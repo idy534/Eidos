@@ -1,8 +1,12 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { projectWorkspacesSchema } from "./project-workspaces-schema.generated.js";
-import type { ProjectDto, ProjectReadRequest, ProjectRootDto, ProjectUpdateRequest, ProjectCreateFoldersRequest, GitWorkspaceRequest, GitWorkspaceContract } from "./project-workspaces.generated.js";
+import type { ProjectDto, ProjectReadRequest, ProjectRootDto, ProjectUpdateRequest, ProjectCreateFoldersRequest, GitContextRequestDto, GitContextResponseDto, GitWorkspaceRequest } from "./project-workspaces.generated.js";
 
 export type { ProjectReadRequest, ProjectRootDto, ProjectUpdateRequest, ProjectCreateFoldersRequest, GitWorkspaceRequest, GitWorkspaceContract } from "./project-workspaces.generated.js";
+export type ProjectGitContextBinding = {
+  [Key in "projectId" | "rootId"]: NonNullable<GitContextRequestDto[Key]>;
+};
+
 const ajv = new Ajv2020({ strict: false, coerceTypes: false });
 const project = ajv.compile<ProjectDto>({ $defs: projectWorkspacesSchema.$defs, $ref: "#/$defs/ProjectDto" });
 const read = ajv.compile<ProjectReadRequest>({ $defs: projectWorkspacesSchema.$defs, $ref: "#/$defs/ProjectReadRequest" });
@@ -11,6 +15,13 @@ const root = ajv.compile<ProjectRootDto>({ $defs: projectWorkspacesSchema.$defs,
 export const isProjectRoot = (value: unknown): value is ProjectRootDto => root(value);
 const git = ajv.compile<GitWorkspaceRequest>({ $defs: projectWorkspacesSchema.$defs, $ref: "#/$defs/GitWorkspaceRequest" });
 export const isGitWorkspaceRequest = (value: unknown): value is GitWorkspaceRequest => git(value);
+const gitContextRequest = ajv.compile<GitContextRequestDto>({ $defs: projectWorkspacesSchema.$defs, $ref: "#/$defs/GitContextRequestDto" });
+const gitContextResponse = ajv.compile<GitContextResponseDto>({ $defs: projectWorkspacesSchema.$defs, $ref: "#/$defs/GitContextResponseDto" });
+export function isProjectGitContextBinding(value: unknown): value is ProjectGitContextBinding {
+  return gitContextRequest(value) && value.workspaceRoot === undefined
+    && typeof value.projectId === "string" && typeof value.rootId === "string";
+}
+export const isProjectGitContext = (value: unknown): value is GitContextResponseDto => gitContextResponse(value);
 const create = ajv.compile<ProjectCreateFoldersRequest>({ $defs: projectWorkspacesSchema.$defs, $ref: "#/$defs/ProjectCreateFoldersRequest" });
 export const isProjectCreateFoldersRequest = (value: unknown): value is ProjectCreateFoldersRequest => create(value);
 export const isProjectWorkspace = (value: unknown): value is ProjectDto => project(value);

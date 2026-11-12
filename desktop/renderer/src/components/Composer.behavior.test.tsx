@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { Composer, type ComposerProps } from "./Composer.js";
 import { setInlineEditorSelectionOffsets } from "./InlineRichEditor.js";
 import { InputContextProvider } from "./InputContext.js";
@@ -24,6 +24,11 @@ const mockModelList: ModelListResult = {
     },
   ],
 };
+
+async function findBranchCard(title: string): Promise<HTMLElement> {
+  const heading = await screen.findByText(title, { selector: ".composer-git-card__title" });
+  return heading.closest<HTMLElement>("[role='tooltip']")!;
+}
 
 const defaultProps: ComposerProps = {
   composerMode: "idle",
@@ -230,6 +235,111 @@ describe("Composer DOM interaction & state behavior", () => {
     expect(screen.queryByLabelText("执行方式")).not.toBeInTheDocument();
     expect(screen.queryByText("main")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "不在项目中工作" })).toBeInTheDocument();
+  });
+
+  it("shows the current local branch while allowing a dirty checkout to start", async () => {
+    const onRefresh = vi.fn();
+    const onSubmit = vi.fn();
+    render(<Composer {...defaultProps} input="保留草稿" onSubmit={onSubmit}
+      project={{ id: "project-a", workspaceRoot: "/workspace/repo", gitAvailable: true }} executionMode="local"
+      draftGit={{
+        context: { gitAvailable: true, currentBranch: "topic", head: "commit", branches: ["main", "topic"], dirty: true, changedFileCount: 1 },
+        error: undefined, selectedBase: undefined, canCopy: false, copyChanges: false,
+        onSelectBranch: vi.fn(), onCopyChanges: vi.fn(), onRefresh,
+      }} />);
+    const branch = screen.getByLabelText("当前分支");
+    expect(branch).toHaveValue("topic");
+    expect(branch).toBeDisabled();
+    expect(branch).toHaveAccessibleDescription("有未提交改动 · 本地切换不可用。请先提交改动或使用 Git stash，再切换本地分支。");
+    // The status lives in a hover card on the branch, not inline in the composer.
+    expect(screen.queryByRole("button", { name: "刷新 Git 状态" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    fireEvent.mouseEnter(branch.closest("label")!);
+    const card = await findBranchCard("有未提交改动 · 本地切换不可用");
+    expect(card).toHaveTextContent("请先提交改动或使用 Git stash，再切换本地分支。");
+    fireEvent.click(within(card).getByRole("button", { name: "刷新 Git 状态" }));
+    expect(onRefresh).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "开始" }));
+    expect(onSubmit).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a blocked branch reachable by keyboard and refreshes Git when it is focused", () => {
+    const onRefresh = vi.fn();
+    render(<Composer {...defaultProps}
+      project={{ id: "project-a", workspaceRoot: "/workspace/repo", gitAvailable: true }} executionMode="local"
+      draftGit={{
+        context: { gitAvailable: true, currentBranch: "topic", head: "commit", branches: ["main", "topic"], dirty: true, changedFileCount: 1 },
+        error: undefined, selectedBase: undefined, canCopy: false, copyChanges: false,
+        onSelectBranch: vi.fn(), onCopyChanges: vi.fn(), onRefresh,
+      }} />);
+    const trigger = screen.getByLabelText("当前分支").closest("label")!;
+    expect(trigger).toHaveAttribute("tabindex", "0");
+    fireEvent.focus(trigger);
+    expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it("shows a muted branch trigger with a retry card when Git cannot be read", async () => {
+    const onRefresh = vi.fn();
+    render(<Composer {...defaultProps}
+      project={{ id: "project-a", workspaceRoot: "/workspace/repo", gitAvailable: true }} executionMode="local"
+      draftGit={{
+        context: undefined, error: "Git 不可用", selectedBase: undefined, canCopy: false, copyChanges: false,
+        onSelectBranch: vi.fn(), onCopyChanges: vi.fn(), onRefresh,
+      }} />);
+    const trigger = screen.getByText("Git 状态不可用").closest("span[tabindex]")!;
+    fireEvent.mouseEnter(trigger);
+    const card = await findBranchCard("无法读取 Git 状态");
+    expect(card).toHaveTextContent("Git 不可用");
+    fireEvent.click(within(card).getByRole("button", { name: "重新读取 Git 状态" }));
+    expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it("shows the matching icon for local and worktree execution", () => {
+    const props = { ...defaultProps, project: { id: "project-a", workspaceRoot: "/workspace/repo", gitAvailable: true } };
+    const { rerender } = render(<Composer {...props} executionMode="local" onExecutionModeChange={vi.fn()} />);
+    const mode = screen.getByLabelText("执行方式").closest("label")!;
+    expect(mode.querySelector("svg")?.innerHTML).toContain("M1.75 16h16.5");
+    rerender(<Composer {...props} executionMode="worktree" onExecutionModeChange={vi.fn()} />);
+    expect(mode.querySelector("svg")?.innerHTML).toContain("M6 9.25V12");
+  });
+
+  it("keeps the source branch unchanged when choosing a worktree base and copy option", () => {
+    const onSelectBranch = vi.fn();
+    const onCopyChanges = vi.fn();
+    render(<Composer {...defaultProps}
+      project={{ id: "project-a", workspaceRoot: "/workspace/repo", gitAvailable: true }} executionMode="worktree"
+      draftGit={{
+        context: { gitAvailable: true, currentBranch: "topic", head: "commit", branches: ["main", "topic"], dirty: true,
+          changedFileCount: 1, occupiedBranches: ["main"] },
+        error: undefined, selectedBase: undefined, canCopy: true, copyChanges: false,
+        onSelectBranch, onCopyChanges, onRefresh: vi.fn(),
+      }} />);
+    const base = screen.getByLabelText("起点分支");
+    // The current branch is the first, default option and is not listed a second time.
+    expect(base).toHaveDisplayValue("topic");
+    expect(within(base).getAllByRole("option").map((option) => option.textContent)).toEqual(["topic", "main"]);
+    expect(screen.queryByText("起点分支", { selector: ":not(.sr-only)" })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "main" })).toBeEnabled();
+    fireEvent.change(base, { target: { value: "main" } });
+    expect(onSelectBranch).toHaveBeenCalledWith("main");
+    // Copying uncommitted changes lives in the "⋯" menu, not inline in the row.
+    expect(screen.queryByRole("checkbox", { name: "复制当前未提交改动" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "更多工作树选项" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "复制当前未提交改动" }));
+    expect(onCopyChanges).toHaveBeenCalledWith(true);
+  });
+
+  it("shows an explicitly chosen current branch as the default worktree base and marks enabled copying", () => {
+    render(<Composer {...defaultProps}
+      project={{ id: "project-a", workspaceRoot: "/workspace/repo", gitAvailable: true }} executionMode="worktree"
+      draftGit={{
+        context: { gitAvailable: true, currentBranch: "topic", head: "commit", branches: ["main", "topic"], dirty: true, changedFileCount: 1 },
+        error: undefined, selectedBase: "topic", canCopy: true, copyChanges: true,
+        onSelectBranch: vi.fn(), onCopyChanges: vi.fn(), onRefresh: vi.fn(),
+      }} />);
+    expect(screen.getByLabelText("起点分支")).toHaveDisplayValue("topic");
+    const more = screen.getByRole("button", { name: "更多工作树选项：将复制当前未提交改动" });
+    expect(more).toHaveClass("is-active");
   });
 
   it("offers project selection for a new projectless conversation", () => {

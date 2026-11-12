@@ -22,6 +22,7 @@ interface InputContextValue {
   sessionId: string;
   workspaceRoot: string;
   workspaceRoots: readonly string[];
+  workspaceRevision: string | undefined;
   projectId: string | undefined;
   busy: boolean;
   error: string | undefined;
@@ -44,6 +45,7 @@ export function InputContextProvider({
   sessionId,
   workspaceRoot,
   workspaceRoots,
+  workspaceRevision,
   projectId,
   ready,
   onAdd,
@@ -55,6 +57,7 @@ export function InputContextProvider({
   sessionId: string | undefined;
   workspaceRoot: string | undefined;
   workspaceRoots?: readonly string[] | undefined;
+  workspaceRevision?: string | undefined;
   projectId?: string | undefined;
   ready: boolean;
   onAdd(id: string, reference: InputReference): void;
@@ -161,7 +164,7 @@ export function InputContextProvider({
   }, [sessionId]);
 
   return <Context.Provider value={sessionId ? {
-    sessionId, workspaceRoot: workspaceRoot ?? "", workspaceRoots: workspaceRoots ?? (workspaceRoot ? [workspaceRoot] : []), projectId, busy: Boolean(counts[sessionId]), error: errors[sessionId], clearError, add, paths, pastePaths,
+    sessionId, workspaceRoot: workspaceRoot ?? "", workspaceRoots: workspaceRoots ?? (workspaceRoot ? [workspaceRoot] : []), workspaceRevision, projectId, busy: Boolean(counts[sessionId]), error: errors[sessionId], clearError, add, paths, pastePaths,
     paste: () => work(() => window.eidosRuntime.pasteInputImage()), settings: onSettings,
     reuse: (reference) => { if (ready) commitReference(sessionId, reference); },
     navigateToSession: onNavigateToSession,

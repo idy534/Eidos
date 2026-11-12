@@ -12,6 +12,8 @@ export interface ConfirmDialogProps {
   cancelLabel?: string;
   /** If true, renders confirm button with danger variant and focuses cancel by default. */
   isDestructive?: boolean;
+  initialFocus?: "cancel" | "confirm";
+  className?: string;
   busy?: boolean;
   error?: string | undefined;
   getFallbackFocus?: (() => HTMLElement | null) | undefined;
@@ -37,6 +39,8 @@ export function ConfirmDialog({
   confirmLabel = "确认",
   cancelLabel = "取消",
   isDestructive = false,
+  initialFocus = isDestructive ? "cancel" : "confirm",
+  className,
   busy = false,
   error,
   getFallbackFocus,
@@ -46,7 +50,7 @@ export function ConfirmDialog({
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
   const confirmBtnRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const initialFocusRef = isDestructive ? cancelBtnRef : confirmBtnRef;
+  const initialFocusRef = initialFocus === "cancel" ? cancelBtnRef : confirmBtnRef;
   useDialogFocusLifecycle({ open, initialFocusRef, getFallbackFocus });
 
   // Escape key closes the dialog when not busy
@@ -110,7 +114,7 @@ export function ConfirmDialog({
     >
       <div
         ref={dialogRef}
-        className="modal-dialog"
+        className={className ? `modal-dialog ${className}` : "modal-dialog"}
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"

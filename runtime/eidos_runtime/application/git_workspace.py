@@ -2,31 +2,47 @@ from __future__ import annotations
 
 from copy import copy
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.domain.session import Session, SessionExecutionMode, SessionTaskStatus
+from eidos_runtime.domain.project import Project
 from eidos_runtime.domain.project_workspace import DirectoryIdentity, SessionRoot
 from eidos_runtime.git.errors import WorktreeError
-from eidos_runtime.protocol.methods import SessionGitDiffRequestDto, SessionGitStatusRequestDto
+from eidos_runtime.protocol.methods import (
+    SessionGitDiffRequestDto,
+    SessionGitStatusRequestDto,
+    SessionGitSwitchBranchRequestDto,
+)
 from eidos_runtime.workspace.reader import (
     capture_directory_identity,
     WorkspacePathError,
-    WorkspaceReader,
 )
+
+if TYPE_CHECKING:
+    from eidos_runtime.application.sessions import ManagedWorktreePort, SessionApplication
 
 
 class ScopedGitSessionRepository:
     """Keep the existing Git lifecycle while selecting one persisted checkout."""
 
-    def __init__(self, repository, selected: Session) -> None:
+    def __init__(self, repository, selected: Session, *, draft: bool, source: Session) -> None:
         self.repository = repository
         self.selected = selected
+        self.draft = draft
+        self.source = source
 
     def read_session(self, session_id: str) -> Session | None:
         return self.selected if session_id == self.selected.id else self.repository.read_session(session_id)
 
     def assert_session_deletable(self, session_id: str) -> None:
+        if self.draft and session_id == self.selected.id:
+            return
         self.repository.assert_session_deletable(session_id)
+        if session_id == self.source.id:
+            current = self.repository.read_session(session_id)
+            if current is None or current.worktree_id != self.source.worktree_id:
+                raise ApplicationError("WORKSPACE_IDENTITY_CHANGED")
 
     def has_active_run_for_workspace(self, workspace_root: str) -> bool:
         return self.repository.has_active_run_for_workspace(workspace_root)
@@ -37,13 +53,19 @@ class ScopedGitSessionRepository:
 
 def scoped_git_application(application, request):
     root_id = getattr(request, "root_id", None)
-    if isinstance(request, (SessionGitStatusRequestDto, SessionGitDiffRequestDto)) and request.session_id.startswith("draft-"):
+    repository = application._repository
+    if isinstance(repository, ScopedGitSessionRepository):
+        repository = repository.repository
+    draft = isinstance(
+        request, (SessionGitStatusRequestDto, SessionGitDiffRequestDto, SessionGitSwitchBranchRequestDto)
+    ) and request.session_id.startswith("draft-")
+    if draft:
         session = _draft_git_session(application, request)
         root_id = session.roots[0].id
     elif root_id is None:
         return application
     else:
-        session = application._repository.read_session(request.session_id)
+        session = repository.read_session(request.session_id)
     if session is None:
         raise ApplicationError("RESOURCE_NOT_FOUND")
     root = next((root for root in session.roots if root.id == root_id), None)
@@ -89,7 +111,7 @@ def scoped_git_application(application, request):
     })
     from eidos_runtime.application.git_workflow import GitWorkflowApplication
     result = copy(application)
-    result._repository = ScopedGitSessionRepository(application._repository, selected)
+    result._repository = ScopedGitSessionRepository(repository, selected, draft=draft, source=session)
     result._git_workflow = GitWorkflowApplication(result._repository, manager)
     return result
 
@@ -108,53 +130,66 @@ def _verify_git_metadata_identity(
         raise WorkspacePathError("workspace_identity_changed")
 
 
-def _draft_git_session(application, request: SessionGitStatusRequestDto | SessionGitDiffRequestDto) -> Session:
-    """Build a read-only view from the saved Project without creating a Session."""
-    if request.project_id is None:
-        raise ApplicationError("INVALID_PARAMS")
-    manager = application._require_manager()
+def resolve_project_git_root(
+    manager: ManagedWorktreePort, project_id: str, root_id: str | None, *, primary_only: bool,
+) -> tuple[Project, SessionRoot]:
+    """Observe Git for one attached directory without creating a Session."""
     try:
-        project = manager.project(request.project_id)
+        project = manager.project(project_id)
     except WorktreeError as error:
         raise ApplicationError("RESOURCE_NOT_FOUND") from error
-    root_id = request.root_id or project.primary_root_id
+    root_id = root_id or project.primary_root_id
+    if primary_only and root_id != project.primary_root_id:
+        raise ApplicationError("WORKSPACE_BOUNDARY_VIOLATION", "Git target is not the primary project directory")
     root = next((entry for entry in project.roots if entry.id == root_id), None)
-    if root is None or root.repository_root is None:
-        raise ApplicationError("WORKSPACE_BOUNDARY_VIOLATION", "Git target is not an attached repository")
+    if root is None:
+        raise ApplicationError("WORKSPACE_BOUNDARY_VIOLATION", "Git target is not an attached directory")
     try:
         identity = capture_directory_identity(root.path)
-        discovery = manager.discover(identity.path)
-        if (
-            discovery.repository_root != root.repository_root
-            or discovery.git_dir != root.git_dir
-            or discovery.git_common_dir != root.git_common_dir
-        ):
-            raise WorkspacePathError("workspace_identity_changed")
-
-        def metadata_identity(path: str | None) -> DirectoryIdentity:
-            if path is None:
+        try:
+            discovery = manager.discover(identity.path)
+        except WorktreeError as error:
+            if error.code != "not_a_git_repository":
+                raise
+            discovery = None
+        if root.repository_root is not None:
+            if discovery is None or (
+                discovery.repository_root, discovery.git_dir, discovery.git_common_dir
+            ) != (root.repository_root, root.git_dir, root.git_common_dir):
                 raise WorkspacePathError("workspace_identity_changed")
-            captured = capture_directory_identity(path)
-            with WorkspaceReader(captured):
-                return DirectoryIdentity(
-                    device=captured.device,
-                    inode=captured.inode,
-                    owner=captured.owner,
-                )
-
-        git_dir_identity = metadata_identity(discovery.git_dir)
-        git_common_identity = metadata_identity(discovery.git_common_dir)
+        git_dir_identity = _capture_metadata_identity(discovery.git_dir) if discovery else None
+        git_common_identity = _capture_metadata_identity(discovery.git_common_dir) if discovery else None
     except (WorkspacePathError, WorktreeError) as error:
         raise ApplicationError("WORKSPACE_IDENTITY_CHANGED") from error
     selected = SessionRoot(
-        id=root.id, path=root.path, repository_root=root.repository_root,
-        git_dir=root.git_dir, git_common_dir=root.git_common_dir,
+        id=root.id, path=root.path,
+        repository_root=discovery.repository_root if discovery else None,
+        git_dir=discovery.git_dir if discovery else None,
+        git_common_dir=discovery.git_common_dir if discovery else None,
         git_dir_identity=git_dir_identity,
         git_common_identity=git_common_identity,
         device=identity.device, inode=identity.inode, owner=identity.owner,
     )
+    return project, selected
+
+
+def _capture_metadata_identity(path: str) -> DirectoryIdentity:
+    captured = capture_directory_identity(path)
+    return DirectoryIdentity(device=captured.device, inode=captured.inode, owner=captured.owner)
+
+
+def _draft_git_session(
+    application: SessionApplication,
+    request: SessionGitStatusRequestDto | SessionGitDiffRequestDto | SessionGitSwitchBranchRequestDto,
+) -> Session:
+    if request.project_id is None:
+        raise ApplicationError("INVALID_PARAMS")
+    project, selected = resolve_project_git_root(
+        application._require_manager(), request.project_id, request.root_id,
+        primary_only=isinstance(request, SessionGitSwitchBranchRequestDto),
+    )
     return Session(
         id=request.session_id, project_id=project.id, roots=(selected,),
-        workspace_root=root.path, task_status=SessionTaskStatus.NEW,
+        workspace_root=selected.path, task_status=SessionTaskStatus.NEW,
         created_at=project.created_at, updated_at=project.updated_at,
     )

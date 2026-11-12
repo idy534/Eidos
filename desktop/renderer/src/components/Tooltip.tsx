@@ -36,6 +36,11 @@ export interface TooltipProps {
   className?: string;
   /** Distance in pixels between trigger element and tooltip (default: 6) */
   offset?: number;
+  /**
+   * Keep the bubble open while the pointer moves from the trigger into it,
+   * so the content can hold a button (e.g. a status line with a refresh action).
+   */
+  interactive?: boolean;
   /** Single child element that triggers the tooltip */
   children: ReactElement;
 }
@@ -43,6 +48,8 @@ export interface TooltipProps {
 // Global timestamp of the most recently dismissed tooltip for warm-group transition
 let lastDismissedTime = 0;
 const WARM_THRESHOLD_MS = 300;
+// Time an interactive bubble stays open after the pointer leaves, so it can cross the offset gap.
+const INTERACTIVE_HIDE_DELAY_MS = 150;
 
 // Track whether keyboard navigation is active globally
 let isKeyboardNavigationMode = false;
@@ -121,6 +128,7 @@ export function Tooltip({
   disabled = false,
   className = "",
   offset = 6,
+  interactive = false,
   children,
 }: TooltipProps) {
   const tooltipId = useId();
@@ -156,6 +164,11 @@ export function Tooltip({
       return false;
     });
   }, [clearTimer]);
+
+  const scheduleHide = useCallback(() => {
+    clearTimer();
+    timerRef.current = setTimeout(hideTooltip, INTERACTIVE_HIDE_DELAY_MS);
+  }, [clearTimer, hideTooltip]);
 
   const showTooltip = useCallback(
     (customDelay?: number, source: "pointer" | "keyboard" = "pointer") => {
@@ -197,9 +210,11 @@ export function Tooltip({
   useEffect(() => {
     if (!visible) return;
 
-    // 1. Any click / pointerdown anywhere outside the trigger dismisses tooltip immediately
+    // 1. Any click / pointerdown anywhere outside the trigger (and an interactive bubble) dismisses tooltip immediately
     const handleGlobalPointerDown = (event: globalThis.PointerEvent) => {
-      if (triggerRef.current && !triggerRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (bubbleRef.current?.contains(target)) return;
+      if (triggerRef.current && !triggerRef.current.contains(target)) {
         hideTooltip();
       }
     };
@@ -369,7 +384,8 @@ export function Tooltip({
     }
     isHoveredRef.current = false;
     isSuppressedRef.current = false;
-    hideTooltip();
+    if (interactive) scheduleHide();
+    else hideTooltip();
   };
 
   const handlePointerDown = (e: PointerEvent<HTMLElement>) => {
@@ -477,9 +493,11 @@ export function Tooltip({
       id={tooltipId}
       role="tooltip"
       data-placement={actualPlacement}
-      className={`eidos-tooltip eidos-tooltip--${actualPlacement}${coords ? " eidos-tooltip--visible" : ""} ${className}`.trim()}
+      className={`eidos-tooltip eidos-tooltip--${actualPlacement}${coords ? " eidos-tooltip--visible" : ""}${interactive ? " eidos-tooltip--interactive" : ""} ${className}`.trim()}
       style={tooltipStyle}
       aria-hidden={!visible}
+      onMouseEnter={interactive ? clearTimer : undefined}
+      onMouseLeave={interactive ? scheduleHide : undefined}
     >
       <span className="eidos-tooltip__content">{content}</span>
       {shortcut && <Kbd className="eidos-tooltip__shortcut">{shortcut}</Kbd>}

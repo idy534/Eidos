@@ -88,10 +88,16 @@
   min-width: 0;
   min-height: 3rem;
   align-items: center;
-  gap: 0.5rem;
+  /* Space between project, mode, branch and "⋯"; clearly wider than the 6px icon-to-text gap inside each. */
+  column-gap: 1.125rem;
   padding: 0.75rem 1rem 0.25rem;
   color: var(--text);
   overflow: hidden;
+}
+
+.composer-context:has(.composer-context-branch--draft) {
+  flex-wrap: wrap;
+  row-gap: 0.25rem;
 }
 
 .composer-context-project,
@@ -112,8 +118,16 @@
 .composer-context-mode,
 .composer-context-branch { flex: 0 1 auto; overflow: hidden; }
 
+.composer-context-branch--muted { color: var(--muted); }
+
+.composer-context-branch[tabindex] { border-radius: var(--radius-xs); }
+.composer-context-branch[tabindex]:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+
 .composer-context-project > span,
 .composer-context-branch > span { min-width: 0; flex: 1 1 auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+/* Status dot after the branch name (look comes from the sidebar's .git-dirty-indicator). */
+.composer-context-branch > .composer-branch-status { flex: none; }
 
 .composer-context-project-action {
   position: relative;
@@ -180,7 +194,7 @@ button.composer-context-project--empty:hover:not(:disabled) {
 .composer-context-branch select {
   min-width: 0;
   border: 0;
-  padding: 0.25rem 1.25rem 0.25rem 0;
+  padding: 0.25rem 0;
   color: var(--text);
   background: transparent;
   font-size: 0.875rem;
@@ -190,9 +204,80 @@ button.composer-context-project--empty:hover:not(:disabled) {
   white-space: nowrap;
 }
 
-.composer-context-mode select { max-width: 6.5rem; flex: 0 1 auto; }
+/* Size to the chosen option, so a short "本地" does not reserve the width of "新建本地工作树". */
+.composer-context-mode select,
+.composer-context-branch select { field-sizing: content; }
+
+.composer-context-mode select { max-width: 8rem; flex: 0 1 auto; }
 
 .composer-context-branch select { max-width: 8.5rem; flex: 0 1 auto; }
+
+.composer-context-branch--draft select { max-width: 13rem; }
+
+/* "⋯" holds the less common worktree options so the row keeps only project, mode and branch. */
+.composer-branch-group {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  column-gap: 1.125rem;
+}
+
+/* The trigger's own padding already adds space before the dots. */
+.composer-git-more { display: inline-flex; flex: none; margin-left: -0.25rem; }
+
+.composer-git-more .composer-git-more__trigger {
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+}
+
+.composer-git-more .composer-git-more__trigger.is-active { color: var(--accent); }
+
+/* Hover card on the branch trigger (rendered by Tooltip in a portal). */
+.eidos-tooltip.composer-git-tooltip {
+  max-width: min(320px, calc(100vw - 32px));
+  padding: 8px 10px;
+}
+
+.composer-git-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 12px;
+  row-gap: 2px;
+  align-items: center;
+}
+
+.composer-git-card__title { grid-column: 1; font-weight: 600; }
+
+.composer-git-card__detail {
+  grid-column: 1 / -1;
+  color: color-mix(in srgb, var(--tooltip-text) 72%, transparent);
+}
+
+.composer-git-card__action {
+  grid-column: 2;
+  grid-row: 1;
+  gap: 4px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  padding: 2px 7px;
+  color: var(--tooltip-text);
+  background: color-mix(in srgb, var(--tooltip-text) 14%, transparent);
+  font-size: inherit;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.composer-git-card__action:hover:not(:disabled) {
+  color: var(--tooltip-text);
+  background: color-mix(in srgb, var(--tooltip-text) 24%, transparent);
+}
+
+.composer-git-card__action:active:not(:disabled) { background: color-mix(in srgb, var(--tooltip-text) 30%, transparent); }
+
+.composer-git-card__action:focus-visible { outline: 1.5px solid var(--tooltip-text); outline-offset: 1px; }
 
 .composer-context button:focus-visible,
 .composer-context select:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Session } from "../../../shared/domain-contracts.js";
 import { Button } from "./Button.js";
+import { LocalIcon, WorktreeIcon } from "./ExecutionModeIcons.js";
 import { ToastContainer } from "./ToastContainer.js";
 import { ForkIcon } from "./ForkIcon.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
@@ -138,11 +139,7 @@ export function ForkConversationDialog({
                   <div className="fork-card-content">
                     <div className="fork-card-header">
                       <span className="fork-card-icon" aria-hidden="true">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                          <rect x="2" y="3" width="20" height="14" rx="2" />
-                          <path d="M8 21h8" />
-                          <path d="M12 17v4" />
-                        </svg>
+                        <LocalIcon size={15} />
                       </span>
                       <strong className="fork-card-title">当前目录</strong>
                       <span className="fork-card-badge">共享文件</span>
@@ -171,12 +168,7 @@ export function ForkConversationDialog({
                 <div className="fork-card-content">
                   <div className="fork-card-header">
                     <span className="fork-card-icon" aria-hidden="true">
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                        <line x1="6" y1="3" x2="6" y2="15" />
-                        <circle cx="18" cy="6" r="3" />
-                        <circle cx="6" cy="18" r="3" />
-                        <path d="M18 9a9 9 0 0 1-9 9" />
-                      </svg>
+                      <WorktreeIcon size={15} />
                     </span>
                     <strong className="fork-card-title">独立工作树</strong>
                     <span className="fork-card-badge fork-card-badge--accent">隔离分支</span>

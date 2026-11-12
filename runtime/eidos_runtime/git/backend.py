@@ -9,6 +9,7 @@ from typing import Protocol
 from dulwich.config import ConfigFile
 from dulwich.errors import NotGitRepository
 from dulwich.ignore import IgnoreFilterManager
+from dulwich.objects import Commit
 from dulwich.objectspec import parse_commit
 from dulwich.porcelain import (
     CheckoutError,
@@ -227,6 +228,12 @@ class DulwichGitBackend:
         GitRefValidator.revision(revision)
         repo = self._open_repository(cwd, "resolve-revision")
         try:
+            if revision.startswith("refs/heads/"):
+                ref = Ref(os.fsencode(revision))
+                commit = repo.object_store[repo.refs[ref]]
+                if not isinstance(commit, Commit):
+                    raise ValueError("Local branch does not identify a commit")
+                return _object_id(commit)
             return _object_id(parse_commit(repo, revision))
         except _DULWICH_FAILURES as error:
             raise _git_failure("resolve-revision", error) from error
@@ -602,20 +609,27 @@ class DulwichGitBackend:
             raise _git_failure("worktree-detach", error) from error
 
     def switch_branch(self, cwd: Path, branch: str) -> None:
-        GitRefValidator.branch(branch)
-        repo = self._open_repository(cwd, "worktree-switch-branch")
+        ref = GitRefValidator.branch(branch)
+        # Native Git treats '-' as the previously checked-out branch.
+        if branch == "-":
+            raise ValueError("Git branch is invalid")
+        operation = "worktree-switch-branch"
+        repo = self._open_repository(cwd, operation)
         try:
-            switch(repo, branch, force=False, detach=False)
+            expected_head = repo.refs[ref]
         except _DULWICH_FAILURES as error:
-            raise _git_failure("worktree-switch-branch", error) from error
+            raise _git_failure(operation, error) from error
+        self._git_cli.switch(cwd, branch, detach=False)
+        try:
+            if _current_branch(repo) != branch or repo.head() != expected_head:
+                raise GitCommandFailedError(operation, returncode=None)
+        except _DULWICH_FAILURES as error:
+            raise _git_failure(operation, error) from error
 
     def switch_detached(self, cwd: Path, commit: str) -> None:
         GitRefValidator.revision(commit)
-        repo = self._open_repository(cwd, "worktree-switch-detached")
-        try:
-            switch(repo, commit, force=False, detach=True)
-        except _DULWICH_FAILURES as error:
-            raise _git_failure("worktree-switch-detached", error) from error
+        self._open_repository(cwd, "worktree-switch-detached")
+        self._git_cli.switch(cwd, commit, detach=True)
 
     def _open_repository(self, cwd: Path, operation: str) -> Repo:
         if not cwd.is_absolute() or not cwd.is_dir():

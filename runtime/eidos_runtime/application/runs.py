@@ -9,7 +9,6 @@ from eidos_runtime.domain.goal import GoalError
 from eidos_runtime.domain.automation import AutomationModel, AutomationError
 
 from collections.abc import Callable
-from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
@@ -433,25 +432,9 @@ class RunApplication:
             environment.validate_input_selections([value for value in input_snapshots if value.reference.kind != "agent"])
 
         try:
-            if self._session_repository is not None:
-                projection = self._session_repository.read_session_projection(
-                    request.session_id
-                )
-                if projection is None:
-                    raise ResourceNotFoundError("session not found")
-                workspace_lock = (
-                    self._session_lifecycle.hold_workspace(
-                        projection.session.workspace_root
-                    )
-                    if projection.worktree is None
-                    else nullcontext()
-                )
-            else:
-                workspace_lock = self._session_lifecycle.hold_workspace(
-                    store.workspace_for_session(request.session_id).path
-                )
-            with workspace_lock:
-                with self._session_lifecycle.hold(request.session_id):
+            with self._session_lifecycle.hold(request.session_id):
+                checkout_roots = self._session_checkout_roots(store, request.session_id)
+                with self._session_lifecycle.hold_workspaces(checkout_roots):
                     current_session = store.read_session(request.session_id)
                     if current_session is None:
                         raise ResourceNotFoundError("session not found")
@@ -593,6 +576,23 @@ class RunApplication:
                 else None
             ),
         )
+
+    def _session_checkout_roots(
+        self, store: RunStorePort, session_id: str
+    ) -> tuple[str | Path, ...]:
+        if self._session_repository is None:
+            workspace = store.workspace_for_session(session_id)
+            return tuple(root.path for root in (workspace, *workspace.additional_roots))
+        projection = self._session_repository.read_session_projection(session_id)
+        if projection is None:
+            raise ResourceNotFoundError("session not found")
+        worktree = projection.worktree
+        return tuple(
+            worktree.worktree_root
+            if worktree is not None and root.repository_root == worktree.repository_root
+            else root.repository_root or root.path
+            for root in projection.session.roots
+        ) or (projection.session.workspace_root,)
 
     def _admit_session_workspace(
         self, session_id: str, *, touch_last_used: bool = True

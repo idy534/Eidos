@@ -68,6 +68,7 @@ import { resolveSessionRun } from "./session-model-resolver.js";
 import { useExtensionController } from "./useExtensionController.js";
 import { McpPluginNamesContext } from "../components/McpToolDetails.js";
 import { useGitReviewController } from "./useGitReviewController.js";
+import { useDraftGit } from "./useDraftGit.js";
 import { applyThinking, clearThinking, type LiveThinkingMap } from "../live-thinking.js";
 import { applyNotification, applyQueuedRunChange, isQueuedMessage, userFacingError } from "../session-state.js";
 import { IPC } from "../../../shared/ipc-channels.js";
@@ -137,6 +138,30 @@ export function AppShell({ runtime }: AppShellProps) {
     ready: runtimeStatus.state === "ready" && isStorageReady,
     session: sessionState.snapshot?.session,
   });
+  const draftGit = useDraftGit(sessionState.snapshot ? undefined : sessionState.draft?.session,
+    runtimeStatus.state === "ready" && isStorageReady);
+  const draftGitContext = draftGit.view?.context;
+  const draftGitRevision = draftGitContext
+    ? JSON.stringify([draftGitContext.currentBranch, draftGitContext.head, draftGit.switchCompleted])
+    : undefined;
+  const draftId = sessionState.draft?.session.id;
+  const draftGitReferenceSource = useRef<{ draftId: string | undefined; revision: string | undefined }>({ draftId, revision: undefined });
+  const [olderWorkspaceReferences, setOlderWorkspaceReferences] = useState<readonly string[]>([]);
+  const workspaceReferenceIds = useMemo(() => runState.references
+    .filter((reference) => reference.kind === "file" || reference.kind === "directory")
+    .map((reference) => reference.id), [runState.references]);
+  useEffect(() => {
+    const previous = draftGitReferenceSource.current;
+    if (previous.draftId !== draftId) {
+      setOlderWorkspaceReferences([]);
+      draftGitReferenceSource.current = { draftId, revision: draftGitRevision };
+    } else if (draftGitRevision && previous.revision !== draftGitRevision) {
+      if (previous.revision && workspaceReferenceIds.length) {
+        setOlderWorkspaceReferences((ids) => [...new Set([...ids, ...workspaceReferenceIds])]);
+      }
+      draftGitReferenceSource.current = { draftId, revision: draftGitRevision };
+    }
+  }, [draftGitRevision, draftId, workspaceReferenceIds]);
   const [responseActionState, responseActionActions] = useResponseActionController(
     sessionState.snapshot?.session.id,
   );
@@ -567,6 +592,7 @@ export function AppShell({ runtime }: AppShellProps) {
     projectDeleteBusy ||
     Boolean(createBranchSessionId) ||
     Boolean(handoffSessionId) ||
+    Boolean(draftGit.requestedSwitch) ||
     projectPickerOpen ||
     createProjectOpen ||
     sessionState.pending.branchSessionId !== undefined ||
@@ -823,6 +849,23 @@ export function AppShell({ runtime }: AppShellProps) {
     if (result) gitReviewActions.refresh();
   }
 
+  async function confirmDraftGitSwitch(): Promise<void> {
+    const repositoryRoot = draftGit.requestedSwitch?.observed.repositoryRoot;
+    const result = await draftGit.confirmSwitch();
+    if (result?.status === "rejected") {
+      showToast(result.message, "error");
+      return;
+    }
+    if (!result) return;
+    const { branch } = result;
+    if (repositoryRoot) {
+      const affected = sessionState.sessions.filter((session) => session.executionMode !== "worktree" && !session.worktree
+        && (session.roots?.[0]?.repositoryRoot ?? session.workspaceRoot) === repositoryRoot);
+      gitReviewActions.invalidateCachedStatuses(affected.map((session) => session.id));
+    }
+    showToast(`本地工作区已切换到 ${branch}。`, "success");
+  }
+
   async function confirmHandoff(target: "local" | "worktree", branch?: string): Promise<void> {
     if (!handoffSessionId) return;
     const current = sessionState.snapshot;
@@ -967,6 +1010,7 @@ export function AppShell({ runtime }: AppShellProps) {
       ...(submissionMode === "goal" && currentGoal ? { goalRevision: currentGoal.revision } : {}) };
     const draftSnapshot = sessionState.draft;
     if (draftSnapshot && !sessionState.snapshot) {
+      if (startingDraftId) return;
       const draftInput = runState.input;
       const draftReferences = runState.references;
       if (!draftInput.trim() && !draftReferences.length) return;
@@ -975,7 +1019,12 @@ export function AppShell({ runtime }: AppShellProps) {
         : "附件任务";
       setStartingDraftId(draftSnapshot.session.id);
       try {
-        const materialized = await sessionActions.materializeDraft(workspaceNameHint);
+        const worktree = await draftGit.prepareSubmission().catch((cause: unknown) => {
+          showToast(userFacingError(cause), "error");
+          return undefined;
+        });
+        if (!worktree) return;
+        const materialized = await sessionActions.materializeDraft(workspaceNameHint, worktree);
         if (!materialized) return;
         navHistoryActions.replaceCurrent(materialized.session.id);
         const started = await runActions.submitInput({
@@ -1170,6 +1219,17 @@ export function AppShell({ runtime }: AppShellProps) {
   const sessionWorktree = currentSnapshot?.session.worktree;
   const sessionIsLocal = currentSnapshot?.session.executionMode === "local"
     || (currentSnapshot?.session.executionMode === undefined && sessionWorktree === undefined);
+  const draftGitReferenceNotice = isDraft && workspaceReferenceIds.length > 0
+    ? !sessionIsLocal
+      ? "文件引用来自源工作区，内容可能与新工作树不同。"
+      : workspaceReferenceIds.some((id) => olderWorkspaceReferences.includes(id))
+        ? "部分文件引用来自切换前的工作区。你可以移除后重新选择。"
+        : undefined
+    : undefined;
+  // A heads-up about attached references, not a lasting state: show it once in the global toast.
+  useEffect(() => {
+    if (draftGitReferenceNotice) showToast(draftGitReferenceNotice, "info");
+  }, [draftGitReferenceNotice, showToast]);
   const selectedProject = currentSnapshot?.session.project?.id
     ? sessionState.projects.find((project) => project.id === currentSnapshot.session.project?.id)
     : undefined;
@@ -1179,7 +1239,7 @@ export function AppShell({ runtime }: AppShellProps) {
   // 使环境信息在新会话有项目时也能显示。
   const sessionHasProject = Boolean(currentSnapshot && currentSnapshot.session.projectless !== true && sessionProject);
   const sessionHasGit = isDraft
-    ? sessionProject?.gitAvailable === true
+    ? (draftGitContext?.gitAvailable ?? sessionProject?.gitAvailable) === true
     : currentSnapshot?.session.roots !== undefined
       ? currentSnapshot.session.roots[0]?.repositoryRoot !== undefined
       : sessionProject?.gitAvailable === true;
@@ -1641,6 +1701,7 @@ export function AppShell({ runtime }: AppShellProps) {
       showToast,
     } : undefined}>
     <InputContextProvider ready={runState.draftReady && isStorageReady} sessionId={currentSnapshot?.session.id} workspaceRoot={currentSnapshot?.session.roots?.[0]?.path ?? currentSnapshot?.session.worktree?.worktreeRoot ?? currentSnapshot?.session.workspaceRoot}
+      workspaceRevision={draftGitRevision}
       workspaceRoots={currentSnapshot?.session.roots?.map(root => root.path)}
       projectId={sessionProject?.id}
       onAdd={runActions.addReference} onInsert={runActions.insertReference} onSettings={(section) => { setSettingsCategory(section === "agents" ? "agents" : section === "mcp" ? "mcp" : section === "skills" ? "skills" : "plugins"); setSettingsOpen(true); setDockOpen(false); }}
@@ -1918,7 +1979,8 @@ export function AppShell({ runtime }: AppShellProps) {
                   showContextIndicator={Boolean(contextRun)}
                   modelConfigured={Boolean(modelState.list?.models.length)}
                   modelLoading={modelState.loading}
-                  isSubmitting={runState.isSubmitting || goals.busy || sessionState.pending.creatingSession === true || handoffBusy || restoreBusy}
+                  isSubmitting={runState.isSubmitting || goals.busy || sessionState.pending.creatingSession === true
+                    || Boolean(startingDraftId) || draftGit.switchBusy || handoffBusy || restoreBusy}
                   submitKind={runState.submitKind}
                   cancelingRunId={runState.cancelingRunId}
                   onInputChange={runActions.setInput}
@@ -1943,6 +2005,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   branches={sessionIsLocal ? gitReviewState.projectContext?.branches : undefined}
                   onBranchChange={sessionIsLocal ? (branch) => void switchLocalBranch(branch) : undefined}
                   branchChanging={sessionState.pending.branchSessionId === currentSnapshot.session.id}
+                  draftGit={draftGit.view}
                   onSelectProject={() => void handleSelectProject()}
                   onLeaveProject={() => handleCreateSession()}
                   onExecutionModeChange={sessionHasGit ? requestExecutionModeChange : undefined}
@@ -2036,6 +2099,8 @@ export function AppShell({ runtime }: AppShellProps) {
                     return sessionHasGitRepositories ? (
                       <GitChangesPanel
                         projectId={currentSnapshot.session.project?.id}
+                      sourceWorkspace={isDraft && currentSnapshot.session.executionMode === "worktree"}
+                      workspaceRevision={draftGitRevision}
                         roots={currentSnapshot.session.roots}
                         sessionId={currentSnapshot.session.id}
                         workspaceRoot={currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.roots?.[0]?.repositoryRoot ?? currentSnapshot.session.workspaceRoot}
@@ -2251,6 +2316,19 @@ export function AppShell({ runtime }: AppShellProps) {
         onTargetChange={setForkTarget}
         onCancel={() => setForkSelection(null)}
         onConfirm={() => { if (forkSelection) void createConversationFork(forkSelection.session, forkSelection.item, forkTarget); }}
+      />
+      <ConfirmDialog
+        open={Boolean(draftGit.requestedSwitch)}
+        title={`切换到 ${draftGit.requestedSwitch?.branch ?? ""}？`}
+        description={<p>此操作会切换 <strong>{draftGit.requestedSwitch?.observed.repositoryRoot ?? sessionProject?.workspaceRoot}</strong> 的本地分支。其他使用此目录的会话也会看到新分支。</p>}
+        confirmLabel="切换本地分支"
+        initialFocus="cancel"
+        className="draft-git-switch-dialog"
+        busy={draftGit.switchBusy}
+        error={draftGit.switchError}
+        getFallbackFocus={getDialogFallbackFocus}
+        onConfirm={() => void confirmDraftGitSwitch()}
+        onCancel={draftGit.cancelSwitch}
       />
       <ConfirmDialog
         open={Boolean(sessionToDelete)}
