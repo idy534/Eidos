@@ -14,7 +14,7 @@
   {"id":"13-recovery","title":"重启恢复、取消与关闭","page":"persistence-recovery.md","description":"恢复依据持久中断位置处理模型、审批和未知副作用。关闭等待受管资源静止。"},
   {"id":"14-outbox","title":"状态提交与事件投递","page":"persistence-recovery.md","description":"业务状态、Event 和 Outbox 在同一事务中提交，投递失败可以按记录恢复。"},
   {"id":"15-retrieval","title":"代码理解与检索","page":"workspace-retrieval.md","description":"Inventory、AST、FTS5 和模糊候选共同形成有界检索，文件安全核验保持独立。"},
-  {"id":"16-workspace","title":"Workspace 与版本恢复","page":"workspace-retrieval.md","description":"Session 绑定 Local、Managed Worktree 或 Projectless Workspace，并复用 Checkpoint 与 Fork。"},
+  {"id":"16-workspace","title":"Workspace 与版本恢复","page":"workspace-retrieval.md","description":"Session 绑定 Local、Managed Worktree 或 Projectless Workspace，对话分叉在此基础上创建新 Session。"},
   {"id":"17-extensions","title":"Skill、Plugin 与 MCP","page":"extensions-hooks.md","description":"扩展先经过安装、版本与授权检查，再进入固定快照和既有工具执行链。"},
   {"id":"18-hooks","title":"Hook 信任与生命周期","page":"extensions-hooks.md","description":"Hook 按事件运行，复用受控命令或已连接 MCP，并持久记录调用和后台结果。"},
   {"id":"19-collaboration","title":"Plan 与子 Agent 协作","page":"collaboration-planning.md","description":"父 Run 持有任务依赖，Supervisor 按父任务调度子 Run，消息和结果可以回读。"},

@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from eidos_runtime.model.client import (  # noqa: E402
     ModelResponse,
     ModelToolCall,
-    ModelToolDefinition,
+    FunctionToolDefinition,
     ScriptedModel,
 )
 from eidos_runtime.runtime.model_runner import ModelRunner  # noqa: E402
@@ -68,7 +68,7 @@ class RuntimeSeamTests(unittest.TestCase):
 
     def test_model_runner_passes_step_instructions_and_tools_explicitly(self) -> None:
         model = ScriptedModel([ModelResponse(text="done")])
-        definitions = (ModelToolDefinition(
+        definitions = (FunctionToolDefinition(
             name="memory_echo",
             description="Echo.",
             parameters_json_schema={
@@ -141,7 +141,8 @@ class RuntimeSeamTests(unittest.TestCase):
             finally:
                 tools.close()
 
-        self.assertEqual((plan.requires_approval, plan.is_shell), (False, True))
+        self.assertEqual(plan.side_effect, "shell")
+        self.assertFalse(plan.descriptor.execution_policy.approval_required)
 
     def test_approval_adapter_preserves_rejection_feedback(self) -> None:
         class Decision:

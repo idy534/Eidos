@@ -1,7 +1,7 @@
 {
   "name": "eidos",
   "productName": "Eidos",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "private": true,
   "type": "module",
   "main": "dist/main/main.js",
@@ -36,7 +36,7 @@
     "check:python:static": "pnpm lint:python && pnpm deps:python && pnpm audit:python",
     "check:python": "pnpm check:python:static",
     "check:python:full": "pnpm check:python:static && pnpm test:runtime:full",
-    "test:contracts": "node --test scripts/check-desktop-contracts.test.mjs && node scripts/check-desktop-contracts.mjs",
+    "test:contracts": "node --test scripts/check-desktop-contracts.test.mjs scripts/check-generated-contracts.test.mjs && node scripts/check-desktop-contracts.mjs && node scripts/check-generated-contracts.mjs",
     "test:renderer-state": "node scripts/check-renderer-test-discovery.mjs && node --test \"dist/renderer-test/**/*.test.js\"",
     "test:renderer-behavior": "vitest run --config vitest.renderer.config.ts",
     "test:composer-layout": "electron scripts/test-composer-layout.cjs",

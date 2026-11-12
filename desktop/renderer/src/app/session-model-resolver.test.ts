@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { Run } from "../contracts.js";
-import { resolveSessionModelId } from "./session-model-resolver.js";
+import { resolveSessionRun } from "./session-model-resolver.js";
 
 function makeRun(partial: Partial<Run> & { id: string; sessionId: string; status: Run["status"] }): Run {
   return {
@@ -13,24 +13,24 @@ function makeRun(partial: Partial<Run> & { id: string; sessionId: string; status
   };
 }
 
-test("resolveSessionModelId returns undefined for empty run list", () => {
-  assert.equal(resolveSessionModelId([]), undefined);
+test("resolveSessionRun returns undefined for empty run list", () => {
+  assert.equal(resolveSessionRun([])?.modelId, undefined);
 });
 
 test("scheduled runs keep the user's model and approval defaults unchanged", () => {
   const user = makeRun({ id: "user", sessionId: "s", status: "succeeded", modelId: "deepseek-v4-pro" });
   const automatic = makeRun({ id: "automatic", sessionId: "s", status: "running", modelId: "deepseek-v4-flash", updatedAt: 2000,
     automationOrigin: { automationId: "task", occurrenceId: "occurrence", revision: 1, scheduledFor: "2026-10-15T09:00:00Z" } });
-  assert.equal(resolveSessionModelId([user, automatic]), user.modelId);
-  assert.equal(resolveSessionModelId([automatic]), undefined);
+  assert.equal(resolveSessionRun([user, automatic])?.modelId, user.modelId);
+  assert.equal(resolveSessionRun([automatic])?.modelId, undefined);
 });
 
-test("resolveSessionModelId returns modelId for single run", () => {
+test("resolveSessionRun returns modelId for single run", () => {
   const run = makeRun({ id: "run-1", sessionId: "s-1", status: "succeeded", modelId: "deepseek-v4-pro" });
-  assert.equal(resolveSessionModelId([run]), "deepseek-v4-pro");
+  assert.equal(resolveSessionRun([run])?.modelId, "deepseek-v4-pro");
 });
 
-test("resolveSessionModelId prefers active run over newer terminal run", () => {
+test("resolveSessionRun prefers active run over newer terminal run", () => {
   const terminalNewer = makeRun({
     id: "run-1",
     sessionId: "s-1",
@@ -46,10 +46,10 @@ test("resolveSessionModelId prefers active run over newer terminal run", () => {
     updatedAt: 2000,
   });
 
-  assert.equal(resolveSessionModelId([terminalNewer, activeOlder]), "deepseek-v4-pro");
+  assert.equal(resolveSessionRun([terminalNewer, activeOlder])?.modelId, "deepseek-v4-pro");
 });
 
-test("resolveSessionModelId selects most recently updated terminal run when no active run exists", () => {
+test("resolveSessionRun selects most recently updated terminal run when no active run exists", () => {
   const older = makeRun({
     id: "run-1",
     sessionId: "s-1",
@@ -65,10 +65,10 @@ test("resolveSessionModelId selects most recently updated terminal run when no a
     updatedAt: 2000,
   });
 
-  assert.equal(resolveSessionModelId([older, newer]), "deepseek-v4-pro");
+  assert.equal(resolveSessionRun([older, newer])?.modelId, "deepseek-v4-pro");
 });
 
-test("resolveSessionModelId produces deterministic result on equal timestamps", () => {
+test("resolveSessionRun produces deterministic result on equal timestamps", () => {
   const runA = makeRun({
     id: "run-a",
     sessionId: "s-1",
@@ -86,6 +86,6 @@ test("resolveSessionModelId produces deterministic result on equal timestamps", 
     updatedAt: 1000,
   });
 
-  assert.equal(resolveSessionModelId([runA, runB]), "deepseek-v4-pro");
-  assert.equal(resolveSessionModelId([runB, runA]), "deepseek-v4-pro");
+  assert.equal(resolveSessionRun([runA, runB])?.modelId, "deepseek-v4-pro");
+  assert.equal(resolveSessionRun([runB, runA])?.modelId, "deepseek-v4-pro");
 });

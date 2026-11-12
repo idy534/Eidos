@@ -14,11 +14,8 @@ from eidos_runtime.extensions.skills import (
     _SkillResourceAdapter,
     _skill_content_page,
 )
-from eidos_runtime.tools.contracts import (
-    SkillReadInput,
-    SkillReadResourceInput,
-    project_tool_result,
-)
+from eidos_runtime.tools.contracts import SkillReadInput, SkillReadResourceInput
+from tool_projection import project_tool_result
 
 
 @pytest.mark.parametrize("is_resource", [False, True])

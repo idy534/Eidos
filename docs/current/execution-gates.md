@@ -1,5 +1,7 @@
 # 执行门控清单
 
+目标模式只控制普通 Run 的后续接纳。目标暂停和清除不会强行停止当前 Run；用户停止 Run 时，目标转为暂停。完成候选不能绕过 Stop Hook、子任务、取消、新输入和最终事务检查。旧目标正文或旧激活阶段的结果不能覆盖新的目标状态。重启会暂停自动推进，Rewind 也会暂停目标。目标不增加权限或跨 Session 配额。具体规则见[目标模式](features/goals.md)。
+
 钉钉渠道默认支持单聊，群聊要求 @ 机器人；系统不再设置用户和群白名单。渠道保留配置版本检查。用户可以在 Desktop 渠道设置中选择 full_access，经危险弹窗确认并保存后，Runtime 持久保存确认版本，后续 Run 只能继承冻结配置中的审批模式和确认。渠道输入不进入本机授权证据，也不能自行切换模式。渠道服务复用既有 Supervisor、普通 Run 和执行权限规则，没有增加跨 Session 的执行配额。
 
 定时任务保留同计划不重叠、原 Session 忙碌跳过、最终入队版本检查和所属计划独立占用检查，不增加全局配额或共享 Workspace 锁。automation 的 view / preview 使用只读类别；写模式继续经过 Durable Intent。默认 auto_review 只配置未来 Run，不切换当前 Run。用户在管理页面手动开启 full_access 时需要危险弹窗确认，Runtime 保存确认版本，并在每次接纳 Run 时使用既有的确认校验。模型工具不能开启该模式，也不能修改或重新启用保持完全访问的计划。具体规则见 [当前本地定时任务](features/automations.md)。
@@ -83,7 +85,7 @@
 | 56 | 权限物化、沙盒、扩权与路径保护 | 调整 | manual/auto_review 默认拒绝越界；Eidos 核心保护范围继续要求高危人工确认，普通 Git、项目 metadata 与沙盒外执行按实际影响走普通审批。full_access 直接执行，不创建逐项审批或授权记录。 |
 | 57 | 数据目录、凭据、敏感展示和受控路径保护 | 保留 | 遵循权限模式和原有披露边界，受保护路径只按用户高危确认的具体范围开放。 |
 | 58 | 文件、输出、消息、搜索、MCP 与协议大小预算 | 调整 | 实际资源预算保留；新工具按最近请求换入，搜索满 4 个运行名额后进入有界队列。 |
-| 59 | Worktree、Checkpoint、Rewind、删除与恢复身份校验 | 保留 | 这些操作改变或销毁执行基线，需真实生命周期和可恢复操作记录。 |
+| 59 | Worktree 创建、删除与恢复身份校验 | 保留 | 这些操作改变或销毁执行基线，需真实生命周期和可恢复操作记录。 |
 
 实现入口：`runtime/tool_runtime.py`、`runtime/tool_execution.py`、`runtime/engine.py`、`runtime/approval.py`、`tools/planning.py`、`persistence/collaboration.py`、`application/repository.py`、`application/git_workflow.py`、`extensions/skill_management.py`，以及 Desktop 的 Composer、ApprovalComposer、ExecutionFeed 和 GitWorkflowControls。
 

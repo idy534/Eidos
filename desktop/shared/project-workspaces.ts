@@ -16,4 +16,3 @@ export const isProjectCreateFoldersRequest = (value: unknown): value is ProjectC
 export const isProjectWorkspace = (value: unknown): value is ProjectDto => project(value);
 export const isProjectReadRequest = (value: unknown): value is ProjectReadRequest => read(value);
 export const isProjectUpdateRequest = (value: unknown): value is ProjectUpdateRequest => update(value);
-export type ProjectFolders = ProjectRootDto[];

@@ -19,10 +19,6 @@ class RecordingRuntimeLifecycle:
     calls: list[tuple[LifecycleAction, str]] = field(default_factory=list)
     status_calls: list[str] = field(default_factory=list)
 
-    def pause_run(self, run_id: str) -> LifecycleResult:
-        self.calls.append((LifecycleAction.PAUSE, run_id))
-        return LifecycleResult(action=LifecycleAction.PAUSE, accepted=True)
-
     def resume_run(self, run_id: str) -> LifecycleResult:
         self.calls.append((LifecycleAction.RESUME, run_id))
         return LifecycleResult(action=LifecycleAction.RESUME, accepted=True)
@@ -41,7 +37,7 @@ class RecordingRuntimeLifecycle:
 
 @pytest.mark.parametrize(
     "action",
-    (LifecycleAction.PAUSE, LifecycleAction.RESUME, LifecycleAction.CANCEL),
+    (LifecycleAction.RESUME, LifecycleAction.CANCEL),
 )
 def test_task_lifecycle_application_dispatches_each_action_to_explicit_runtime_port(
     action: LifecycleAction,

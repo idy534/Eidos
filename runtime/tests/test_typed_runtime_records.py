@@ -6,17 +6,15 @@ import pytest
 from pydantic import ValidationError
 
 from eidos_runtime.db.database import Database
-from eidos_runtime.domain.execution import Item, ModelAttempt, Step
+from eidos_runtime.domain.execution import Item, Step
 from eidos_runtime.domain.run import Run, RunStatus
-from eidos_runtime.domain.tool import Approval, ToolCall
+from eidos_runtime.domain.tool import Approval
 from eidos_runtime.persistence.errors import PersistenceCorruptionError
 from eidos_runtime.persistence.mappers.runtime import (
     approval_from_row,
     item_from_row,
-    model_attempt_from_row,
     run_from_row,
     step_from_row,
-    tool_call_from_row,
 )
 from eidos_runtime.persistence.repositories import TypedRuntimeRepository
 
@@ -75,29 +73,6 @@ def test_core_mappers_return_frozen_domain_records_and_preserve_nullable_facts()
         "created_at": 1000,
         "completed_at": 1001,
     })
-    tool_call = tool_call_from_row({
-        "id": "tool-1",
-        "item_id": "item-2",
-        "model_step_index": 1,
-        "batch_order": 0,
-        "provider_call_id": "call-1",
-        "tool_name": "read_file",
-        "status": "completed",
-        "payload_kind": "function",
-        "arguments_json": '{"path":"README.md"}',
-        "result_json": '{"outcome":"success"}',
-        "model_result_json": '{"outcome":"success"}',
-        "approval_status": None,
-        "approval_decision": None,
-        "approval_feedback": None,
-        "approval_diff": None,
-        "base_sha256": None,
-        "provenance_json": None,
-        "tool_set_hash": None,
-        "started_at": 1000,
-        "duration_ms": None,
-        "completed_at": 1001,
-    })
     approval = approval_from_row({
         "id": "approval-1",
         "tool_call_id": "tool-1",
@@ -114,37 +89,6 @@ def test_core_mappers_return_frozen_domain_records_and_preserve_nullable_facts()
         "created_at": 1000,
         "decided_at": None,
     })
-    attempt = model_attempt_from_row({
-        "id": "attempt-1",
-        "step_id": "step-1",
-        "ordinal": 0,
-        "status": "completed",
-        "provider_name": "provider",
-        "configured_provider_id": "provider",
-        "resolved_model_name": "model-1",
-        "finish_reason": "stop",
-        "provider_response_id": None,
-        "lease_id": None,
-        "wire_api": "chat_completions",
-        "model_id": "model-1",
-            "request_timeout": 30.0,
-            "context_snapshot_id": None,
-        "retry_decision_json": None,
-        "usage_json": None,
-        "error_code": None,
-        "http_status": None,
-        "ttft_ms": None,
-        "duration_ms": 10,
-        "had_progress": 1,
-        "response_state": "complete",
-        "phase": "unknown",
-        "tool_call_count": 0,
-        "response_text_sha256": None,
-        "response_text_bytes": 0,
-        "protocol_diagnostics_json": None,
-        "started_at": 1000,
-        "completed_at": 1010,
-    })
 
     assert isinstance(run, Run)
     assert run.status is RunStatus.RUNNING
@@ -152,12 +96,8 @@ def test_core_mappers_return_frozen_domain_records_and_preserve_nullable_facts()
     assert isinstance(item, Item)
     assert item.model_step_index is None
     assert isinstance(step, Step)
-    assert isinstance(tool_call, ToolCall)
-    assert tool_call.result_json == '{"outcome":"success"}'
     assert isinstance(approval, Approval)
     assert approval.decided_at is None
-    assert isinstance(attempt, ModelAttempt)
-    assert attempt.completed_at == 1010
 
     with pytest.raises(ValidationError):
         run.status = RunStatus.FAILED  # type: ignore[misc]

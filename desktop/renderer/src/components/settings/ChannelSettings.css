@@ -133,14 +133,6 @@
   transform: translateY(-1px);
 }
 
-.channel-card--disabled {
-  opacity: 0.75;
-}
-
-.channel-card--disabled .channel-card-logo {
-  filter: grayscale(0.15);
-}
-
 .channel-card-left {
   display: flex;
   align-items: center;
@@ -376,43 +368,6 @@
   gap: 1rem;
 }
 
-
-.channel-setting-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1.25rem;
-}
-
-.channel-subrow {
-  padding-top: 0.25rem;
-}
-
-.channel-card-divider {
-  height: 1px;
-  background: var(--surface-muted);
-  margin: 0.25rem 0;
-}
-
-.channel-setting-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-
-.channel-setting-title {
-  font-size: 0.88rem;
-  font-weight: 600;
-  color: var(--text);
-  cursor: pointer;
-}
-
-.channel-setting-desc {
-  font-size: 0.8rem;
-  color: var(--muted);
-  line-height: 1.4;
-}
-
 /* Grid & Fields */
 .channel-grid-fields {
   display: grid;
@@ -520,13 +475,6 @@
   line-height: 1.5;
   font-family: var(--font-code);
   font-size: 0.82rem;
-}
-
-.channel-field-hint {
-  margin: 0.2rem 0 0;
-  font-size: 0.77rem;
-  color: var(--muted);
-  line-height: 1.45;
 }
 
 /* Password with Eye Action */

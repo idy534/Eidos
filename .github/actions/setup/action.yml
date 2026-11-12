@@ -19,5 +19,5 @@ runs:
         cache: pnpm
     - run: pnpm install --frozen-lockfile
       shell: bash
-    - run: uv sync --frozen
+    - run: uv sync --locked
       shell: bash

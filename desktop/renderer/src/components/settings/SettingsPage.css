@@ -279,18 +279,14 @@
 
 /* Model Settings Row Details */
 
-.model-row-title,
-.plugin-row-header,
-.mcp-row-header {
+.plugin-row-header {
   display: flex;
   align-items: center;
   gap: 0.55rem;
   flex-wrap: wrap;
 }
 
-.model-name,
-.plugin-name,
-.mcp-server-name {
+.plugin-name {
   font-weight: 600;
   color: var(--text);
 }
@@ -308,38 +304,6 @@
   font-family: var(--font-code);
   font-size: var(--font-size-xs);
   color: var(--text-tertiary);
-}
-
-.plugin-meta-info,
-.mcp-row-summary {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 11.5px;
-  color: var(--muted);
-}
-
-.meta-divider {
-  opacity: 0.4;
-}
-
-.api-key-edit-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-}
-
-.api-key-input-row {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
-
-.api-key-input-row input {
-  flex: 1;
-  font-family: var(--font-code);
-  font-size: 12.5px;
 }
 
 .saved-model {
@@ -590,24 +554,9 @@
   border-color: var(--accent);
 }
 
-.mcp-row-actions { display: flex; align-items: center; gap: 0.4rem; }
-
 .mcp-create-footer { justify-content: space-between; }
 
 .mcp-create-footer-actions { display: flex; gap: 0.5rem; }
-
-.api-key-masked-display {
-  margin-top: 0.35rem;
-  font-family: var(--font-code);
-  font-size: var(--font-size-caption);
-  color: var(--muted);
-}
-
-.setting-field-error {
-  margin: 0.25rem 0 0;
-  color: var(--danger);
-  font-size: var(--font-size-caption);
-}
 
 
 /* Plugin Stats & Actions */
@@ -768,37 +717,6 @@
 
 /* MCP Grid Details */
 
-.mcp-details-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 0.65rem 1rem;
-  margin: 0;
-}
-
-.mcp-details-grid dt {
-  color: var(--text-tertiary);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.mcp-details-grid dd {
-  margin: 0.15rem 0 0;
-  color: var(--text);
-  font-family: var(--font-code);
-  font-size: 11.5px;
-}
-
-.mcp-details-grid .full-width {
-  grid-column: span 2;
-}
-
-.mcp-plugin-tag {
-  font-size: 11.5px;
-  color: var(--muted);
-}
-
 /* Runtime System Status Panel */
 
 .runtime-version-tag {
@@ -817,23 +735,6 @@
   display: flex;
   flex-direction: column;
   gap: 1.1rem;
-}
-
-.mcp-warning-banner {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  padding: 0.65rem 0.85rem;
-  border: 1px solid #ebd9b8;
-  border-radius: var(--radius-sm);
-  color: #70541e;
-  background: #fdf8ed;
-  font-size: 0.82rem;
-  font-weight: 500;
-}
-
-.mcp-warning-icon {
-  font-size: var(--font-size-body);
 }
 
 .mcp-meta-grid {
@@ -883,30 +784,6 @@
   background: var(--surface-muted);
 }
 
-.mcp-command-block {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.mcp-command-block label {
-  color: var(--muted);
-  font-size: 0.75rem;
-  font-weight: 550;
-}
-
-.mcp-command-block pre {
-  margin: 0;
-  padding: 0.75rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface-muted);
-  font-family: var(--font-code);
-  font-size: 11.5px;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
 /* Note: Empty states (.empty-state) are centralized in components/common.css */
 
 /* Responsive Narrow Window Adjustments (<768px) */
@@ -945,28 +822,13 @@
     padding: 0.5rem 1rem 1.5rem;
   }
 
-  .mcp-details-grid,
-.mcp-meta-grid {
+  .mcp-meta-grid {
     grid-template-columns: 1fr;
   }
 
-  .mcp-details-grid .full-width,
   .mcp-meta-grid .full-width {
     grid-column: span 1;
   }
-}
-
-.key-row input { min-width: 0; }
-
-.key-row button { flex: none; }
-
-.setting-number-field input {
-  width: 5rem;
-}
-
-@media (max-width: 760px) {
-  .setup-panel { grid-template-columns: 1fr; margin: 0.75rem 1rem 0; }
-  .key-row { flex-direction: column; }
 }
 
 .workbench.workbench--settings .settings-page-header::before { content: none; }

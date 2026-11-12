@@ -2,7 +2,7 @@ import type { InputReference, InputPrepareRequest } from "../../../shared/input-
 import { canonicalizeInlineText } from "../../../shared/inline-references.js";
 import { InputReferenceCards, isInlineReference, isShelfReference, useInputContext, useReferenceActivation } from "./InputContext.js";
 import { InlineRichEditor } from "./InlineRichEditor.js";
-import { InputPicker, type InputPickerMode, LightbulbIcon } from "./InputPicker.js";
+import { InputPicker, type InputPickerMode, LightbulbIcon, TargetGoalIcon } from "./InputPicker.js";
 import { forwardRef, useCallback, useState, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import type { ApprovalMode, ContextUsage, ModelId, ModelReasoningSelection, Run, Session } from "../contracts.js";
 import type { ComposerMode } from "../session-state.js";
@@ -16,6 +16,8 @@ import { ModelSelector } from "./ModelSelector.js";
 import { Tooltip } from "./Tooltip.js";
 import { AgentEditorDialog } from "./settings/AgentEditorDialog.js";
 
+export type ComposerWorkMode = "execute" | "plan" | "goal";
+
 export interface ComposerProps {
   composerMode: ComposerMode;
   activeRun: Run | undefined;
@@ -26,8 +28,8 @@ export interface ComposerProps {
   modelList: import("../contracts.js").ModelListResult | undefined;
   selectedModelId: ModelId | undefined;
   reasoningSelection?: ModelReasoningSelection | undefined;
-  workMode?: "execute" | "plan";
-  onWorkModeChange?: (mode: "execute" | "plan") => void;
+  workMode?: ComposerWorkMode;
+  onWorkModeChange?: (mode: ComposerWorkMode) => void;
   approvalMode?: ApprovalMode | undefined;
   onApprovalModeChange?: ((mode: ApprovalMode) => void) | undefined;
   contextUsage: ContextUsage | undefined;
@@ -298,6 +300,8 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       : modelConfigured
         ? workMode === "plan"
           ? "先把想法变成计划"
+          : workMode === "goal"
+          ? "输入目标，Eidos 会持续推进直到完成"
           : "想做什么，从这里开始"
         : "请先在设置中添加模型";
 
@@ -472,12 +476,14 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
         onCommand={(command) => {
           consumeMention();
           if (command === "plan") onWorkModeChange?.("plan");
+          else if (command === "goal") onWorkModeChange?.("goal");
           else if (command === "status") setShowStatus((value) => !value);
           else if (command === "model") {
             composerRef.current?.querySelector<HTMLButtonElement>(".model-selector > button")?.click();
           } else context?.settings(command);
         }}
-        onSelectPlanMode={() => onWorkModeChange?.("plan")} />}
+        onSelectPlanMode={() => onWorkModeChange?.("plan")}
+        onSelectGoalMode={() => onWorkModeChange?.("goal")} />}
       {agentCreator && <AgentEditorDialog referenceAfterSave onClose={() => { setAgentCreator(undefined); focusActiveEditor(); }}
         onSaved={(saved) => {
           void agentCreator.add({ kind: "agent", source: saved.definition.name }, agentCreator.insertRange);
@@ -618,6 +624,18 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
                   <CloseIcon className="composer-plan-badge__close" />
                 </span>
                 <span className="composer-plan-badge__text">Plan 模式</span>
+              </button>
+            </Tooltip>
+          )}
+          {workMode === "goal" && (
+            <Tooltip content="退出目标模式">
+              <button type="button" className="composer-plan-badge" disabled={isSubmitting}
+                onClick={() => onWorkModeChange?.("execute")} aria-label="退出目标模式">
+                <span className="composer-plan-badge__icon" aria-hidden="true">
+                  <TargetGoalIcon className="composer-plan-badge__bulb" />
+                  <CloseIcon className="composer-plan-badge__close" />
+                </span>
+                <span className="composer-plan-badge__text">目标模式</span>
               </button>
             </Tooltip>
           )}

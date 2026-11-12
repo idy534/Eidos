@@ -192,11 +192,16 @@ class BundledBrowserPluginTests(unittest.TestCase):
         return [json.loads(line) for line in path.read_text().splitlines()]
 
     def test_only_allowlisted_tools_register_with_eidos_approval_classes(self) -> None:
-        from eidos_runtime.domain.browser import BROWSER_TOOL_CLASSES, BrowserToolClass, KNOWN_BLOCKED_BROWSER_TOOLS
+        from eidos_runtime.domain.browser import BROWSER_TOOL_CLASSES, BrowserToolClass
+
+        # Anything outside BROWSER_TOOL_CLASSES is blocked. These three must stay out:
+        # browser_run_code_unsafe runs arbitrary code in the server process and
+        # browser_evaluate runs arbitrary script inside signed-in pages.
+        known_blocked = {"browser_run_code_unsafe", "browser_evaluate", "browser_emulate_media"}
 
         entries = {entry.spec.name.removeprefix("mcp__browser__"): entry for entry in self.manager.start()}
         self.assertEqual(set(entries), set(BROWSER_TOOL_CLASSES))
-        self.assertFalse(KNOWN_BLOCKED_BROWSER_TOOLS & set(entries))
+        self.assertFalse(known_blocked & set(entries))
         for name, tool_class in BROWSER_TOOL_CLASSES.items():
             self.assertEqual(entries[name].spec.approval_required, tool_class is not BrowserToolClass.READ, name)
         launch = self.log()[0]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import unicodedata
 
 
 from eidos_runtime.model.client import (
@@ -18,7 +19,12 @@ from eidos_runtime.tools.registry import (
     ToolArgumentValidationResult,
     ToolRegistry,
 )
-from eidos_runtime.tools.contracts import ToolResultProjection
+from eidos_runtime.tools.contracts import (
+    MAX_SHELL_DISPLAY_INTENT_INPUT_LENGTH,
+    RunShellInput,
+    SHELL_DISPLAY_INTENT_FIELD,
+    ToolResultProjection,
+)
 from eidos_runtime.runtime.protocol_diagnostics import (
     ProtocolDiagnostic,
     argument_summary,
@@ -30,6 +36,8 @@ class ToolValidationResult:
     tool_calls: tuple[ModelToolCall, ...]
     error_code: str | None = None
     protocol_diagnostic: ProtocolDiagnostic | None = None
+    # (provider call id, reason) for each supplied shell description that was unusable.
+    dropped_display_intents: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -41,14 +49,6 @@ class ToolDispatchPlan:
     @property
     def descriptor(self) -> ToolDescriptor | None:
         return self.binding.descriptor if self.binding is not None else None
-
-    @property
-    def requires_approval(self) -> bool:
-        return bool(
-            self.descriptor
-            and self.descriptor.execution_policy
-            and self.descriptor.execution_policy.approval_required
-        )
 
     @property
     def timeout_seconds(self) -> int:
@@ -72,37 +72,14 @@ class ToolDispatchPlan:
             else "external"
         )
 
-    @property
-    def contract_hash(self) -> str | None:
-        return (
-            self.binding.contract_fingerprint
-            if self.binding is not None else None
-        )
-
-    @property
-    def is_shell(self) -> bool:
-        return self.side_effect == "shell"
-
-    @property
-    def is_external(self) -> bool:
-        return self.side_effect == "external"
-
-    @property
-    def is_eidos_state(self) -> bool:
-        return self.side_effect == "eidos_state"
-
-    @property
-    def is_network_eidos_state(self) -> bool:
-        return bool(
-            self.descriptor and self.descriptor.spec.name == "skill_install"
-        )
-
-
 class ToolDispatcher:
     """Owns model ToolCall validation and batch invariants for RuntimeEngine."""
 
     def __init__(self, registry: ToolRegistry) -> None:
         self._registry = registry
+
+    def has_tool(self, name: str) -> bool:
+        return self._registry.get(name) is not None
 
     def validate(
         self,
@@ -132,6 +109,7 @@ class ToolDispatcher:
             )
         provider_ids: set[str] = set()
         effective_calls: list[ModelToolCall] = []
+        dropped_display_intents: list[tuple[str, str]] = []
         for call in response.tool_calls:
             registry_entry = (
                 self._registry.get(call.name)
@@ -172,18 +150,28 @@ class ToolDispatcher:
                         tool_set_hash=tool_set_hash,
                     ),
                 )
+            raw_payload = call.raw_payload or call.payload
+            display_intent = None
+            if entry.input_model is RunShellInput and isinstance(call.payload, FunctionToolPayload):
+                display_intent, dropped_reason, payload = _split_shell_display_intent(call.payload)
+                if dropped_reason is not None:
+                    dropped_display_intents.append((call.provider_call_id, dropped_reason))
+                if isinstance(raw_payload, FunctionToolPayload):
+                    _, _, raw_payload = _split_shell_display_intent(raw_payload)
+            else:
+                payload = call.payload
             contract = None
             effective_payload = None
             if entry.spec.input_kind == "function":
-                if isinstance(call.payload, FunctionToolPayload):
-                    contract = entry.validate_arguments(call.payload.arguments)
+                if isinstance(payload, FunctionToolPayload):
+                    contract = entry.validate_arguments(payload.arguments)
                     effective_payload = (
                         FunctionToolPayload(
                             arguments=contract.normalized_arguments
                         )
                         if contract.valid
                         and contract.normalized_arguments is not None
-                        else call.payload
+                        else payload
                     )
             elif entry.spec.input_kind == "custom":
                 if isinstance(call.payload, CustomToolPayload):
@@ -216,12 +204,15 @@ class ToolDispatcher:
             provider_ids.add(call.provider_call_id)
             effective_calls.append(ModelToolCall(
                 call.provider_call_id, call.name, effective_payload,
-                raw_payload=call.raw_payload or call.payload,
+                raw_payload=raw_payload, display_intent=display_intent,
             ))
         # Batch policy controls runtime scheduling, not how many calls a model may
         # return in one response. Mixed or side-effecting batches are serialized by
         # ToolCallRuntime; only an all-read parallel-safe batch is run concurrently.
-        return ToolValidationResult(tuple(effective_calls))
+        return ToolValidationResult(
+            tuple(effective_calls),
+            dropped_display_intents=tuple(dropped_display_intents),
+        )
 
     def model_definitions(
         self, activated_names: tuple[str, ...] = ()
@@ -382,6 +373,33 @@ class ToolDispatcher:
             and entry.execution_policy is not None
             and entry.execution_policy.concurrency.mode == "parallel_safe"
         )
+
+
+def _split_shell_display_intent(
+    payload: FunctionToolPayload,
+) -> tuple[str | None, str | None, FunctionToolPayload]:
+    """Return the usable description, why a supplied one was dropped, and the execution payload."""
+    if SHELL_DISPLAY_INTENT_FIELD not in payload.arguments:
+        return None, None, payload
+    arguments = dict(payload.arguments)
+    value = arguments.pop(SHELL_DISPLAY_INTENT_FIELD)
+    payload = FunctionToolPayload(arguments=arguments)
+    if not isinstance(value, str):
+        return None, "not_string", payload
+    stripped = value.strip()
+    if not stripped:
+        return None, "empty", payload
+    if len(stripped) > MAX_SHELL_DISPLAY_INTENT_INPUT_LENGTH:
+        return None, "too_long", payload
+    if any(
+        unicodedata.category(character) in {"Cc", "Cs", "Zl", "Zp"}
+        or unicodedata.bidirectional(character) in {
+            "LRE", "RLE", "LRO", "RLO", "PDF", "LRI", "RLI", "FSI", "PDI",
+        }
+        for character in stripped
+    ):
+        return None, "unsafe_characters", payload
+    return stripped, None, payload
 
 
 def _tool_validation_diagnostic(

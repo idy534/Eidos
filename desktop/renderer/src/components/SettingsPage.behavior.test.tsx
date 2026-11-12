@@ -136,7 +136,7 @@ describe("Model settings", () => {
 
     await user.click(await screen.findByRole("button", { name: "添加模型" }));
     expect(screen.getByRole("heading", { name: "添加模型" })).toBeInTheDocument();
-    expect(screen.getByText("仅支持 OpenAI 兼容协议 API")).toBeInTheDocument();
+    expect(screen.getByText("使用提供商的模型 API")).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("提供商"), "kimi");
     expect(container.querySelector(".model-provider-control img")).toHaveAttribute("src", kimiLogo);
     await user.selectOptions(screen.getByLabelText("提供商"), "minimax");

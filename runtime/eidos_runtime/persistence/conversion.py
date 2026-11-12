@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 import json
 import math
 import sqlite3
 from types import TracebackType
-from typing import Iterator, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
-from pydantic import JsonValue
 
 from eidos_runtime.models import JSON_SAFE_INTEGER_MAX
 from eidos_runtime.persistence.errors import PersistenceCorruptionError
@@ -24,17 +22,6 @@ class RowValues(Protocol):
     def keys(self) -> Iterable[str]: ...
 
     def __getitem__(self, key: str) -> object: ...
-
-
-class TransactionLock(Protocol):
-    def __enter__(self) -> object: ...
-
-    def __exit__(
-        self,
-        exception_type: type[BaseException] | None,
-        exception: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> bool | None: ...
 
 
 @runtime_checkable
@@ -58,22 +45,6 @@ class WriteTransaction(ReadTransaction, Protocol):
         exception: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool | None: ...
-
-
-@contextmanager
-def read_transaction(
-    lock: TransactionLock, connection: ReadTransaction
-) -> Iterator[ReadTransaction]:
-    with lock:
-        yield connection
-
-
-@contextmanager
-def write_transaction(
-    lock: TransactionLock, connection: WriteTransaction
-) -> Iterator[WriteTransaction]:
-    with lock, connection as transaction:
-        yield transaction
 
 
 class RowReader:
@@ -124,23 +95,11 @@ class RowReader:
             self._invalid(field)
         return bool(value)
 
-    def optional_boolean(self, field: str) -> bool | None:
-        value = self.value(field)
-        if value is None:
-            return None
-        return self.boolean(field)
-
     def real(self, field: str) -> float:
         value = self.value(field)
         if type(value) not in (int, float) or not math.isfinite(value):
             self._invalid(field)
         return float(value)
-
-    def optional_real(self, field: str) -> float | None:
-        value = self.value(field)
-        if value is None:
-            return None
-        return self.real(field)
 
     def json_text(self, field: str) -> str:
         value = self.text(field)
@@ -216,24 +175,6 @@ def utc_datetime_to_millis(value: datetime) -> int:
     if not SQLITE_INTEGER_MIN <= milliseconds <= SQLITE_INTEGER_MAX:
         raise ValueError("timestamp exceeds SQLite integer range")
     return milliseconds
-
-
-def decode_json_object(
-    value: object, *, record: str, field: str
-) -> dict[str, JsonValue]:
-    if type(value) is not str:
-        _raise_json_invalid(record, field)
-    try:
-        decoded = json.loads(value, parse_constant=lambda _value: _invalid_json())
-    except (TypeError, ValueError, json.JSONDecodeError):
-        _raise_json_invalid(record, field)
-    if not isinstance(decoded, dict):
-        _raise_json_invalid(record, field)
-    try:
-        _validate_json_value(decoded)
-    except ValueError:
-        _raise_json_invalid(record, field)
-    return decoded
 
 
 def _validate_json_value(value: object) -> None:

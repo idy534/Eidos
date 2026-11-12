@@ -9,15 +9,11 @@ from uuid import uuid4
 import pytest
 
 from eidos_runtime.application.errors import ApplicationError
-from eidos_runtime.application.checkpoints import CheckpointApplication
 from eidos_runtime.application.sessions import SessionApplication
-from eidos_runtime.application.worktree_retention import WorktreeRetentionService
 from eidos_runtime.db.schema import SCHEMA_VERSION
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.git import WorktreeManager
 from eidos_runtime.protocol.methods import (
-    CheckpointCreateRequestDto,
-    CheckpointForkRequestDto,
     SessionCreateRequestDto,
     SessionDeleteRequestDto,
 )
@@ -119,63 +115,6 @@ def test_same_session_create_operation_id_has_one_worktree(
         ).fetchone()[0] == 1
         assert store.connection.execute(
             "SELECT COUNT(*) FROM sessions"
-        ).fetchone()[0] == 1
-    finally:
-        store.close()
-
-
-def test_same_checkpoint_fork_operation_id_has_one_fork(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    repository = _repository(tmp_path)
-    store, manager, sessions = _application(tmp_path)
-    checkpoints = CheckpointApplication(
-        store,
-        store.checkpoint_repository(),
-        worktree_manager=manager,
-        retention=WorktreeRetentionService(store.database, manager),
-    )
-    parent = sessions.create(
-        SessionCreateRequestDto(
-            workspaceRoot=str(repository), executionMode="worktree"
-        )
-    ).root
-    parent_run, _item = store.enqueue_run(str(parent["id"]), "fork")
-    checkpoint = checkpoints.create(
-        CheckpointCreateRequestDto(runId=str(parent_run["id"]))
-    ).checkpoint
-    request = CheckpointForkRequestDto(
-        checkpointId=checkpoint.id,
-        operationId=str(uuid4()),
-    )
-    try:
-        original_create = manager.create_prepared
-        calls = 0
-
-        def delayed_create(*args: object, **kwargs: object) -> object:
-            nonlocal calls
-            calls += 1
-            time.sleep(0.1)
-            return original_create(*args, **kwargs)
-
-        monkeypatch.setattr(manager, "create_prepared", delayed_create)
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            results = list(executor.map(checkpoints.fork, (request, request)))
-
-        assert calls == 1
-        assert results[0].run.id == results[1].run.id
-        assert store.connection.execute(
-            "SELECT COUNT(*) FROM worktrees"
-        ).fetchone()[0] == 2
-        assert store.connection.execute(
-            "SELECT COUNT(*) FROM sessions"
-        ).fetchone()[0] == 2
-        assert store.connection.execute(
-            "SELECT COUNT(*) FROM runs"
-        ).fetchone()[0] == 2
-        assert store.connection.execute(
-            "SELECT COUNT(*) FROM checkpoint_actions WHERE action = 'fork'"
         ).fetchone()[0] == 1
     finally:
         store.close()
@@ -498,122 +437,3 @@ def test_deleted_worktree_without_delete_intent_does_not_delete_session(
         ).fetchone()[0] == 1
     finally:
         store.close()
-
-
-@pytest.mark.parametrize(
-    "crash_point", ["prepared", "git", "worktree", "session", "run", "action"]
-)
-def test_checkpoint_fork_restart_recovery_is_singleton(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    crash_point: str,
-) -> None:
-    repository = _repository(tmp_path)
-    store, manager, sessions = _application(tmp_path)
-    checkpoints = CheckpointApplication(
-        store,
-        store.checkpoint_repository(),
-        worktree_manager=manager,
-        retention=WorktreeRetentionService(store.database, manager),
-    )
-    parent = sessions.create(
-        SessionCreateRequestDto(
-            workspaceRoot=str(repository), executionMode="worktree"
-        )
-    ).root
-    parent_run, _item = store.enqueue_run(str(parent["id"]), "fork")
-    checkpoint = checkpoints.create(
-        CheckpointCreateRequestDto(runId=str(parent_run["id"]))
-    ).checkpoint
-    operation_id = str(uuid4())
-    request = CheckpointForkRequestDto(
-        checkpointId=checkpoint.id,
-        operationId=operation_id,
-    )
-    try:
-        if crash_point == "prepared":
-            def crash_after_prepare(*args: object, **kwargs: object) -> object:
-                raise SystemExit("crash after fork durable prepare")
-
-            monkeypatch.setattr(manager, "create_prepared", crash_after_prepare)
-        elif crash_point == "git":
-            original = manager.git.worktree_add
-
-            def crash_after_git(*args: object, **kwargs: object) -> None:
-                original(*args, **kwargs)
-                raise SystemExit("crash after fork git worktree add")
-
-            monkeypatch.setattr(manager.git, "worktree_add", crash_after_git)
-        elif crash_point == "worktree":
-            original = manager.repository.insert_worktree
-
-            def crash_after_worktree(*args: object, **kwargs: object) -> object:
-                original(*args, **kwargs)
-                raise SystemExit("crash after fork Worktree persistence")
-
-            monkeypatch.setattr(
-                manager.repository, "insert_worktree", crash_after_worktree
-            )
-        elif crash_point == "session":
-            original = checkpoints._sessions.create_session
-
-            def crash_after_session(*args: object, **kwargs: object) -> object:
-                original(*args, **kwargs)
-                raise SystemExit("crash after fork Session persistence")
-
-            monkeypatch.setattr(
-                checkpoints._sessions, "create_session", crash_after_session
-            )
-        elif crash_point == "run":
-            original = store.enqueue_run
-
-            def crash_after_run(*args: object, **kwargs: object) -> object:
-                original(*args, **kwargs)
-                raise SystemExit("crash after fork Run persistence")
-
-            monkeypatch.setattr(store, "enqueue_run", crash_after_run)
-        else:
-            original = checkpoints._repository.record_action
-
-            def crash_after_action(*args: object, **kwargs: object) -> None:
-                original(*args, **kwargs)
-                raise SystemExit("crash after checkpoint action")
-
-            monkeypatch.setattr(
-                checkpoints._repository, "record_action", crash_after_action
-            )
-        with pytest.raises(SystemExit):
-            checkpoints.fork(request)
-    finally:
-        store.close()
-
-    restarted = SessionStore(tmp_path / "data")
-    restarted.initialize()
-    restarted_manager = WorktreeManager(
-        restarted.database,
-        managed_root=tmp_path / "managed-worktrees",
-    )
-    restarted_manager.recover()
-    restarted_checkpoints = CheckpointApplication(
-        restarted,
-        restarted.checkpoint_repository(),
-        worktree_manager=restarted_manager,
-        retention=WorktreeRetentionService(restarted.database, restarted_manager),
-    )
-    try:
-        result = restarted_checkpoints.fork(request)
-        assert result.run.id
-        assert restarted.connection.execute(
-            "SELECT COUNT(*) FROM worktrees"
-        ).fetchone()[0] == 2
-        assert restarted.connection.execute(
-            "SELECT COUNT(*) FROM sessions"
-        ).fetchone()[0] == 2
-        assert restarted.connection.execute(
-            "SELECT COUNT(*) FROM runs"
-        ).fetchone()[0] == 2
-        assert restarted.connection.execute(
-            "SELECT COUNT(*) FROM checkpoint_actions WHERE action = 'fork'"
-        ).fetchone()[0] == 1
-    finally:
-        restarted.close()

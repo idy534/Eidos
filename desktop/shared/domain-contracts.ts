@@ -272,6 +272,7 @@ export type ApprovalMode = "manual" | "auto_review" | "full_access";
 export interface Run {
   hookActivity?: HookActivity[];
   channelOrigin?: import("./channels.generated.js").ChannelOrigin;
+  goalOrigin?: import("./goals.generated.js").GoalRunOrigin;
   automationOrigin?: import("./automation.generated.js").AutomationOrigin;
   inherited?: boolean;
   approvalMode?: ApprovalMode;
@@ -366,6 +367,8 @@ export interface ToolCall {
   status: "running" | "completed" | "failed" | "canceled";
   payloadKind?: "function" | "custom";
   argumentsJson?: string;
+  displayIntent?: string;
+  displayCommand?: string;
   resultJson?: string;
   approvalStatus?: "pending" | "resolved" | "canceled";
   approvalDecision?: "approve" | "reject";
@@ -573,6 +576,7 @@ export interface FileApprovalRequest extends ApprovalRequestBase {
 export interface CommandApprovalRequest extends ApprovalRequestBase {
   kind: "command_execution";
   command: string;
+  displayIntent?: string | undefined;
   cwd: string;
   networkEnabled: boolean;
   timeoutSeconds: number;
@@ -754,6 +758,7 @@ export interface RunThinkingParams {
 }
 
 export type RuntimeNotification =
+  | { method: "goal/updated"; params: import("./goals.generated.js").GoalChangedNotice }
   | { method: "memory/changed"; params: import("./memory.generated.js").MemoryChangedNotice }
   | { method: "context/compactionUpdated"; params: { sessionId: string; activity: ContextCompactionActivity } }
   | { method: "model/retryUpdated"; params: { sessionId: string; activity: ModelRetryActivity } }

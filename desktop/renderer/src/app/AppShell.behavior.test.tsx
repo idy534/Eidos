@@ -11,6 +11,10 @@ const fixture = vi.hoisted(() => ({
   forkSession: vi.fn(),
   startDraft: vi.fn(),
   reviseRun: vi.fn(),
+  submitInput: vi.fn(),
+  setInput: vi.fn(),
+  input: "",
+  selectedModelId: undefined as string | undefined,
 }));
 vi.mock("./useSessionController.js", () => ({
   useSessionController: () => [{
@@ -19,7 +23,8 @@ vi.mock("./useSessionController.js", () => ({
     handleRunNotification: vi.fn(), setSnapshot: vi.fn(), refreshCompletedSession: vi.fn(), handleTitleNotification: vi.fn() }],
 }));
 vi.mock("./useRunController.js", () => ({
-  useRunController: () => [{ composerMode: "idle", input: "", references: [], draftReady: false }, { reviseRun: fixture.reviseRun }],
+  useRunController: () => [{ composerMode: "idle", input: fixture.input, references: [], draftReady: false },
+    { reviseRun: fixture.reviseRun, submitInput: fixture.submitInput, setInput: fixture.setInput }],
 }));
 vi.mock("./useApprovalController.js", () => ({
   useApprovalController: () => [{
@@ -28,7 +33,7 @@ vi.mock("./useApprovalController.js", () => ({
   }, { loadPending: vi.fn() }],
 }));
 vi.mock("./useModelController.js", () => ({
-  useModelController: () => [{}, { load: vi.fn() }],
+  useModelController: () => [{ selectedModelId: fixture.selectedModelId }, { load: vi.fn() }],
 }));
 vi.mock("./useExtensionController.js", () => ({
   useExtensionController: () => [{ plugins: [], skills: [], pendingSkillIds: new Set(), mcpServers: [], pendingAction: {} }, { load: vi.fn() }],
@@ -45,11 +50,16 @@ vi.mock("../components/SessionSidebar.js", () => ({
 }));
 vi.mock("../components/Composer.js", async () => {
   const { ApprovalModeSelector } = await import("../components/ApprovalModeSelector.js");
-  return { Composer: ({ approvalMode, onApprovalModeChange, onExecutionModeChange }: {
+  return { Composer: ({ approvalMode, onApprovalModeChange, onExecutionModeChange, workMode, onWorkModeChange, onSubmit }: {
+    workMode: string; onWorkModeChange: (mode: "goal" | "plan" | "execute") => void; onSubmit: () => void;
     approvalMode: ApprovalMode; onApprovalModeChange: (mode: ApprovalMode) => void;
     onExecutionModeChange?: (mode: "local" | "worktree") => void;
   }) => <>
     <ApprovalModeSelector mode={approvalMode} onChange={onApprovalModeChange} />
+    <span data-testid="composer-work-mode">{workMode}</span>
+    <button onClick={() => onWorkModeChange("goal")}>选择目标模式</button>
+    <button onClick={() => onWorkModeChange("plan")}>选择 Plan 模式</button>
+    <button onClick={onSubmit}>发送输入</button>
     {onExecutionModeChange && <button onClick={() => onExecutionModeChange("worktree")}>切换到工作树</button>}
   </> };
 });
@@ -147,6 +157,8 @@ describe("AppShell text change review", () => {
 
 beforeEach(() => {
   fixture.draft = undefined;
+  fixture.input = ""; fixture.selectedModelId = undefined;
+  fixture.submitInput.mockReset().mockResolvedValue(true); fixture.setInput.mockReset();
   fixture.forkSession.mockReset().mockImplementation(async () => fixture.snapshot);
   fixture.startDraft.mockReset();
   fixture.reviseRun.mockReset().mockResolvedValue(true);
@@ -160,6 +172,7 @@ beforeEach(() => {
   };
   Object.defineProperty(window, "scrollTo", { configurable: true, value: vi.fn() });
   window.eidosRuntime = {
+    goal: vi.fn(async () => ({})),
     onNotification: vi.fn(() => () => undefined),
     readBrowserAgentStatus: vi.fn(async () => ({
       chromeInstalled: true, running: false, pluginInstalled: false, pluginEnabled: false, resource: "unavailable", granted: false,
@@ -503,4 +516,99 @@ describe("AppShell live thinking", () => {
     act(() => notify!(thinking("rs:1", "迟到的摘要")));
     expect(screen.queryByTestId("live-thinking")).not.toBeInTheDocument();
   });
+});
+
+
+describe("AppShell Composer goal mode", () => {
+  it("selects the mode without opening a setup form and starts with Composer permissions", async () => {
+    fixture.selectedModelId = "test-model";
+    fixture.input = "修复登录模块并确认测试通过。";
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "选择目标模式" }));
+    await waitFor(() => expect(screen.getByTestId("composer-work-mode")).toHaveTextContent("goal"));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(fixture.submitInput).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "发送输入" }));
+    await waitFor(() => expect(fixture.submitInput).toHaveBeenCalledWith(expect.objectContaining({
+      selectedModelId: "test-model", approvalMode: "manual", planning: { workMode: "execute", goalMode: true },
+    })));
+    expect(window.eidosRuntime.goal).toHaveBeenCalledWith({ action: "get", sessionId: "session-a" });
+  });
+
+  it("keeps a draft unmaterialized when only choosing goal mode", async () => {
+    fixture.draft = { ...fixture.snapshot!, session: { ...fixture.snapshot!.session, id: "draft" } };
+    fixture.snapshot = undefined;
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "选择目标模式" }));
+    await waitFor(() => expect(screen.getByTestId("composer-work-mode")).toHaveTextContent("goal"));
+    expect(window.eidosRuntime.goal).not.toHaveBeenCalled();
+    expect(fixture.submitInput).not.toHaveBeenCalled();
+  });
+
+  it("treats bare /goal as a mode selection and preserves direct input submission", async () => {
+    fixture.selectedModelId = "test-model";
+    fixture.input = "/goal";
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "发送输入" }));
+    await waitFor(() => expect(screen.getByTestId("composer-work-mode")).toHaveTextContent("goal"));
+    expect(fixture.setInput).toHaveBeenCalledWith("");
+    expect(fixture.submitInput).not.toHaveBeenCalled();
+  });
+
+  it("pauses the persistent goal before switching to Plan mode", async () => {
+    const saved = { id: "goal", sessionId: "session-a", objective: "完整目标。", status: "active", revision: 1,
+      objectiveRevision: 1, activation: 1, model: { modelId: "test-model" }, approvalMode: "manual", createdAt: 1, updatedAt: 1 };
+    window.eidosRuntime.goal = vi.fn(async (request) => ({ goal: { ...saved, status: request.action === "pause" ? "paused" : "active" } })) as typeof window.eidosRuntime.goal;
+    renderShell();
+    await waitFor(() => expect(screen.getByTestId("composer-work-mode")).toHaveTextContent("goal"));
+    fireEvent.click(screen.getByRole("button", { name: "选择 Plan 模式" }));
+    await waitFor(() => expect(screen.getByTestId("composer-work-mode")).toHaveTextContent("plan"));
+    expect(window.eidosRuntime.goal).toHaveBeenCalledWith(expect.objectContaining({ action: "pause", expectedRevision: 1 }));
+  });
+});
+
+it("exits the armed goal mode when Runtime pauses the active goal", async () => {
+  let status: "active" | "paused" = "active";
+  const saved = { id: "goal", sessionId: "session-a", objective: "保留完整目标。", revision: 1, objectiveRevision: 1, activation: 1,
+    model: { modelId: "test-model" }, approvalMode: "manual" as const, createdAt: 1, updatedAt: 1 };
+  window.eidosRuntime.goal = vi.fn(async () => ({ goal: { ...saved, status } }));
+  renderShell();
+  await waitFor(() => expect(screen.getByTestId("composer-work-mode")).toHaveTextContent("goal"));
+  fireEvent.click(screen.getByRole("button", { name: "选择目标模式" }));
+  status = "paused";
+  const calls = vi.mocked(window.eidosRuntime.onNotification).mock.calls;
+  act(() => { for (const [callback] of calls) callback({ method: "goal/updated", params: { sessionId: "session-a" } }); });
+  await waitFor(() => expect(screen.getByTestId("composer-work-mode")).toHaveTextContent("execute"));
+  expect(await screen.findByRole("button", { name: "继续目标" })).toBeInTheDocument();
+});
+
+it("leaves goal mode after completion so a follow-up message does not start a new goal", async () => {
+  fixture.selectedModelId = "test-model";
+  fixture.input = "谢谢，顺便把按钮颜色改深一点。";
+  let status: "active" | "complete" = "active";
+  const saved = { id: "goal", sessionId: "session-a", objective: "完整目标。", revision: 3, objectiveRevision: 1, activation: 1,
+    model: { modelId: "test-model" }, approvalMode: "manual" as const, createdAt: 1, updatedAt: 1 };
+  window.eidosRuntime.goal = vi.fn(async () => ({ goal: { ...saved, status } }));
+  renderShell();
+  await waitFor(() => expect(screen.getByTestId("composer-work-mode")).toHaveTextContent("goal"));
+  fireEvent.click(screen.getByRole("button", { name: "选择目标模式" }));
+  status = "complete";
+  const calls = vi.mocked(window.eidosRuntime.onNotification).mock.calls;
+  act(() => { for (const [callback] of calls) callback({ method: "goal/updated", params: { sessionId: "session-a" } }); });
+  await waitFor(() => expect(screen.getByTestId("composer-work-mode")).toHaveTextContent("execute"));
+  fireEvent.click(screen.getByRole("button", { name: "发送输入" }));
+  await waitFor(() => expect(fixture.submitInput).toHaveBeenCalledWith(expect.objectContaining({ planning: { workMode: "execute" } })));
+});
+
+it("sends active-goal feedback with its expected version and keeps the original target", async () => {
+  fixture.selectedModelId = "test-model";
+  fixture.input = "还需要核对错误分支。";
+  const saved = { id: "goal", sessionId: "session-a", objective: "完整目标。", status: "active" as const, revision: 3,
+    objectiveRevision: 1, activation: 1, model: { modelId: "test-model" }, approvalMode: "manual" as const, createdAt: 1, updatedAt: 1 };
+  window.eidosRuntime.goal = vi.fn(async () => ({ goal: saved }));
+  renderShell();
+  await waitFor(() => expect(screen.getByTestId("composer-work-mode")).toHaveTextContent("goal"));
+  fireEvent.click(screen.getByRole("button", { name: "发送输入" }));
+  await waitFor(() => expect(fixture.submitInput).toHaveBeenCalledWith(expect.objectContaining({ planning: { workMode: "execute", goalRevision: 3 } })));
+  expect(window.eidosRuntime.goal).toHaveBeenCalledTimes(1);
 });

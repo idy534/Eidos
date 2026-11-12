@@ -1,4 +1,4 @@
-from pydantic import Field
+from pydantic import Field, model_validator
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.domain.planning import PlanDocument, UserInputRequest, UserInputResponse, WorkMode
 
@@ -38,5 +38,15 @@ class PlanResponse(EidosFrozenStrictModel):
 
 class RunPlanningOptions(EidosFrozenStrictModel):
     work_mode: WorkMode = 'execute'
+    goal_mode: bool = False
+    goal_revision: int | None = Field(default=None, ge=1, le=9_007_199_254_740_991)
     plan_id: str | None = None
     plan_revision: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def exclusive_modes(self) -> "RunPlanningOptions":
+        if self.goal_mode and (self.work_mode != "execute" or self.plan_id is not None or self.plan_revision is not None):
+            raise ValueError("goal mode and plan mode are mutually exclusive")
+        if self.goal_revision is not None and (self.work_mode != "execute" or self.plan_id is not None or self.plan_revision is not None):
+            raise ValueError("goal continuation and plan mode are mutually exclusive")
+        return self

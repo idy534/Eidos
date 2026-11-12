@@ -78,6 +78,7 @@ class EventType(StrEnum):
     WEB_SEARCH_CHANGED = "web_search.settings_changed"
     CHANNEL_CHANGED = "channel.changed"
     AUTOMATION_CHANGED = "automation.changed"
+    GOAL_CHANGED = "goal.changed"
     PROJECT_UPDATED = "project.updated"
     SIDEBAR_PINS_CHANGED = "sidebar.pins_changed"
     SESSION_CREATED = "session.created"
@@ -210,6 +211,3 @@ class RuntimePhaseTracker:
             return
         ensure_transition(self.state, target)
         self.track(target, reason)
-
-
-StateMachine = RuntimePhaseTracker

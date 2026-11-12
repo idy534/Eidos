@@ -250,13 +250,6 @@ if len({spec.name for spec in TOOL_SPECS}) != len(TOOL_SPECS):
     raise RuntimeError("duplicate tool spec")
 
 
-def model_tool_definitions() -> list[dict[str, object]]:
-    return [{"type": "function", "function": {
-        "name": spec.name, "description": spec.description,
-        "parameters": spec.input_schema,
-    }} for spec in TOOL_SPECS]
-
-
 def _tool_specs(
     *, supports_custom_tools: bool, supports_tool_grammar: bool
 ) -> tuple[ToolSpec, ...]:

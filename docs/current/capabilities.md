@@ -1,12 +1,16 @@
 # Eidos 当前能力
 
+## 目标模式（2026-11-07）
+
+用户可以通过 `/goal` 设定持续目标。Runtime 在每轮正常结束后接纳新的普通 Run，直到模型按要求声明完成、系统记录受阻或用户暂停、清除目标。Desktop 通过输入框的“＋”菜单和 `/goal` 开启目标模式。目标标签位于访问模式右边，并与 Plan 互斥。用户在输入框中直接填写目标，状态区域展示完成证据。目标的权限、取消、工具执行、未知结果和恢复继续使用现有链路。当前 P0 边界见[目标模式](features/goals.md)。
+
 Eidos 支持多目录项目、一个主要文件夹和侧栏项目编辑。会话固定创建时的目录绑定。Files 和 Review 分别选择文件夹与 Git checkout。主仓库 Worktree 映射其源 checkout 内的目录，其他目录继续共享。系统的 Checkpoint 仍只覆盖主仓库的现有范围。具体行为和限制见 [多目录项目](features/projects.md)。
 
 用户可以在“设置 → 网页搜索”配置 DeepSeek Search、LangSearch 和豆包搜索 Custom 版，并手动勾选默认服务。三家可以同时保存，用户也可以全部取消。没有默认服务或可用本地 Key 时，新 Run 不发布 `web_search`。系统不会自动切换服务。Run 固定创建时的配置。用户选择默认服务后，搜索不再逐次审批，仍保留 Durable Intent、取消和有界结果投影；请求可能计费。实现已接入，真实账户 Key 验证仍未进行。配置、持久化和验证边界见[当前网页搜索](features/web-search.md)。
 
 Eidos 支持钉钉、飞书和企业微信文字消息。用户可以在“设置 → 助理”为各平台配置凭证、模型、项目和审批模式。各渠道按平台的群机器人提及规则接收消息，不设置额外用户和群白名单。渠道支持经 Desktop 确认并保存的完全访问模式。Runtime 使用普通 Session / Run 执行，并向原会话回复。现有记录包含钉钉真实收发验证；飞书、企业微信与长期重连仍需真实平台验收。配置和验证边界见 [当前渠道接入](features/channels.md)。
 
-本地定时任务已接入 Runtime、automation 延迟工具与侧栏管理页面。计划默认使用替我审批，支持已有 Session 或每次新 Session。时间限制、持久化、来源、权限和验证边界见 [当前本地定时任务](features/automations.md)。
+本地定时任务已接入 Runtime、automation 工具与侧栏管理页面。计划默认使用替我审批，支持已有 Session 或每次新 Session。时间限制、持久化、来源、权限和验证边界见 [当前本地定时任务](features/automations.md)。
 
 > 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。Eidos 私有数据读取与修改、Runtime、系统 Skill 和受管资源修改继续要求高危人工确认。普通 Git、项目 metadata 与沙盒外执行按实际操作走普通审批，auto_review 可以判断。沙盒外进程使用宿主权限，系统不能继续承诺 Seatbelt 路径保护。full_access 直接执行，不创建逐项 Approval。所有模式仍保留身份、版本、取消、Durable Intent、结果核验和未知结果记录。详细范围见 [审批策略](features/approval-policy.md)。
 
@@ -205,7 +209,6 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - Runtime 可以创建、打开、验证、列出、恢复、清理和删除 managed Worktree。新 Worktree 使用 Runtime-controlled root 和 detached HEAD，不创建 `eidos/*` branch。`baseRef`、immutable `baseCommit` 和 nullable `branch` 会进入 Worktree projection。
 - Runtime 提供 managed Worktree retention。Retention 只处理 `ownership = managed` 的 active Worktree，并按 durable `last_used_at` 保留最近 N 个。Runtime 默认保留 15 个，且可以关闭自动清理。active Run、unfinished Handoff、unfinished lifecycle、invalid identity、legacy managed branch 和无法完成 Snapshot 的 Worktree 会被跳过。
 - Runtime 提供 durable Worktree Snapshot、safe cleanup 和 Restore。Snapshot 使用压缩的 Git CLI full/staged patch bytes、Pydantic manifest、SHA-256 artifact checksum 和 `refs/eidos/worktree-snapshots/<snapshot_id>` hidden ref。Artifact 只保存 `full.patch.gz`、`staged.patch.gz` 和 `manifest.json`，不保存完整 Index、unchanged blob 或 structured repository state，所以 capture 和 artifact 大小接近 O(changed files)。Snapshot 不保存 ignored environment。Restore 会重新 materialize `.worktreeinclude`，再由 Git CLI apply patch，并恢复原 Worktree id、原 Worktree root、Snapshot HEAD 和原始 `baseCommit`。
-- Git Checkpoint 会引用独立的 durable Snapshot。Create 固定当时的 HEAD、staged patch、unstaged patch 和 untracked content。Managed Fork 会从该 HEAD 创建新的 detached managed Worktree，并恢复完全相同的 Index 和 Working Tree 状态。Managed Rewind 会在原 managed Worktree 上恢复。Local Rewind 会在用户显式请求后恢复原 Local Git checkout。两种 Rewind 都执行 native `git reset --hard`、`git clean -fdx` 和 Git patch apply，然后再次验证 Snapshot fingerprint。Checkpoint 引用的 artifact 和 hidden ref 不会被普通 retention snapshot replacement 删除。
 - Runtime 可以实时查询 Worktree 的 HEAD、detached/attached branch、dirty、staged、unstaged、untracked 和 conflict 状态。`session/gitStatus` 同时返回 `stagedFiles`、`unstagedFiles`、`untrackedFiles`、`conflictFiles` 和对应 count。Detached durable identity 与 observed branch 都为 NULL 时才有效；legacy attached Worktree 仍要求 branch identity 匹配。
 - `session/createBranch` 可以在 active、valid、detached Worktree 中执行 `Create Branch Here`。Runtime 在 durable intent 中冻结当前 HEAD 为 `expected_head`，然后创建 branch 并再次验证该 HEAD。`base_commit` 仍是 Worktree 创建时的 immutable baseline，不参与 branch attach HEAD 判断。Runtime 不创建第二个 Worktree，不改变 HEAD 或 working-tree changes。成功后 Worktree 持久化 `branch_ownership = user`。User Branch handoff 到 Local 后，Runtime 只在确认 Local branch 和 HEAD 后清除 Worktree 的 `branch`、`checkout_branch` 和 `branch_ownership` metadata，不删除或修改 Git ref；该 branch 之后属于普通用户 Git 资源。Session delete 会移除仍由 Eidos 管理的 Worktree，但保留 user branch。已存在或在其他 Worktree checkout 的 branch 会拒绝。Branch attach 后 HEAD 改变会进入 recovery required，Runtime 不 force switch。
 - Local Git Session 支持在当前 Project workspace 的 local branches 之间切换，也支持从当前 HEAD 创建并切换到新 branch。Desktop Composer 和 Changes 视图都提供 Local branch selector；创建分支复用现有 Create Branch 对话框。Runtime 会拒绝 dirty workspace、active Run、进行中的 Git operation 和非 Local Session。多个 Local Session 共享同一个 workspace，因此 branch mutation 和 Run admission 的短暂 preflight 使用同一条 workspace 锁；这条锁不限制已启动 Run 的 Shell 或普通副作用并行。
@@ -221,7 +224,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - Remote Fetch、Pull 和 Push 复用 `DeferredMethodResult`、Runtime managed task、`async_operations` 和 process-group termination。Remote timeout 是 120 秒。Cancellation 会终止并回收 Git 子进程组。当前没有新增通用 Desktop operation-cancel API。
 - 只读 `project/gitContext`、`session/gitStatus`、`session/gitDiff` 同样经 `DeferredMethodResult` 与 managed task  offload，不再占用 JSON-RPC 输入循环；排队中的 `session/read`、`model/presets` 等便宜调用不再被慢 Git 队头阻塞。Draining/重配时调度失败会同步回退，保持读可用。
 - SQLite v1 基线保存 Project、Worktree ownership、branch ownership、`worktrees.last_used_at`、`runtime_settings`、`worktree_snapshots`、Checkpoint 的 `git_snapshot_id`、lifecycle state、`sessions.execution_mode`、`sessions.worktree_id`、`sessions.associated_worktree_id`、`worktrees.checkout_branch` 和 managed lifecycle intent。基线测试验证完整表结构、Worktree FK、Run、nullable branch、retention defaults 和 Worktree lifecycle fields。
-- Session create、Session delete、managed Checkpoint Fork、Create Branch Here、Local branch mutation 和 Session Handoff 支持同进程 operation serialization、durable prepare、restart reconciliation 和同 operationId retry。Git stage、unstage 和 commit 也使用现有 `operations` 表。Runtime 在 Git 前后使用两个短 SQLite transaction。Completed 或明确 failed 的 operation replay 原结果或原错误。未完成的 Git operation 返回 `OPERATION_IN_PROGRESS`，不会重复执行不确定的外部 side effect；外部结果无法证明时返回 `GIT_REMOTE_OUTCOME_UNCERTAIN` 并保留副作用标记。Retry 不会重新生成 Worktree identity。Branch attach recovery 和 Handoff recovery 不会 force switch、force checkout 或创建第二个 Worktree。
+- Session create、Session delete、Create Branch Here、Local branch mutation 和 Session Handoff 支持同进程 operation serialization、durable prepare、restart reconciliation 和同 operationId retry。Git stage、unstage 和 commit 也使用现有 `operations` 表。Runtime 在 Git 前后使用两个短 SQLite transaction。Completed 或明确 failed 的 operation replay 原结果或原错误。未完成的 Git operation 返回 `OPERATION_IN_PROGRESS`，不会重复执行不确定的外部 side effect；外部结果无法证明时返回 `GIT_REMOTE_OUTCOME_UNCERTAIN` 并保留副作用标记。Retry 不会重新生成 Worktree identity。Branch attach recovery 和 Handoff recovery 不会 force switch、force checkout 或创建第二个 Worktree。
 - Git mutation、Fetch、Pull 和 Push 在写入 `in_progress` 前执行无副作用 preflight。Session、active Run、execution root、branch、Workspace cleanliness、path 或 remote 校验失败不会污染 `operations` 表。Remote operations 复用现有 operations table、request hash 和 replay 规则。Deferred prepare 在单个 SQLite transaction 内同时创建 `operations` reservation 和 `async_operations` lifecycle。失败会完整回滚。
 - `GitBackend` 把 Git mechanics 与 Eidos Worktree lifecycle 分开。Eidos 不实现 Git working-tree、Index、commit、merge tree、rebase replay、conflict marker、fast-forward 或 push semantics。Dulwich 负责 discovery、HEAD、refs、branch metadata 和 revision resolution。唯一的 `GitCli` authority 负责 status、diff、stage、commit、fetch、merge、merge abort、rebase、rebase continue/abort、push、patch mechanics、Worktree Add 和 destructive clean；它不作为 Dulwich failure retry path。Commit、merge commit 和 rebase replay 读取 repository-local identity，或只从用户 global config 读取 `user.name` 和 `user.email`。Hooks 始终禁用。Credentials 只在 REMOTE profile 开放。Observation command 禁用 executable filters。Stage 允许 native Git 执行 clean/process filter。
 - 所有 Git CLI 调用都经过 `HardenedGitRunner`。Runner 负责 argv、stdin bytes、bounded output、timeout、process group cleanup、isolated environment、hooks/fsmonitor/credential/askpass/pager 和 external diff/textconv/filter hardening。Status、diff、capture、apply、Worktree Add 和 destructive clean 不会无意执行 configured helper。
@@ -248,8 +251,8 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 已应用的文件 Diff 会进入 ToolCall 持久事实，并在 Execution Feed 中展示。
 - 已有普通文件通过 stdin 把有界候选内容交给受控 helper，原地写入并保留 inode；这条路径不创建候选临时文件，系统管理 xattr 和 ACL。Runtime 不再克隆、复制或逐项比较元数据。helper 在截断前检查普通文件、owner、链接和 Base Hash，写入后执行 fsync 和最终验证。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
 - 工作区外的普通文件写入复用现有扩权审批和 Run Grant。审批包含目标路径、权限范围、完整 Diff 和版本；审批通过后重新核验身份和版本。沙盒不可用时，无沙盒写入需要单独明确批准；受保护路径需要高危人工确认后才可扩权。
-- `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
-- 模型调用当前目录中存在但尚未激活的延迟 Tool 时，Runtime 返回 `tool_not_activated`，提示使用工具完整名称搜索激活，并在收到搜索结果后的下一 Step 重试。该调用不会执行工具、申请审批、创建 Durable Intent 或建立结果未知状态，也不会消耗协议修复次数或单独终止 Run。未知、禁用和未授权工具继续按原有检查拒绝。重复调用仍受现有 LoopGuard 限制。
+- 内置工具从首轮直接提供。已启用的 MCP 工具在激活预算（16 个工具、128 KiB）内直接提供；超过预算时整体改为通过 `tool_search` 查找后提供，内置浏览器插件的工具除外。规则见 [系统提示词](features/system-prompts.md#工具与-skill)。
+- 模型调用尚未提供的 MCP 工具时，Runtime 返回 `tool_not_activated`，并提示用工具全名调用 `tool_search`，在后续 Step 重试。当前 Run 没有 `tool_search` 时，该错误只说明这是历史调用，不要求重放。该调用不会执行工具、申请审批、创建 Durable Intent 或建立结果未知状态，也不会消耗协议修复次数或单独终止 Run。未知、禁用和未授权工具继续按原有检查拒绝。重复调用仍受现有 LoopGuard 限制。
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
 - `skill_create` 使用独立的参数预算，不再受普通工具的 64 KiB JSON 参数上限限制。创建路径保留单文件 4 MiB、整棵 Skill 8 MiB、最多 512 个文件的边界；512 个文件包含自动生成的 `SKILL.md`。安装与目录加载允许更大的完整 Skill tree：单文件 4 MiB、整棵 64 MiB、最多 20,000 个文件。`skill_install` 的整次工具超时为 300 秒。Runtime 将 YAML、标题和正文一起计入 `SKILL.md` 大小，将文件路径、metadata 和 JSON 转义计入独立参数预算。工具可以一次提交完整文本资源，无需为了旧的 64 KiB 上限省略文件。`skill_read` 与 `skill_read_resource` 每页仍最多返回 24,000 UTF-8 bytes，offset 可以覆盖整个 4 MiB 文件。审批、Durable Intent、取消、路径保护和 Run 固定目录快照保持原有语义。
 - ToolCallRuntime 和 ToolExecutionController 会按工具类型执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。普通读取和 Shell 聚合输出不因可识别敏感内容阻断；展示层只做 best-effort 脱敏。
@@ -277,6 +280,8 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Runtime 分开管理 Shell 进程寿命和工具等待窗口。模型收到 `shell_running` 后，可以用 `write_stdin` 的空 `chars` 继续等待和读取新输出，也可以发送输入，或使用 `control_shell` 明确停止命令。PTY 的 Ctrl-C 允许程序处理后继续运行。Runtime 持续读取 stdout/stderr，并把做过 best-effort 展示脱敏的片段追加到原命令 Item；聚合结果保留原始 stdout/stderr。内部会保存每次跟进 ToolCall；Desktop 不显示正常的 `write_stdin` 和 `control_shell` 跟进卡片。跟进失败会显示中文错误提示。
 - Shell stdout 和 stderr 使用 UTF-8 增量解码。Runtime 按片段到达顺序将展示脱敏后的内容累积到 Item content，实时预览合计最多 256 KiB。Desktop 在预览不足时使用终态结果中保留的首尾；其他情况继续保留片段顺序。
 - Desktop 处理过程中相邻的两个及以上工具调用会折叠为一个工具组，默认只显示一行摘要，例如“读取 4 个文件 · 搜索 3 次 · 运行 6 条命令”，含失败时附“N 失败”标记。组内有进行中的工具时，摘要显示该工具的实时动作并带转圈图标。展开后以紧凑行列出各工具，超过 8 项时限高滚动；每行仍按原样展开详情。待审批的工具和会话内搜索命中的条目会让所在工具组自动展开。工具组只是展示层聚合，不改变 Run、Item 和 ToolCall 的持久事实；单个孤立的工具调用和助手叙述文字保持原样，叙述文字会把工具组分开。
+- 相邻的两个及以上 `view_image` 调用会从工具组中分出来，显示为一个图像组：标题为“已查看 N 张图像”，默认折叠，可展开；展开后显示一排方形缩略图，窄窗口下横向滚动。失败的调用显示为失败格并计入“N 失败”；执行中的调用显示为加载格。点击缩略图打开放大预览，用户可以用左右按钮或 ←/→ 键在本组图片之间切换，到首尾停住，失败的调用不进入切换序列。单个 `view_image` 保持原卡片；它留在普通工具组里时，摘要显示为“查看 N 张图像”。图像组同样只是展示层聚合，`view_image` 仍是每次一个路径。
+- 图片放大预览由公共组件 `ImageLightbox` 提供，`view_image` 卡片与图像组、MCP 与浏览器截图、产物卡片和输入引用图片都使用它。只有一张图片时它是单纯的放大层；传入多张图片时才显示切换按钮和“文件名 · 序号 / 总数”。
 - Desktop Shell Feed 默认折叠 Shell Item。用户展开后，Feed 将 Shell 输出按纯文本展示，并移除 ANSI 和 OSC 控制序列，不激活终端格式或链接。旧 Item 缺少或没有 `content` 时，Feed 回退到结果中的 stdout 和 stderr。待审批、已批准和已拒绝的 Shell 历史都使用这个 Shell Item，审批状态单独显示。
 - Feed 先按完整 Item 顺序区分过程消息和回复，再隐藏正常的 Shell 跟进卡片。隐藏 `write_stdin` 不会把它前面的进度文字变成最终回复。Run 仍在执行时，回复不显示最终操作栏；Run 进入终态后，只有最后一个消息段中的最后一条回复显示该操作栏。跟进失败仍显示中文错误提示。
 - Shell Result 存在 `attemptCount`、`sandboxed` 或 `escalated` 时，Execution Feed 会展示这些已有执行和权限事实，包括扩权重试信息。
@@ -351,7 +356,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 ## Recovery
 
 - Runtime 重启时会从 SQLite 恢复 Run、ToolCall、Approval、Outbox 和 Long Task。未知结果兼容字段本身不阻止恢复。真正未完成的副作用调用仍进入 interrupted，系统不会自动重放。
-- Runtime 启动时会读取 Worktree lifecycle intent、Snapshot metadata、Snapshot artifact、hidden ref 和 Session Handoff operation，并在业务应用暴露前执行 bounded reconciliation。Worktree Session create、Session delete、Managed Checkpoint Fork、Branch attach、retention cleanup、Restore 和 Session Handoff 可以在 restart 后恢复或进入 cleanup required。Managed 和 Local Checkpoint Rewind 会保留 durable lifecycle；同一 `operationId` 在 Runtime restart 后可以继续收敛，且不会重复记录 Checkpoint action。
+- Runtime 启动时会读取 Worktree lifecycle intent、Snapshot metadata、Snapshot artifact、hidden ref 和 Session Handoff operation，并在业务应用暴露前执行 bounded reconciliation。Worktree Session create、Session delete、Branch attach、retention cleanup、Restore 和 Session Handoff 可以在 restart 后恢复或进入 cleanup required。Managed 和 Local Checkpoint Rewind 会保留 durable lifecycle；同一 `operationId` 在 Runtime restart 后可以继续收敛，且不会重复记录 Checkpoint action。
 - Runtime 支持 cancel、pause、resume 和 restart verification 的 typed boundary。
 - Resume 前会检查 Workspace identity、规则、Repository/Context snapshot、permission snapshot、Git 和 side-effect reconciliation 字段。
 - Cancel、Tool timeout、Shell cleanup、MCP shutdown 和 Runtime shutdown 都有资源跟踪和有界等待。
@@ -360,13 +365,10 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Checkpoint
 
-- Runtime 提供 checkpoint create/list 和 rewind/fork action lineage 的 typed RPC。
-- Checkpoint 记录 Rule Snapshot、Repository Snapshot、Context Snapshot、Compaction Summary、Workspace identity、Git、permission、Model snapshot 和 reconciliation 状态引用。
-- Managed 和 Local Git Checkpoint 复用现有 Git snapshot artifact，保存 HEAD、staged、unstaged 和 untracked 状态。Artifact 使用 checksum 和 hidden ref 验证。
-- Managed Checkpoint Fork 创建新的 detached managed Worktree，并恢复完整 Checkpoint Git 状态。相同 `checkpointId` 与 `operationId` 不会创建第二套 Worktree、Session、Run 或 action。
-- Local Checkpoint Fork 使用相同 Project、相同 workspace root 和 `worktreeId = NULL` 创建新的 Local Session、Run 和 lineage。两个 Local Thread 共享真实目录，因此 Fork 不复制 filesystem。
-- Managed 和 Local Rewind 会恢复原 checkout 的完整 Checkpoint Git 状态。Local Rewind 只允许用户显式调用。Checkpoint action 以 append-only lineage 保存 source Run、target Run 和 action kind。
-- Rewind 尚未重建完整逻辑 Context。Fork 仍不会复制全部非 Git immutable snapshot。Non-Git Local Workspace 不支持 filesystem rewind。
+- Checkpoint create/list、Rewind 和 Checkpoint Fork 的 RPC 与应用层已移除，Desktop 从未提供这些入口。
+- 从某条回答继续另一条对话使用会话分叉（`session/fork`）；独立 Worktree 分叉复用 Worktree Snapshot。
+- `checkpoints` 与 `checkpoint_actions` 表仍在 Schema 中，不再写入；Session 删除时仍会清理其中的旧记录，被旧记录引用的 Snapshot 不会被 retention 替换。
+- Non-Git Local Workspace 不支持 filesystem rewind。
 
 ## Distribution
 
@@ -398,7 +400,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `pnpm check:python` 覆盖 Ruff、deptry、Runtime tests 和 Python dependency audit。
 - Seatbelt native、Electron startup/shutdown、bundled Runtime、packaged App 和 packaging config 都有独立测试入口。
 - Runtime dependency focused tests 入口包括 `runtime/tests/test_skill_runtime_requirements.py`、`runtime/tests/test_skill_manifest.py`、`runtime/tests/test_system_skills.py`、`runtime/tests/test_runtime_dependency_catalog.py`、`runtime/tests/test_dependency_shell_environment.py` 和 `runtime/tests/test_runtime_dependency_persistence.py`。Node CJS/ESM loader 与 manifest packaging 使用 `runtime/tests/test_dependency_runtime_loader.mjs` 和 `scripts/runtime-dependency-packaging.test.mjs`。这些入口的当前通过状态要以实际运行结果为准。
-- Repository、Project Rules、Context、LoopGuard、response actions、schema baseline、checkpoint、long task、MCP 和 telemetry 都有 focused test files。
+- Repository、Project Rules、Context、LoopGuard、response actions、schema baseline、long task、MCP 和 telemetry 都有 focused test files。
 
 ## Implementation Anchors
 
@@ -467,7 +469,8 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 有项目的 Session 会收到独立的文件引用提示词。提示词提供文件、行号、行列号的标准 Markdown 格式和示例，要求模型使用当前 execution root 内已经确认的绝对路径，并用尖括号包住链接目标。无项目的 Session 不加入这段提示词。标准示例为 `[app.ts (line 42)](</workspace/My Project/src/app.ts:42>)`；列号示例为 `[app.ts (line 42, column 5)](</workspace/My Project/src/app.ts:42:5>)`。示例路径只说明格式，模型必须替换为实际路径。
 - Conversation 只把显式 Markdown 绝对路径链接作为文件跳转入口。系统从链接目标提取路径和位置，显示标签不参与寻址。裸文件名、行内代码和相对文件链接保持文字。文件链接复用现有图标和蓝色文字样式，不依赖扩展名白名单，也不按文件名搜索或猜测子目录。系统支持 `:line[:column]`，并兼容显式链接中的 `#Lline[Ccolumn]`；行列号从 1 开始。普通文本和代码预览会滚动到目标行，并选中该行或指定列的字符；同一文件再次点击不同位置时会重新定位。带位置的 HTML 链接会打开源码。渲染后的 Markdown 按源文本位置滚动到对应块，文档内相对链接仍按文档所在目录解析。目标行超出当前预览时，系统会显示提示。Renderer、Runtime 自动化测试和构建已通过；完整结果见 `docs/current/limitations.md`。人工 Desktop 验收尚未执行。
 - Files 支持 PNG、JPEG、WebP、GIF、SVG、PDF 和 HTML，Markdown 支持 Workspace 内的相对图片和文件链接。界面提供加载失败提示和有界预览。预览版本来自文件身份、大小和修改时间，不是内容快照。
-- Desktop 会把预览请求中的 `WORKSPACE_FILE_NOT_FOUND` 转成“暂无预览”，不再让该错误触发 Electron IPC handler 异常日志。其他错误仍按原有路径返回。`view_image` 卡片只对成功调用且位于当前 Workspace 内的路径请求预览；历史文件删除后，卡片不会恢复原文件。
+- 最终回答可以图文混排。基础提示词要求模型用 `![说明](<绝对路径>)` 把需要给用户看的工作区图片嵌在相关段落里，并说明远程图片不显示；有项目和无项目会话都会收到这条要求。Renderer 先按当前执行目录解析图片，绝对路径不在执行目录时再匹配 Session 的其他根目录，并把对应根目录交给现有 `workspace/readAsset` 核验；相对路径只按当前执行目录解析。所有根目录之外的路径显示“不在当前工作区，无法显示”，不发起读取。远程 `http(s)` 图片不会自动加载，显示为带域名的占位按钮，用户点击后才在浏览器面板打开。回答图片按块级显示，聊天中最大高度为 `min(32rem, 70vh)`，点击进入 Files 预览；解码失败时显示失败说明。图片只在距滚动视口 1200px 内时持有预览授权，离开后释放授权并保留已测量的占位尺寸，避免长会话超过 Main 的 256 个预览授权上限。图片仍按当前文件版本显示，不是回答时的内容快照；历史回答仍按当前执行目录解析。
+- Desktop 会把预览请求中的 `WORKSPACE_FILE_NOT_FOUND` 转成“暂无预览”，不再让该错误触发 Electron IPC handler 异常日志。其他错误仍按原有路径返回。`view_image` 卡片和图像组的缩略图优先显示结果提交时保存的图片（`ui_result_json.attachments`，经 `prepareToolContentPreview` 读取），因此源文件被删除或位于 Skill 目录时仍可预览。没有该字段的旧结果只对成功调用且位于当前 Workspace 内的路径请求预览；历史文件删除后，这类卡片不会恢复原文件。图像组的缩略图只在接近视口时持有预览授权，离开后释放；放大预览会让当前图片和相邻两张保持加载。
 - PDF 预览使用已打包的 PDF.js 和本地 worker 绘制页面。页面外侧沿用预览区的 `--surface-muted` 底色，不再显示 Chromium 内嵌查看器的黑色外框。加载和失败状态也沿用同一底色，系统「预览」打开入口保留。底部工具栏不显示“PDF 预览”文字；多页文件保留页码，页码和打开按钮始终单行显示。总页数直接读取当前 PDF 文档，滚动条复用统一样式。主 Renderer 不再保留 PDF iframe 样式或 iframe 加载许可。
 - `workspace/readAsset` 每次最多读取 192 KiB，总文件上限是 32 MiB。文本资源必须完整通过敏感扫描，文本上限是 2 MiB。Main 通过短期 `eidos-preview` 授权地址提供资源，Runtime 在每次读取时重新核验 Workspace 和文件版本。
 - Review 提供“最近一轮”范围，严格按 `runId` 过滤持久化 ToolCall 文件补丁，空轮保持空，不回退到全量；“整个任务”展示本 Session 全部 Run 的补丁历史。长任务可以分页加载更早记录。文件工具在 Prepare 后提交 `item.updated` Event，并通过 Outbox 推送 `item/updated`。界面不会把准备中的补丁标记为已写入。
@@ -514,7 +517,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - **行内提及标签（Inline Mention Tokens，在光标位置插入并内嵌于输入框与已发送消息气泡正文任意位置）**：承载 `skill`（琥珀色，点击打开只读 `SkillDetailDialog`）、`agent`（青绿色，点击打开只读 `AgentDefinitionDialog`）、`mcp`（翠绿色，点击打开 `McpDetailDialog` 或快照预览）、`plugin`（紫罗兰色，点击打开只读详情预览弹窗）和 `history`（群青色，点击跳转到原会话）。通过 `@` / `$` / `/` 或左下角 `+` 选择器添加时，标签直接插入当前光标处并将光标置于新标签右侧，与前后普通文字流式共排（不展示悬停 `×` 移除按钮）；光标紧贴标签前后时按 `Backspace` / `Delete` 可将整个标签作为原子文本删除，方向键整块跳过标签。草稿与提交正文通过内联引用标记持久化精确位置，旧消息未带位置标记时兼容回退至句首展示。
 - 工作区文件树提供引用按钮。历史选择器可以选择具体消息；消息区域也提供单条引用。非编辑区域的选中文字可以通过原生右键菜单加入草稿。
 
-Runtime 保存每个 Session 的草稿。界面恢复完成前不允许覆盖草稿。提交时，界面只清除已经成功提交且没有继续修改的那一版输入。用户可以只发送附件。界面和 Runtime 都会拒绝向不支持图片的模型提交新的图片引用。消息流展示已发送引用，编辑重发保留引用并允许移除。
+Runtime 保存每个 Session 的草稿。界面恢复完成前不允许覆盖草稿。文件、目录和扩展引用按来源替换同目标旧快照，剪贴板图片与选中文本摘录按内容 ID 去重并支持在草稿中保留多条不同内容。提交时，界面只清除已经成功提交且没有继续修改的那一版输入。用户可以只发送附件。界面和 Runtime 都会拒绝向不支持图片的模型提交新的图片引用。消息流展示已发送引用，编辑重发保留引用并允许移除。
 
 Runtime 在构建模型上下文时，会把当前消息引用集合中唯一匹配的内联标记转换成简短提及。例如，`[$github](ref:内部引用ID前缀)` 在模型正文中显示为 `$github`，其他内联类型显示为 `@名称`。转换使用已保存引用的名称；Runtime 不按标记中的显示名称猜测目标。完整 ID 或至少 8 位的唯一前缀可以匹配，未匹配、有歧义和附件类型的标记保持原文。每条消息只使用自己的引用集合。引用说明单独保留正文提及、类型和来源，因此同名 Skill、Plugin 和 MCP 仍可区分。原始消息、Run 输入、草稿和引用快照继续保存原值，数据库与 Desktop 协议没有变化。
 

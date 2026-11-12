@@ -100,14 +100,6 @@ class UpdateFileChunk:
     is_end_of_file: bool = False
     line_number: int | None = None
 
-    @property
-    def change_context(self) -> str | None:
-        return self.context
-
-    @property
-    def end_of_file(self) -> bool:
-        return self.is_end_of_file
-
 
 @dataclass(frozen=True, slots=True)
 class UpdateFile:

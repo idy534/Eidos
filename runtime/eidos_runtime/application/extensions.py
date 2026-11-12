@@ -135,23 +135,6 @@ class SkillMetadata(EidosFrozenStrictModel):
         return _validated(cls, value, "skill metadata is invalid")
 
 
-class SkillSource(EidosFrozenStrictModel):
-    plugin_id: str
-    plugin_version: str
-    plugin_hash: str
-
-
-class SkillContent(EidosFrozenStrictModel):
-    qualified_id: str
-    content: str
-    content_hash: str
-    source: SkillSource
-
-    @classmethod
-    def from_wire(cls, value: object) -> "SkillContent":
-        return _validated(cls, value, "skill content is invalid")
-
-
 class McpServerRecord(EidosFrozenStrictModel):
     schema_version: Literal[1] = 1
     plugin_id: str
@@ -448,15 +431,6 @@ class ExtensionApplication:
         except (SkillReadError, PluginImportError, OSError) as error:
             code = "SYSTEM_SKILL_PROTECTED" if str(error) == "system_skill_protected" else "SKILL_UNAVAILABLE"
             raise ApplicationError(code) from error
-
-    def read_skill(self, *, qualified_id: str) -> SkillContent:
-        catalog = self._skill_catalog()
-        try:
-            return SkillContent.from_wire(
-                catalog.read_skill(catalog.extension_snapshot(), qualified_id)
-            )
-        except SkillReadError as error:
-            raise ApplicationError("SKILL_UNAVAILABLE") from error
 
     def list_mcp_servers(self) -> McpServerList:
         return McpServerList(
@@ -805,7 +779,6 @@ __all__ = [
     "PluginImportResult",
     "PluginList",
     "PluginRecord",
-    "SkillContent",
     "SkillList",
     "SkillMetadata",
 ]

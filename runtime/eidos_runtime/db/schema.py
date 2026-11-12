@@ -3,6 +3,8 @@ from __future__ import annotations
 from eidos_runtime.db.browser_grants_migration import BROWSER_GRANTS_SCHEMA_SQL
 from eidos_runtime.db.event_query_migration import EVENT_QUERY_INDEX_SQL
 from eidos_runtime.db.browser_extension_migration import BROWSER_EXTENSION_SCHEMA_SQL
+from eidos_runtime.db.goal_migration import GOAL_SCHEMA_SQL, GOAL_V51_SCHEMA_SQL
+from eidos_runtime.db.shell_display_migration import SHELL_DISPLAY_MIGRATION_SQL
 from eidos_runtime.db.project_binding_migration import PROJECT_BINDING_SCHEMA_SQL
 from eidos_runtime.db.worktree_git_identity_migration import (
     WORKTREE_GIT_IDENTITY_SCHEMA_SQL,
@@ -36,7 +38,10 @@ from eidos_runtime.memory.flow_migration import MEMORY_FLOW_SQL
 from eidos_runtime.db.personalization_migration import PERSONALIZATION_SCHEMA_SQL
 
 
-SCHEMA_VERSION = 50
+SCHEMA_VERSION = 53
+V52_SCHEMA_VERSION = 52
+V51_SCHEMA_VERSION = 51
+V50_SCHEMA_VERSION = 50
 V49_SCHEMA_VERSION = 49
 V48_SCHEMA_VERSION = 48
 V47_SCHEMA_VERSION = 47
@@ -82,7 +87,7 @@ V8_SCHEMA_VERSION = 8
 V7_SCHEMA_VERSION = 7
 V6_SCHEMA_VERSION = 6
 V5_SCHEMA_VERSION = 5
-PREVIOUS_SCHEMA_VERSION = V49_SCHEMA_VERSION
+PREVIOUS_SCHEMA_VERSION = V52_SCHEMA_VERSION
 LEGACY_SCHEMA_VERSION = 1
 
 TOOL_CALL_PAYLOAD_KIND_COLUMN = (
@@ -131,7 +136,6 @@ CREATE TABLE runs (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
     user_input TEXT NOT NULL,
     model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash',
-    model_profile_id TEXT,
     model_profile_json TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN (
         'queued', 'running', 'waiting_approval', 'finalizing',
@@ -165,32 +169,6 @@ CREATE TABLE runs (
 CREATE UNIQUE INDEX one_active_run_per_session
 ON runs(session_id)
 WHERE status IN ('running', 'finalizing');
-
-CREATE TABLE model_profiles (
-    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-    id TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL UNIQUE,
-    profile_json TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
-
-CREATE TABLE model_capability_snapshots (
-    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-    id TEXT NOT NULL UNIQUE,
-    profile_id TEXT NOT NULL,
-    snapshot_json TEXT NOT NULL,
-    probed_at INTEGER NOT NULL
-);
-
-CREATE TABLE run_model_snapshots (
-    run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE RESTRICT,
-    profile_id TEXT NOT NULL,
-    capability_snapshot_id TEXT NOT NULL,
-    snapshot_json TEXT NOT NULL,
-    frozen_at INTEGER NOT NULL
-);
-
 CREATE TABLE run_resolution_snapshots (
     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
@@ -858,44 +836,10 @@ _BASE_WITH_CONTEXT_SNAPSHOT_SQL = _RAW_BASE_SCHEMA_SQL.replace(
     "    context_snapshot_id TEXT REFERENCES context_snapshots(id) ON DELETE RESTRICT,\n"
     "    retry_decision_json TEXT,",
 )
-_LEGACY_MODEL_TABLES_SQL = """
-CREATE TABLE model_profiles (
-    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-    id TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL UNIQUE,
-    profile_json TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
-
-CREATE TABLE model_capability_snapshots (
-    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-    id TEXT NOT NULL UNIQUE,
-    profile_id TEXT NOT NULL,
-    snapshot_json TEXT NOT NULL,
-    probed_at INTEGER NOT NULL
-);
-
-CREATE TABLE run_model_snapshots (
-    run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE RESTRICT,
-    profile_id TEXT NOT NULL,
-    capability_snapshot_id TEXT NOT NULL,
-    snapshot_json TEXT NOT NULL,
-    frozen_at INTEGER NOT NULL
-);
-
-"""
-_BASE_WITHOUT_LEGACY_MODEL_TABLES_SQL = _BASE_WITH_CONTEXT_SNAPSHOT_SQL.replace(
-    _LEGACY_MODEL_TABLES_SQL, ""
-).replace(
-    "    model_profile_id TEXT,\n", ""
-)
-if _BASE_WITHOUT_LEGACY_MODEL_TABLES_SQL == _BASE_WITH_CONTEXT_SNAPSHOT_SQL:
-    raise RuntimeError("legacy model tables were not removed from the current schema")
 
 # Current base additions: effective_cwd on runs, resolved_instructions_hash +
 # effective_cwd on step_resolution_snapshots.
-BASE_SCHEMA_SQL = _BASE_WITHOUT_LEGACY_MODEL_TABLES_SQL.replace(
+BASE_SCHEMA_SQL = _BASE_WITH_CONTEXT_SNAPSHOT_SQL.replace(
     "    error_code TEXT,\n"
     "    cancel_requested_at INTEGER,",
     "    effective_cwd TEXT,\n"
@@ -917,7 +861,7 @@ BASE_SCHEMA_SQL = _BASE_WITHOUT_LEGACY_MODEL_TABLES_SQL.replace(
     "\n"
     "CREATE TABLE steps",
 )
-if BASE_SCHEMA_SQL == _BASE_WITHOUT_LEGACY_MODEL_TABLES_SQL:
+if BASE_SCHEMA_SQL == _BASE_WITH_CONTEXT_SNAPSHOT_SQL:
     raise RuntimeError("current schema additions are missing")
 
 RESPONSE_ACTIONS_SCHEMA_SQL = """
@@ -1599,7 +1543,10 @@ V46_SCHEMA_SQL = V45_SCHEMA_SQL + PROJECT_BINDING_SCHEMA_SQL
 V47_SCHEMA_SQL = V46_SCHEMA_SQL + WORKTREE_GIT_IDENTITY_SCHEMA_SQL
 V48_SCHEMA_SQL = V47_SCHEMA_SQL + BROWSER_GRANTS_SCHEMA_SQL
 V49_SCHEMA_SQL = V48_SCHEMA_SQL + EVENT_QUERY_INDEX_SQL
-SCHEMA_SQL = V49_SCHEMA_SQL + BROWSER_EXTENSION_SCHEMA_SQL
+V50_SCHEMA_SQL = V49_SCHEMA_SQL + BROWSER_EXTENSION_SCHEMA_SQL
+V51_SCHEMA_SQL = V50_SCHEMA_SQL + GOAL_V51_SCHEMA_SQL
+V52_SCHEMA_SQL = V50_SCHEMA_SQL + GOAL_SCHEMA_SQL
+SCHEMA_SQL = V52_SCHEMA_SQL + SHELL_DISPLAY_MIGRATION_SQL
 
 # Test/upgrade fixture for schema v5. Schema v5 still kept the rebuildable
 # repository index in the state database.

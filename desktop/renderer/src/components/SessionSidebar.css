@@ -799,17 +799,6 @@
   -webkit-user-select: text;
 }
 
-.sidebar-hover-card__path-text {
-  font-family: var(--font-code);
-  font-size: var(--font-size-xs);
-  line-height: 1.4;
-  color: var(--text-secondary);
-  word-break: break-all;
-  cursor: text;
-  user-select: text;
-  -webkit-user-select: text;
-}
-
 .sidebar-hover-card__path-empty {
   font-size: var(--font-size-xs);
   color: var(--muted);

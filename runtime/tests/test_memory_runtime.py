@@ -158,7 +158,7 @@ def test_context_uses_index_and_usage_survives_forgetting(setup, monkeypatch):
         )
     )
     with pytest.raises(MemoryRejected):
-        store.read_latest_context_snapshot(run["id"])
+        store.context_snapshot_repository().read_latest_for_run(run["id"])
     assert not store.read_step_resolution_snapshots(run["id"])
     monkeypatch.setattr(
         store.database.json_blobs,

@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from eidos_runtime.context.budget import estimate_context_budget
 from eidos_runtime.context.plan import ContextPlanner, ContextSnapshot
 from eidos_runtime.db.database import Database
-from eidos_runtime.model.client import ModelProfileSnapshot, ModelToolDefinition
+from eidos_runtime.model.client import ModelProfileSnapshot, FunctionToolDefinition
 from eidos_runtime.persistence.context_snapshots import ContextSnapshotRepository
 from eidos_runtime.persistence.errors import PersistenceCorruptionError
 from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
@@ -58,7 +58,7 @@ def test_context_plan_captures_canonical_builder_payload_without_reprojecting(
         },
     )
     tools = (
-        ModelToolDefinition(
+        FunctionToolDefinition(
             name="read_file",
             description="Read",
             parameters_json_schema={"type": "object"},

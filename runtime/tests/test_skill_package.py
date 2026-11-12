@@ -19,7 +19,6 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
-from eidos_runtime.application.extensions import SkillContent  # noqa: E402
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
 from eidos_runtime.extensions.skill_access import SkillAccess  # noqa: E402
 from eidos_runtime.extensions.skills import (  # noqa: E402
@@ -212,13 +211,10 @@ class SkillPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(SkillReadError, "skill_path_invalid"):
             self.skills.read_resource(snapshot, "user:resource-example", "references")
 
-    def test_skill_read_wire_shape_has_no_inventory_and_matches_the_desktop_response(self) -> None:
+    def test_skill_read_without_resources_has_no_inventory(self) -> None:
         _root, snapshot, _access = self.resource_skill({"references/api.md": b"Reference."})
         skill = self.skills.read_skill(snapshot, "user:resource-example")
         self.assertEqual(set(skill), {"qualifiedId", "content", "contentHash", "source"})
-        # `skill/read` validates this exact mapping against a strict DTO.
-        content = SkillContent.from_wire(self.skills.read_skill(self.skills.extension_snapshot(), "user:resource-example"))
-        self.assertEqual(content.qualified_id, "user:resource-example")
 
     def test_inventory_lists_scripts_and_references_before_assets_and_skips_generated_files(self) -> None:
         files = {f"assets/image{index:03}.png": b"\x89PNG\r\n\x1a\n" for index in range(60)}

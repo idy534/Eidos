@@ -372,10 +372,25 @@ def test_hook_allow_still_requires_eidos_approval_for_rewritten_shell(tmp_path: 
         approvals.append(request)
         return ApprovalDecision("reject", "Keep the sandbox")
 
-    model = ScriptedModel([ModelResponse(tool_calls=(ModelToolCall("shell-1", "run_shell", {"command": "true"}),)), ModelResponse(text="permission declined")])
+    model = ScriptedModel([
+        ModelResponse(tool_calls=(ModelToolCall("shell-1", "run_shell", {
+            "command": "true", "display_intent": "Check that the shell is available",
+        }),)),
+        ModelResponse(text="permission declined"),
+    ])
     try:
-        RuntimeEngine(store, model, lambda _: None, shell_available=True, request_approval=reject).run(run["id"], threading.Event())
+        notifications = []
+        RuntimeEngine(store, model, notifications.append, shell_available=True, request_approval=reject).run(run["id"], threading.Event())
         assert len(approvals) == 1
+        assert approvals[0]["command"] == "touch must-not-exist"
+        assert "displayIntent" not in approvals[0]
+        rewrite = next(
+            event["params"]["item"]["toolCall"] for event in notifications
+            if event.get("method") == "item/updated"
+            and event["params"]["item"].get("toolCall", {}).get("displayCommand")
+        )
+        assert rewrite["displayCommand"] == "touch must-not-exist"
+        assert "displayIntent" not in rewrite
         assert not (workspace / "must-not-exist").exists()
         assert store.read_run(run["id"])["status"] == "succeeded"
         assert store.connection.execute("SELECT count(*) FROM approvals WHERE status='rejected'").fetchone()[0] == 1

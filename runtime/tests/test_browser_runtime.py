@@ -8,7 +8,6 @@ import pytest
 
 from eidos_runtime.infrastructure.browser_runtime import (
     BrowserRuntimeUnavailable,
-    browser_runtime_ready,
     resolve_browser_runtime,
 )
 from eidos_runtime.infrastructure.managed_resources import ManagedResourceManager
@@ -81,7 +80,6 @@ def test_unprepared_runtime_is_reported_without_downloading(manager):
     with pytest.raises(BrowserRuntimeUnavailable) as raised:
         resolve_browser_runtime(manager)
     assert raised.value.code == "browser_runtime_not_ready"
-    assert not browser_runtime_ready(manager)
 
 
 def test_prepared_runtime_resolves_verified_node_and_entry(manager):

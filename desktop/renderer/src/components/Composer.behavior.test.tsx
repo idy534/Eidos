@@ -885,3 +885,38 @@ describe("Composer DOM interaction & state behavior", () => {
     fireEvent.click(screen.getByRole("button", { name: "关闭技能详情" }));
   });
 });
+
+
+it("chooses goal mode from the plus menu, keeps the draft and makes Plan mutually exclusive", async () => {
+  const api = { listSkills: vi.fn().mockResolvedValue({ skills: [] }), listPlugins: vi.fn().mockResolvedValue({ plugins: [] }),
+    listMcpServers: vi.fn().mockResolvedValue({ servers: [] }), listSessions: vi.fn().mockResolvedValue({ items: [] }),
+    listAgentTypes: vi.fn().mockResolvedValue({ agents: [] }), listWorkspaceDirectory: vi.fn().mockResolvedValue({ entries: [], truncated: false }),
+    onInputQuote: vi.fn().mockReturnValue(vi.fn()) };
+  Object.defineProperty(window, "eidosRuntime", { configurable: true, writable: true, value: api });
+  function Modes() {
+    const [mode, setMode] = useState<"execute" | "plan" | "goal">("execute");
+    const [input, setInput] = useState("修复现有问题。");
+    return <InputContextProvider sessionId="session" workspaceRoot="/workspace" ready onAdd={vi.fn()} onSettings={vi.fn()}>
+      <Composer {...defaultProps} input={input} onInputChange={setInput} approvalMode="full_access" onApprovalModeChange={vi.fn()}
+        workMode={mode} onWorkModeChange={setMode} />
+    </InputContextProvider>;
+  }
+  render(<Modes />);
+  fireEvent.click(screen.getByRole("button", { name: "添加引用" }));
+  fireEvent.click(await screen.findByRole("button", { name: "目标模式" }));
+  expect(screen.getByRole("button", { name: "退出目标模式" })).toHaveTextContent("目标模式");
+  expect(screen.queryByRole("button", { name: "退出 Plan 模式" })).toBeNull();
+  expect(screen.getByRole("textbox")).toHaveValue("修复现有问题。");
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  const access = screen.getByRole("button", { name: "审批模式：完全访问" });
+  expect(access.compareDocumentPosition(screen.getByRole("button", { name: "退出目标模式" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "添加引用" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Plan 模式" }));
+  expect(screen.getByRole("button", { name: "退出 Plan 模式" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "退出目标模式" })).toBeNull();
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "/goal" } });
+  fireEvent.click(await screen.findByRole("option", { name: /\/goal/ }));
+  expect(screen.getByRole("button", { name: "退出目标模式" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "退出 Plan 模式" })).toBeNull();
+  expect(screen.getByRole("textbox")).toHaveValue("");
+});

@@ -54,7 +54,6 @@ from eidos_runtime.model.reasoning_summary import emit_reasoning_summary
 from eidos_runtime.model.client import (
     CustomToolDefinition,
     FunctionToolDefinition,
-    MAX_FUNCTION_ARGUMENT_BYTES,
     MAX_TOOL_CALL_ID_BYTES as MODEL_TOOL_CALL_ID_BYTES,
     MAX_TOOL_NAME_BYTES as MODEL_TOOL_NAME_BYTES,
     ModelClient,
@@ -107,7 +106,6 @@ _LOGGER = logging.getLogger(__name__)
 
 MAX_TOOL_CALL_ID_BYTES = MODEL_TOOL_CALL_ID_BYTES
 MAX_TOOL_NAME_BYTES = MODEL_TOOL_NAME_BYTES
-MAX_TOOL_ARGUMENT_BYTES = MAX_FUNCTION_ARGUMENT_BYTES
 USAGE_DETAIL_KEYS = frozenset({
     "accepted_prediction_tokens",
     "audio_tokens",
@@ -261,10 +259,6 @@ class PydanticAIModelClient:
         return self._reasoning_selection not in (None, "none") or bool(
             self._model.profile.get("thinking_always_enabled", False)
         )
-
-    @property
-    def sdk_max_retries(self) -> int | None:
-        return self._openai_client.max_retries if self._openai_client is not None else None
 
     def generate_title(self, user_input: str, cancel: threading.Event) -> str:
         return self.complete(

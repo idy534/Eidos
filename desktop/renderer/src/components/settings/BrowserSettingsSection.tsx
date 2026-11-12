@@ -6,7 +6,6 @@ import { GlobeIcon } from "../MenuIcons.js";
 import { EyeIcon, EyeOffIcon } from "./ChannelIcons.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { SettingRow } from "./SettingRow.js";
-import "./BrowserSettings.css";
 
 export const BROWSER_PLUGIN_ID = "eidos-browser";
 

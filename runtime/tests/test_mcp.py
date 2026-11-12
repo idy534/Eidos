@@ -22,6 +22,7 @@ from mcp import types as mcp_types
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
+from eidos_runtime.domain.input_reference import InputReference, InputSnapshot  # noqa: E402
 from eidos_runtime.extensions.mcp import (  # noqa: E402
     McpConnection,
     McpManager,
@@ -343,6 +344,98 @@ class McpManagerTests(unittest.TestCase):
             ).run(followup["id"], threading.Event())
         self.assertEqual(self.store.read_run(followup["id"])["status"], "succeeded")
         self.assertTrue(any(item.get("type") == "tool_result" and item.get("name") == "mcp__fixture__echo" for item in replay.contexts[0]))
+
+    def test_unlisted_mcp_tool_is_reported_then_found_through_tool_search(self) -> None:
+        session = self.store.create_session(str(self.workspace))
+        run, _ = self.store.create_run(
+            session["id"], "Use the echo tool", extension_snapshot=SkillCatalog(self.plugins).extension_snapshot(),
+        )
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall("inactive", "mcp__fixture__echo", {"message": "before"}),)),
+            ModelResponse(tool_calls=(ModelToolCall("search", "tool_search", {"query": "mcp__fixture__echo", "limit": 1}),)),
+            ModelResponse(tool_calls=(ModelToolCall("active", "mcp__fixture__echo", {"message": "after"}),)),
+            ModelResponse(text="Done."),
+        ])
+        sdk_calls = []
+        original_call = McpConnection.call
+
+        def record_call(connection, name, arguments, cancel):
+            sdk_calls.append((name, arguments))
+            return original_call(connection, name, arguments, cancel)
+
+        # The fixture server is small enough to stay listed, so unlist it the way a large set would be.
+        def unlist_connected_tools(entries, **_options):
+            return frozenset(entry.spec.name for entry in entries if entry.provenance.kind == "mcp")
+
+        with patch("eidos_runtime.runtime.run_resources.deferred_tool_names", unlist_connected_tools), \
+                patch.object(McpConnection, "call", record_call):
+            RuntimeEngine(
+                self.store, model, lambda _message: None,
+                request_approval=lambda _request, _cancel: ApprovalDecision("approve"),
+                async_kernel=self.kernel, resource_registry=self.resources, mcp_sandbox=False,
+            ).run(run["id"], threading.Event())
+
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        # Only the call made after the search reached the server.
+        self.assertEqual(sdk_calls, [("echo", {"message": "after"})])
+        first_step = {definition.name for definition in model.tool_definitions_history[0]}
+        self.assertIn("tool_search", first_step)
+        self.assertNotIn("mcp__fixture__echo", first_step)
+        self.assertIn("mcp__fixture__echo", {definition.name for definition in model.tool_definitions_history[2]})
+        feedback = next(item for item in model.contexts[1] if item.get("type") == "tool_result")
+        self.assertIn('query="mcp__fixture__echo"', json.loads(feedback["result"])["summary"])
+        saved = self.store.connection.execute(
+            "SELECT id,result_json FROM tool_calls WHERE provider_call_id = 'inactive'",
+        ).fetchone()
+        result = json.loads(saved["result_json"])
+        self.assertEqual(result["code"], "tool_not_activated")
+        self.assertFalse(result["sideEffectsMayExist"])
+        # The rejected call is feedback only: no approval, no intent, no protocol-error strike.
+        self.assertEqual(self.store.connection.execute(
+            "SELECT COUNT(*) FROM durable_intents WHERE tool_call_id = ?", (saved["id"],),
+        ).fetchone()[0], 0)
+        self.assertEqual(self.store.connection.execute(
+            "SELECT consecutive_protocol_errors FROM runs WHERE id = ?", (run["id"],),
+        ).fetchone()[0], 0)
+        self.assertEqual(self.store.activated_tools(run["id"]), ("mcp__fixture__echo",))
+
+    def test_a_server_attached_to_the_message_lists_its_unlisted_tools_from_the_first_step(self) -> None:
+        session = self.store.create_session(str(self.workspace))
+        run, _ = self.store.create_run(
+            session["id"], "Use the echo tool", extension_snapshot=SkillCatalog(self.plugins).extension_snapshot(),
+        )
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall("echo", "mcp__fixture__echo", {"message": "hello"}),)),
+            ModelResponse(text="Done."),
+        ])
+
+        def unlist_connected_tools(entries, **_options):
+            return frozenset(entry.spec.name for entry in entries if entry.provenance.kind == "mcp")
+
+        # The user attached the demo plugin's fixture server in the composer.
+        attached = [InputSnapshot(
+            reference=InputReference(
+                id="a" * 64, kind="mcp", label="fixture", source="demo:fixture",
+                sha256="b" * 64, status="selection", size=0,
+            ),
+            selection_id="fixture", plugin_id="demo",
+        )]
+        with patch("eidos_runtime.runtime.run_resources.deferred_tool_names", unlist_connected_tools), \
+                patch("eidos_runtime.runtime.run_resources.InputContextRepository.for_run", lambda _self, _run_id: attached):
+            RuntimeEngine(
+                self.store, model, lambda _message: None,
+                request_approval=lambda _request, _cancel: ApprovalDecision("approve"),
+                async_kernel=self.kernel, resource_registry=self.resources, mcp_sandbox=False,
+            ).run(run["id"], threading.Event())
+
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        first_step = {definition.name for definition in model.tool_definitions_history[0]}
+        self.assertIn("mcp__fixture__echo", first_step)
+        self.assertIn("tool_search", first_step)
+        codes = [json.loads(row[0])["code"] for row in self.store.connection.execute(
+            "SELECT result_json FROM tool_calls ORDER BY creation_seq",
+        )]
+        self.assertEqual(codes, ["ok"])
 
     def test_two_direct_mcp_calls_preserve_first_step_order_and_approval(self) -> None:
         session = self.store.create_session(str(self.workspace))

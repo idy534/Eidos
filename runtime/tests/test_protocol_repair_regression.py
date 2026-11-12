@@ -20,7 +20,8 @@ from eidos_runtime.model.client import (  # noqa: E402
     ModelToolCall,
     ScriptedModel,
 )
-from eidos_runtime.runtime.loop import ApprovalDecision, RuntimeLoop  # noqa: E402
+from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
+from eidos_runtime.runtime.approval import ApprovalDecision  # noqa: E402
 from eidos_runtime.runtime.protocol_diagnostics import argument_summary  # noqa: E402
 from eidos_runtime.model.pydantic_ai_client import map_model_response  # noqa: E402
 from pydantic_ai.messages import (  # noqa: E402
@@ -62,7 +63,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
                 ])
                 if not recover:
                     model.responses = (*model.responses, ModelResponse(text="Recovered after truncation"))
-                RuntimeLoop(self.store, model, lambda _: None).run(run["id"], threading.Event())
+                RuntimeEngine(self.store, model, lambda _: None).run(run["id"], threading.Event())
                 result = self.store.read_run(run["id"])
                 self.assertEqual(result["status"], "succeeded")
                 self.assertNotIn("errorCode", result)
@@ -127,7 +128,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         ])
         approvals: list[dict[str, object]] = []
 
-        RuntimeLoop(
+        RuntimeEngine(
             self.store,
             model,
             lambda _message: None,
@@ -182,7 +183,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
                     ModelResponse(text="Command result received."),
                 ])
 
-                RuntimeLoop(self.store, model, lambda _: None).run(run["id"], threading.Event())
+                RuntimeEngine(self.store, model, lambda _: None).run(run["id"], threading.Event())
 
                 row = self.store.connection.execute(
                     """SELECT arguments_json, raw_arguments_json, result_json, model_result_json
@@ -244,7 +245,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             ModelResponse(tool_calls=(ModelToolCall("shell-many-extras", "run_shell", arguments),)),
             ModelResponse(text="Result received."),
         ])
-        RuntimeLoop(self.store, model, lambda _: None).run(run["id"], threading.Event())
+        RuntimeEngine(self.store, model, lambda _: None).run(run["id"], threading.Event())
         feedback = next(item for item in model.contexts[1] if item["type"] == "tool_result")
         result = json.loads(feedback["result"])
         self.assertEqual(result["code"], "ok")
@@ -275,7 +276,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             ),
         ])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -337,7 +338,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             ModelResponse(tool_calls=(ModelToolCall("old-input", "apply_patch", legacy),)),
             ModelResponse(text="The input needs correction."),
         ])
-        RuntimeLoop(self.store, model, lambda _message: None).run(run["id"], threading.Event())
+        RuntimeEngine(self.store, model, lambda _message: None).run(run["id"], threading.Event())
         assert target.read_text() == "old\n"
         assert self.store.connection is not None
         saved = self.store.connection.execute(
@@ -370,7 +371,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             ModelResponse(tool_calls=(ModelToolCall("new-input", "apply_patch", corrected),)),
             ModelResponse(text="Updated."),
         ])
-        RuntimeLoop(self.store, resumed_model, lambda _message: None).run(
+        RuntimeEngine(self.store, resumed_model, lambda _message: None).run(
             resumed["id"], threading.Event()
         )
         assert self.store.read_run(resumed["id"])["status"] == "succeeded"
@@ -405,7 +406,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             ),
         ])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -462,7 +463,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             ),
         ])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -530,7 +531,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             ),
         ])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -595,7 +596,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             ),
         ])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -631,7 +632,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             finish_reason="stop",
         )])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -652,7 +653,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             finish_reason="stop",
         )])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -670,7 +671,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         )
         model = ScriptedModel([undeclared, undeclared])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -701,7 +702,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             ),
         ])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -727,7 +728,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         ))
         model = ScriptedModel([bad, bad, ModelResponse(text="Recovered without executing invalid tools")])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
@@ -752,7 +753,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         )
         model = ScriptedModel([bad, bad, bad, ModelResponse(text="The browser plugin is not installed.")])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 

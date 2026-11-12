@@ -31,8 +31,10 @@ from eidos_runtime.model.client import (
 )
 from eidos_runtime.tools.contracts import (
     GENERIC_PROJECTOR,
+    MAX_SHELL_DISPLAY_INTENT_LENGTH,
     PROJECTORS,
     RunShellInput,
+    SHELL_DISPLAY_INTENT_FIELD,
     ToolResultProjector,
 )
 
@@ -47,7 +49,6 @@ _ALLOWED_SCHEMA_KEYS = {
 MAX_ACTIVATED_TOOLS = 16
 MAX_ACTIVATED_SCHEMA_BYTES = 128 * 1024
 MAX_SINGLE_DEFINITION_BYTES = 32 * 1024
-MAX_SINGLE_SCHEMA_BYTES = MAX_SINGLE_DEFINITION_BYTES
 
 
 class ToolSpec(ClosedModel):
@@ -502,10 +503,43 @@ class ToolRegistryEntry:
                 format=self.spec.input_format,
             )
         assert self.spec.input_schema is not None
+        schema = self.spec.input_schema
+        description = self.spec.description
+        if self.input_model is RunShellInput:
+            # Presentation-only input must not change a saved execution contract.
+            description += (
+                " Include display_intent for every run_shell call, including follow-up calls, "
+                "so the user can understand what the command is for."
+            )
+            properties = schema["properties"]
+            required = schema.get("required", [])
+            assert isinstance(properties, dict)
+            assert isinstance(required, list)
+            # Models write arguments in schema order and skip trailing optional
+            # ones, so the description is advertised first and as required.
+            # Execution still accepts a call that leaves it out.
+            schema = {
+                **schema,
+                "properties": {
+                    SHELL_DISPLAY_INTENT_FIELD: {
+                        "type": "string",
+                        "maxLength": MAX_SHELL_DISPLAY_INTENT_LENGTH,
+                        "description": (
+                            "One-line description of what this command is meant to do, "
+                            "in the user's language. State the action and its main target. "
+                            "Mention material side effects and avoid claiming an outcome, "
+                            "quoting the command, or including secrets. "
+                            "For git status --short: Check for uncommitted changes."
+                        ),
+                    },
+                    **properties,
+                },
+                "required": [SHELL_DISPLAY_INTENT_FIELD, *required],
+            }
         return FunctionToolDefinition(
             name=self.spec.name,
-            description=self.spec.description,
-            parameters_json_schema=self.spec.input_schema,
+            description=description,
+            parameters_json_schema=schema,
         )
 
     @property
@@ -829,6 +863,20 @@ def _hash_json(value: object) -> str:
         value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def can_be_activated(entry: ToolRegistryEntry) -> bool:
+    """Whether a deferred entry could ever be activated; larger definitions are skipped."""
+    return _definition_size(entry.model_definition()) <= MAX_SINGLE_DEFINITION_BYTES
+
+
+def fits_activation_budget(entries: tuple[ToolRegistryEntry, ...]) -> bool:
+    """Whether all entries could be active together under the deferred-tool limits."""
+    if len(entries) > MAX_ACTIVATED_TOOLS:
+        return False
+    return sum(
+        _definition_size(entry.model_definition()) for entry in entries
+    ) <= MAX_ACTIVATED_SCHEMA_BYTES
 
 
 def _definition_size(definition: ModelToolDefinitionLike) -> int:

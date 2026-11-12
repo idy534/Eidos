@@ -343,7 +343,7 @@ def test_registered_protocol_and_shutdown_service(tmp_path):
 
 def test_real_loop_direct_create_and_query(automation):
     store, session, app, _ = automation
-    from eidos_runtime.runtime.loop import RuntimeEngine
+    from eidos_runtime.runtime.engine import RuntimeEngine
     run, _ = store.create_run(session, "每十分钟检查状态，新建会话")
     responses = [
         ModelResponse(tool_calls=(ModelToolCall("create", "automation", {"mode": "create", "kind": "cron", "name": "状态检查", "prompt": "检查状态",
@@ -520,7 +520,7 @@ def test_atomic_regeneration_rechecks_current_source_before_creating_run(automat
 def test_late_cancel_preserves_saved_task_receipt(automation):
     store, session, app, _ = automation
     from eidos_runtime.runtime.fault_injection import injected_faults
-    from eidos_runtime.runtime.loop import RuntimeEngine
+    from eidos_runtime.runtime.engine import RuntimeEngine
     cancel = threading.Event()
     class LateCancel:
         calls = 0

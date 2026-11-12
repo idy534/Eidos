@@ -11,7 +11,6 @@ import { SkillDetailDialog, SkillIcon } from "./SkillDetailDialog.js";
 import { McpSettingsIcon, SkillsSettingsIcon, githubIcon } from "./SettingsIcons.js";
 import { compatibilityIssue } from "./plugin-compatibility.js";
 import type { SettingsPendingAction } from "./settings-types.js";
-import "./PluginDetailDialog.css";
 import { McpConnectionPanel } from "./McpConnectionPanel.js";
 import { HookHistoryDialog } from "./HookHistoryDialog.js";
 import { mcpCommandLabel } from "./mcpCommand.js";

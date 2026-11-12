@@ -439,6 +439,8 @@ class EventListRequestDto(_CanonicalIdRequest):
 
 class RunStartRequestDto(_OperationRequest):
     work_mode: Literal["execute", "plan"] = Field(default="execute", alias="workMode")
+    goal_mode: bool = Field(default=False, alias="goalMode")
+    goal_revision: int | None = Field(default=None, alias="goalRevision", ge=1, le=9_007_199_254_740_991)
     plan_id: str | None = Field(default=None, alias="planId")
     plan_revision: int | None = Field(default=None, alias="planRevision", ge=1)
     references: list[InputReferenceId] = Field(default_factory=list, max_length=20)
@@ -463,6 +465,12 @@ class RunStartRequestDto(_OperationRequest):
             raise ValueError("full access confirmation does not match approval mode")
         if not self.user_input.strip() and not self.references:
             raise ValueError("userInput must not be blank")
+        if self.goal_mode and (self.work_mode != "execute" or self.plan_id is not None or self.plan_revision is not None):
+            raise ValueError("goal mode and plan mode are mutually exclusive")
+        if self.goal_mode and (not self.user_input.strip() or len(self.user_input) > 4000):
+            raise ValueError("goal requires 1 to 4000 characters of input")
+        if self.goal_revision is not None and (self.work_mode != "execute" or self.plan_id is not None or self.plan_revision is not None):
+            raise ValueError("goal continuation and plan mode are mutually exclusive")
         return self
 
 
@@ -471,19 +479,9 @@ class RunCancelRequestDto(_OperationRequest):
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("operation_id", "run_id")
 
 
-class RunPauseRequestDto(_OperationRequest):
-    run_id: StrictStr = Field(alias="runId")
-    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("operation_id", "run_id")
-
-
 class RunResumeRequestDto(_OperationRequest):
     run_id: StrictStr = Field(alias="runId")
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("operation_id", "run_id")
-
-
-class RunStatusRequestDto(_CanonicalIdRequest):
-    run_id: StrictStr = Field(alias="runId")
-    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("run_id",)
 
 
 class ContextUsageRequestDto(_CanonicalIdRequest):
@@ -567,15 +565,15 @@ class SkillSetEnabledRequestDto(MethodRequestDto):
     enabled: bool
 
 
-class SkillReadRequestDto(MethodRequestDto):
+class _SkillIdRequestDto(MethodRequestDto):
     qualified_id: StrictStr = Field(alias="qualifiedId", min_length=1)
 
 
-class SkillDetailRequestDto(SkillReadRequestDto):
+class SkillDetailRequestDto(_SkillIdRequestDto):
     pass
 
 
-class SkillRemoveRequestDto(SkillReadRequestDto):
+class SkillRemoveRequestDto(_SkillIdRequestDto):
     pass
 
 
@@ -663,29 +661,6 @@ class ExtensionReadRequestDto(MethodRequestDto):
 class ExtensionReadEventsRequestDto(MethodRequestDto):
     after_event_id: StrictInt = Field(default=0, alias="afterEventId", ge=0)
     limit: StrictInt = Field(default=200, ge=1, le=500)
-
-
-class CheckpointCreateRequestDto(_OperationRequest):
-    run_id: StrictStr = Field(alias="runId")
-    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("operation_id", "run_id")
-
-
-class CheckpointListRequestDto(_CanonicalIdRequest):
-    run_id: StrictStr = Field(alias="runId")
-    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("run_id",)
-
-
-class CheckpointRewindRequestDto(_OperationRequest):
-    checkpoint_id: StrictStr = Field(alias="checkpointId")
-    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("operation_id", "checkpoint_id")
-
-
-class CheckpointForkRequestDto(_OperationRequest):
-    checkpoint_id: StrictStr = Field(alias="checkpointId")
-    workspace_root: StrictStr | None = Field(
-        default=None, alias="workspaceRoot", min_length=1, max_length=4096
-    )
-    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("operation_id", "checkpoint_id")
 
 
 class _SessionResponseDto(MethodResultDto, SessionDto):
@@ -1096,15 +1071,7 @@ class _RunLifecycleResponseDto(MethodResultDto):
     )
 
 
-class RunPauseResponseDto(_RunLifecycleResponseDto):
-    pass
-
-
 class RunResumeResponseDto(_RunLifecycleResponseDto):
-    pass
-
-
-class RunStatusResponseDto(_RunLifecycleResponseDto):
     pass
 
 
@@ -1226,19 +1193,6 @@ class SkillListResponseDto(MethodResultDto):
     skills: list[ManagedSkillDto]
 
 
-class SkillSourceDto(ClosedModel):
-    plugin_id: StrictStr = Field(alias="pluginId")
-    plugin_version: StrictStr = Field(alias="pluginVersion")
-    plugin_hash: StrictStr = Field(alias="pluginHash")
-
-
-class SkillReadResponseDto(MethodResultDto):
-    qualified_id: StrictStr = Field(alias="qualifiedId")
-    content: StrictStr
-    content_hash: StrictStr = Field(alias="contentHash")
-    source: SkillSourceDto
-
-
 class McpListResponseDto(MethodResultDto):
     servers: list[McpServerRecordDto]
 
@@ -1269,55 +1223,3 @@ class ExtensionReadResponseDto(MethodResultDto):
 
 class ExtensionReadEventsResponseDto(EventListResponseDto):
     pass
-
-
-class CheckpointDto(ClosedModel):
-    id: StrictStr
-    run_id: StrictStr = Field(alias="runId")
-    item_ordinal: StrictInt = Field(alias="itemOrdinal", ge=0)
-    rule_snapshot_id: StrictStr | None = Field(default=None, alias="ruleSnapshotId")
-    repository_snapshot_id: StrictStr | None = Field(default=None, alias="repositorySnapshotId")
-    context_snapshot_id: StrictStr | None = Field(default=None, alias="contextSnapshotId")
-    compact_summary_id: StrictStr | None = Field(default=None, alias="compactSummaryId")
-    workspace_identity_hash: StrictStr = Field(alias="workspaceIdentityHash")
-    git_head: StrictStr | None = Field(default=None, alias="gitHead")
-    git_snapshot_id: StrictStr | None = Field(default=None, alias="gitSnapshotId")
-    permission_snapshot_hash: StrictStr | None = Field(default=None, alias="permissionSnapshotHash")
-    model_profile_snapshot_hash: StrictStr = Field(alias="modelProfileSnapshotHash")
-    reconciliation_required: bool = Field(alias="reconciliationRequired")
-    created_at: StrictInt = Field(alias="createdAt")
-
-
-class CheckpointCreateResponseDto(MethodResultDto):
-    checkpoint: CheckpointDto
-
-
-class CheckpointListResponseDto(MethodResultDto):
-    checkpoints: list[CheckpointDto]
-
-
-class CheckpointRewindResponseDto(_RunLifecycleResponseDto):
-    checkpoint: CheckpointDto
-
-
-class CheckpointForkResponseDto(MethodResultDto):
-    checkpoint: CheckpointDto
-    parent_run_id: StrictStr = Field(alias="parentRunId")
-    run: RunDto
-
-
-class RepositorySnapshotReferenceDto(ClosedModel):
-    snapshot_id: StrictStr = Field(alias="snapshotId")
-    inventory_snapshot_id: StrictStr = Field(alias="inventorySnapshotId")
-    index_snapshot_id: StrictStr | None = Field(default=None, alias="indexSnapshotId")
-    inventory_generation: StrictInt = Field(alias="inventoryGeneration", ge=0)
-    index_generation: StrictInt | None = Field(default=None, alias="indexGeneration", ge=0)
-    complete: bool
-    created_at: StrictInt = Field(alias="createdAt")
-
-
-class RepositoryStatusResponseDto(MethodResultDto):
-    repository_id: StrictStr = Field(alias="repositoryId")
-    workspace_root: StrictStr = Field(alias="workspaceRoot")
-    snapshots: list[RepositorySnapshotReferenceDto]
-    reconciliation_required: bool = Field(alias="reconciliationRequired")

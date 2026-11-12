@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eidos_runtime.db.storage import SCHEMA_REVISION, SessionStore  # noqa: E402
+from eidos_runtime.db.storage import SCHEMA_VERSION, SessionStore  # noqa: E402
 from eidos_runtime.protocol.methods import ManagedSkillDto  # noqa: E402
 from eidos_runtime.protocol.schemas import (  # noqa: E402
     McpServerRecordDto,
@@ -118,7 +118,7 @@ class ExtensionStorageTests(unittest.TestCase):
 
         self.assertEqual(
             connection.execute("PRAGMA user_version").fetchone()[0],
-            SCHEMA_REVISION,
+            SCHEMA_VERSION,
         )
         self.assertIn(
             "extension_snapshot_json",

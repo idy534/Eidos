@@ -17,7 +17,6 @@ from eidos_runtime.domain.worktree import (
     WorktreeOwnership,
     WorktreeState,
 )
-from eidos_runtime.domain.worktree_snapshot import WorktreeSnapshot
 from eidos_runtime.git.errors import WorktreeError
 from eidos_runtime.git.manager import WorktreeManager
 from eidos_runtime.git.snapshot_artifacts import SnapshotArtifactStore
@@ -167,9 +166,6 @@ class WorktreeRetentionService:
 
     def latest_ready_snapshot_id(self, worktree_id: str) -> str | None:
         return self.snapshot_service.latest_ready_id(worktree_id)
-
-    def latest_ready_snapshot(self, worktree_id: str) -> WorktreeSnapshot | None:
-        return self.snapshot_service.latest_ready(worktree_id)
 
     def reconcile_operations(self) -> None:
         for operation in self.manager.lifecycle.list_unfinished():

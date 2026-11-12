@@ -32,12 +32,8 @@ from eidos_runtime.runtime.tool_execution import (  # noqa: E402
 from eidos_runtime.runtime.tool_runtime import ToolCallRuntime  # noqa: E402
 from eidos_runtime.sandbox.permissions import BasePermissionProfile  # noqa: E402
 from eidos_runtime.sandbox.sensitive import default_scanner  # noqa: E402
-from eidos_runtime.tools.contracts import (  # noqa: E402
-    ReadFileResultData,
-    ReadFileInput,
-    project_tool_result,
-    result_model,
-)
+from eidos_runtime.tools.contracts import ReadFileResultData, ReadFileInput, result_model  # noqa: E402
+from tool_projection import project_tool_result  # noqa: E402
 from eidos_runtime.tools.registry import (  # noqa: E402
     StepToolBinding,
     ToolArgumentValidationResult,
@@ -116,6 +112,12 @@ class _ApprovalHandler(_Handler):
 
 
 class _Dispatcher:
+    # Set on an instance when the Run under test registers tool_search.
+    registered_tools: frozenset[str] = frozenset()
+
+    def has_tool(self, name: str) -> bool:
+        return name in self.registered_tools
+
     def validate_execution(self, call, plan) -> ToolArgumentValidationResult | None:
         return ToolArgumentValidationResult(valid=True) if call.name == "read_file" and plan.descriptor is not None else None
 
@@ -234,6 +236,21 @@ class ToolExecutionControllerTests(unittest.TestCase):
         self.assertFalse(outcome.result["sideEffectsMayExist"])
         self.assertFalse(outcome.result["reconciliationRequired"])
         self.assertEqual(self.store.connection.execute("SELECT COUNT(*) FROM approvals").fetchone()[0], 0)
+        self.assertEqual(self.store.connection.execute("SELECT COUNT(*) FROM durable_intents").fetchone()[0], 0)
+
+    def test_inactive_tool_feedback_points_at_tool_search_when_the_run_has_it(self) -> None:
+        handler = _Handler()
+        controller = self._controller({"external": handler})
+        controller.dispatcher.registered_tools = frozenset({"tool_search"})
+        plan = replace(_plan("external", 5, "external", True), activation_required=True)
+        outcome = controller.execute(
+            run_id=self.run["id"], item=self._item(), call=self.call, plan=plan,
+            cancel=threading.Event(), deadline=None,
+        )
+        self.assertEqual(outcome.result["code"], "tool_not_activated")
+        self.assertIn(f'Call tool_search with query="{self.call.name}"', outcome.result["summary"])
+        self.assertNotIn("historical call", outcome.result["summary"])
+        self.assertEqual(handler.calls, 0)
         self.assertEqual(self.store.connection.execute("SELECT COUNT(*) FROM durable_intents").fetchone()[0], 0)
 
     def test_cancel_wins_before_inactive_tool_feedback(self) -> None:

@@ -1,4 +1,4 @@
-import type { ModelId, Run } from "../contracts.js";
+import type { Run } from "../contracts.js";
 import { findActiveRun } from "../session-state.js";
 
 /**
@@ -34,8 +34,4 @@ export function resolveSessionRun(runs: Run[]): Run | undefined {
   });
 
   return sorted[0];
-}
-
-export function resolveSessionModelId(runs: Run[]): ModelId | undefined {
-  return resolveSessionRun(runs)?.modelId;
 }

@@ -45,14 +45,6 @@ BROWSER_TOOL_CLASSES: dict[str, BrowserToolClass] = {
     "browser_file_upload": BrowserToolClass.FILE,
 }
 
-# Listed for review only; anything outside BROWSER_TOOL_CLASSES is blocked.
-# browser_run_code_unsafe runs arbitrary code in the server process and
-# browser_evaluate runs arbitrary script inside signed-in pages.
-KNOWN_BLOCKED_BROWSER_TOOLS = frozenset({
-    "browser_run_code_unsafe", "browser_evaluate", "browser_emulate_media",
-})
-
-
 # Not registered while the tools drive the user's own Chrome: the full request
 # and response headers and bodies carry session cookies and bearer tokens.
 USER_CHROME_BLOCKED_BROWSER_TOOLS = frozenset({"browser_network_request"})

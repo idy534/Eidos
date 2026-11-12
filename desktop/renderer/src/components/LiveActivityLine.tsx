@@ -1,8 +1,39 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { LiveThinking } from "../live-thinking.js";
 
 /** A text change waits at least this long so fast summaries never flicker. */
 const MIN_DWELL_MS = 1200;
+const POPOVER_GAP_PX = 6;
+const BOUNDARY_PADDING_PX = 12;
+const FALLBACK_POPOVER_HEIGHT_PX = 160;
+
+type PopoverPlacement = "above" | "below";
+type ExpandableThinking = LiveThinking & { body: string };
+
+function isExpandableThinking(thinking: LiveThinking | undefined): thinking is ExpandableThinking {
+  return thinking !== undefined && thinking.body !== undefined && thinking.body !== "";
+}
+
+function resolvePopoverPlacement(rootEl: HTMLElement, popoverEl: HTMLElement): PopoverPlacement {
+  const feedEl = rootEl.closest(".feed");
+  const boundaryRect = feedEl
+    ? feedEl.getBoundingClientRect()
+    : { top: 0, bottom: window.innerHeight };
+  const rowRect = rootEl.getBoundingClientRect();
+  const popoverRect = popoverEl.getBoundingClientRect();
+  const measuredHeight = popoverEl.offsetHeight || popoverRect.height;
+  const popoverHeight = measuredHeight > 0
+    ? measuredHeight
+    : (rowRect.top !== 0 || rowRect.bottom !== 0 ? FALLBACK_POPOVER_HEIGHT_PX : 0);
+
+  const spaceAbove = rowRect.top - boundaryRect.top - BOUNDARY_PADDING_PX - POPOVER_GAP_PX;
+  const spaceBelow = boundaryRect.bottom - rowRect.bottom - BOUNDARY_PADDING_PX - POPOVER_GAP_PX;
+
+  if (popoverHeight > 0 && spaceAbove < popoverHeight && spaceBelow > spaceAbove) {
+    return "below";
+  }
+  return "above";
+}
 
 function useSteadyText(next: string): string {
   const [shown, setShown] = useState(next);
@@ -18,7 +49,7 @@ function useSteadyText(next: string): string {
     if (wait <= 0) {
       apply();
       return undefined;
-    }
+    };
     const timer = window.setTimeout(apply, wait);
     return () => window.clearTimeout(timer);
   }, [next, shown]);
@@ -40,17 +71,29 @@ function MarkTraceIcon() {
 /**
  * The one moving element at the end of a running Run. It shows the latest
  * provider reasoning summary title, or the current action as a fallback.
- * With summary text it becomes a button that opens a popover above the row,
- * so the Feed never shifts.
+ * With summary text it becomes a button that opens a popover above the row
+ * (or flips below when near the top of the Feed), so the Feed never shifts.
  */
 export function LiveActivityLine({ text, thinking }: { text: string; thinking?: LiveThinking | undefined }) {
   const shown = useSteadyText(text);
-  const body = thinking?.body;
   const popoverId = useId();
   const [open, setOpen] = useState(false);
+  const [placement, setPlacement] = useState<PopoverPlacement>("above");
+  const [retainedThinking, setRetainedThinking] = useState<ExpandableThinking | undefined>(
+    () => (isExpandableThinking(thinking) ? thinking : undefined),
+  );
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const expandable = body !== undefined && body !== "";
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  if (isExpandableThinking(thinking) && retainedThinking !== thinking) {
+    setRetainedThinking(thinking);
+  } else if (!open && !isExpandableThinking(thinking) && retainedThinking !== undefined) {
+    setRetainedThinking(undefined);
+  }
+
+  const activeThinking = isExpandableThinking(thinking) ? thinking : (open ? retainedThinking : undefined);
+  const expandable = activeThinking !== undefined;
 
   useEffect(() => {
     if (!open) return undefined;
@@ -70,9 +113,21 @@ export function LiveActivityLine({ text, thinking }: { text: string; thinking?: 
     };
   }, [open]);
 
-  useEffect(() => {
-    if (!expandable) setOpen(false);
-  }, [expandable]);
+  useLayoutEffect(() => {
+    if (!open || !rootRef.current || !popoverRef.current) return undefined;
+    const updatePlacement = () => {
+      if (!rootRef.current || !popoverRef.current) return;
+      setPlacement(resolvePopoverPlacement(rootRef.current, popoverRef.current));
+    };
+    updatePlacement();
+    const feedEl = rootRef.current.closest(".feed");
+    feedEl?.addEventListener("scroll", updatePlacement, { passive: true });
+    window.addEventListener("resize", updatePlacement);
+    return () => {
+      feedEl?.removeEventListener("scroll", updatePlacement);
+      window.removeEventListener("resize", updatePlacement);
+    };
+  }, [open, activeThinking?.summaryId, activeThinking?.title, activeThinking?.body, activeThinking?.previous.length]);
 
   const label = (
     <>
@@ -82,7 +137,7 @@ export function LiveActivityLine({ text, thinking }: { text: string; thinking?: 
   );
 
   return (
-    <div className="live-activity" role="status" ref={rootRef}>
+    <div className="live-activity" role="status" ref={rootRef} data-placement={open ? placement : undefined}>
       {expandable ? (
         <button
           ref={triggerRef}
@@ -99,14 +154,21 @@ export function LiveActivityLine({ text, thinking }: { text: string; thinking?: 
       ) : (
         <div className="live-activity-row">{label}</div>
       )}
-      {expandable && open && thinking && (
-        <div className="live-activity-popover" id={popoverId} role="dialog" aria-label="思考过程">
-          <p className="live-activity-popover-caption">思考过程 · 仅本次运行</p>
-          <p className="live-activity-popover-title">{thinking.title}</p>
-          <p className="live-activity-popover-body">{body}</p>
-          {thinking.previous.length > 0 && (
+      {open && activeThinking && (
+        <div
+          ref={popoverRef}
+          className="live-activity-popover"
+          data-placement={placement}
+          id={popoverId}
+          role="dialog"
+          aria-label="思考过程"
+        >
+          <p className="live-activity-popover-caption">思考过程</p>
+          <p className="live-activity-popover-title">{activeThinking.title}</p>
+          <p className="live-activity-popover-body">{activeThinking.body}</p>
+          {activeThinking.previous.length > 0 && (
             <ul className="live-activity-popover-previous">
-              {thinking.previous.map((title, index) => <li key={`${index}:${title}`} title={title}>{title}</li>)}
+              {activeThinking.previous.map((title, index) => <li key={`${index}:${title}`} title={title}>{title}</li>)}
             </ul>
           )}
         </div>

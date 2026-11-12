@@ -1665,6 +1665,7 @@ class ExecutionRepository(Repository):
         arguments_json: str,
         *,
         raw_arguments_json: str | None = None,
+        display_intent: str | None = None,
         payload_kind: Literal["function", "custom"] = "function",
         provenance: dict[str, object] | None = None,
         tool_set_hash: str | None = None,
@@ -1715,8 +1716,8 @@ class ExecutionRepository(Repository):
                 INSERT INTO tool_calls (
                     id, item_id, model_step_index, batch_order, provider_call_id,
                     tool_name, payload_kind, status, arguments_json, raw_arguments_json, provenance_json,
-                    tool_set_hash, started_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
+                    tool_set_hash, started_at, display_intent
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     tool_call_id,
@@ -1731,6 +1732,7 @@ class ExecutionRepository(Repository):
                     provenance_json,
                     tool_set_hash,
                     now,
+                    display_intent,
                 ),
             )
             tool_event = append_event(
@@ -1816,6 +1818,18 @@ class ExecutionRepository(Repository):
             ).fetchone()
             if fact is None:
                 raise InvalidRunStateError("tool item is unavailable")
+            if fact["tool_name"] == "update_goal" and json.loads(result_json).get("outcome") == "success":
+                from eidos_runtime.domain.goal import GoalDeclaration, GoalError
+                from eidos_runtime.persistence.goals import GoalRepository
+                from eidos_runtime.runtime.errors import tool_error
+                arguments = connection.execute("SELECT arguments_json FROM tool_calls WHERE item_id=?", (item_id,)).fetchone()[0]
+                try:
+                    GoalRepository(self.database).declare(str(fact["run_id"]), item_id,
+                        GoalDeclaration.model_validate_json(arguments), connection=connection)
+                except GoalError as error:
+                    result_json = json.dumps(tool_error("update_goal", error.code, str(error)))
+                    model_result_json = ui_result_json = result_json
+                    item_status = tool_status = "failed"
             ensure_transition(
                 ToolCallStatus(fact["tool_status"]), ToolCallStatus(tool_status)
             )
@@ -2380,6 +2394,29 @@ class ExecutionRepository(Repository):
                 (item_id,),
             ).fetchone()
         return row is not None
+
+    def record_shell_display_rewrite(
+        self, item_id: str, display_command: str | None,
+    ) -> CommittedMutation[dict[str, object]]:
+        with self.lock, self._connection() as connection:
+            updated = connection.execute(
+                """
+                UPDATE tool_calls
+                SET display_intent = NULL, display_command = ?
+                WHERE item_id = ? AND status = 'running' AND tool_name = 'run_shell'
+                """,
+                (display_command, item_id),
+            )
+            if updated.rowcount != 1:
+                raise InvalidRunStateError("shell display is unavailable")
+            item = connection.execute(
+                "SELECT session_id, run_id FROM items WHERE id = ?", (item_id,),
+            ).fetchone()
+            event = append_event(
+                connection, EventType.ITEM_UPDATED, _now_ms(), {"item_id": item_id},
+                session_id=item["session_id"], run_id=item["run_id"],
+            )
+        return CommittedMutation(self.read_item(item_id), (event,))
 
     def record_workspace_change(
         self,

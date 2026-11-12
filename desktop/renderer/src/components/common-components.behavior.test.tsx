@@ -10,7 +10,7 @@ import { Kbd } from "./Kbd.js";
 import { SearchInput } from "./SearchInput.js";
 import { SettingSection } from "./SettingSection.js";
 import { Spinner } from "./Spinner.js";
-import { ToastContainer } from "./Toast.js";
+import { ToastContainer } from "./ToastContainer.js";
 
 describe("Global common components", () => {
   describe("SearchInput", () => {

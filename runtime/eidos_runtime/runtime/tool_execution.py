@@ -45,6 +45,7 @@ from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
 from eidos_runtime.tools.contracts import GENERIC_PROJECTOR, RunShellInput
+from eidos_runtime.tools.search import TOOL_SEARCH_NAME
 from eidos_runtime.tools.registry import (
     ToolArgumentValidationResult,
     ToolConcurrencyPolicy,
@@ -499,6 +500,24 @@ class ToolExecutionController:
                 payload = CustomToolPayload(input=str(updated["patch"])) if isinstance(call.payload, CustomToolPayload) else FunctionToolPayload(arguments=updated)
                 call = ModelToolCall(call.provider_call_id, call.name, payload, raw_payload=call.raw_payload or call.payload)
                 plan = self.dispatcher.plan(call, plan.binding)
+                if call.name == "run_shell" and isinstance(tool_call, dict):
+                    rewritten = self.dispatcher.validate_execution(call, plan)
+                    if rewritten is not None and rewritten.valid:
+                        before = validation.normalized_arguments or {}
+                        after = rewritten.normalized_arguments or {}
+                        command = after.get("command")
+                        command_changed = isinstance(command, str) and command != before.get("command")
+                        cwd_changed = after.get("cwd", ".") != before.get("cwd", ".")
+                        if command_changed or cwd_changed:
+                            # Keep the original execution record for approval recovery.
+                            display_command = (
+                                self.sensitive.redact_for_presentation(command).text[:16 * 1024]
+                                if isinstance(command, str) and command_changed else None
+                            )
+                            if tool_call.get("displayIntent") or tool_call.get("displayCommand") != display_command:
+                                mutation = self.store.record_shell_display_rewrite(str(item["id"]), display_command)
+                                item = mutation.value
+                                self.events.publish(mutation, item=item)
         call_id = call.provider_call_id
         if isinstance(tool_call, dict) and isinstance(tool_call.get("id"), str):
             call_id = tool_call["id"]
@@ -568,8 +587,13 @@ class ToolExecutionController:
                         call.name,
                         "tool_not_activated",
                         f"Tool {call.name} is not activated. No tool was executed. "
-                        "This historical call was outside its original step tool set. "
-                        "Use the tools advertised for a new step; do not replay this call.",
+                        + (
+                            f'Call {TOOL_SEARCH_NAME} with query="{call.name}", wait for its result, '
+                            "then call the tool in a later step."
+                            if self.dispatcher.has_tool(TOOL_SEARCH_NAME) else
+                            "This historical call was outside its original step tool set. "
+                            "Use the tools advertised for a new step; do not replay this call."
+                        ),
                     ),
                     "completed",
                 )

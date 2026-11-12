@@ -21,7 +21,6 @@ FAULT_POINTS = frozenset({
     "finalization_model_failure",
     "jsonrpc_output_disconnect",
     "cancel_claim_race",
-    "configure_worker_race",
     "cancel_approval_race",
     "cancel_finalization_race",
     "shutdown_tool_completion_race",

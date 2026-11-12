@@ -17,7 +17,7 @@ from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.runtime.run_resources import RunResources  # noqa: E402
 from eidos_runtime.runtime.shell_process_manager import ShellProcessManager  # noqa: E402
 from eidos_runtime.sandbox.shell import ShellLaunchSpec  # noqa: E402
-from eidos_runtime.tools.contracts import project_tool_result  # noqa: E402
+from tool_projection import project_tool_result  # noqa: E402
 from eidos_runtime.tools.read_tool_output import (  # noqa: E402
     READ_TOOL_OUTPUT_MODEL_CONTENT_JSON_BYTES,
     READ_TOOL_OUTPUT_MODEL_PAGE_BYTES,

@@ -6,6 +6,7 @@
  */
 
 export const IPC = {
+  GOAL_EXECUTE: "goal:execute",
   SHELL_ENVIRONMENT_READ: "shell-environment:read",
   PERSONALIZATION_READ: "personalization:read",
   PERSONALIZATION_SAVE: "personalization:save",
@@ -199,5 +200,3 @@ export const IPC = {
   APP_NEW_TASK: "app:new-task",
   APP_OPEN_WORKSPACE: "app:open-workspace",
 } as const;
-
-export type IPCChannel = (typeof IPC)[keyof typeof IPC];

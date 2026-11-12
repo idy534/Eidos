@@ -96,8 +96,7 @@
   border-color: var(--line);
 }
 
-.mcp-connection-notice,
-.mcp-connection-hint {
+.mcp-connection-notice {
   margin: 0;
   font-size: 0.78125rem;
   color: var(--muted);

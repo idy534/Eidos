@@ -181,6 +181,7 @@ export function ApprovalModeSelector({
             <p style={{ margin: "0 0 0.5rem", fontWeight: 500 }}>Eidos 将不再逐项请求批准</p>
             <p style={{ margin: 0, color: "var(--muted)" }}>
               本次任务将以当前 macOS 用户的权限读写文件、运行命令和访问网络。操作可能造成数据丢失、凭据泄露或系统设置变化，也可能修改 Eidos 自身的数据。请仅在信任当前任务时开启。
+              目标模式会把该权限用于本目标的后续执行。
             </p>
           </div>
         }

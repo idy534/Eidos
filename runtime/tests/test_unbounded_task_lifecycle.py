@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
-from eidos_runtime.runtime.loop import RuntimeEngine
+from eidos_runtime.runtime.engine import RuntimeEngine
 
 
 class UnboundedTaskLifecycleTests(unittest.TestCase):

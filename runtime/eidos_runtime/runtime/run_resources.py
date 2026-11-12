@@ -7,7 +7,7 @@ import hashlib
 from typing import TYPE_CHECKING
 
 from eidos_runtime.db.storage import SessionStore
-from eidos_runtime.extensions.browser_plugin import BrowserLaunch
+from eidos_runtime.extensions.browser_plugin import BROWSER_PLUGIN_ID, BROWSER_SERVER_ID, BrowserLaunch
 from eidos_runtime.infrastructure.browser_host import BrowserHost
 from eidos_runtime.runtime.browser_launch import resolve_browser_launch
 from eidos_runtime.extensions.mcp import McpManager
@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from eidos_runtime.runtime.hooks import HookService
 from eidos_runtime.runtime.shell_process_manager import ShellProcessManager
 from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
+from eidos_runtime.tools.search import deferred_tool_names, tool_search_entry
 from eidos_runtime.tools.request_permissions import request_permissions_entry
 from eidos_runtime.tools.memory import memory_entries
 from eidos_runtime.tools.planning import planning_entries
@@ -52,6 +53,14 @@ from eidos_runtime.tools.view_image import ViewImageRootAuthority, view_image_en
 
 if TYPE_CHECKING:
     from eidos_runtime.application.collaboration import CollaborationApplication
+
+
+def _is_bundled_browser_tool(entry: ToolRegistryEntry) -> bool:
+    # Eidos ships and classifies these tools itself, so they are always listed.
+    return (
+        entry.provenance.plugin_id == BROWSER_PLUGIN_ID
+        and entry.provenance.server_id == BROWSER_SERVER_ID
+    )
 
 
 class RunResourceError(RuntimeError):
@@ -170,6 +179,7 @@ class RunResources:
             self._select_skills(self.user_input, turn_id=self.run_id)
             self._refresh_skill_dependency_diagnostics()
             self._set_registry()
+            self._activate_selected_sources()
             return self
         except SkillReadError as error:
             self.close()
@@ -263,6 +273,14 @@ class RunResources:
         channel_origin = ChannelRepository(self.store.database).origin(self.run_id)
         automation_origin = AutomationRepository(self.store.database).origin(self.run_id)
         automation_tools = ()
+        from eidos_runtime.persistence.goals import GoalRepository
+        from eidos_runtime.tools.goal import goal_entry
+        goals = GoalRepository(self.store.database)
+        goal = goals.for_run(self.run_id).goal
+        goal_origin = self.store.read_run(self.run_id).get("goalOrigin")
+        automatic_goal = isinstance(goal_origin, dict) and goal_origin.get("trigger") != "user_input"
+        goal_tools = (goal_entry(goals),) if (not self.is_child and goal is not None
+            and goal.status == "active" and self.store.read_run(self.run_id).get("workMode", "execute") == "execute") else ()
         if self.store.automations is not None and not self.is_child and channel_origin is None:
             if automation_origin is None:
                 automation_tools = (automation_entry(self.store.automations),)
@@ -287,6 +305,7 @@ class RunResources:
         base = ToolRegistry.build(
             builtin_entries=(
                 *automation_tools,
+                *goal_tools,
                 *search_tools,
                 *self.tool_executor.registry.entries,
                 read_tool_output_entry(self.store, self.run_id, self.shell_process_manager),
@@ -295,7 +314,7 @@ class RunResources:
                 *memory_entries(
                     child=self.is_child,
                     read_enabled=memory_access.read_enabled,
-                    write_enabled=memory_access.writable and automation_origin is None and channel_origin is None,
+                    write_enabled=memory_access.writable and automation_origin is None and channel_origin is None and not automatic_goal,
                 ),
                 *(collaboration_entries(self.collaboration, child=self.is_child) if self.collaboration else ()),
                 *planning_entries(include_plan=self.store.read_run(self.run_id).get("workMode") == "plan"),
@@ -315,8 +334,44 @@ class RunResources:
                 if entry.spec.name not in {"request_permissions", "request_user_input", "write_plan"}
                 and (entry.provenance.source_id != "eidos.collaboration" or entry.spec.name == "send_message")
             ))
+        deferred = deferred_tool_names(base.entries, always_listed=_is_bundled_browser_tool)
+        if deferred:
+            # Past the activation budget, connected tools are found through tool_search
+            # instead of being sent with every request.
+            searchable = tuple(entry for entry in base.entries if entry.spec.name in deferred)
+            base = ToolRegistry(
+                (*base.entries, tool_search_entry(searchable)),
+                quarantined=base.quarantined,
+                deferred_names=deferred,
+            )
         self.registry = base
         self.dispatcher = ToolDispatcher(self.registry)
+
+    def _activate_selected_sources(self) -> None:
+        """List the unlisted tools of a plugin or MCP server the user attached to this Run."""
+        if self.registry is None:
+            return
+        unlisted = tuple(
+            entry for entry in self.registry.entries if self.registry.is_deferred(entry.spec.name)
+        )
+        if not unlisted:
+            return
+        selections = InputContextRepository(self.store.database).for_run(self.run_id)
+        plugins = {
+            value.selection_id for value in selections
+            if value.reference.kind == "plugin" and value.selection_id is not None
+        }
+        servers = {
+            (value.plugin_id, value.selection_id) for value in selections
+            if value.reference.kind == "mcp" and value.selection_id is not None
+        }
+        names = tuple(
+            entry.spec.name for entry in unlisted
+            if entry.provenance.plugin_id in plugins
+            or (entry.provenance.plugin_id, entry.provenance.server_id) in servers
+        )
+        if names:
+            self.store.activate_tools(self.run_id, names)
 
     def _select_skills(self, user_input: str, *, turn_id: str) -> None:
         if self.skills is None or self.skill_catalog_snapshot is None:

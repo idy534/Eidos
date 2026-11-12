@@ -1,7 +1,7 @@
 """Samples are Playwright MCP 0.0.84 results captured from a real Eidos Run."""
 from eidos_runtime.domain.browser_result import browser_view, clean_browser_text
 from eidos_runtime.protocol.tool_text import project_tool_text
-from eidos_runtime.tools.contracts import project_tool_result
+from tool_projection import project_tool_result
 
 OUT = "../../../../../private/tmp/eidos-mcp-wyuhbjuc/tmp/browser-output"
 

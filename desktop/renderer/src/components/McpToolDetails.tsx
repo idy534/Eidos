@@ -1,7 +1,6 @@
-import { createContext, useEffect, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { createContext, useCallback, useEffect, useState, type ReactNode } from "react";
 import type { Item, ToolAttachment, ToolCall } from "../../../shared/index.js";
-import { CloseIcon } from "./MenuIcons.js";
+import { ImageLightbox } from "./ImageLightbox.js";
 import { ToolTextView } from "./ToolTextView.js";
 
 /** pluginId → plugin display name, provided where the plugin list is loaded. */
@@ -121,25 +120,23 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** One saved tool image, read through Runtime with a lightbox on click. */
-export function ToolImage({ sessionId, toolCallId, attachment, name }: {
-  sessionId: string;
-  toolCallId: string;
-  attachment: ToolAttachment;
-  name: string;
-}) {
+/**
+ * Preview URL for one saved tool image, read through Runtime. `index` undefined
+ * holds no preview, which lets off-screen images give their grant back.
+ */
+export function useToolContentPreview(sessionId: string, toolCallId: string, index: number | undefined) {
   const [state, setState] = useState<{ url?: string; error?: boolean }>({});
   const [attempt, setAttempt] = useState(0);
-  const [open, setOpen] = useState(false);
   useEffect(() => {
     let active = true;
     let created: string | undefined;
     setState({});
+    if (index === undefined) return;
     if (typeof window.eidosRuntime?.prepareToolContentPreview !== "function") {
       setState({ error: true });
       return;
     }
-    void window.eidosRuntime.prepareToolContentPreview(sessionId, toolCallId, attachment.index)
+    void window.eidosRuntime.prepareToolContentPreview(sessionId, toolCallId, index)
       .then((url) => {
         created = url;
         if (active) setState({ url });
@@ -150,38 +147,39 @@ export function ToolImage({ sessionId, toolCallId, attachment, name }: {
       active = false;
       if (created) void window.eidosRuntime?.releaseInputPreview?.(created);
     };
-  }, [sessionId, toolCallId, attachment.index, attempt]);
-  useEffect(() => {
-    if (!open) return;
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [open]);
+  }, [sessionId, toolCallId, index, attempt]);
+  const retry = useCallback(() => setAttempt((value) => value + 1), []);
+  const fail = useCallback(() => setState({ error: true }), []);
+  return { url: state.url, error: state.error === true, retry, fail };
+}
+
+/** One saved tool image, read through Runtime with a lightbox on click. */
+export function ToolImage({ sessionId, toolCallId, attachment, name }: {
+  sessionId: string;
+  toolCallId: string;
+  attachment: ToolAttachment;
+  name: string;
+}) {
+  const preview = useToolContentPreview(sessionId, toolCallId, attachment.index);
+  const [open, setOpen] = useState(false);
   const details = [attachment.mime === "image/jpeg" ? "JPEG" : attachment.mime === "image/png" ? "PNG" : "", attachment.bytes ? formatBytes(attachment.bytes) : ""]
     .filter(Boolean).join(" · ");
   return (
     <div className="tool-image-preview-card">
-      {state.url ? (
+      {preview.url ? (
         <button type="button" className="tool-image-thumbnail-btn" onClick={() => setOpen(true)}
           title={details ? `${name} · ${details}` : name} aria-label={`放大查看${name}`}>
-          <img src={state.url} alt={name} loading="lazy" onError={() => setState({ error: true })} />
+          <img src={preview.url} alt={name} loading="lazy" onError={preview.fail} />
         </button>
-      ) : state.error ? (
+      ) : preview.error ? (
         <p className="tool-image-empty" role="status">
-          {name}无法加载。<button type="button" className="mcp-inline-action" onClick={() => setAttempt((value) => value + 1)}>重试</button>
+          {name}无法加载。<button type="button" className="mcp-inline-action" onClick={preview.retry}>重试</button>
         </p>
       ) : (
         <div className="tool-image-loading"><span>正在加载{name}…</span></div>
       )}
-      {open && state.url && createPortal(
-        <div className="artifact-image-preview" role="dialog" aria-modal="true" aria-label={`${name}预览`}
-          onClick={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
-          <button type="button" className="artifact-image-preview__close" aria-label="关闭图片预览" autoFocus onClick={() => setOpen(false)}>
-            <CloseIcon />
-          </button>
-          <img src={state.url} alt={name} />
-        </div>,
-        document.body,
+      {open && preview.url && (
+        <ImageLightbox images={[{ name, dialogLabel: `${name}预览`, url: preview.url }]} onClose={() => setOpen(false)} />
       )}
     </div>
   );

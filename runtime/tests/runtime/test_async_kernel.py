@@ -28,6 +28,14 @@ from eidos_runtime.protocol.server import RuntimeServer
 from eidos_runtime.sandbox.seatbelt import SeatbeltSelfTestResult
 
 
+def _persistent_task_kinds(server: RuntimeServer) -> list[str]:
+    # Startup may also run short one-off tasks such as resource warmup, which
+    # depend on the machine. Only the persistent services are a fixed set.
+    with server.supervisor.lock:
+        tasks = tuple(server.supervisor._managed_tasks.values())
+    return sorted(task.kind for task in tasks if task.persistent)
+
+
 class RuntimeAsyncKernelTests(unittest.TestCase):
     def test_owned_tasks_run_concurrently_and_retain_bounded_diagnostics(
         self,
@@ -531,7 +539,7 @@ class RuntimeAsyncKernelTests(unittest.TestCase):
             self.assertIs(server.supervisor.async_kernel, kernel)
             kinds = [resource.kind for resource in server.supervisor.resources.active_resources()]
             self.assertEqual(kinds.count(RuntimeResourceKind.ASYNC_KERNEL), 1)
-            self.assertEqual(kinds.count(RuntimeResourceKind.MANAGED_TASK), 1)
+            self.assertEqual(_persistent_task_kinds(server), ["browser-host", "storage-maintenance"])
             self.assertTrue(set(kinds) <= {RuntimeResourceKind.ASYNC_KERNEL, RuntimeResourceKind.MANAGED_TASK, RuntimeResourceKind.ASYNC_TASK})
             self.assertIsNotNone(server.storage_maintenance)
 
@@ -562,7 +570,7 @@ class RuntimeAsyncKernelTests(unittest.TestCase):
             self.assertIs(server.async_kernel, kernel)
             kinds = [resource.kind for resource in server.supervisor.resources.active_resources()]
             self.assertEqual(kinds.count(RuntimeResourceKind.ASYNC_KERNEL), 1)
-            self.assertEqual(kinds.count(RuntimeResourceKind.MANAGED_TASK), 1)
+            self.assertEqual(_persistent_task_kinds(server), ["browser-host", "storage-maintenance"])
             self.assertTrue(set(kinds) <= {RuntimeResourceKind.ASYNC_KERNEL, RuntimeResourceKind.MANAGED_TASK, RuntimeResourceKind.ASYNC_TASK})
             self.assertIsNotNone(server.storage_maintenance)
             server.close()

@@ -158,14 +158,6 @@ class RuntimeDependencyCoordinator:
     def catalog_snapshot(self) -> RuntimeDependencySnapshot | None:
         return self._snapshot
 
-    def set_skill_metadata_source(
-        self,
-        skills: SkillCatalog,
-        skill_snapshot: SkillCatalogSnapshot,
-    ) -> None:
-        self.skills = skills
-        self.skill_snapshot = skill_snapshot
-
     def default_binding(self) -> RuntimeDependencyBinding | None:
         """Resolve the base binding with ``requirements=None``."""
 

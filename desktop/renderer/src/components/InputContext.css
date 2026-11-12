@@ -467,14 +467,11 @@
 .composer > .input-reference-list--shelf {
   padding: 0.625rem 0.875rem 0.25rem;
 }
-.composer .input-reference-hint,
-.composer .input-reference-error {
+.composer .input-reference-hint {
   padding-inline: 0.875rem;
   margin: 0.25rem 0;
 }
-.input-reference-hint,
-.input-reference-error { font-size: var(--font-size-caption); margin: 5px 0; }
-.input-reference-error { color: var(--danger, #b42318); }
+.input-reference-hint { font-size: var(--font-size-caption); margin: 5px 0; }
 /* Reference Image Lightbox (reusing & extending artifact-image-preview) */
 .ref-image-lightbox {
   cursor: default;

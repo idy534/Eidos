@@ -125,6 +125,12 @@ def test_runtime_captures_image_before_a_later_step_deletes_it(store, tmp_path):
     RuntimeEngine(store, model, lambda _: None).run(run["id"], threading.Event())
     assert store.read_run(run["id"])["status"] == "succeeded"
     assert not source.exists()
+    # Desktop previews view_image from the saved image, so the result must expose it once the source is gone.
+    row = store.connection.execute("SELECT id, ui_result_json FROM tool_calls WHERE tool_name = 'view_image'").fetchone()
+    assert json.loads(row["ui_result_json"])["attachments"] == [
+        {"index": 0, "kind": "image", "mime": "image/png", "bytes": len(original)},
+    ]
+    assert base64.b64decode(store.read_tool_content(session["id"], row["id"], 0, 0, None).data) == original
     for context in model.contexts[1:]:
         messages = encode_context(context, supports_images=True)
         binaries = [value for message in messages for part in message.parts if isinstance(part, ToolReturnPart) and isinstance(part.content, list) for value in part.content if isinstance(value, BinaryContent)]

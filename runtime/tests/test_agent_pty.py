@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
-from eidos_runtime.runtime.loop import RuntimeLoop
+from eidos_runtime.runtime.engine import RuntimeEngine
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.runtime.shell_output_buffer import ShellOutputBuffer
 from eidos_runtime.runtime.shell_process_manager import ShellProcessManager, ShellProcessSessionNotFound
@@ -252,7 +252,7 @@ def test_runtime_pty_keeps_permissions_and_persists_actual_transport(tmp_path, m
             ModelResponse(text="Checked"),
         ])
         approvals = []
-        RuntimeLoop(store, model, lambda _: None, shell_available=True,
+        RuntimeEngine(store, model, lambda _: None, shell_available=True,
                     request_approval=lambda request: approvals.append(request)).run(run["id"], threading.Event())
         row = store.connection.execute(
             "SELECT result_json FROM tool_calls WHERE provider_call_id='terminal'"
@@ -341,7 +341,7 @@ def test_runtime_controls_use_intents_and_keep_terminal_facts_after_restart(tmp_
         model = InteractionModel([ModelResponse(tool_calls=(ModelToolCall(
             "terminal", "run_shell", {"command": command, "tty": True, "yieldTimeMs": 250},
         ),))])
-        RuntimeLoop(store, model, lambda _: None).run(run["id"], threading.Event())
+        RuntimeEngine(store, model, lambda _: None).run(run["id"], threading.Event())
         resized, invalid, ended = result("resize"), result("invalid"), result("terminal")
         assert resized["data"]["controlAction"] == "resize"
         assert (resized["data"]["columns"], resized["data"]["rows"]) == (120, 40)
@@ -374,7 +374,7 @@ def test_runtime_controls_use_intents_and_keep_terminal_facts_after_restart(tmp_
                 "sessionId": ended["data"]["sessionId"], "action": "terminate",
             }),)), ModelResponse(text="Old terminal is closed"),
         ])
-        RuntimeLoop(reopened, model, lambda _: None).run(next_run["id"], threading.Event())
+        RuntimeEngine(reopened, model, lambda _: None).run(next_run["id"], threading.Event())
         stale = json.loads(reopened.connection.execute(
             "SELECT result_json FROM tool_calls WHERE provider_call_id='stale'",
         ).fetchone()[0])

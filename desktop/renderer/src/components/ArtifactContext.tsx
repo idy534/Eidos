@@ -1,5 +1,5 @@
 import type { ProjectRootDto } from "../../../shared/project-workspaces.js";
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { getOfficialFileIcon } from "./FileIcons.js";
 import type { ToastType } from "./ToastContainer.js";
 import { Tooltip } from "./Tooltip.js";
@@ -115,8 +115,10 @@ export function displayFilePath(
   return `${path}${lineSuffix}`;
 }
 
-export function usePreviewUrl(path: string | undefined, version?: string) {
+/** `root` selects another Session root; Runtime still verifies it belongs to the Session. */
+export function usePreviewUrl(path: string | undefined, version?: string, root?: string) {
   const actions = useArtifacts();
+  const previewRoot = root ?? actions?.executionRoot;
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     if (!actions || !path || version || typeof window.eidosRuntime?.onNotification !== "function") return;
@@ -124,7 +126,7 @@ export function usePreviewUrl(path: string | undefined, version?: string) {
       if (event.method === "workspace/changed" && event.params.sessionId === actions.sessionId && event.params.paths.some((changed) => changed === path || path.startsWith(changed + "/"))) setRevision((value) => value + 1);
     });
   }, [actions?.sessionId, path, version]);
-  const key = JSON.stringify([actions?.sessionId, actions?.executionRoot, actions?.projectId, path, version, revision]);
+  const key = JSON.stringify([actions?.sessionId, previewRoot, actions?.projectId, path, version, revision]);
   const [state, setState] = useState<{ key?: string; url?: string; error?: string }>({});
   useEffect(() => {
     let current = true;
@@ -135,7 +137,7 @@ export function usePreviewUrl(path: string | undefined, version?: string) {
       actions.sessionId,
       path,
       version,
-      actions.executionRoot,
+      previewRoot,
       actions.projectId,
     ).then((url) => {
       if (url === null) {
@@ -152,15 +154,94 @@ export function usePreviewUrl(path: string | undefined, version?: string) {
         void window.eidosRuntime.releaseWorkspacePreview(created).catch(() => {});
       }
     };
-  }, [actions?.sessionId, actions?.executionRoot, actions?.projectId, path, version, revision, key]);
+  }, [actions?.sessionId, previewRoot, actions?.projectId, path, version, revision, key]);
   return state.key === key ? state : {};
 }
 
-export function ArtifactImage({ path, alt, version }: { path: string; alt: string; version?: string }) {
-  const { url, error } = usePreviewUrl(path, version);
+export interface ImageTarget {
+  path: string;
+  root: string;
+  rootId?: string;
+}
+
+/** Relative sources stay in the displayed root; absolute sources may name any Session root. */
+export function resolveImageTarget(src: string, actions: ArtifactActions, documentPath?: string): ImageTarget | undefined {
+  const primary = artifactPath(src, actions.executionRoot, documentPath);
+  if (primary) return { path: primary, root: actions.executionRoot, ...(actions.rootId ? { rootId: actions.rootId } : {}) };
+  if (documentPath || !(src.startsWith("/") || src.startsWith("file://"))) return undefined;
+  for (const root of actions.roots ?? []) {
+    if (root.path === actions.executionRoot) continue;
+    const path = artifactPath(src, root.path);
+    if (path) return { path, root: root.path, rootId: root.id };
+  }
+  return undefined;
+}
+
+function scrollParent(element: Element): Element | null {
+  for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+    const { overflowY } = getComputedStyle(parent);
+    if (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") return parent;
+  }
+  return null;
+}
+
+/**
+ * Preview grants are a bounded Main resource and the Conversation stays mounted,
+ * so images hold a grant only while they are near the scrolled viewport.
+ */
+export function useNearViewport<T extends Element>() {
+  const ref = useRef<T>(null);
+  const [near, setNear] = useState(() => typeof IntersectionObserver === "undefined");
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      const entry = entries[entries.length - 1];
+      if (entry) setNear(entry.isIntersecting);
+    }, { root: scrollParent(element), rootMargin: "1200px 0px" });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, near] as const;
+}
+
+export function ArtifactImage({ path, alt, version, root, rootId }: { path: string; alt: string; version?: string; root?: string; rootId?: string }) {
+  const [ref, near] = useNearViewport<HTMLSpanElement>();
+  const { url, error } = usePreviewUrl(near ? path : undefined, version, root);
   const actions = useArtifacts();
-  return url ? <button type="button" className="artifact-image-button" onClick={() => actions?.openFile(path)} aria-label={`打开 ${alt || path}`}><img src={url} alt={alt} loading="lazy" onError={(event) => { event.currentTarget.alt = "图片加载失败，请刷新文件。"; }} /></button>
-    : <span role="status">{error || `正在读取 ${alt || path}…`}</span>;
+  const [failedUrl, setFailedUrl] = useState<string>();
+  const [size, setSize] = useState<{ width: number; height: number }>();
+  const label = alt || path;
+  let body: ReactNode;
+  if (url && failedUrl !== url) {
+    body = (
+      <button
+        type="button"
+        className="artifact-image-button"
+        onClick={() => { if (rootId === undefined) actions?.openFile(path); else actions?.openFile(path, { rootId }); }}
+        aria-label={`打开 ${label}`}
+        title={path}
+      >
+        <img
+          src={url}
+          alt={alt}
+          onLoad={(event) => {
+            const { offsetWidth: width, offsetHeight: height } = event.currentTarget;
+            if (width > 0 && height > 0) setSize({ width, height });
+          }}
+          onError={() => setFailedUrl(url)}
+        />
+      </button>
+    );
+  } else if (error || (url && failedUrl === url)) {
+    body = <span className="artifact-image-fallback" role="status" title={path}>{error || `${label}：图片加载失败，请刷新文件。`}</span>;
+  } else if (!near && size) {
+    // Keep the measured box while the grant is released so history does not shift.
+    body = <span className="artifact-image-placeholder" style={{ width: size.width, height: size.height }} aria-label={label} role="img" />;
+  } else {
+    body = <span className="artifact-image-loading" role="status">{`正在读取 ${label}…`}</span>;
+  }
+  return <span ref={ref} className="artifact-image">{body}</span>;
 }
 
 export function ArtifactLink({ href, documentPath, children }: { href?: string; documentPath?: string; children: ReactNode }) {

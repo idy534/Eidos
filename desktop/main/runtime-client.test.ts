@@ -140,12 +140,6 @@ test("preserves every workspace and lifecycle business code in the closed contra
     "REVIEW_ANCHOR_INVALID",
     "REVIEW_COMMENT_ID_REUSED",
     "REVIEW_COMMENT_NOT_FOUND",
-    "CHECKPOINT_GIT_STATE_UNAVAILABLE",
-    "CHECKPOINT_FORK_WORKTREE_FAILED",
-    "CHECKPOINT_REWIND_FAILED",
-    "CHECKPOINT_WORKFLOW_BUSY",
-    "DIRECT_CHECKPOINT_FORK_PATH_FORBIDDEN",
-    "MANAGED_CHECKPOINT_FORK_PATH_FORBIDDEN",
     "ASYNC_OPERATION_CANCELED",
     "ASYNC_OPERATION_INTERRUPTED",
   ];
@@ -1686,12 +1680,14 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     path.join(packageRoot, "__main__.py"),
     [
       "import json, sys",
+      `shell_item=json.load(open(${JSON.stringify(protocolV1Fixture)}, encoding='utf-8'))['shellDisplayIntent']['item']`,
       "def send(message): print(json.dumps(message, separators=(',', ':')), flush=True)",
       "json.loads(sys.stdin.readline())",
       "send({'jsonrpc':'2.0','id':'client-1','result':{'protocolVersion':1,'runtimeVersion':'0.3.0','capabilities':{'runShell':True,'modelConfigured':False}}})",
+      "send({'jsonrpc':'2.0','method':'item/started','params':{'sessionId':shell_item['sessionId'],'runId':shell_item['runId'],'item':shell_item}})",
       "send({'jsonrpc':'2.0','id':'server-file-1','method':'item/requestApproval','params':{'id':'forged-id','sessionId':'s1','runId':'r1','itemId':'i1','toolCallId':'tc1','summary':'file summary','kind':'file_change','diff':'diff text','reviewFallback':'自动审批超时','requiresHumanConfirmation':True,'riskWarning':'此操作会修改受保护路径。','apiKey':'secret-key','environment':{'PRIVATE_TOKEN':'secret'}}})",
       "sys.stdin.readline()",
-      "send({'jsonrpc':'2.0','id':'server-cmd-1','method':'item/requestApproval','params':{'id':'forged-id','sessionId':'s1','runId':'r1','itemId':'i2','toolCallId':'tc2','summary':'cmd summary','kind':'command_execution','command':'ls','cwd':'/tmp','networkEnabled':False,'timeoutSeconds':30,'token':'secret-token'}})",
+      "send({'jsonrpc':'2.0','id':'server-cmd-1','method':'item/requestApproval','params':{'id':'forged-id','sessionId':'s1','runId':'r1','itemId':'i2','toolCallId':'tc2','summary':'cmd summary','kind':'command_execution','command':'ls','cwd':'/tmp','networkEnabled':False,'timeoutSeconds':30,'displayIntent':'List files','token':'secret-token'}})",
       "sys.stdin.readline()",
       "send({'jsonrpc':'2.0','id':'server-ext-1','method':'item/requestApproval','params':{'id':'forged-id','sessionId':'s1','runId':'r1','itemId':'i3','toolCallId':'tc3','summary':'ext summary','kind':'external_tool','toolName':'my_tool','arguments':{'foo':'bar'},'provenance':{'kind':'mcp','sourceId':'srv1','sourceVersion':'1.0','contentHash':'h1','extraProvField':'secret'},'permissionProfile':'connector','timeoutSeconds':60,'envNames':['PATH'],'internalDiagnostics':{'stack':'path'}}})",
       "sys.stdin.readline()",
@@ -1712,11 +1708,13 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
   );
 
   const receivedRequests: Array<Record<string, unknown>> = [];
+  const notifications: RuntimeNotification[] = [];
   let client: RuntimeClient | undefined;
   try {
     client = new RuntimeClient({
       pythonExecutable: pythonExecutable,
       runtimeRoot,
+      onNotification: (notification) => notifications.push(notification),
       onApprovalRequest: async (req) => {
         receivedRequests.push(req as unknown as Record<string, unknown>);
         return { decision: "approve" };
@@ -1752,11 +1750,14 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     assert.equal(req2.id, "server-cmd-1");
     assert.equal(req2.kind, "command_execution");
     assert.equal(req2.command, "ls");
+    assert.equal(req2.displayIntent, "List files");
+    const shellStarted = notifications.find((notification) => notification.method === "item/started");
+    assert.equal(shellStarted?.params.item.toolCall?.displayIntent, "检查当前工作区有哪些未提交的改动");
     assert.equal(req2.networkEnabled, false);
     assert.equal(req2.token, undefined);
     assert.deepEqual(Object.keys(req2).sort(), [
       "additionalExecutableAccess", "additionalFileSystemAccess", "additionalReadAccess", "additionalWriteAccess",
-      "attemptOrdinal", "command", "cwd", "escalationReason", "executionMode",
+      "attemptOrdinal", "command", "cwd", "displayIntent", "escalationReason", "executionMode",
       "id", "itemId", "kind", "networkEnabled", "reason", "reviewFallback", "runId",
       "sandboxPermissions", "sessionId", "summary", "timeoutSeconds", "toolCallId",
       "requiresHumanConfirmation", "riskWarning",

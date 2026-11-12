@@ -39,7 +39,7 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 from eidos_runtime.model.client import (  # noqa: E402
     AssistantMessagePhase,
     ModelRequestError,
-    ModelToolDefinition,
+    FunctionToolDefinition,
 )
 from eidos_runtime.model.config import MODEL_CATALOG, ModelProfileSpec  # noqa: E402
 from eidos_runtime.model.prompts import (  # noqa: E402
@@ -68,7 +68,7 @@ class PydanticAIModelClientTests(unittest.TestCase):
             choices.append(info.model_settings["tool_choice"])
             yield {0: DeltaToolCall(name="submit_summary", json_args='{"ok":true}')}
         client = self.client(stream)
-        definition = ModelToolDefinition(name="submit_summary", description="Output only", parameters_json_schema={"type": "object"})
+        definition = FunctionToolDefinition(name="submit_summary", description="Output only", parameters_json_schema={"type": "object"})
         response = client.complete((), threading.Event(), lambda _: None, instructions=TEST_INSTRUCTIONS,
                                    tool_definitions=(definition,), required_tool=definition.name)
         self.assertEqual(choices, [["submit_summary"]])
@@ -432,7 +432,7 @@ class PydanticAIModelClientTests(unittest.TestCase):
             threading.Event(),
             lambda _delta: None,
             instructions=TEST_INSTRUCTIONS,
-            tool_definitions=(ModelToolDefinition(
+            tool_definitions=(FunctionToolDefinition(
                 name="apply_patch",
                 description="Apply a structured patch.",
                 parameters_json_schema={"type": "object"},
@@ -513,7 +513,7 @@ class PydanticAIModelClientTests(unittest.TestCase):
             captured["instructions"] = info.instructions
             yield "done"
 
-        definition = ModelToolDefinition(
+        definition = FunctionToolDefinition(
             name="read_file",
             description="Read a file.",
             parameters_json_schema={

@@ -361,7 +361,7 @@ export function WorktreeSettings({ onShowToast }: WorktreeSettingsProps = {}) {
             <div className="worktree-info-content">
               <h4>会话与历史持久化（Durable Session）</h4>
               <p>
-                Worktree 目录的清理仅释放文件系统的物理临时分支目录。会话元数据、上下文记忆、Checkpoints、Diff 对比记录及交互历史完整保留在 SQLite 数据库中。
+                Worktree 目录的清理仅释放文件系统的物理临时分支目录。会话元数据、上下文记忆、Diff 对比记录及交互历史完整保留在 SQLite 数据库中。
               </p>
             </div>
           </div>

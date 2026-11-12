@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 
 import pytest
+from schema_fixtures import remove_shell_display_schema
 
+from eidos_runtime.db.database import DATABASE_NAME
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
 from eidos_runtime.model.config import default_profile_snapshot
@@ -38,6 +41,7 @@ def test_unsandboxed_script_uses_auto_review_before_launch(tmp_path, monkeypatch
         ModelResponse(tool_calls=(ModelToolCall('shell', 'run_shell', {
             'command': 'sh ./render.sh', 'sandboxPermissions': 'require_escalated',
             'justification': 'Render the requested document',
+            'display_intent': 'Create a document preview',
         }),)),
         ModelResponse(tool_calls=(ModelToolCall('assessment', 'submit_approval_assessment', {
             'outcome': 'deny' if change == 'reject' else 'allow', 'risk': 'medium',
@@ -47,10 +51,12 @@ def test_unsandboxed_script_uses_auto_review_before_launch(tmp_path, monkeypatch
     ])
     model.profile_snapshot = default_profile_snapshot('deepseek-v4-flash')
     original = model.complete
+    reviewer_contexts = []
 
     def complete(*args, **kwargs):
         response = original(*args, **kwargs)
         if any(tool.name == 'submit_approval_assessment' for tool in kwargs.get('tool_definitions', ())):
+            reviewer_contexts.append(args[0])
             if change == 'script':
                 script.write_text('printf changed\n')
             if change == 'cancel':
@@ -68,6 +74,10 @@ def test_unsandboxed_script_uses_auto_review_before_launch(tmp_path, monkeypatch
         RuntimeEngine(store, model, lambda _: None, request_approval=unexpected, shell_available=True).run(run['id'], cancel)
         assert len(launches) == (1 if change == 'none' else 0)
         request = json.loads(store.connection.execute('SELECT request_json FROM approvals').fetchone()[0])
+        assert "displayIntent" not in request
+        # The acting model sees its own description again; the reviewer never does.
+        assert len(reviewer_contexts) == 1
+        assert "Create a document preview" not in json.dumps(reviewer_contexts[0])
         assert not request.get('requiresHumanConfirmation')
         assert request['sandboxEnforced'] is False
         assert request['reviewScriptEvidence'][0]['content'] == 'printf ready\n'
@@ -108,8 +118,47 @@ def test_script_evidence_is_bounded_and_cannot_follow_links_or_read_other_roots(
     assert all('private data' not in (script.content or '') for script in scripts)
 
 
+def test_changing_shell_display_intent_does_not_repeat_a_rejected_approval(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    requests = []
+    descriptions = ("Show a preview", "Print the preview text")
+    calls = tuple(
+        ModelToolCall(f"shell-{index}", "run_shell", {
+            "command": "printf ready",
+            "sandboxPermissions": "require_escalated",
+            "justification": "Request execution outside the sandbox",
+            "display_intent": description,
+        })
+        for index, description in enumerate(descriptions)
+    )
+    try:
+        session = store.create_session(str(workspace))
+        run, _ = store.create_run(session["id"], "Show a preview", approval_mode="manual")
+        RuntimeEngine(
+            store, ScriptedModel([ModelResponse(tool_calls=calls), ModelResponse(text="done")]),
+            lambda _: None, shell_available=True,
+            request_approval=lambda request, _: requests.append(request) or ApprovalDecision("reject"),
+        ).run(run["id"], threading.Event())
+        assert len(requests) == 1
+        assert requests[0]["displayIntent"] == descriptions[0]
+        rows = store.connection.execute(
+            "SELECT display_intent, result_json FROM tool_calls ORDER BY creation_seq",
+        ).fetchall()
+        assert tuple(row["display_intent"] for row in rows) == descriptions
+        assert all(json.loads(row["result_json"])["code"] == "user_rejected" for row in rows)
+        assert store.connection.execute("SELECT count(*) FROM durable_intents").fetchone()[0] == 0
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize('decision', ['approve', 'reject'])
-def test_pending_legacy_unsandboxed_approval_keeps_the_human_decision_after_restart(tmp_path, monkeypatch, decision):
+@pytest.mark.parametrize('with_intent', [False, True])
+def test_pending_legacy_unsandboxed_approval_keeps_the_human_decision_after_restart(
+    tmp_path, monkeypatch, decision, with_intent,
+):
     class Crash(BaseException):
         pass
 
@@ -141,12 +190,17 @@ def test_pending_legacy_unsandboxed_approval_keeps_the_human_decision_after_rest
             model = ScriptedModel([ModelResponse(tool_calls=(ModelToolCall('shell', 'run_shell', {
                 'command': 'sh ./render.sh', 'sandboxPermissions': 'require_escalated',
                 'justification': 'Render the document',
+                **({'display_intent': 'Create a document preview'} if with_intent else {}),
             }),))])
             with pytest.raises(Crash):
                 RuntimeEngine(store, model, lambda _: None, shell_available=True,
                               request_approval=lambda *_: (_ for _ in ()).throw(Crash())).run(run['id'], threading.Event())
         pending = store.typed_runtime_repository().read_pending_approval(run['id'])
         store.close()
+        if not with_intent:
+            with sqlite3.connect(data / DATABASE_NAME) as connection:
+                remove_shell_display_schema(connection)
+                connection.execute("PRAGMA user_version=52")
         store = SessionStore(data)
         store.initialize()
         requests = []
@@ -155,6 +209,7 @@ def test_pending_legacy_unsandboxed_approval_keeps_the_human_decision_after_rest
             request_approval=lambda request, _cancel: requests.append(request) or ApprovalDecision(decision),
         ).run(run['id'], threading.Event())
         assert len(requests) == 1 and requests[0]['requiresHumanConfirmation']
+        assert requests[0].get('displayIntent') == ('Create a document preview' if with_intent else None)
         assert len(launches) == (1 if decision == 'approve' else 0)
         row = store.connection.execute('SELECT id,decision,review_json FROM approvals').fetchone()
         assert (row['id'], row['decision']) == (pending.id, decision)

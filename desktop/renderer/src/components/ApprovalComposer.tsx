@@ -227,6 +227,7 @@ function ApprovalContent({ approval }: { approval: ApprovalRequest }) {
   if (approval.kind === "command_execution") return <>
     <pre className="approval-command" aria-label="完整命令">{approval.command}</pre>
     <dl className="approval-details">
+      {approval.displayIntent?.trim() && <DetailRow label="模型说明">{approval.displayIntent.trim()}</DetailRow>}
       <Directory cwd={approval.cwd} />
       <DetailRow label="执行方式">{approval.executionMode === "unsandboxed" ? "沙盒外执行" : approval.executionMode === "expanded_sandbox" ? "沙盒内执行（已扩展权限）" : "默认沙盒"}</DetailRow>
       <DetailRow label="批准范围">仅本次命令</DetailRow>

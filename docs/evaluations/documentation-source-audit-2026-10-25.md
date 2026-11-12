@@ -18,7 +18,7 @@
 | 主库版本与升级 | 能力页写 v39，Worktree 专题写 v1 且不升级旧库。 | [schema.py](../../runtime/eidos_runtime/db/schema.py) 的版本是 41，[database.py](../../runtime/eidos_runtime/db/database.py) 包含旧版本迁移。两处现在说明 v41、受支持迁移与未知版本的 health-only 行为。 |
 | 记忆存储与维护 | 架构正文和交互图仍列“旧记忆辅助库”与 Memory 后台任务。 | [存储布局](../../runtime/eidos_runtime/db/layout.py) 与 [StorageMaintenance](../../runtime/eidos_runtime/db/maintenance.py) 已使用主库记忆元数据和存储维护服务。v40 清理旧 memories.sqlite，当前正文由私有 Markdown 文件保存。 |
 | Worktree 生命周期 | 操作枚举遗漏 checkpoint/rewind。 | [WorktreeLifecycleScope](../../runtime/eidos_runtime/domain/worktree.py) 包含该操作。专题现在同步枚举。 |
-| Git、置顶与 Checkpoint | Worktree 专题把置顶、并行 Agent、Git UI、完整 Git 状态回退等已实现能力列为缺失。 | [置顶](../../runtime/eidos_runtime/application/sidebar.py)、[Git Workflow](../../runtime/eidos_runtime/application/git_workflow.py) 和 [Checkpoint](../../runtime/eidos_runtime/persistence/checkpoints.py) 已有实现。专题和限制页现在保留真正缺失的 Worktree 隔离、PR UI、逻辑 Context 回退等边界。 |
+| Git、置顶与 Checkpoint | Worktree 专题把置顶、并行 Agent、Git UI、完整 Git 状态回退等已实现能力列为缺失。 | [置顶](../../runtime/eidos_runtime/application/sidebar.py)、[Git Workflow](../../runtime/eidos_runtime/application/git_workflow.py) 和 Checkpoint（`persistence/checkpoints.py`，该文件已在 2026-11 移除） 已有实现。专题和限制页现在保留真正缺失的 Worktree 隔离、PR UI、逻辑 Context 回退等边界。 |
 | Git metadata 权限 | Worktree 专题写 metadata 只能只读。 | [权限物化](../../runtime/eidos_runtime/sandbox/permissions.py) 支持获批的精确写入和 full_access。专题现在说明默认权限与获批例外。 |
 | 长 Shell 门控 | 架构主流程写长 Shell 会阻止同 Run 的新副作用。 | [Tool Runtime](../../runtime/eidos_runtime/runtime/tool_runtime.py) 只在提交与启动窗口互斥。正文现在与后续章节保持一致。 |
 | Agent Shell PTY | 工具专题写 ShellProcessManager 管理 PTY。 | [ShellProcessManager](../../runtime/eidos_runtime/runtime/shell_process_manager.py) 使用管道；[Main Terminal](../../desktop/main/terminal-manager.ts) 单独管理 PTY。专题现在区分两条路径。 |

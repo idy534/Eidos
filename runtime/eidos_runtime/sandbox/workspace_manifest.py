@@ -4,8 +4,6 @@ from dataclasses import dataclass, replace
 import hashlib
 import json
 import os
-from pathlib import Path
-import stat
 import time
 from typing import TYPE_CHECKING
 
@@ -59,83 +57,6 @@ class WorkspaceDiff:
         # An incomplete before/after pair cannot distinguish a pre-existing
         # entry from a mutation. Only a complete pair can establish a change.
         return self.complete and bool(self.created or self.modified or self.deleted)
-
-
-def capture_workspace_manifest(
-    root: Path,
-    *,
-    max_entries: int = DEFAULT_MAX_ENTRIES,
-    deadline: float | None = None,
-) -> WorkspaceManifest:
-    root = root.resolve()
-    deadline = (
-        time.monotonic() + DEFAULT_SCAN_SECONDS
-        if deadline is None
-        else deadline
-    )
-    entries: list[WorkspaceManifestEntry] = []
-    pending = [("", root)]
-    complete = True
-    truncated = False
-    while pending:
-        if time.monotonic() >= deadline:
-            complete = False
-            truncated = True
-            break
-        relative_parent, directory = pending.pop()
-        try:
-            children = sorted(
-                os.scandir(directory), key=lambda value: os.fsencode(value.name)
-            )
-        except OSError:
-            complete = False
-            continue
-        for child in children:
-            if child.name in IGNORED_NAMES:
-                continue
-            if time.monotonic() >= deadline:
-                complete = False
-                truncated = True
-                break
-            relative = (
-                f"{relative_parent}/{child.name}"
-                if relative_parent
-                else child.name
-            )
-            try:
-                metadata = child.stat(follow_symlinks=False)
-            except OSError:
-                complete = False
-                continue
-            if stat.S_ISDIR(metadata.st_mode):
-                if not child.is_symlink():
-                    pending.append((relative, Path(child.path)))
-                continue
-            if len(entries) >= max_entries:
-                complete = False
-                truncated = True
-                break
-            digest = None
-            if stat.S_ISREG(metadata.st_mode) and metadata.st_size <= HASH_LIMIT_BYTES:
-                try:
-                    digest = _hash_file(Path(child.path), deadline)
-                except (OSError, TimeoutError):
-                    complete = False
-            entries.append(WorkspaceManifestEntry(
-                relative,
-                metadata.st_size,
-                metadata.st_mtime_ns,
-                stat.S_IMODE(metadata.st_mode),
-                metadata.st_ino or None,
-                digest,
-            ))
-        if truncated:
-            break
-    return WorkspaceManifest(
-        tuple(sorted(entries, key=lambda value: os.fsencode(value.path))),
-        complete,
-        truncated,
-    )
 
 
 def capture_workspace_roots_manifest(roots: tuple[WorkspaceIdentity, ...]) -> WorkspaceManifest:
@@ -278,13 +199,3 @@ def attach_workspace_diff(
         attached["reconciliationRequired"] = False
         attached["sideEffectsMayExist"] = False
     return attached
-
-
-def _hash_file(path: Path, deadline: float) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while chunk := handle.read(64 * 1024):
-            if time.monotonic() >= deadline:
-                raise TimeoutError
-            digest.update(chunk)
-    return digest.hexdigest()

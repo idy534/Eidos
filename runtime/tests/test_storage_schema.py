@@ -61,6 +61,7 @@ from eidos_runtime.runtime.state_machine import (  # noqa: E402
 
 
 EXPECTED_TABLES = {
+    "session_goals", "goal_runs", "goal_continuations",
     "personalization_settings",
     "hook_sources",
     "mcp_connections",
@@ -493,6 +494,7 @@ class StorageSchemaTests(unittest.TestCase):
                 "hook_invocations_plugin", "hook_invocations_run",
                 "channel_inbound_status", "channel_deliveries_pending",
                 "one_active_run_per_session",
+                "one_open_goal_per_session", "one_pending_goal_continuation", "goal_runs_by_goal",
                 "scheduled_occurrences_task", "scheduled_occurrences_preparing", "automation_run_origins_task",
                 "one_pending_approval_per_item",
                 "one_pending_approval_per_run",
@@ -590,10 +592,10 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 50)
+        self.assertEqual(SCHEMA_VERSION, 53)
         self.assertEqual(V47_SCHEMA_VERSION, 47)
         self.assertEqual(V46_SCHEMA_VERSION, 46)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 49)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 52)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
@@ -737,6 +739,8 @@ class StorageSchemaTests(unittest.TestCase):
         legacy.execute("ALTER TABLE worktrees DROP COLUMN git_dir_dev")
         legacy.execute("DROP TABLE session_browser_grants")
         legacy.execute("DROP TABLE browser_settings")
+        from schema_fixtures import remove_goal_schema
+        remove_goal_schema(legacy)
         legacy.execute("PRAGMA user_version = 45")
         legacy.commit()
         legacy.close()

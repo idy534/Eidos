@@ -17,7 +17,7 @@ from eidos_runtime.tools.registry import (  # noqa: E402
     ToolRegistryEntry,
     ToolSpec,
 )
-from eidos_runtime.model.client import ModelToolDefinition  # noqa: E402
+from eidos_runtime.model.client import FunctionToolDefinition  # noqa: E402
 from eidos_runtime.tools.contracts import RunShellInput, RunShellResultData  # noqa: E402
 from eidos_runtime.tools.workspace import TOOL_SPECS  # noqa: E402
 
@@ -275,7 +275,7 @@ class ToolRegistryTests(unittest.TestCase):
         registry = ToolRegistry((memory_entry(),))
 
         self.assertEqual(registry.model_definitions(), (
-            ModelToolDefinition(
+            FunctionToolDefinition(
                 name="memory_echo",
                 description="Echo a value from memory.",
                 parameters_json_schema=memory_entry().spec.input_schema,

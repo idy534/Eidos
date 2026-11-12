@@ -34,10 +34,11 @@ import {
 } from "../shared/browser.js";
 import { isBuiltinPluginRequest, isMcpConnectionRequest } from "../shared/mcp-connections.js";
 import { isAutomationRequest, isAutomationHistoryRequest, isAutomationRunNowRequest } from "../shared/automation.js";
+import { isGoalRequest } from "../shared/goals.js";
 import { resolveRuntimePaths } from "./runtime-paths.js";
 import "./response-runtime-client.js";
 import { redactLogLine, sanitizeLogValue } from "./log-redaction.js";
-import { dispatchAppCommand as dispatchCommand, ensureAppWindow as ensureWindow } from "./app-command-dispatch.js";
+import { dispatchAppCommand as dispatchCommand } from "./app-command-dispatch.js";
 import { QuitFlowController, type ActiveRunProjection, type QuitFlowDependencies } from "./quit-flow.js";
 import { shutdownRuntime } from "./runtime-shutdown.js";
 import { resolveWorkspaceFileForOpen } from "./workspace-open.js";
@@ -329,10 +330,6 @@ const windowDeps = {
   getExistingWindow: () => BrowserWindow.getAllWindows()[0],
   createWindow,
 };
-
-export function ensureMainWindow(): BrowserWindow {
-  return ensureWindow(windowDeps) as BrowserWindow;
-}
 
 export async function dispatchAppCommand(command: AppShortcut): Promise<void> {
   await dispatchCommand(command, windowDeps);
@@ -636,6 +633,10 @@ ipcMain.handle(IPC.CHANNEL_READ, (_event, request: unknown) => {
 ipcMain.handle(IPC.CHANNEL_SAVE, (_event, request: unknown) => {
   if (!isChannelSaveRequest(request)) throw new Error("渠道配置无效，请检查必填项。 ");
   return clientOrThrow().saveChannel(request);
+});
+ipcMain.handle(IPC.GOAL_EXECUTE, (_event, request: unknown) => {
+  if (!isGoalRequest(request)) throw new Error("目标参数无效。");
+  return clientOrThrow().goal(request);
 });
 ipcMain.handle(IPC.AUTOMATION_EXECUTE, (_event, request: unknown) => {
   if (!isAutomationRequest(request)) throw new Error("定时任务参数无效。");

@@ -145,9 +145,10 @@ describe("InputPicker behavior", () => {
     expect(onChoose).not.toHaveBeenCalled();
   });
 
-  it("renders action buttons in correct order with disabled goal mode and triggers Plan mode", async () => {
+  it("enables both mode entries and closes after choosing Plan or Goal", async () => {
     setupRuntime();
     const onSelectPlanMode = vi.fn();
+    const onSelectGoalMode = vi.fn();
     const onClose = vi.fn();
 
     render(
@@ -155,6 +156,7 @@ describe("InputPicker behavior", () => {
         {...pickerProps}
         mode="all"
         onSelectPlanMode={onSelectPlanMode}
+        onSelectGoalMode={onSelectGoalMode}
         onClose={onClose}
       />,
     );
@@ -167,11 +169,14 @@ describe("InputPicker behavior", () => {
     expect(fileBtn).toBeInTheDocument();
     expect(folderBtn).toBeInTheDocument();
     expect(planBtn).toBeInTheDocument();
-    expect(goalBtn).toBeDisabled();
+    expect(goalBtn).toBeEnabled();
 
     fireEvent.click(planBtn);
     expect(onSelectPlanMode).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
+    fireEvent.click(goalBtn);
+    expect(onSelectGoalMode).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(2);
   });
 
   it("toggles collapsible search bar when clicking search trigger and collapses on 收起", async () => {

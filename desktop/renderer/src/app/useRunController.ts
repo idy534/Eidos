@@ -194,8 +194,8 @@ export function useRunController(
     try {
       if (inputOverride === undefined) await draftStore.flush(sessionId);
       const returnedRun = await window.eidosRuntime.startRun(
-        sessionId, /^\/plan(?:\s|$)/.test(sessionInput.trim()) ? sessionInput.trim().replace(/^\/plan(?:\s+|$)/, "").trim() || "请先制定计划。" : sessionInput.trim(), selectedModelId, reasoningSelection, approvalMode, submittedReferences.map((value) => value.id),
-        /^\/plan(?:\s|$)/.test(sessionInput.trim()) ? { ...planning, workMode: "plan" } : planning,
+        sessionId, /^\/(plan|goal)(?:\s|$)/.test(sessionInput.trim()) ? sessionInput.trim().replace(/^\/(plan|goal)(?:\s+|$)/, "").trim() || "请先制定计划。" : sessionInput.trim(), selectedModelId, reasoningSelection, approvalMode, submittedReferences.map((value) => value.id),
+        /^\/plan(?:\s|$)/.test(sessionInput.trim()) ? { workMode: "plan" } : planning,
       );
 
       if (returnedRun.sessionId === sessionId) {

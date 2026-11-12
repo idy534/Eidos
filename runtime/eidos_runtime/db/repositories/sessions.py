@@ -51,7 +51,6 @@ from eidos_runtime.runtime.state_machine import EventType
 from eidos_runtime.workspace.projectless import projectless_root
 
 DEFAULT_LIST_LIMIT = 50
-MAX_LIST_LIMIT = 200
 SESSION_CURSOR_PREFIX = "session-v2:"
 MAX_SNAPSHOT_BYTES = 768 * 1024
 
@@ -1166,13 +1165,15 @@ class SessionRepository(Repository):
         automation_origins = AutomationRepository(self.database).origins_for_runs([row["id"] for row in run_rows])
         from eidos_runtime.persistence.channels import ChannelRepository
         channel_origins = ChannelRepository(self.database).origins_for_runs([row["id"] for row in run_rows])
+        from eidos_runtime.persistence.goals import GoalRepository
+        goal_origins = GoalRepository(self.database).origins_for_runs([row["id"] for row in run_rows])
         selected_runs = [
-            _run_from_row(row, include_user_input=False, automation_origin=automation_origins.get(row["id"]), channel_origin=channel_origins.get(row["id"]))
+            _run_from_row(row, include_user_input=False, automation_origin=automation_origins.get(row["id"]), channel_origin=channel_origins.get(row["id"]), goal_origin=goal_origins.get(row["id"]))
             for row in reversed(run_rows)
             if row["id"] in known_run_ids
         ]
         remaining_runs = {
-            row["id"]: _run_from_row(row, include_user_input=False, automation_origin=automation_origins.get(row["id"]), channel_origin=channel_origins.get(row["id"]))
+            row["id"]: _run_from_row(row, include_user_input=False, automation_origin=automation_origins.get(row["id"]), channel_origin=channel_origins.get(row["id"]), goal_origin=goal_origins.get(row["id"]))
             for row in run_rows
             if row["id"] not in known_run_ids
         }

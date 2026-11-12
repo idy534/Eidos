@@ -91,7 +91,6 @@ from eidos_runtime.persistence.repository_intelligence import (
 )
 from eidos_runtime.persistence.context_snapshots import ContextSnapshotRepository
 from eidos_runtime.persistence.verified_compaction import VerifiedCompactionRepository
-from eidos_runtime.persistence.checkpoints import CheckpointRepository
 from eidos_runtime.persistence.session_handoff import SessionHandoffRepository
 from eidos_runtime.context.plan import ContextSnapshot
 from eidos_runtime.context.budget import ContextBudget
@@ -111,7 +110,6 @@ from eidos_runtime.models.runtime_dependency_records import (
 )
 
 
-SCHEMA_REVISION = SCHEMA_VERSION
 TRepository = TypeVar("TRepository", bound=Repository)
 
 
@@ -140,7 +138,6 @@ class SessionStore:
         self._context_snapshot_repository: ContextSnapshotRepository | None = None
         self._verified_compaction_repository: VerifiedCompactionRepository | None = None
         self._long_task_repository: LongTaskRepository | None = None
-        self._checkpoint_repository: CheckpointRepository | None = None
         self._session_handoff_repository: SessionHandoffRepository | None = None
 
     def initialize(self) -> None:
@@ -156,6 +153,8 @@ class SessionStore:
             )
             self._persistence_layout.initialize(self._database)
             with startup_phase("storage.runtime_recovery"), self._database.transaction() as connection:
+                from eidos_runtime.persistence.goals import recover_goals
+                recover_goals(connection)
                 recover_runtime_facts(connection)
             with startup_phase("storage.projectless_alpha_reset"):
                 if discard_legacy_projectless_sessions(self._database):
@@ -233,7 +232,6 @@ class SessionStore:
         self._context_snapshot_repository = None
         self._verified_compaction_repository = None
         self._long_task_repository = None
-        self._checkpoint_repository = None
         self._session_handoff_repository = None
         self._runtime_dependencies = None
         if self._persistence_layout is not None:
@@ -278,14 +276,6 @@ class SessionStore:
 
     def read_running_context_snapshot(self, run_id: str) -> ContextSnapshot | None:
         return self.context_snapshot_repository().read_running_for_run(run_id)
-
-    def read_latest_context_snapshot(self, run_id: str) -> ContextSnapshot | None:
-        return self.context_snapshot_repository().read_latest_for_run(run_id)
-
-    def read_latest_context_budget(
-        self, run_id: str
-    ) -> tuple[str, ContextBudget] | None:
-        return self.context_snapshot_repository().read_latest_budget_for_run(run_id)
 
     def read_context_details(self, run_id: str) -> ContextDetails:
         from eidos_runtime.persistence.context_management import ContextManagementRepository
@@ -336,12 +326,6 @@ class SessionStore:
 
     def long_task_progress(self, run_id: str) -> LongTaskProgress | None:
         return self.long_task_repository().read(run_id)
-
-    def checkpoint_repository(self) -> CheckpointRepository:
-        self._repository(self._sessions)
-        if self._checkpoint_repository is None:
-            self._checkpoint_repository = CheckpointRepository(self._database)
-        return self._checkpoint_repository
 
     def session_handoff_repository(self) -> SessionHandoffRepository:
         self._repository(self._sessions)
@@ -1128,6 +1112,7 @@ class SessionStore:
         arguments_json: str,
         *,
         raw_arguments_json: str | None = None,
+        display_intent: str | None = None,
         payload_kind: Literal["function", "custom"] = "function",
         provenance: dict[str, object] | None = None,
         tool_set_hash: str | None = None,
@@ -1140,9 +1125,17 @@ class SessionStore:
             tool_name,
             arguments_json,
             raw_arguments_json=raw_arguments_json,
+            display_intent=display_intent,
             payload_kind=payload_kind,
             provenance=provenance,
             tool_set_hash=tool_set_hash,
+        )
+
+    def record_shell_display_rewrite(
+        self, item_id: str, display_command: str | None,
+    ) -> CommittedMutation[dict[str, object]]:
+        return self._repository(self._execution).record_shell_display_rewrite(
+            item_id, display_command,
         )
 
     def complete_tool_item(

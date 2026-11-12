@@ -9,8 +9,10 @@ export function selectCiScopes(files, full = false) {
     || file.startsWith(".github/") || file.startsWith("scripts/"));
   const runtime = global || paths.some((file) => file.startsWith("runtime/"));
   const shared = paths.some((file) => file.startsWith("desktop/shared/") || file.startsWith("runtime/eidos_runtime/protocol/"));
-  const desktop = global || shared || paths.some((file) => file.startsWith("desktop/"));
-  const native = global || paths.some((file) =>
+  // The packaging config is checked by test:packaging (desktop) and the DMG build (native).
+  const packaging = paths.some((file) => file === "electron-builder.yml" || file.startsWith("packaging/"));
+  const desktop = global || shared || packaging || paths.some((file) => file.startsWith("desktop/"));
+  const native = global || packaging || paths.some((file) =>
     file.startsWith("runtime/eidos_runtime/") || file.startsWith("resources/")
     || file.startsWith("desktop/main/") || file.startsWith("desktop/shared/"));
   return { runtime: runtime || shared, desktop, native };

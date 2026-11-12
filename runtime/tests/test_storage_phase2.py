@@ -18,7 +18,7 @@ from eidos_runtime.db.storage import (  # noqa: E402
     DATABASE_NAME,
     RESERVE_BYTES,
     RESERVE_NAME,
-    SCHEMA_REVISION,
+    SCHEMA_VERSION,
     SessionStore,
 )
 from eidos_runtime.protocol.server import RuntimeServer  # noqa: E402
@@ -42,7 +42,7 @@ class PhaseTwoStorageTests(unittest.TestCase):
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertGreaterEqual(connection.execute("PRAGMA busy_timeout").fetchone()[0], 5000)
-        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], SCHEMA_REVISION)
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
         reserve = (self.data_directory / RESERVE_NAME).stat()
         self.assertEqual(reserve.st_size, RESERVE_BYTES)
         self.assertGreaterEqual(reserve.st_blocks * 512, RESERVE_BYTES)

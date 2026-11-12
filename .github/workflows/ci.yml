@@ -66,6 +66,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
       - run: pnpm test:runtime:full
+      # Python DTOs are the schema source; a change here must not leave stale TypeScript contracts.
+      - if: ${{ !cancelled() }}
+        run: node scripts/check-generated-contracts.mjs
 
   desktop:
     needs: changes

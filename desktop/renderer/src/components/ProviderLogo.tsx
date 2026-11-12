@@ -3,7 +3,6 @@ import kimiLogo from "../assets/providers/kimi.svg";
 import minimaxLogo from "../assets/providers/minimax.svg";
 import volcengineLogo from "../assets/providers/volcengine.svg";
 import qoderLogo from "../assets/providers/qoder.svg";
-import "./ProviderLogo.css";
 
 const providerLogos: Record<string, string> = {
   deepseek: deepseekLogo,

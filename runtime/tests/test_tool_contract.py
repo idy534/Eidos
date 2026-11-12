@@ -32,9 +32,8 @@ from eidos_runtime.tools.contracts import (  # noqa: E402
 from eidos_runtime.tools.workspace import (  # noqa: E402
     TOOL_SPECS,
     canonical_tool_result,
-    model_tool_definitions,
 )
-from eidos_runtime.tools.contracts import project_tool_result  # noqa: E402
+from tool_projection import project_tool_result  # noqa: E402
 from eidos_runtime.tools.registry import ToolSpec  # noqa: E402
 
 
@@ -505,13 +504,6 @@ class ToolContractTests(unittest.TestCase):
 
     def test_write_stdin_is_model_visible(self) -> None:
         self.assertIn("write_stdin", {spec.name for spec in TOOL_SPECS})
-        self.assertIn(
-            "write_stdin",
-            {
-                definition["function"]["name"]
-                for definition in model_tool_definitions()
-            },
-        )
 
     def test_shell_tool_tells_model_how_to_request_network_access(self) -> None:
         description = next(
@@ -549,12 +541,6 @@ class ToolContractTests(unittest.TestCase):
             "Starting directory. Defaults to the current Run's workspace when omitted or set to '.'. "
             "Relative paths start at that workspace root; canonical absolute paths follow the current Run permissions.",
         )
-        model_shell = next(
-            definition["function"] for definition in model_tool_definitions()
-            if definition["function"]["name"] == "run_shell"
-        )
-        self.assertEqual(model_shell["description"], description)
-        self.assertEqual(model_shell["parameters"]["properties"]["cwd"], properties["cwd"])
         self.assertEqual(
             properties["gitWriteAccess"]["description"],
             'Set to "request" for Git metadata write permission in the repository containing cwd. '

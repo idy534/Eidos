@@ -148,11 +148,6 @@ def test_activate_defers_persisted_generation_restore_until_readiness(
             "build",
             lambda *_args, **_kwargs: pytest.fail("activation must not build index"),
         )
-        monkeypatch.setattr(
-            application,
-            "initialize_recovery",
-            lambda: pytest.fail("activation must not scan persisted inventory"),
-        )
 
         active = runtime.activate_workspace(root)
 
@@ -521,29 +516,6 @@ def test_changed_workspace_identity_stops_old_watcher_and_creates_new_state(
         assert old_watcher.stopped.wait(1)
         assert len(_BlockingWatchController.instances) == 2
         runtime.shutdown_all()
-    finally:
-        database.close()
-
-
-def test_workspace_shutdown_stops_watcher_and_rejects_late_invalidation(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "workspace"
-    root.mkdir()
-    database = _database(tmp_path)
-    try:
-        runtime = _runtime(RepositoryIntelligenceRepository(database))
-        active = runtime.activate_workspace(root)
-        watcher = _BlockingWatchController.instances[0]
-        assert watcher.started.wait(1)
-
-        runtime.shutdown_workspace(root)
-        active.invalidate((RepositoryChange(path="late.py", change="added"),))
-
-        assert watcher.stopped.wait(1)
-        assert active.closed is True
-        assert active.dirty_paths == frozenset()
-        assert runtime.get_active(root) is None
     finally:
         database.close()
 

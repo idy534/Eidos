@@ -66,7 +66,6 @@ def test_runtime_application_container_composes_all_phase_ef_boundaries(tmp_path
     assert applications.repository_factory is not None
     assert applications.repository_runtime is server.repository_runtime
     assert applications.context is not None
-    assert applications.checkpoints is not None
     assert applications.task_lifecycle is not None
     assert applications.workspace is not None
     assert applications.review is not None
@@ -82,13 +81,16 @@ def test_runtime_application_container_composes_all_phase_ef_boundaries(tmp_path
         "session/gitFetch", "session/gitPull", "session/gitPush",
         "session/gitMerge", "session/gitMergeAbort",
         "session/gitRebase", "session/gitRebaseContinue", "session/gitRebaseAbort",
-        "run/status", "run/pause", "run/resume", "run/cancel",
+        "run/resume", "run/cancel",
         "context/usage",
-        "checkpoint/create", "checkpoint/list", "checkpoint/rewind",
-        "checkpoint/fork",
         "workspace/listDirectory", "workspace/readAsset", "workspace/readFilePreview",
         "review/listComments", "review/createComment", "review/deleteComment",
     } <= registered
+    # Methods with no Desktop caller stay unregistered.
+    assert not registered & {
+        "run/status", "run/pause", "skill/read",
+        "checkpoint/create", "checkpoint/list", "checkpoint/rewind", "checkpoint/fork",
+    }
     server.close()
 
 

@@ -59,8 +59,6 @@
   box-shadow: none;
 }
 
-.create-project-icon { width: 1.1rem; height: 1.1rem; flex: none; color: var(--text); }
-
 .create-project-name-field input {
   width: 100%;
   min-width: 0;
@@ -78,64 +76,11 @@
 
 .create-project-source h4 { margin: 0 0 0.4rem; font-size: 0.85rem; font-weight: 650; }
 
-.create-project-folder-button {
-  display: flex;
-  width: 100%;
-  min-height: 4.8rem;
-  align-items: center;
-  justify-content: center;
-  gap: 0.6rem;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 0.75rem;
-  color: var(--text);
-  background: var(--surface-raised);
-  font: inherit;
-  font-size: 0.85rem;
-  cursor: pointer;
-  box-sizing: border-box;
-  transition: border-color 140ms ease, background-color 140ms ease;
-}
-
-.create-project-folder-button:hover:not(:disabled) {
-  background: var(--surface-hover);
-  border-color: rgba(49, 95, 74, 0.45);
-}
-
-.create-project-folder-button--selected,
-.create-project-folder-button--selected:hover:not(:disabled) {
-  justify-content: flex-start;
-  min-height: 2.75rem;
-  color: var(--accent);
-  border-color: var(--accent);
-  background: var(--surface-selected);
-  outline: none;
-  box-shadow: none;
-}
-
-.create-project-folder-button:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.create-project-folder-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.create-project-folder-icon { width: 1.35rem; height: 1.35rem; flex: none; color: var(--muted); }
-
-.create-project-folder-button--selected .create-project-folder-icon { color: var(--accent); }
-
 .create-project-dialog-footer {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
   padding: 0.5rem 1.25rem 0.8rem;
-}
-
-.create-session-dialog-body {
-  display: flex;
-  flex-direction: column;
-  gap: 1.1rem;
 }
 
 .create-branch-dialog-body {
@@ -583,38 +528,6 @@
 .create-session-ref-field select {
   width: 100%;
   box-sizing: border-box;
-}
-
-.create-session-changes-option {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.65rem;
-  padding: 0.8rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface-muted);
-  cursor: pointer;
-}
-
-.create-session-changes-option input {
-  margin-top: 0.15rem;
-  accent-color: var(--accent);
-}
-
-.create-session-changes-option span {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.create-session-changes-option strong {
-  font-size: 0.86rem;
-}
-
-.create-session-changes-option small {
-  color: var(--muted);
-  font-size: 0.74rem;
-  line-height: 1.35;
 }
 
 @media (max-width: 560px) {

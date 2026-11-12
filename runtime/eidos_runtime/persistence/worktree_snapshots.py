@@ -64,9 +64,6 @@ class WorktreeSnapshotRepository(Repository):
             ).fetchone()
         return _map(row)
 
-    def latest_ready_snapshot(self, worktree_id: str) -> WorktreeSnapshot | None:
-        return self.latest_ready(worktree_id)
-
     def list_for_worktree(self, worktree_id: str) -> tuple[WorktreeSnapshot, ...]:
         with self.lock:
             rows = self._connection().execute(
@@ -76,14 +73,6 @@ class WorktreeSnapshotRepository(Repository):
                 ORDER BY created_at DESC, id DESC
                 """,
                 (worktree_id,),
-            ).fetchall()
-        return tuple(value for row in rows if (value := _map(row)) is not None)
-
-    def list_ready(self) -> tuple[WorktreeSnapshot, ...]:
-        with self.lock:
-            rows = self._connection().execute(
-                "SELECT * FROM worktree_snapshots WHERE state = 'ready' "
-                "ORDER BY created_at ASC, id ASC"
             ).fetchall()
         return tuple(value for row in rows if (value := _map(row)) is not None)
 

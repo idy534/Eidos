@@ -198,6 +198,11 @@ class ApprovalCoordinator:
         self.pause_effective_time(run_id)
         tool_call = pending_item["toolCall"]
         assert isinstance(tool_call, dict)
+        # Send presentation text only to the human prompt, after binding the request to the action.
+        display_intent = tool_call.get("displayIntent")
+        human_description = project_approval_diff(description)
+        if description.get("kind") == "command_execution" and isinstance(display_intent, str):
+            human_description = {**human_description, "displayIntent": display_intent}
         suspend_deadline = getattr(cancel, "suspend_deadline", None)
         resume_deadline = getattr(cancel, "resume_deadline", None)
         if callable(suspend_deadline):
@@ -208,7 +213,7 @@ class ApprovalCoordinator:
                     ApprovalRequest({
                         "sessionId": pending_item["sessionId"], "runId": pending_item["runId"],
                         "itemId": pending_item["id"], "toolCallId": tool_call["id"],
-                        **project_approval_diff(description),
+                        **human_description,
                     }), cancel,
                 ))
                 if mode == "auto_review":
@@ -241,7 +246,7 @@ class ApprovalCoordinator:
                     ApprovalRequest({
                         "sessionId": pending_item["sessionId"], "runId": pending_item["runId"],
                         "itemId": pending_item["id"], "toolCallId": tool_call["id"],
-                        **project_approval_diff(description),
+                        **human_description,
                         "reviewFallback": fallback_review.rationale,
                     }), cancel,
                 )
@@ -262,7 +267,7 @@ class ApprovalCoordinator:
                         "runId": pending_item["runId"],
                         "itemId": pending_item["id"],
                         "toolCallId": tool_call["id"],
-                        **project_approval_diff(description),
+                        **human_description,
                     }), cancel,
                 )
         finally:

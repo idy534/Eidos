@@ -236,11 +236,6 @@
   list-style: none;
 }
 
-.git-workflow-error {
-  flex: 1 0 100%;
-  margin: 0;
-}
-
 .git-changes-toolbar {
   display: flex;
   flex: none;
@@ -401,22 +396,6 @@
   width: 1rem;
   height: 1rem;
   display: block;
-}
-
-.git-more-trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.85rem;
-  height: 1.85rem;
-  border-radius: var(--radius-sm);
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.git-more-trigger:hover {
-  color: var(--text);
-  background: var(--surface-hover);
 }
 
 .git-icon-button {
@@ -598,44 +577,6 @@
   display: none;
 }
 
-.git-review-toolbar-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.35rem;
-}
-
-.git-review-toolbar-actions .git-icon-button {
-  width: 2.2rem;
-  height: 2.2rem;
-  min-width: 2.2rem;
-  min-height: 2.2rem;
-  border-radius: 0.75rem;
-  padding: 0;
-  color: var(--muted);
-  background: transparent;
-  box-shadow: none;
-}
-
-.git-review-toolbar-actions .git-icon-button:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--surface-hover);
-}
-
-.git-review-toolbar-actions .git-icon-button .btn-icon,
-.git-review-toolbar-actions .git-icon-button svg {
-  width: 1.1rem;
-  height: 1.1rem;
-}
-
-.git-review-toolbar-actions .git-icon-button svg {
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.6;
-}
-
 .git-scope-tabs {
   padding: 2px;
   border: 1px solid var(--line);
@@ -643,18 +584,6 @@
   background: var(--surface-muted);
   display: inline-flex;
   align-items: center;
-}
-
-.git-review-summary {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0.45rem 1.5rem;
-  border-bottom: 1px solid var(--line);
-  color: var(--muted);
-  font-family: var(--font-ui);
-  font-size: var(--font-size-caption);
 }
 
 .git-review-stats,
@@ -669,16 +598,6 @@
   flex: 1 1 auto;
 }
 
-.git-review-branch,
-.git-review-summary code {
-  min-width: 0;
-  overflow: hidden;
-  font-family: var(--font-code);
-  font-size: var(--font-size-caption);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .git-review-stat {
   font-family: var(--font-ui);
   font-size: var(--font-size-sidebar);
@@ -690,11 +609,6 @@
 .git-review-stat--addition { color: var(--status-success); }
 
 .git-review-stat--deletion { color: var(--status-danger); }
-
-.git-review-error {
-  flex: none;
-  margin: 0.75rem 1.5rem 0;
-}
 
 .git-review-files {
   flex: 1 1 auto;
@@ -1079,21 +993,6 @@
   border-style: dashed;
 }
 
-.git-diff-view pre {
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  overflow: auto;
-  padding: 1rem 1.25rem 2.5rem;
-  color: var(--text);
-  background: var(--surface-raised);
-  font-family: var(--font-code);
-  font-size: var(--font-size-code);
-  line-height: var(--line-height-code);
-  tab-size: 2;
-  white-space: pre;
-}
-
 .git-diff-truncated {
   position: absolute;
   right: 1rem;
@@ -1154,20 +1053,8 @@
     width: 100%;
   }
 
-  .git-review-toolbar-actions {
-    flex-wrap: nowrap;
-    justify-content: flex-start;
-  }
-
   .git-review-feedback {
     margin-left: auto;
-  }
-
-  .git-review-summary {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 0.3rem;
-    padding: 0.65rem 1rem;
   }
 
   .git-review-compare {
@@ -1202,8 +1089,6 @@
 
 @media (max-width: 760px) {
   .git-changes-toolbar { flex-wrap: wrap; padding: 0.75rem 1rem; }
-  .git-review-toolbar-actions { justify-content: flex-start; }
-  .git-review-summary { padding-inline: 1rem; }
 }
 
 @media (prefers-reduced-transparency: reduce) {

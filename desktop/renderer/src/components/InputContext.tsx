@@ -4,7 +4,7 @@ import type { InputPrepareRequest, InputPreview, InputReference } from "../../..
 import { isInlineReference, isShelfReference, parseInlineSegments } from "../../../shared/inline-references.js";
 import type { McpServerRecord } from "../contracts.js";
 import { runtimeBusinessCode, userFacingError } from "../session-state.js";
-import { CloseIcon as ImageCloseIcon } from "./MenuIcons.js";
+import { ImageLightbox } from "./ImageLightbox.js";
 import { ToastContainer } from "./ToastContainer.js";
 import { FileIcon, FolderIcon, AgentIcon, SkillIcon, ServerIcon, PuzzleIcon, ChatHistoryIcon } from "./InputPicker.js";
 import { AgentDefinitionDialog } from "./AgentDefinitionDialog.js";
@@ -12,11 +12,6 @@ import { McpDetailDialog } from "./settings/McpDetailDialog.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 
 export { isInlineReference, isShelfReference };
-
-export function useInlineTokenMetrics(
-  _editorRef: { current: HTMLElement | null },
-  _inlineReferences: readonly InputReference[],
-): void {}
 
 export interface InputEditorSelectionBridge {
   getSelectionRange(): { start: number; end: number } | undefined;
@@ -612,14 +607,6 @@ function ImageLightboxModal({
   const [error, setError] = useState<string>();
 
   useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
-  useEffect(() => {
     let active = true;
     let created: string | undefined;
     if (typeof window.eidosRuntime?.prepareInputPreview !== "function") return;
@@ -640,36 +627,16 @@ function ImageLightboxModal({
     };
   }, [preview.reference.id]);
 
-  if (typeof document === "undefined") return null;
-
-  const displaySrc = url || preview.thumbnail;
-
-  return createPortal(
-    <div
-      className="artifact-image-preview"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${preview.reference.label} 图片预览`}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <button
-        type="button"
-        className="artifact-image-preview__close"
-        aria-label="关闭图片预览"
-        autoFocus
-        onClick={onClose}
-      >
-        <ImageCloseIcon />
-      </button>
-      {displaySrc ? (
-        <img src={displaySrc} alt={preview.reference.label} />
-      ) : (
-        <p role={error ? "alert" : "status"}>{error || "正在读取图片预览…"}</p>
-      )}
-    </div>,
-    document.body,
+  return (
+    <ImageLightbox
+      images={[{
+        name: preview.reference.label,
+        url: url || preview.thumbnail || undefined,
+        status: error || "正在读取图片预览…",
+        failed: Boolean(error),
+      }]}
+      onClose={onClose}
+    />
   );
 }
 

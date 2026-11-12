@@ -20,7 +20,7 @@ class RuntimeLayoutTests(unittest.TestCase):
         from eidos_runtime.context.compactor import ContextCompactor
         from eidos_runtime.model.client import ModelResponse
         from eidos_runtime.protocol.schemas import JsonRpcRequestDto
-        from eidos_runtime.runtime.loop import RuntimeEngine
+        from eidos_runtime.runtime.engine import RuntimeEngine
         from eidos_runtime.runtime.event_projector import EventProjector
         from eidos_runtime.runtime.supervisor import RunSupervisor
         from eidos_runtime.runtime.loop_guard import LoopGuard

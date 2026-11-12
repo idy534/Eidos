@@ -4,6 +4,7 @@ from eidos_runtime.protocol.project_workspaces import ProjectRootDto
 from eidos_runtime.domain.channels import ChannelOrigin
 from eidos_runtime.models.mcp_connections import RemoteMcpInfo
 from eidos_runtime.domain.automation import AutomationOrigin
+from eidos_runtime.domain.goal import GoalRunOrigin
 
 from eidos_runtime.domain.session_fork import SessionForkSource, SessionForkOrigin
 
@@ -272,6 +273,7 @@ class McpServerRecordDto(ClosedModel):
 
 
 class RunDto(ClosedModel):
+    goal_origin: GoalRunOrigin | None = Field(default=None, alias="goalOrigin", exclude_if=lambda value: value is None)
     hook_activity: list[HookActivity] = Field(default_factory=list, alias="hookActivity", max_length=8, exclude_if=lambda value: not value)
     channel_origin: ChannelOrigin | None = Field(default=None, alias="channelOrigin")
     automation_origin: AutomationOrigin | None = Field(default=None, alias="automationOrigin")
@@ -345,6 +347,8 @@ class ToolCallDto(ClosedModel):
         default=None, alias="payloadKind"
     )
     arguments_json: StrictStr | None = Field(default=None, alias="argumentsJson")
+    display_intent: StrictStr | None = Field(default=None, alias="displayIntent", max_length=120)
+    display_command: StrictStr | None = Field(default=None, alias="displayCommand", max_length=16 * 1024)
     result_json: StrictStr | None = Field(default=None, alias="resultJson")
     approval_status: Literal["pending", "resolved", "canceled"] | None = Field(default=None, alias="approvalStatus")
     approval_decision: Literal["approve", "reject"] | None = Field(default=None, alias="approvalDecision")

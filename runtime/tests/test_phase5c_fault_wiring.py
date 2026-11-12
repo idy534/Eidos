@@ -41,7 +41,6 @@ FAULT_LOCATIONS = {
     "finalization_model_failure": "runtime/finalizer.py",
     "jsonrpc_output_disconnect": "protocol/server.py",
     "cancel_claim_race": "runtime/supervisor.py",
-    "configure_worker_race": "runtime/supervisor.py",
     "cancel_approval_race": "runtime/approval.py",
     "cancel_finalization_race": "runtime/finalizer.py",
     "shutdown_tool_completion_race": "runtime/supervisor.py",

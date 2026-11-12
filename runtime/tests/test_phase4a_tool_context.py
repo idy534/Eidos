@@ -36,11 +36,8 @@ from eidos_runtime.runtime.tool_execution import (  # noqa: E402
     ToolExecutionController,
 )
 from eidos_runtime.sandbox.sensitive import default_scanner  # noqa: E402
-from eidos_runtime.tools.contracts import (  # noqa: E402
-    ReadFileInput,
-    ToolResultProjection,
-    project_tool_result,
-)
+from eidos_runtime.tools.contracts import ReadFileInput, ToolResultProjection  # noqa: E402
+from tool_projection import project_tool_result  # noqa: E402
 from eidos_runtime.tools.workspace import ToolExecutor  # noqa: E402
 from eidos_runtime.tools.json_schema import (  # noqa: E402
     BoundedJsonSchema,

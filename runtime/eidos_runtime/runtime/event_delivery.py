@@ -190,5 +190,7 @@ class EventDelivery:
                 and payload.get("current") == "running"
                 and isinstance(run_id, str)
             ):
-                item = self.store.get_user_item(run_id)
+                origin = run.get("goalOrigin") if run else None
+                if not isinstance(origin, dict) or origin.get("trigger") == "user_input":
+                    item = self.store.get_user_item(run_id)
         return run, item

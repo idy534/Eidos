@@ -65,6 +65,8 @@ class ContextItemFact(_Fact):
     tool_name: str | None = None
     payload_kind: Literal["function", "custom"] | None = None
     arguments_json: str | None = None
+    # Saved presentation text; kept apart from the arguments that were executed.
+    display_intent: str | None = None
     result_json: str | None = None
     model_result_json: str | None = None
     ordinal: int = 0

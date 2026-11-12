@@ -160,14 +160,6 @@ class RuleResolutionSnapshot(_FrozenModel):
             raise ValueError("rule resolution snapshot hash mismatch")
         return self
 
-    def model_instruction(self) -> str | None:
-        sections = [
-            f"Project rules from {rule.relative_path}:\n{rule.content}"
-            for rule in self.rules
-            if rule.content
-        ]
-        return "\n\n".join(sections) or None
-
 
 class RunResolutionSnapshot(_FrozenModel):
     schema_version: Literal[1] = 1
