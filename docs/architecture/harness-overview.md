@@ -23,7 +23,7 @@
 | 工具执行 | 模型建议怎样成为可核验操作？ | Tool Registry、Controller、Intent、Shell 与结果投影 | [工具运行](tool-runtime.md) |
 | 权限隔离 | 什么操作可以直接执行？什么操作需要用户决定？ | Run 模式、Grant、人工审批、Seatbelt、文件 Helper | [权限与沙盒](permissions-sandbox.md) |
 | 持久化恢复 | 进程重启后，系统能确认和恢复什么？ | SQLite 事务、Outbox、Recovery、资源关闭 | [持久化与恢复](persistence-recovery.md) |
-| 工作空间与检索 | 系统怎样理解代码并管理修改？ | Workspace、Inventory、AST、FTS5、Worktree、Checkpoint | [Workspace 与检索](workspace-retrieval.md) |
+| 工作空间与检索 | 系统怎样理解代码并管理修改？ | Workspace、Inventory、AST、FTS5、Worktree、对话分叉 | [Workspace 与检索](workspace-retrieval.md) |
 | 扩展系统 | 外部能力怎样进入固定且可撤销的边界？ | Skill、Plugin、MCP、账号连接与 Hook | [扩展与 Hook](extensions-hooks.md) |
 | 计划与协作 | 多个子任务怎样保留依赖和结果？ | Plan、委派、子 Run、持久消息与等待 | [Plan 与子 Agent](collaboration-planning.md) |
 | 持续任务入口 | 定时和渠道任务怎样复用同一个 Runtime？ | 触发认领、入站去重、Run 来源与回复记录 | [定时任务与渠道](automation-channels.md) |

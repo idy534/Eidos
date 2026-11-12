@@ -28,7 +28,7 @@ flowchart TB
     subgraph bounds[工作边界]
       direction LR
       permission[权限与 Sandbox<br/>审批、Grant、Seatbelt]
-      workspace[Workspace 与检索<br/>Worktree、索引、Checkpoint]
+      workspace[Workspace 与检索<br/>Worktree、索引、对话分叉]
       permission ~~~ workspace
     end
     request --> loop --> action

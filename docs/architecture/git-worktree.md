@@ -28,7 +28,7 @@ Git Project + Worktree
   → Run in Worktree.worktree_root
 ```
 
-Non-Git Project 只能创建 Local Execution Session。Git Project 可以创建 Local 或 Worktree Execution Session。Local Session 可以使用文件、Shell、Skill、MCP、Context、Long Task、Sandbox 和 Checkpoint，但没有 Worktree binding。Worktree Session 提供 Git status、Git diff、Managed Worktree 和 Git-based Fork。
+Non-Git Project 只能创建 Local Execution Session。Git Project 可以创建 Local 或 Worktree Execution Session。Local Session 可以使用文件、Shell、Skill、MCP、Context、Long Task 和 Sandbox，但没有 Worktree binding。Worktree Session 提供 Git status、Git diff、Managed Worktree 和 Git-based Fork。
 
 Local Run 和 Worktree Run 都冻结 `RunResolutionSnapshot.workspace_identity`。Runtime 在 Run admission、resume 和 restart 时继续验证 canonical path、device、inode 和 owner。没有 Git 不会跳过 Workspace boundary 或 Sandbox。
 
@@ -52,7 +52,7 @@ Git metadata 字段必须同时有值或同时为空。Local Project 以 canonic
 ## Git authority and backend
 
 - `WorktreeManager` 是 Eidos 的 Project、Worktree、Session binding、Run identity、durable operation、recovery、compensation 和 Sandbox boundary authority。
-- `GitBackend` 是 Git mechanics seam。它不拥有 Session、Run、Checkpoint 或 SQLite lifecycle。
+- `GitBackend` 是 Git mechanics seam。它不拥有 Session、Run 或 SQLite lifecycle。
 - `DulwichGitBackend` 直接返回 Eidos-owned 的 `GitRepositoryDiscovery`、`GitRepositoryContext`、`GitStatusObservation`、`GitDiffObservation` 和 `GitWorktreeEntry`。它负责 repository discovery、HEAD/ref、local branch、branch validation、revision resolution、ignore observation、worktree list/remove/prune、switch、reset、normal clean 和 snapshot hidden ref。
 - Eidos 不实现 Git working-tree 或 index semantics。Git authority 按 operation 固定，不存在 per-call fallback：
   - Dulwich：repository discovery、HEAD/ref、branch validation、revision resolution、ignore observation、worktree list/remove/prune、branch switch、reset、normal clean 和 hidden snapshot ref。
@@ -93,22 +93,9 @@ Managed retry 使用 intent 中相同的 `worktree_id`、`worktree_root`、`bran
 
 `Worktree` 创建后仍然是 detached execution resource。`session/createBranch` 只允许 active、valid、`branch = NULL` 的 Worktree。Runtime 先写 `worktree/attach-branch` durable intent，再在同一个 Worktree cwd 执行 `dulwich.porcelain.switch(target="HEAD", create=branch, force=False)`，核验 HEAD 没有变化，最后把 `branch` 和 `branch_ownership = user` 写入 SQLite。已有 branch 或在其他 Worktree checkout 的 branch 都会拒绝。Branch attach 的 `prepared`、`branch_attached`、`completed` 和 `cleanup_required` 状态支持 startup recovery。用户 branch 随 Worktree 删除保留；旧 attached branch 仍按 `legacy_managed` 兼容语义处理。
 
-## Managed Checkpoint Fork
+## 对话分叉
 
-Managed Fork v1 使用 `checkpoint.gitHead` 作为新 Worktree 的 `base_commit`，并使用 detached HEAD。新 Fork 的 `branch = NULL`。Runtime 为同一个 durable operation 准备固定的 Worktree、Session、Run 和 checkpoint action identity：
-
-```text
-prepared
-  → worktree_created
-  → session_created
-  → run_created
-  → checkpoint_action_created
-  → completed
-```
-
-相同 `checkpointId` 和 `operationId` 的 retry 会读取已有的 Worktree、Session、Run 和 action。Runtime 不会创建第二套资源。Fork v1 不恢复 checkpoint 时刻完整的未提交 working-tree patch，也不复制全部 immutable snapshot 内容。
-
-Local Fork 使用同一个 Project 和同一个 `workspace_root` 创建新的 Local Session、Run 和 checkpoint action。两个 Local Thread 共享真实目录。Local Fork 是 conversation/runtime fork，不是 filesystem snapshot；当前不提供 copy-on-write、directory snapshot 或 filesystem rewind。
+Checkpoint Fork 与 Rewind 已移除。对话分叉由 `session/fork` 提供：独立 Worktree 分叉按 Worktree Snapshot 恢复 Git 状态，Local 分叉使用同一个 Project 和同一个 `workspace_root`。Local 分叉是 conversation/runtime fork，不是 filesystem snapshot；当前不提供 copy-on-write、directory snapshot 或 filesystem rewind。
 
 ## Session delete
 
@@ -128,7 +115,7 @@ Local Session delete 不创建 Git lifecycle intent。它只删除 Eidos Session
 
 ## Managed Worktree retention、Snapshot 和 Restore
 
-Session 与 Worktree directory 使用不同的生命周期。Retention 可以删除 Eidos-owned 的 managed Worktree directory，但它不会删除 Session、Run、Event、Checkpoint 或 `associated_worktree_id`。Worktree row 会保留为 `state = deleted` 的历史 identity。
+Session 与 Worktree directory 使用不同的生命周期。Retention 可以删除 Eidos-owned 的 managed Worktree directory，但它不会删除 Session、Run、Event 或 `associated_worktree_id`。Worktree row 会保留为 `state = deleted` 的历史 identity。
 
 Runtime 只把 `ownership = managed` 且 `state = active` 的 Worktree 放入 retention candidate。Runtime 不自动处理 adopted Worktree。Runtime 默认保留最近 15 个 Worktree。`runtime_settings` 保存 `automatic_cleanup` 和 `managed_worktree_limit`，用户可以在 Settings 中关闭自动清理或把数量改为 1 到 100。关闭自动清理时，Runtime 不执行数量清理。
 
@@ -188,13 +175,13 @@ Restore lifecycle 使用 `prepared → worktree_created → state_materialized �
 
 Runtime startup 会检查 ready Snapshot row、artifact directory 和 hidden ref。`ready row + artifact + ref` 才是 valid Snapshot。缺失 artifact 或 ref mismatch 会把 row 标记为 `invalid`。没有 SQLite ownership proof 的 snapshot artifact directory 和 hidden ref 只作为 orphan candidate 处理；Runtime 不删除陌生的其他 `refs/eidos/*`。
 
-Session Delete 会先通过既有 `session/delete` durable operation 清理 Snapshot artifact、hidden ref 和 metadata，再删除 Session。User branch ref 不属于 Snapshot cleanup，因此 Session Delete 会保留它。Checkpoint 仍然是用户/Runtime 的任务恢复点，Worktree Snapshot 只是 disposable directory 的恢复材料。
+Session Delete 会先通过既有 `session/delete` durable operation 清理 Snapshot artifact、hidden ref 和 metadata，再删除 Session。User branch ref 不属于 Snapshot cleanup，因此 Session Delete 会保留它。Worktree Snapshot 只是 disposable directory 的恢复材料。
 
 ## Schema and lifecycle states
 
 当前主库 `state.sqlite` 的 schema 是 v41。Runtime 会对受支持的旧版本执行迁移；未知版本和未来版本会进入 `health_only`。Worktree、Session binding、branch ownership、Handoff、Snapshot 和 retention/restore 使用同一主库与迁移链。维护者可以在 [schema.py](../../runtime/eidos_runtime/db/schema.py) 和 [database.py](../../runtime/eidos_runtime/db/database.py) 核对版本与迁移入口。
 
-`worktree_lifecycle_operations` 当前包含 `session/create`、`session/delete`、`checkpoint/fork`、`checkpoint/rewind`、`worktree/attach-branch`、`worktree/retention-cleanup` 和 `worktree/restore`。它使用有限状态：`prepared`、`worktree_created`、`session_created`、`run_created`、`checkpoint_action_created`、`branch_attached`、`snapshot_saved`、`state_materialized`、`worktree_rebound`、`worktree_deleted`、`completed` 和 `cleanup_required`。它不是通用 workflow engine，也不保存 arbitrary payload executor。
+`worktree_lifecycle_operations` 当前包含 `session/create`、`session/delete`、`checkpoint/fork`、`checkpoint/rewind`（这两项只为旧记录保留，不再产生）、`worktree/attach-branch`、`worktree/retention-cleanup` 和 `worktree/restore`。它使用有限状态：`prepared`、`worktree_created`、`session_created`、`run_created`、`checkpoint_action_created`、`branch_attached`、`snapshot_saved`、`state_materialized`、`worktree_rebound`、`worktree_deleted`、`completed` 和 `cleanup_required`。它不是通用 workflow engine，也不保存 arbitrary payload executor。
 
 ## Startup recovery
 
@@ -233,6 +220,6 @@ Local Workspace 的 writable root 是 `Project.workspace_root`。Local profile �
 
 Session projection 提供 `projectId`、`workspaceRoot`、`gitAvailable` 和 `executionMode`。Desktop 创建 Thread 时显示 Local / Worktree 选择。Git Project 的 Worktree 选择器使用 Runtime `project/gitContext` 提供的 current branch、HEAD、local branches、dirty 和 changed file count。Worktree 起始 ref 等于当前 branch 且 source dirty 时，Desktop 默认勾选 `Include current changes`；Runtime 仍要求 request 显式传入 `includeLocalChanges`。Local Session 隐藏 Starting Branch；Worktree Session 显示 Starting Branch。Worktree Sidebar 在 detached 状态显示 `Detached @ <short-head>` 和 `Create Branch`，并保留 dirty status、HEAD diff 和 baseline diff UI。
 
-当前已实现 Project / Session 置顶、单层子 Agent 委派，以及 Review 中的 Stage、Unstage、Discard、Commit、Fetch、Pull、Push、Merge 和 Rebase。Managed 和 Local Git Checkpoint 保存 HEAD、staged、unstaged 与 untracked 状态；Managed Fork 恢复独立 Worktree，Local Fork 共享当前目录，Rewind 恢复原 checkout。Ignored 文件不进入 Checkpoint artifact。
+当前已实现 Project / Session 置顶、单层子 Agent 委派，以及 Review 中的 Stage、Unstage、Discard、Commit、Fetch、Pull、Push、Merge 和 Rebase。对话分叉可以恢复独立 Worktree，也可以共享当前目录。Ignored 文件不进入 Worktree Snapshot。
 
-当前仍未实现 Permanent Worktree、Archive Chat、分支强制删除、Pull Request UI 和跨 Worktree 的 Repository Intelligence 共享。子 Agent 不自动分配独立 Worktree。Rewind 尚未重建完整逻辑 Context，Non-Git Workspace 不支持文件系统回退。详细边界见[当前能力](../current/capabilities.md#runtime-git-worktree-kernel)与[当前限制](../current/limitations.md#recovery-与-checkpoint)。
+当前仍未实现 Permanent Worktree、Archive Chat、分支强制删除、Pull Request UI 和跨 Worktree 的 Repository Intelligence 共享。子 Agent 不自动分配独立 Worktree。系统不提供工作区回退，Non-Git Workspace 也不支持文件系统回退。详细边界见[当前能力](../current/capabilities.md#runtime-git-worktree-kernel)与[当前限制](../current/limitations.md#recovery)。

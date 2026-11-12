@@ -85,7 +85,7 @@
 | 56 | 权限物化、沙盒、扩权与路径保护 | 调整 | manual/auto_review 默认拒绝越界；Eidos 核心保护范围继续要求高危人工确认，普通 Git、项目 metadata 与沙盒外执行按实际影响走普通审批。full_access 直接执行，不创建逐项审批或授权记录。 |
 | 57 | 数据目录、凭据、敏感展示和受控路径保护 | 保留 | 遵循权限模式和原有披露边界，受保护路径只按用户高危确认的具体范围开放。 |
 | 58 | 文件、输出、消息、搜索、MCP 与协议大小预算 | 调整 | 实际资源预算保留；新工具按最近请求换入，搜索满 4 个运行名额后进入有界队列。 |
-| 59 | Worktree、Checkpoint、Rewind、删除与恢复身份校验 | 保留 | 这些操作改变或销毁执行基线，需真实生命周期和可恢复操作记录。 |
+| 59 | Worktree 创建、删除与恢复身份校验 | 保留 | 这些操作改变或销毁执行基线，需真实生命周期和可恢复操作记录。 |
 
 实现入口：`runtime/tool_runtime.py`、`runtime/tool_execution.py`、`runtime/engine.py`、`runtime/approval.py`、`tools/planning.py`、`persistence/collaboration.py`、`application/repository.py`、`application/git_workflow.py`、`extensions/skill_management.py`，以及 Desktop 的 Composer、ApprovalComposer、ExecutionFeed 和 GitWorkflowControls。
 

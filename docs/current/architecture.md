@@ -102,7 +102,7 @@ Project → ordered roots + primary root
 
 Desktop Workspace Explorer 提供根选择器。`WorkspaceExplorerApplication` 解析 Session 的固定根，或在草稿中解析持久 Project 配置。Runtime 核验请求的具体 root。目录通知携带 `workspaceRoot`，Renderer 只刷新对应根。预览、资源与文件内查找使用同一个根。`WorkspaceReader` 保留 fd-relative、`O_NOFOLLOW`、有界输出与发现规则。Renderer 继续只经过 typed IPC 访问文件。
 
-多目录项目的详细行为、Git 仓库范围和 Checkpoint 限制见 [项目说明](features/projects.md)。
+多目录项目的详细行为、Git 仓库范围和恢复范围限制见 [项目说明](features/projects.md)。
 
 Conversation 文件引用沿用 `MarkdownContent → ArtifactLink → AppShell → WorkspaceExplorer → typed IPC → WorkspaceExplorerApplication → WorkspaceReader`。`workspaceFileLink` 从显式 Markdown 链接目标解析绝对路径和可选行列号，并把当前 execution root 内的目标转为工作区相对路径。显示标签不参与路径解析。行内代码不再自动变成文件链接。文档预览通过 `documentPath` 保留相对链接语义。`ArtifactActions.openFile` 和 Renderer 内部的 `WorkspaceFileOpenRequest` 携带可选 `line`、`column`；位置只控制预览滚动与选区，不改变 Runtime 文件读取请求、权限或文件身份。Shiki 的 line transformer 和普通文本行节点提供源行标记。Markdown 的 rehype 节点位置提供源文本块标记。代码高亮完成后，预览会再次应用当前定位请求；同文件的不同请求用 `requestId` 区分。
 
@@ -178,7 +178,7 @@ Terminal 不经过 Python Runtime，也不是 Agent Shell Tool。Renderer 只通
 
 `RuntimeServer` 维护 SQLite Store、ModelConfigStore、RunSupervisor、RuntimeAsyncKernel 和 Method Registry。Method Registry 负责方法注册、typed request/response 校验、重复注册检查和稳定错误映射。慢 remote（fetch/pull/push）与慢只读 Git 观察（`project/gitContext`、`session/gitStatus`、`session/gitDiff`）使用 `DeferredMethodResult` 与 supervisor managed task offload，后台经线程安全 `send` 回包，输入循环不等待；draining/重配调度失败时只读观察同步回退。
 
-应用层为 Session、Run、Response Action、Model、Extension、Repository、Context、Checkpoint 和 Long Task 提供边界。RuntimeServer 仍保留少量兼容入口，但它不会建立第二套状态权威。
+应用层为 Session、Run、Response Action、Model、Extension、Repository、Context 和 Long Task 提供边界。RuntimeServer 仍保留少量兼容入口，但它不会建立第二套状态权威。
 
 `ResponseActionRuntimeServer` 在默认 `__main__` 入口上扩展 Response Action 方法。它与基础 RuntimeServer 共用初始化、健康检查、关闭、Supervisor 和 SQLite。
 
@@ -407,7 +407,7 @@ Shell 参数通过 Pydantic `AliasChoices` 兼容 Codex 拼写。`run_shell` 接
 
 已声明 Tool 的载荷类型正确但参数契约校验失败时，Runtime 会在 Prepare 前生成并提交 `invalid_arguments` Tool Error。该 ToolCall 仍然进入 SQLite、Event 和下一次 Model Context，但不会触发 Approval、Durable Intent 或 Tool Runtime。载荷类型错误、当前目录中不存在的 Tool、重复或无效 Call ID 等协议错误仍然进入 protocol repair。
 
-当前 Run 的可用内置工具与已启用 MCP 工具从首轮直接提供。系统不再注册工具搜索入口，也不按有无项目延后工具展示。Step 仍固定可用集合、工具契约和绑定。旧激活记录与快照继续可读，旧 Step 中原本未提供的调用仍不能执行；对应兼容错误不会要求调用已移除的工具。未知、禁用或未授权工具仍由校验拒绝。参数、审批、Durable Intent、取消和结果核验保持原样。
+当前 Run 的可用内置工具从首轮直接提供，不按有无项目延后展示。已启用的 MCP 工具由 `RunResources._set_registry` 调用 `tools/search.py` 的 `deferred_tool_names` 决定：定义合计在激活预算内时直接提供；超过预算时整体标记为延后，并注册 `tool_search`。`tool_search` 的命中项经 `VerifiedToolOutput.activated_tool_names` 写入 Run 的激活记录，下一 Step 的工具集合包含它们。内置浏览器插件的工具和无法激活的超大定义始终直接提供。Step 仍固定可用集合、工具契约和绑定。旧 Step 中原本未提供的调用仍不能执行。未知、禁用或未授权工具仍由校验拒绝。参数、审批、Durable Intent、取消和结果核验保持原样。
 
 `list_files`、`read_file`、`read_file_range` 和 `search_text` 的 Contract 只校验参数类型、大小和明显非法语法。ToolExecutor 的只读 Path Authority 再把相对路径绑定到 Workspace，把 canonical absolute path 绑定到 Workspace 或当前 Run 的 active Skill root。结果投影也遵循这个 authority：Workspace 结果保持 Workspace-relative，active Skill 结果返回 canonical absolute path，目录结果保留末尾 `/`，因此只读 Tool 结果可以直接 round-trip 到下一次只读 Tool。active Skill root 只读。未授权的 absolute path 返回普通 Tool Error，不进入 Tool 参数契约错误或协议修复。写入 Tool 使用 Workspace-relative 路径；`run_shell.cwd` 还接受 Workspace 内的 canonical absolute path，并在 shell launch boundary 归一化为 Workspace-relative 路径。active Skill root 和 Workspace 外路径不能成为 Shell cwd。
 
@@ -757,13 +757,13 @@ Renderer 构建前只清理 `dist/renderer/assets`，以移除上次构建遗留
 
 Runtime 启动时会收敛未完成的 Run、ToolCall、Approval、Outbox 和资源状态。没有未完成执行、未决副作用 Intent 或运行中 ToolAttempt 的 active Run 可以重新排队。未知结果兼容字段本身不阻止恢复。真正失去执行结果的活动调用仍记录为 interrupted，系统不会自动重放。Pending Approval 保留原有恢复规则。取消先写入 SQLite，再传播给所属 Worker、模型请求、工具进程、审批等待和异步任务。未知结果不会把用户取消改成 interrupted。
 
-Long Task 控制事实写入 `operations` 的 `long_task/control` scope。`run/pause` 在模型、工具和 Approval 安全点生效。`run/resume` 需要重新记录 Workspace identity、规则、Repository/Context snapshot、permission snapshot、Git 和 reconciliation 检查结果。未确认副作用不会自动重放。
+Long Task 控制事实写入 `operations` 的 `long_task/control` scope。`run/pause` 与 `run/status` RPC 已移除，当前没有发起暂停的入口；引擎仍会在模型、工具和 Approval 安全点处理已持久化的暂停请求。`run/resume` 仍然注册，但 Desktop 界面目前不调用它。它需要重新记录 Workspace identity、规则、Repository/Context snapshot、permission snapshot、Git 和 reconciliation 检查结果。未确认副作用不会自动重放。
 
 Runtime 会记录 Shell 和其他工具的未知结果。系统不会因此建立后续操作的核验门，也不会同步扫描 Workspace 来解除这类执行限制。系统不会自动重放未知操作。后续操作仍执行各自的权限、身份、版本和结果校验。
 
-Checkpoint create/list 和 rewind/fork action lineage 通过 typed RPC 暴露。Checkpoint 保存规则、Repository、Context、compaction、Workspace identity、Git、permission、Model snapshot 和 reconciliation 引用。Managed 和 Local Git Checkpoint 都复用 `worktree_snapshots` metadata、Git patch artifact、checksum 和 hidden ref，保存 HEAD、staged、unstaged 和 untracked 状态。Managed Fork 创建新的 detached managed Worktree，并恢复完整 Checkpoint Git 状态。Local Fork 仍使用同一个 Project 和同一个 `workspace_root` 创建新的 Local Session、Run 和 lineage，所以两个 Local Thread 共享真实目录。Managed 和 Local Rewind 会在原 checkout 中恢复完整 Checkpoint Git 状态；Local Rewind 只允许用户显式调用。Non-Git Local Workspace 仍不提供 filesystem snapshot、copy-on-write 或 rewind。
+Checkpoint create/list、Rewind 和 Checkpoint Fork 的 RPC 与应用层已移除。从某条回答继续另一条对话使用会话分叉（`session/fork`），独立 Worktree 分叉复用 `worktree_snapshots` metadata、Git patch artifact、checksum 和 hidden ref。`checkpoints` 与 `checkpoint_actions` 表保留但不再写入。Non-Git Local Workspace 仍不提供 filesystem snapshot、copy-on-write 或 rewind。
 
-Worktree Session create、Session delete、managed Checkpoint Fork、Create Branch Here、retention cleanup 和 Restore 使用当前 durable lifecycle intent。Session Handoff 使用同一 `session_handoff_operations` 边界。Local Session create、delete 和 Local Fork 不创建 Git lifecycle intent。Local delete 只删除 Eidos Session 数据，不删除 `workspace_root` 或用户文件。Runtime 启动时先完成 SQLite 初始化，再运行 Worktree observation、Worktree lifecycle、Snapshot storage、retention/restore 和 Session Handoff reconciliation，之后才暴露业务应用。Retry 使用原始 intent 中的同一 Worktree id、root、branch 和 base commit。新 Worktree 的 branch 是 NULL，验证要求实际 Git branch 也为 NULL。已有 legacy attached Worktree 仍要求 branch identity 完全匹配。`includeLocalChanges = true` 要求 source `HEAD == baseCommit`，并在创建前后重新核验 source identity、HEAD、branch、status 和 patch。Source Workspace 不执行 stash、reset、checkout 或 add。冲突会进入 compensation；无法证明清理完成时进入 `cleanup_required`。Create Branch Here 在 durable intent 中保存当前 `expected_head`，并用该字段完成 attach 和 recovery；`base_commit` 不会随着 commit 更新。HEAD 在 branch create 后发生外部改变时，Runtime 进入 recovery required，不 force switch。Retention cleanup 只有在 Snapshot ready、artifact checksum 和 hidden ref 都通过验证后才执行 `reset --hard`、`clean -fdx` 和 non-force Worktree remove。Restore 失败会保留 Snapshot，并在不能安全清理时进入 `cleanup_required`。显式 user branch 会随 Worktree 删除保留。Runtime 不执行 force remove、未知路径递归删除或 branch 强制删除。
+Worktree Session create、Session delete、Create Branch Here、retention cleanup 和 Restore 使用当前 durable lifecycle intent。Session Handoff 使用同一 `session_handoff_operations` 边界。Local Session create、delete 和 Local Fork 不创建 Git lifecycle intent。Local delete 只删除 Eidos Session 数据，不删除 `workspace_root` 或用户文件。Runtime 启动时先完成 SQLite 初始化，再运行 Worktree observation、Worktree lifecycle、Snapshot storage、retention/restore 和 Session Handoff reconciliation，之后才暴露业务应用。Retry 使用原始 intent 中的同一 Worktree id、root、branch 和 base commit。新 Worktree 的 branch 是 NULL，验证要求实际 Git branch 也为 NULL。已有 legacy attached Worktree 仍要求 branch identity 完全匹配。`includeLocalChanges = true` 要求 source `HEAD == baseCommit`，并在创建前后重新核验 source identity、HEAD、branch、status 和 patch。Source Workspace 不执行 stash、reset、checkout 或 add。冲突会进入 compensation；无法证明清理完成时进入 `cleanup_required`。Create Branch Here 在 durable intent 中保存当前 `expected_head`，并用该字段完成 attach 和 recovery；`base_commit` 不会随着 commit 更新。HEAD 在 branch create 后发生外部改变时，Runtime 进入 recovery required，不 force switch。Retention cleanup 只有在 Snapshot ready、artifact checksum 和 hidden ref 都通过验证后才执行 `reset --hard`、`clean -fdx` 和 non-force Worktree remove。Restore 失败会保留 Snapshot，并在不能安全清理时进入 `cleanup_required`。显式 user branch 会随 Worktree 删除保留。Runtime 不执行 force remove、未知路径递归删除或 branch 强制删除。
 
 ## 17. Implementation Anchors
 

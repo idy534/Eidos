@@ -401,7 +401,7 @@ Run `e277e61b`（`deepseek-v4-1-flash-261017`，reasoning high）共 10 步。�
 - Desktop Terminal 是用户直接操作的临时 PTY。它不属于 Agent Tool，不经过 Runtime Approval 或 Seatbelt，也不会写入 SQLite、Checkpoint、Conversation 或恢复状态。关闭 Terminal Tab、切换 Session execution binding、删除 Session、关闭窗口或退出应用都会终止对应 PTY。Review 和 Files 各只打开一个工具 Tab；Terminal 可以打开多个 Tab，Files 可以同时预览多个文件。
 - Projectless Conversation 不创建 Project，也不提供 Git status、Git diff 或 Repository Intelligence。它使用系统私有锚点作为 workspace，并提供文件工具、Shell、Skill、MCP、Plugin、Files 和网页预览。它只支持 Local execution。
 - Workspace Explorer 支持有界 UTF-8 text/code、Markdown、常见图片、PDF 和 HTML。其他二进制、Office、archive 和 database 文件不做内嵌预览。Explorer 支持已打开文本文件内查找，但不提供文件名或跨文件搜索、编辑、文件拖放、重命名或删除。当前的拖动交互只用于调整文件树与预览区的宽高。
-- Non-Git Project 已经支持 Local Execution Session。Non-Git Project 不支持 Git status、Git diff、Managed Worktree 或 Git-based Fork。Local Checkpoint Fork 共享真实 workspace，不提供 directory snapshot、copy-on-write 或 filesystem rewind。
+- Non-Git Project 已经支持 Local Execution Session。Non-Git Project 不支持 Git status、Git diff、Managed Worktree 或 Git-based Fork。Local 会话分叉共享真实 workspace，不提供 directory snapshot、copy-on-write 或 filesystem rewind。
 - Git Project 可以创建 Local 或 Worktree Execution Session，也可以在同一个 Session 中执行 Local ↔ Managed Worktree Handoff。Local Session 支持切换 local branch，也支持基于当前 branch 创建并切换到新 branch。该操作要求 workspace clean 且没有任何共享该 workspace 的 active Run。Managed Worktree 默认是 detached HEAD。Runtime 已提供 structured status、compare ref、精确文本行统计、file-scoped diff、stage、unstage、discard、commit、fetch、fast-forward-only pull、push、merge、rebase 和对应 continue/abort typed API。Desktop Review 已提供文件手风琴、展开或折叠全部、Stage、Unstage、tracked/untracked Discard、Open in Editor、inline Review Comment，以及 Commit、Fetch、Pull、Push、Merge、Rebase 和 Local branch 控制。二进制文件没有可用的文本行统计，`statsIncomplete` 会明确标记。Stash 尚未实现。
 - Desktop Remote Git 不提供 credential 配置或 PAT 输入。它只复用系统 Git credential helper 和 SSH Agent。Advanced Git target 当前只列出已观察到的 local branch。它不接受任意 revision 文本，也不提供 remote ref browser。
 - Inline Review Comment 当前只支持单条行级 Comment、删除、精确 anchor 失效和 active Comment 批量发送。它不支持 thread、reply、mention、reaction、云同步或模糊 re-anchor。stale Comment 只保留为历史提示，不会自动进入 Agent feedback。
@@ -410,7 +410,7 @@ Run `e277e61b`（`deepseek-v4-1-flash-261017`，reasoning high）共 10 步。�
 - Ignore 规则只影响普通 `list_files`/`search_text` 发现结果。`.git`、`.agents` 和 `.eidos` 等 hard discovery 目录默认隐藏，但显式只读路径仍可读取。Ignore 规则不是权限。
 - `search_text` 没有 LSP、AST 查询和基于 Repo Intelligence 的默认搜索路径。它仍然使用受管 Ripgrep，结果、preview、单文件和查询大小都有界。首次等待和后续等待不会结束搜索进程，但搜索不能跨 Run 或 Runtime 重启恢复。每个 Run 最多同时运行 4 个搜索，最多保留 16 个未领取的搜索会话；单个搜索进程最多运行 600 秒。
 - 已声明 Tool 的参数错误会返回 `invalid_arguments` Tool Result。Runtime 只保留有界字段路径、稳定原因码和有限数值约束，例如 `field=maxResults, reason=less_than_equal, maximum=100, actual=101`，不返回原始参数值。敏感或超大的结果在 projection 重建为错误时仍保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。
-- 当前可用工具直接提供。旧 Step 的未激活调用仍返回兼容错误，不会自动执行；新版本不注册工具搜索入口。Step 的工具绑定与契约核验仍然保留。
+- MCP 工具超过激活预算（16 个工具、128 KiB）后需要先用 `tool_search` 查找，同时可用的延后工具最多 16 个。搜索只做名称、描述和来源的关键词匹配，没有语义检索。真实模型在工具很多时的查找成功率尚未验证。Step 的工具绑定与契约核验仍然保留。
 - Tool 的准备异常与授权成功分别记录。只有实际执行已开始且没有可信结果时，系统才记录未知副作用；该记录不建立执行屏障。未知事实不阻塞后续执行。可信结果之后的格式校验、投影、输出过滤和迟到取消不单独改变执行确定性。完全访问 Shell 的绝对 cwd 在准备和启动两层遵循同一模式，目录身份仍需核验。
 - 无改动文件操作不会创建新的副作用屏障，但它不能清除其他操作的未知结果。Runtime 不修改历史 Run 的错误标记，也不根据工具返回的 `no_changes` 字符串推断已经安全跳过执行。
 - MCP 的有效响应表示调用已经返回，不证明外部业务目标已经达成。Runtime 在收到响应后做有界内容和固定输出 Schema 校验；校验失败仍报告工具错误，并保留可能已经发生的副作用。SDK 调用已进入但没有有效响应时，Runtime 仍按未知结果处理。当前提交标记是 SDK 调用边界，不是远端业务执行的确认。
@@ -454,11 +454,11 @@ Run `e277e61b`（`deepseek-v4-1-flash-261017`，reasoning high）共 10 步。�
 - 当前 Retrieval Query 只使用可以从用户目标、Inventory、Index、已有 Tool Result、dirty path 和 committed change 直接确认的信号。它没有 embedding、Vector Search、复杂 query rewrite、Base Index + Worktree Overlay，也没有 cross-worktree sharing。
 - Watcher 事件不是 Workspace 安全事实。Watcher 不会静默修改当前 Run 的 immutable snapshot。
 
-### Recovery 与 Checkpoint
+### Recovery
 
-- Runtime 可以持久化 Long Task 控制、pause/resume/cancel、restart verification 结果和 reconciliation 状态。启动时，没有未完成 Tool 执行或不确定副作用的 active Run，且同时没有 cancel request、没有 reconciliation barrier、没有未决有副作用 Durable Intent 和没有 running ToolAttempt 时，才可以重新排队。更广泛的 Restart Verification 尚未覆盖完整的 Git diff、credential、MCP、Seatbelt、pending Approval、unfinished ToolCall、Durable Intent 和 Checkpoint 兼容性集合。
-- Checkpoint create/list 和 rewind/fork lineage 已持久化并暴露 typed RPC。Managed 和 Local Git Checkpoint 会保存 HEAD、staged、unstaged 和 untracked Git 状态。Managed Fork 会恢复独立 Worktree 的完整 checkpoint Git 状态。Managed 和 Local Rewind 会恢复原 checkout 的完整 checkpoint Git 状态。Local Rewind 只允许用户显式调用。Rewind 尚未重建完整逻辑 Context。Fork 仍不会复制全部非 Git immutable snapshots。Ignored 文件不进入 Checkpoint artifact。
-- Worktree Session create、Session delete、managed Checkpoint Fork、managed Checkpoint Rewind、Create Branch Here、retention cleanup 和 Restore 使用 durable lifecycle intent。Session Handoff 使用 durable operation、strict HandoffPlan 和 startup recovery。Create Branch Here 使用 attach 时冻结的 `expected_head`，不使用创建时的 `base_commit` 判断当前 branch HEAD。Runtime 仍会拒绝 dirty Worktree delete，并保留无法证明安全的目录和 legacy attached branch。Retention 只处理 managed Worktree，不处理 adopted Worktree、Permanent Worktree 或按 bytes 的 disk quota。User Branch handoff 给 Local 后只释放 Eidos Worktree metadata，不删除 Git ref；Session delete 仍会保留这个普通用户 branch。Local Session delete 不删除用户 workspace。当前已提供 Project / Session 置顶。系统仍不提供 Permanent Worktree、Archive Chat、multi-Session shared Worktree、dependency cache Snapshot 或 Pull Request UI。
+- Runtime 可以持久化 Long Task 控制、resume/cancel、restart verification 结果和 reconciliation 状态。`run/pause` 与 `run/status` RPC 已移除，当前没有发起暂停的入口；`run/resume` 仍注册但 Desktop 界面不调用。启动时，没有未完成 Tool 执行或不确定副作用的 active Run，且同时没有 cancel request、没有 reconciliation barrier、没有未决有副作用 Durable Intent 和没有 running ToolAttempt 时，才可以重新排队。更广泛的 Restart Verification 尚未覆盖完整的 Git diff、credential、MCP、Seatbelt、pending Approval、unfinished ToolCall 和 Durable Intent 兼容性集合。
+- Checkpoint create/list、Rewind 和 Checkpoint Fork 已移除。系统不提供把工作区回退到某个历史时刻的功能；`checkpoints` 与 `checkpoint_actions` 表保留但不再写入。
+- Worktree Session create、Session delete、Create Branch Here、retention cleanup 和 Restore 使用 durable lifecycle intent。Session Handoff 使用 durable operation、strict HandoffPlan 和 startup recovery。Create Branch Here 使用 attach 时冻结的 `expected_head`，不使用创建时的 `base_commit` 判断当前 branch HEAD。Runtime 仍会拒绝 dirty Worktree delete，并保留无法证明安全的目录和 legacy attached branch。Retention 只处理 managed Worktree，不处理 adopted Worktree、Permanent Worktree 或按 bytes 的 disk quota。User Branch handoff 给 Local 后只释放 Eidos Worktree metadata，不删除 Git ref；Session delete 仍会保留这个普通用户 branch。Local Session delete 不删除用户 workspace。当前已提供 Project / Session 置顶。系统仍不提供 Permanent Worktree、Archive Chat、multi-Session shared Worktree、dependency cache Snapshot 或 Pull Request UI。
 - Linked Worktree 的 Git metadata read 和获批后的精确 write 已在真实 macOS Seatbelt 中验证。默认 write、原始 repository working-tree access 和不匹配的 Worktree recovery 仍会被拒绝。Desktop dirty indicator 只使用 `project/gitContext` 和当前 Session status，不做所有 Thread 的持续轮询。Non-Git Local Workspace Checkpoint 仍不保存或恢复 filesystem state。
 - 子 Agent 第一阶段复用现有 Agent Loop、审批和扩展工具。每个父 Run 最多有 16 个子 Session，同时最多运行 8 个子 Run；名额只在该父 Run 内计数，不影响其他父 Run。独立 Worktree 交付与合并、跨 Worktree Repository Intelligence 共享尚未实现。完整回归与真实 macOS 验证结果见当前 PR。
 - Runtime 不恢复已消失的 Model request、Process 或 ToolCall。重启时，系统记录实际中断与未知结果，并禁止自动重放不确定操作。旧未知结果不再成为后续 Run、工具、正常完成或取消的核验门。
@@ -496,7 +496,7 @@ Run `e277e61b`（`deepseek-v4-1-flash-261017`，reasoning high）共 10 步。�
 
 ### Application 边界
 
-- `application/` 已建立 Session、Run、Response Action、Model、Extension、Repository、Context、Checkpoint 和 TaskLifecycle 的部分边界。
+- `application/` 已建立 Session、Run、Response Action、Model、Extension、Repository、Context 和 TaskLifecycle 的部分边界。
 - 部分 RuntimeServer handler 仍通过 SessionStore 兼容入口执行。所有顶层 use case 尚未完成统一 Application migration。
 - `Run.runtimeState` 是可选跨语言 DTO 字段，不是恢复权威。当前恢复权威仍然是 SQLite 中的 Run status、Approval、Step、ToolCall、Durable Intent 和 reconciliation 事实。
 
@@ -511,7 +511,6 @@ Run `e277e61b`（`deepseek-v4-1-flash-261017`，reasoning high）共 10 步。�
 - `runtime/eidos_runtime/application/repository.py`
 - `runtime/eidos_runtime/application/context.py`
 - `runtime/eidos_runtime/repo_intelligence/`
-- `runtime/eidos_runtime/persistence/checkpoints.py`
 - `runtime/eidos_runtime/persistence/repository_intelligence.py`
 - `runtime/eidos_runtime/extensions/`
 - `runtime/eidos_runtime/sandbox/`

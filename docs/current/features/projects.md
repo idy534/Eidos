@@ -38,7 +38,7 @@ Review 的编辑器入口会在所选 checkout 的全部已挂载目录中匹配
 
 Worktree、Session 根快照、保留快照和生命周期记录固定源 repository root 与 common directory。Session 根快照也保存 Git metadata 目录身份；按根读取 Git 状态或 Diff 前会核对身份，替换 metadata 会返回 `WORKSPACE_IDENTITY_CHANGED`。切换项目主要文件夹后，旧 Worktree 的运行、Fork、Handoff、恢复和清理仍使用原仓库。新会话会重新发现 Git，所以项目保存后才初始化的仓库也能被新会话识别。
 
-Checkpoint 和 Rewind 继续覆盖主仓库现有 Git 能力可保存的内容。其他仓库、共享文件夹、ignored 文件和非 Git 文件夹不属于该恢复范围。本版本不提供多仓库 Worktree 组、多仓库原子提交、统一 PR 或全项目原子 Rewind。Repo Intelligence 的自动索引仍以主要目录为范围；Agent 可以显式搜索其他根。
+Worktree 快照与恢复只覆盖主仓库现有 Git 能力可保存的内容。其他仓库、共享文件夹、ignored 文件和非 Git 文件夹不属于该恢复范围。本版本不提供多仓库 Worktree 组、多仓库原子提交或统一 PR。Repo Intelligence 的自动索引仍以主要目录为范围；Agent 可以显式搜索其他根。
 
 ## 持久化与兼容
 

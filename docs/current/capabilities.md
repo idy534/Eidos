@@ -209,7 +209,6 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - Runtime 可以创建、打开、验证、列出、恢复、清理和删除 managed Worktree。新 Worktree 使用 Runtime-controlled root 和 detached HEAD，不创建 `eidos/*` branch。`baseRef`、immutable `baseCommit` 和 nullable `branch` 会进入 Worktree projection。
 - Runtime 提供 managed Worktree retention。Retention 只处理 `ownership = managed` 的 active Worktree，并按 durable `last_used_at` 保留最近 N 个。Runtime 默认保留 15 个，且可以关闭自动清理。active Run、unfinished Handoff、unfinished lifecycle、invalid identity、legacy managed branch 和无法完成 Snapshot 的 Worktree 会被跳过。
 - Runtime 提供 durable Worktree Snapshot、safe cleanup 和 Restore。Snapshot 使用压缩的 Git CLI full/staged patch bytes、Pydantic manifest、SHA-256 artifact checksum 和 `refs/eidos/worktree-snapshots/<snapshot_id>` hidden ref。Artifact 只保存 `full.patch.gz`、`staged.patch.gz` 和 `manifest.json`，不保存完整 Index、unchanged blob 或 structured repository state，所以 capture 和 artifact 大小接近 O(changed files)。Snapshot 不保存 ignored environment。Restore 会重新 materialize `.worktreeinclude`，再由 Git CLI apply patch，并恢复原 Worktree id、原 Worktree root、Snapshot HEAD 和原始 `baseCommit`。
-- Git Checkpoint 会引用独立的 durable Snapshot。Create 固定当时的 HEAD、staged patch、unstaged patch 和 untracked content。Managed Fork 会从该 HEAD 创建新的 detached managed Worktree，并恢复完全相同的 Index 和 Working Tree 状态。Managed Rewind 会在原 managed Worktree 上恢复。Local Rewind 会在用户显式请求后恢复原 Local Git checkout。两种 Rewind 都执行 native `git reset --hard`、`git clean -fdx` 和 Git patch apply，然后再次验证 Snapshot fingerprint。Checkpoint 引用的 artifact 和 hidden ref 不会被普通 retention snapshot replacement 删除。
 - Runtime 可以实时查询 Worktree 的 HEAD、detached/attached branch、dirty、staged、unstaged、untracked 和 conflict 状态。`session/gitStatus` 同时返回 `stagedFiles`、`unstagedFiles`、`untrackedFiles`、`conflictFiles` 和对应 count。Detached durable identity 与 observed branch 都为 NULL 时才有效；legacy attached Worktree 仍要求 branch identity 匹配。
 - `session/createBranch` 可以在 active、valid、detached Worktree 中执行 `Create Branch Here`。Runtime 在 durable intent 中冻结当前 HEAD 为 `expected_head`，然后创建 branch 并再次验证该 HEAD。`base_commit` 仍是 Worktree 创建时的 immutable baseline，不参与 branch attach HEAD 判断。Runtime 不创建第二个 Worktree，不改变 HEAD 或 working-tree changes。成功后 Worktree 持久化 `branch_ownership = user`。User Branch handoff 到 Local 后，Runtime 只在确认 Local branch 和 HEAD 后清除 Worktree 的 `branch`、`checkout_branch` 和 `branch_ownership` metadata，不删除或修改 Git ref；该 branch 之后属于普通用户 Git 资源。Session delete 会移除仍由 Eidos 管理的 Worktree，但保留 user branch。已存在或在其他 Worktree checkout 的 branch 会拒绝。Branch attach 后 HEAD 改变会进入 recovery required，Runtime 不 force switch。
 - Local Git Session 支持在当前 Project workspace 的 local branches 之间切换，也支持从当前 HEAD 创建并切换到新 branch。Desktop Composer 和 Changes 视图都提供 Local branch selector；创建分支复用现有 Create Branch 对话框。Runtime 会拒绝 dirty workspace、active Run、进行中的 Git operation 和非 Local Session。多个 Local Session 共享同一个 workspace，因此 branch mutation 和 Run admission 的短暂 preflight 使用同一条 workspace 锁；这条锁不限制已启动 Run 的 Shell 或普通副作用并行。
@@ -225,7 +224,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - Remote Fetch、Pull 和 Push 复用 `DeferredMethodResult`、Runtime managed task、`async_operations` 和 process-group termination。Remote timeout 是 120 秒。Cancellation 会终止并回收 Git 子进程组。当前没有新增通用 Desktop operation-cancel API。
 - 只读 `project/gitContext`、`session/gitStatus`、`session/gitDiff` 同样经 `DeferredMethodResult` 与 managed task  offload，不再占用 JSON-RPC 输入循环；排队中的 `session/read`、`model/presets` 等便宜调用不再被慢 Git 队头阻塞。Draining/重配时调度失败会同步回退，保持读可用。
 - SQLite v1 基线保存 Project、Worktree ownership、branch ownership、`worktrees.last_used_at`、`runtime_settings`、`worktree_snapshots`、Checkpoint 的 `git_snapshot_id`、lifecycle state、`sessions.execution_mode`、`sessions.worktree_id`、`sessions.associated_worktree_id`、`worktrees.checkout_branch` 和 managed lifecycle intent。基线测试验证完整表结构、Worktree FK、Run、nullable branch、retention defaults 和 Worktree lifecycle fields。
-- Session create、Session delete、managed Checkpoint Fork、Create Branch Here、Local branch mutation 和 Session Handoff 支持同进程 operation serialization、durable prepare、restart reconciliation 和同 operationId retry。Git stage、unstage 和 commit 也使用现有 `operations` 表。Runtime 在 Git 前后使用两个短 SQLite transaction。Completed 或明确 failed 的 operation replay 原结果或原错误。未完成的 Git operation 返回 `OPERATION_IN_PROGRESS`，不会重复执行不确定的外部 side effect；外部结果无法证明时返回 `GIT_REMOTE_OUTCOME_UNCERTAIN` 并保留副作用标记。Retry 不会重新生成 Worktree identity。Branch attach recovery 和 Handoff recovery 不会 force switch、force checkout 或创建第二个 Worktree。
+- Session create、Session delete、Create Branch Here、Local branch mutation 和 Session Handoff 支持同进程 operation serialization、durable prepare、restart reconciliation 和同 operationId retry。Git stage、unstage 和 commit 也使用现有 `operations` 表。Runtime 在 Git 前后使用两个短 SQLite transaction。Completed 或明确 failed 的 operation replay 原结果或原错误。未完成的 Git operation 返回 `OPERATION_IN_PROGRESS`，不会重复执行不确定的外部 side effect；外部结果无法证明时返回 `GIT_REMOTE_OUTCOME_UNCERTAIN` 并保留副作用标记。Retry 不会重新生成 Worktree identity。Branch attach recovery 和 Handoff recovery 不会 force switch、force checkout 或创建第二个 Worktree。
 - Git mutation、Fetch、Pull 和 Push 在写入 `in_progress` 前执行无副作用 preflight。Session、active Run、execution root、branch、Workspace cleanliness、path 或 remote 校验失败不会污染 `operations` 表。Remote operations 复用现有 operations table、request hash 和 replay 规则。Deferred prepare 在单个 SQLite transaction 内同时创建 `operations` reservation 和 `async_operations` lifecycle。失败会完整回滚。
 - `GitBackend` 把 Git mechanics 与 Eidos Worktree lifecycle 分开。Eidos 不实现 Git working-tree、Index、commit、merge tree、rebase replay、conflict marker、fast-forward 或 push semantics。Dulwich 负责 discovery、HEAD、refs、branch metadata 和 revision resolution。唯一的 `GitCli` authority 负责 status、diff、stage、commit、fetch、merge、merge abort、rebase、rebase continue/abort、push、patch mechanics、Worktree Add 和 destructive clean；它不作为 Dulwich failure retry path。Commit、merge commit 和 rebase replay 读取 repository-local identity，或只从用户 global config 读取 `user.name` 和 `user.email`。Hooks 始终禁用。Credentials 只在 REMOTE profile 开放。Observation command 禁用 executable filters。Stage 允许 native Git 执行 clean/process filter。
 - 所有 Git CLI 调用都经过 `HardenedGitRunner`。Runner 负责 argv、stdin bytes、bounded output、timeout、process group cleanup、isolated environment、hooks/fsmonitor/credential/askpass/pager 和 external diff/textconv/filter hardening。Status、diff、capture、apply、Worktree Add 和 destructive clean 不会无意执行 configured helper。
@@ -252,8 +251,8 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 已应用的文件 Diff 会进入 ToolCall 持久事实，并在 Execution Feed 中展示。
 - 已有普通文件通过 stdin 把有界候选内容交给受控 helper，原地写入并保留 inode；这条路径不创建候选临时文件，系统管理 xattr 和 ACL。Runtime 不再克隆、复制或逐项比较元数据。helper 在截断前检查普通文件、owner、链接和 Base Hash，写入后执行 fsync 和最终验证。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
 - 工作区外的普通文件写入复用现有扩权审批和 Run Grant。审批包含目标路径、权限范围、完整 Diff 和版本；审批通过后重新核验身份和版本。沙盒不可用时，无沙盒写入需要单独明确批准；受保护路径需要高危人工确认后才可扩权。
-- 当前可用的工具从首轮直接提供。Runtime 不注册 `tool_search`，也不要求先搜索再激活，见 [系统提示词](features/system-prompts.md)。旧激活记录和快照字段只保留读取兼容。
-- 历史 Step 中未激活的延迟 Tool 调用返回 `tool_not_activated`，提示改用新 Step 提供的工具，不重放该调用。该调用不会执行工具、申请审批、创建 Durable Intent 或建立结果未知状态，也不会消耗协议修复次数或单独终止 Run。未知、禁用和未授权工具继续按原有检查拒绝。重复调用仍受现有 LoopGuard 限制。
+- 内置工具从首轮直接提供。已启用的 MCP 工具在激活预算（16 个工具、128 KiB）内直接提供；超过预算时整体改为通过 `tool_search` 查找后提供，内置浏览器插件的工具除外。规则见 [系统提示词](features/system-prompts.md#工具与-skill)。
+- 模型调用尚未提供的 MCP 工具时，Runtime 返回 `tool_not_activated`，并提示用工具全名调用 `tool_search`，在后续 Step 重试。当前 Run 没有 `tool_search` 时，该错误只说明这是历史调用，不要求重放。该调用不会执行工具、申请审批、创建 Durable Intent 或建立结果未知状态，也不会消耗协议修复次数或单独终止 Run。未知、禁用和未授权工具继续按原有检查拒绝。重复调用仍受现有 LoopGuard 限制。
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
 - `skill_create` 使用独立的参数预算，不再受普通工具的 64 KiB JSON 参数上限限制。创建路径保留单文件 4 MiB、整棵 Skill 8 MiB、最多 512 个文件的边界；512 个文件包含自动生成的 `SKILL.md`。安装与目录加载允许更大的完整 Skill tree：单文件 4 MiB、整棵 64 MiB、最多 20,000 个文件。`skill_install` 的整次工具超时为 300 秒。Runtime 将 YAML、标题和正文一起计入 `SKILL.md` 大小，将文件路径、metadata 和 JSON 转义计入独立参数预算。工具可以一次提交完整文本资源，无需为了旧的 64 KiB 上限省略文件。`skill_read` 与 `skill_read_resource` 每页仍最多返回 24,000 UTF-8 bytes，offset 可以覆盖整个 4 MiB 文件。审批、Durable Intent、取消、路径保护和 Run 固定目录快照保持原有语义。
 - ToolCallRuntime 和 ToolExecutionController 会按工具类型执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。普通读取和 Shell 聚合输出不因可识别敏感内容阻断；展示层只做 best-effort 脱敏。
@@ -355,7 +354,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 ## Recovery
 
 - Runtime 重启时会从 SQLite 恢复 Run、ToolCall、Approval、Outbox 和 Long Task。未知结果兼容字段本身不阻止恢复。真正未完成的副作用调用仍进入 interrupted，系统不会自动重放。
-- Runtime 启动时会读取 Worktree lifecycle intent、Snapshot metadata、Snapshot artifact、hidden ref 和 Session Handoff operation，并在业务应用暴露前执行 bounded reconciliation。Worktree Session create、Session delete、Managed Checkpoint Fork、Branch attach、retention cleanup、Restore 和 Session Handoff 可以在 restart 后恢复或进入 cleanup required。Managed 和 Local Checkpoint Rewind 会保留 durable lifecycle；同一 `operationId` 在 Runtime restart 后可以继续收敛，且不会重复记录 Checkpoint action。
+- Runtime 启动时会读取 Worktree lifecycle intent、Snapshot metadata、Snapshot artifact、hidden ref 和 Session Handoff operation，并在业务应用暴露前执行 bounded reconciliation。Worktree Session create、Session delete、Branch attach、retention cleanup、Restore 和 Session Handoff 可以在 restart 后恢复或进入 cleanup required。Managed 和 Local Checkpoint Rewind 会保留 durable lifecycle；同一 `operationId` 在 Runtime restart 后可以继续收敛，且不会重复记录 Checkpoint action。
 - Runtime 支持 cancel、pause、resume 和 restart verification 的 typed boundary。
 - Resume 前会检查 Workspace identity、规则、Repository/Context snapshot、permission snapshot、Git 和 side-effect reconciliation 字段。
 - Cancel、Tool timeout、Shell cleanup、MCP shutdown 和 Runtime shutdown 都有资源跟踪和有界等待。
@@ -364,13 +363,10 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Checkpoint
 
-- Runtime 提供 checkpoint create/list 和 rewind/fork action lineage 的 typed RPC。
-- Checkpoint 记录 Rule Snapshot、Repository Snapshot、Context Snapshot、Compaction Summary、Workspace identity、Git、permission、Model snapshot 和 reconciliation 状态引用。
-- Managed 和 Local Git Checkpoint 复用现有 Git snapshot artifact，保存 HEAD、staged、unstaged 和 untracked 状态。Artifact 使用 checksum 和 hidden ref 验证。
-- Managed Checkpoint Fork 创建新的 detached managed Worktree，并恢复完整 Checkpoint Git 状态。相同 `checkpointId` 与 `operationId` 不会创建第二套 Worktree、Session、Run 或 action。
-- Local Checkpoint Fork 使用相同 Project、相同 workspace root 和 `worktreeId = NULL` 创建新的 Local Session、Run 和 lineage。两个 Local Thread 共享真实目录，因此 Fork 不复制 filesystem。
-- Managed 和 Local Rewind 会恢复原 checkout 的完整 Checkpoint Git 状态。Local Rewind 只允许用户显式调用。Checkpoint action 以 append-only lineage 保存 source Run、target Run 和 action kind。
-- Rewind 尚未重建完整逻辑 Context。Fork 仍不会复制全部非 Git immutable snapshot。Non-Git Local Workspace 不支持 filesystem rewind。
+- Checkpoint create/list、Rewind 和 Checkpoint Fork 的 RPC 与应用层已移除，Desktop 从未提供这些入口。
+- 从某条回答继续另一条对话使用会话分叉（`session/fork`）；独立 Worktree 分叉复用 Worktree Snapshot。
+- `checkpoints` 与 `checkpoint_actions` 表仍在 Schema 中，不再写入；Session 删除时仍会清理其中的旧记录，被旧记录引用的 Snapshot 不会被 retention 替换。
+- Non-Git Local Workspace 不支持 filesystem rewind。
 
 ## Distribution
 
@@ -402,7 +398,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `pnpm check:python` 覆盖 Ruff、deptry、Runtime tests 和 Python dependency audit。
 - Seatbelt native、Electron startup/shutdown、bundled Runtime、packaged App 和 packaging config 都有独立测试入口。
 - Runtime dependency focused tests 入口包括 `runtime/tests/test_skill_runtime_requirements.py`、`runtime/tests/test_skill_manifest.py`、`runtime/tests/test_system_skills.py`、`runtime/tests/test_runtime_dependency_catalog.py`、`runtime/tests/test_dependency_shell_environment.py` 和 `runtime/tests/test_runtime_dependency_persistence.py`。Node CJS/ESM loader 与 manifest packaging 使用 `runtime/tests/test_dependency_runtime_loader.mjs` 和 `scripts/runtime-dependency-packaging.test.mjs`。这些入口的当前通过状态要以实际运行结果为准。
-- Repository、Project Rules、Context、LoopGuard、response actions、schema baseline、checkpoint、long task、MCP 和 telemetry 都有 focused test files。
+- Repository、Project Rules、Context、LoopGuard、response actions、schema baseline、long task、MCP 和 telemetry 都有 focused test files。
 
 ## Implementation Anchors
 

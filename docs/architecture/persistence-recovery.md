@@ -21,7 +21,7 @@ SQLite 是业务事实来源。内存只保存协调状态、缓存和活跃资�
 | 工具 | ToolCall、Attempt、Intent、结果与执行开始事实 | Runtime 区分未执行、已完成和未知结果。 |
 | 人机协作 | Approval、Grant、输入请求、Plan 与子任务依赖 | Runtime 恢复合法等待并沿原契约继续。 |
 | 扩展与资料 | Extension Snapshot、记忆版本、读取记录、检索来源 | Runtime 核对固定内容与撤销状态。 |
-| 版本操作 | Checkpoint、Fork lineage、Worktree 生命周期与快照引用 | Runtime 恢复或拒绝已经失效的工作空间操作。 |
+| 版本操作 | 对话分叉 lineage、Worktree 生命周期与快照引用 | Runtime 恢复或拒绝已经失效的工作空间操作。 |
 
 Repository 和 Mapper 将数据库行映射为边界模型。Raw SQL、条件更新和短事务继续表达状态转换。Schema 升级需要在事务中更新结构和版本；迁移失败不能只留下新版本号。
 
@@ -47,7 +47,7 @@ Supervisor 先停止接纳并请求取消，再等待 Worker、Managed Task、Sh
 
 完整数据备份保存一致的 SQLite 与被引用资源。恢复到新目录后，Runtime 检查归档路径、体积、SQLite 完整性、正文和 Blob 引用。Workspace 与模型凭据不在该备份范围。
 
-数据库回退、代码回退和 Workspace Rewind 是不同操作。旧 Runtime 不能读取新 schema 时，维护者需要使用兼容备份，而非仅回退代码。当前记忆备份格式的具体边界见[记忆专题](memory.md#存储与恢复限制)。
+数据库回退和代码回退是不同操作。旧 Runtime 不能读取新 schema 时，维护者需要使用兼容备份，而非仅回退代码。当前记忆备份格式的具体边界见[记忆专题](memory.md#存储与恢复限制)。
 
 ## 源码与测试入口
 

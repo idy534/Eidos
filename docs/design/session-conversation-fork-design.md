@@ -42,9 +42,9 @@ Codex App Server 用 `thread/fork` 创建新的聊天 ID。参数 `lastTurnId` �
 
 ## 2. Eidos 现状与缺口
 
-当前实现已经支持 `checkpoint/fork`。Local 路径创建新 Session，然后把父 Run 的 `userInput`、引用和模型再次入队。Managed 路径先恢复 Checkpoint 的 Git 状态，再创建新 Session 和新 Run。两条路径都没有复制整个 Session 的聊天前缀。[Checkpoint 实现](../../runtime/eidos_runtime/application/checkpoints.py#L536)、[Managed Fork 实现](../../runtime/eidos_runtime/application/checkpoints.py#L652)
+当前实现已经支持 `checkpoint/fork`。Local 路径创建新 Session，然后把父 Run 的 `userInput`、引用和模型再次入队。Managed 路径先恢复 Checkpoint 的 Git 状态，再创建新 Session 和新 Run。两条路径都没有复制整个 Session 的聊天前缀。Checkpoint 实现（`application/checkpoints.py`，已随 Checkpoint 功能移除）、Managed Fork 实现（同一文件）
 
-当前 Checkpoint Fork 还要求 Session 绑定 Project。因此，它不能直接作为通用的 Projectless 聊天分叉入口。[Project 检查](../../runtime/eidos_runtime/application/checkpoints.py#L547)
+当前 Checkpoint Fork 还要求 Session 绑定 Project。因此，它不能直接作为通用的 Projectless 聊天分叉入口。Project 检查（同一文件）
 
 当前 `session/read` 按 Session 查询真实 Run、Item 和 ToolCall，并支持历史分页。当前 Context 也只查询该 Session 的 Item。两个读取路径都需要增加继承历史的支持。[历史读取](../../runtime/eidos_runtime/db/repositories/sessions.py#L906)、[Context 事实读取](../../runtime/eidos_runtime/db/repositories/context.py#L43)
 

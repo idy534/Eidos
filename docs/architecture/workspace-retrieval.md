@@ -34,11 +34,10 @@ TaskQuery 从任务文本、显式路径与符号、当前 Diff、最近修改�
 | Local Session | Session 使用原项目 checkout。 | 多个 Session 可以并行共享文件；提交仍需版本校验。 |
 | Managed Worktree | 系统管理独立 checkout、身份、状态和资源引用。 | 工作树存在不代表运行任务自动独占所有资源。 |
 | Projectless | 普通 Session 使用独立私有 Workspace。 | 系统不因此开放整个 Eidos 数据目录。 |
-| Checkpoint / Rewind | 系统保存恢复资料并按前提恢复对应范围。 | 文件回退不能撤销已发生的 Shell 网络、MCP 或其他外部副作用。 |
 | Fork | 系统固定历史与 lineage，再创建正常 Session。 | Local / Projectless 可以共享当前目录，独立 Worktree 分叉按快照恢复。 |
 | Handoff / Archive | 系统管理 Local 与 Worktree 切换、快照、归档和恢复。 | 系统需要在各阶段核对 Git、文件和持久生命周期。 |
 
-模型上下文、磁盘文件、Git HEAD 和 Checkpoint 不是同一个版本。维护者诊断时需要分别读取它们。重建检索索引不能修复文件版本冲突，Workspace Rewind 也不能代替业务数据恢复。
+模型上下文、磁盘文件和 Git HEAD 不是同一个版本。维护者诊断时需要分别读取它们。重建检索索引不能修复文件版本冲突。
 
 ## 当前边界
 
@@ -51,6 +50,6 @@ TaskQuery 从任务文本、显式路径与符号、当前 Diff、最近修改�
 | 清单与索引 | [inventory.py](../../runtime/eidos_runtime/repo_intelligence/inventory.py)、[map.py](../../runtime/eidos_runtime/repo_intelligence/map.py)、[index.py](../../runtime/eidos_runtime/repo_intelligence/index.py) | [Inventory](../../runtime/tests/test_repository_inventory.py)、[Index](../../runtime/tests/test_repository_index.py) |
 | 查询与排序 | [query.py](../../runtime/eidos_runtime/repo_intelligence/query.py)、[retrieval.py](../../runtime/eidos_runtime/repo_intelligence/retrieval.py) | [查询](../../runtime/tests/test_repository_task_query.py)、[检索](../../runtime/tests/test_repository_retrieval.py) |
 | 缓存与即时搜索 | [watcher.py](../../runtime/eidos_runtime/repo_intelligence/watcher.py)、[search_driver.py](../../runtime/eidos_runtime/workspace/search_driver.py) | [Watcher](../../runtime/tests/test_repository_watcher.py)、[缓存](../../runtime/tests/test_repository_cache.py) |
-| Git 与恢复 | [git/manager.py](../../runtime/eidos_runtime/git/manager.py)、[checkpoints.py](../../runtime/eidos_runtime/application/checkpoints.py)、[session_fork.py](../../runtime/eidos_runtime/application/session_fork.py) | [Managed Checkpoint](../../runtime/tests/test_checkpoint_managed_worktree.py)、[lineage](../../runtime/tests/test_checkpoint_lineage.py) |
+| Git 与恢复 | [git/manager.py](../../runtime/eidos_runtime/git/manager.py)、[session_fork.py](../../runtime/eidos_runtime/application/session_fork.py) | [对话分叉](../../runtime/tests/test_session_conversation_fork.py)、[Worktree 生命周期](../../runtime/tests/test_worktree_lifecycle.py) |
 
 返回[组成总览](harness-overview.md)。
