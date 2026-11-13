@@ -66,7 +66,7 @@ def seed(service, session, **changes):
             path="profile.md",
             summary="用户背景",
             kind="user",
-            content="用户使用中文。",
+            content=changes.pop("content", "用户使用中文。"),
             **changes,
         )
     )
@@ -391,7 +391,7 @@ def test_flow_migration_failure_rolls_back_column_triggers_and_version(monkeypat
         )
 
 
-@pytest.mark.parametrize("action", ["write", "delete"])
+@pytest.mark.parametrize("action", ["write", "append", "delete"])
 @pytest.mark.parametrize("mode,resume_mode", [("read", "read"), ("off", "off"), ("off", "auto")])
 @pytest.mark.parametrize("changed", [False, True])
 def test_approval_recovery_retains_cas_and_archive_semantics(setup, action, mode, resume_mode, changed):
@@ -409,6 +409,8 @@ def test_approval_recovery_retains_cas_and_archive_semantics(setup, action, mode
     }
     if action == "write":
         arguments.update(content="用户明确更正后的内容。", summary="更正后的背景")
+    if action == "append":
+        arguments.update(content="补充：用户也使用英文。")
 
     class Interrupted(BaseException):
         pass
@@ -419,8 +421,13 @@ def test_approval_recovery_retains_cas_and_archive_semantics(setup, action, mode
         assert request["expectedRevision"] == 1
         if mode == "off":
             assert "用户使用中文。" not in json.dumps(request, ensure_ascii=False)
+        elif action == "append":
+            assert "+补充：用户也使用英文。" in request["diff"]
+            assert "+用户使用中文。" in request["diff"]
         else:
             assert "-用户使用中文。" in request["diff"]
+        if action == "append" and mode == "off":
+            assert "+补充：用户也使用英文。" in request["diff"]
         raise Interrupted()
 
     model = ScriptedModel(
@@ -471,7 +478,7 @@ def test_approval_recovery_retains_cas_and_archive_semantics(setup, action, mode
         assert reopened.read_run(run["id"])["status"] == "succeeded"
         code = (
             "memory_revision_conflict" if changed
-            else "memory_saved" if action == "write"
+            else "memory_saved" if action in {"write", "append"}
             else "memory_archived"
         )
         assert results(reopened, run)[-1]["code"] == code
@@ -479,12 +486,16 @@ def test_approval_recovery_retains_cas_and_archive_semantics(setup, action, mode
             reopened.database.memory.list(
                 MemoryListRequest(session_id=session["id"])
             ).documents
-        ) == (action == "write" or changed)
+        ) == (action in {"write", "append"} or changed)
         assert len(
             reopened.database.memory.list(
                 MemoryListRequest(session_id=session["id"], include_archived=True)
             ).documents
         ) == 1
+        if action == "append" and not changed:
+            assert reopened.database.memory.read(
+                MemoryReadRequest(session_id=session["id"], path="profile.md")
+            ).content == "用户使用中文。\n补充：用户也使用英文。"
         if changed:
             assert reopened.database.memory.read(
                 MemoryReadRequest(session_id=session["id"], path="profile.md")
@@ -502,3 +513,210 @@ def test_approval_recovery_retains_cas_and_archive_semantics(setup, action, mode
             ).fetchone()
     finally:
         reopened.close()
+
+
+def test_append_and_replace_merge_without_a_prior_read(setup):
+    store, session = setup
+    service = store.database.memory
+    seed(service, session, content="# 背景\n\n- 用户使用中文。\n")
+    run, _ = store.create_run(session["id"], "补充并更正我的背景", approval_mode="manual")
+    model = ScriptedModel(
+        [
+            call("memory_edit", path="profile.md", action="append", content="- 用户是后端开发。"),
+            call("memory_edit", path="profile.md", action="replace", oldText="使用中文", content="使用简体中文"),
+            call("memory_edit", path="profile.md", action="replace", oldText="不存在的文字", content="x"),
+            call("memory_edit", path="profile.md", action="replace", oldText="- 用户", content="- 他"),
+            call("memory_edit", path="missing.md", action="replace", oldText="x", content="y"),
+            call("memory_edit", path="new.md", action="append", content="新笔记的第一行。"),
+            ModelResponse(text="已更新"),
+        ]
+    )
+    RuntimeEngine(store, model, lambda _: None).run(run["id"], threading.Event())
+    assert [result.get("code") for result in results(store, run)] == [
+        "memory_saved",
+        "memory_saved",
+        "memory_text_not_found",
+        "memory_text_ambiguous",
+        "memory_document_not_found",
+        "memory_saved",
+    ]
+    read = service.read(MemoryReadRequest(session_id=session["id"], path="profile.md"))
+    assert read.content == "# 背景\n\n- 用户使用简体中文。\n- 用户是后端开发。"
+    assert read.revision == 3 and read.document.kind == "user"
+    created = service.read(MemoryReadRequest(session_id=session["id"], path="new.md"))
+    assert created.content == "新笔记的第一行。" and created.revision == 1
+    assert not store.connection.execute("SELECT 1 FROM approvals").fetchone()
+    assert store.read_run(run["id"])["status"] == "succeeded"
+    operation = store.connection.execute(
+        "SELECT operation_id FROM memory_actions WHERE operation_id LIKE 'memory-tool:%' ORDER BY created_at LIMIT 1"
+    ).fetchone()[0]
+    assert service.replayed(operation).code == "memory_saved"
+
+
+def test_replace_needs_reading_and_merges_respect_the_note_limit(setup):
+    store, session = setup
+    service = store.database.memory
+    seed(service, session, content="x" * 65_000)
+    service.policy(MemoryPolicyRequest(session_id=session["id"], scope="current", mode="off"))
+    service.policy(MemoryPolicyRequest(session_id=session["id"], scope="global", mode="off"))
+    run, _ = store.create_run(session["id"], "更正笔记", approval_mode="full_access")
+    model = ScriptedModel(
+        [
+            call("memory_edit", path="profile.md", action="replace", oldText="x", content="y"),
+            call("memory_edit", path="profile.md", action="append", content="y" * 1_000),
+            ModelResponse(text="未能修改"),
+        ]
+    )
+    RuntimeEngine(store, model, lambda _: None).run(run["id"], threading.Event())
+    assert [result.get("code") for result in results(store, run)] == [
+        "memory_read_disabled",
+        "memory_note_too_large",
+    ]
+    assert store.read_run(run["id"])["status"] == "succeeded"
+
+
+def test_new_notes_report_similar_notes_and_index_overflow(setup):
+    store, session = setup
+    service = store.database.memory
+    service.edit(
+        MemoryEditRequest(
+            session_id=session["id"],
+            operation_id="existing",
+            path="testing-policy.md",
+            title="测试策略",
+            summary="只在明确要求时运行全量测试，平时运行定向测试。",
+            content="用户只在明确要求时运行全量测试。",
+        )
+    )
+    run, _ = store.create_run(session["id"], "记住测试习惯", approval_mode="manual")
+    model = ScriptedModel(
+        [
+            call(
+                "memory_edit",
+                path="test-policy.md",
+                title="测试策略",
+                summary="只在明确要求时运行全量测试，平时跑定向测试。",
+                content="全量测试只在用户明确要求时运行。",
+            ),
+            call("memory_edit", path="unrelated.md", summary="发布前需要更新版本号。", content="发布前更新版本号。"),
+            ModelResponse(text="已保存"),
+        ]
+    )
+    RuntimeEngine(store, model, lambda _: None).run(run["id"], threading.Event())
+    similar, unrelated = results(store, run)
+    assert similar["data"]["similar"] == [
+        {"path": "testing-policy.md", "summary": "只在明确要求时运行全量测试，平时运行定向测试。"}
+    ]
+    assert "merge into it" in similar["summary"]
+    assert "summary" not in unrelated
+    assert "similar" not in unrelated["data"]
+    assert "indexHidden" not in unrelated["data"]
+
+    for index in range(230):
+        service.edit(
+            MemoryEditRequest(
+                session_id=session["id"],
+                operation_id=f"bulk-{index}",
+                path=f"bulk-{index:03d}.md",
+                summary=f"批量条目 {index}",
+                content=f"条目 {index}",
+            )
+        )
+    second, _ = store.create_run(session["id"], "再记一条", approval_mode="manual")
+    RuntimeEngine(
+        store,
+        ScriptedModel([call("memory_edit", path="late.md", content="最后一条。"), ModelResponse(text="好")]),
+        lambda _: None,
+    ).run(second["id"], threading.Event())
+    late = results(store, second)[0]
+    hidden = late["data"]["indexHidden"]
+    assert hidden > 0
+    assert f"{hidden} notes in this scope no longer fit" in late["summary"]
+    assert hidden == service.index_hidden(
+        session["id"], service.list(MemoryListRequest(session_id=session["id"], scope="current")).scopes[-1].id
+    )
+
+
+def test_v53_upgrade_adds_read_tracking_and_keeps_notes(tmp_path):
+    from schema_fixtures import remove_memory_usage_schema
+
+    from eidos_runtime.db.schema import SCHEMA_VERSION
+
+    data = tmp_path / "data"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = SessionStore(data)
+    store.initialize()
+    session = store.create_session(str(workspace))
+    seed(store.database.memory, session)
+    store.close()
+    with sqlite3.connect(data / "state.sqlite") as connection:
+        remove_memory_usage_schema(connection)
+        connection.execute("PRAGMA user_version=53")
+    reopened = SessionStore(data)
+    reopened.initialize()
+    try:
+        assert reopened.health()["state"] == "ready"
+        assert reopened.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        read = reopened.database.memory.read(
+            MemoryReadRequest(session_id=session["id"], path="profile.md")
+        )
+        assert read.content == "用户使用中文。" and read.document.last_read_at is None
+        assert reopened.connection.execute(
+            "SELECT read_count FROM memory_documents WHERE id=?", (read.document.id,)
+        ).fetchone()[0] == 0
+    finally:
+        reopened.close()
+
+
+def test_usage_migration_failure_rolls_back_columns_and_version(tmp_path, monkeypatch):
+    from schema_fixtures import remove_memory_usage_schema
+
+    from eidos_runtime.db.schema import SCHEMA_SQL
+    from eidos_runtime.memory import usage_migration
+
+    with sqlite3.connect(tmp_path / "state.sqlite") as connection:
+        connection.executescript(SCHEMA_SQL)
+        remove_memory_usage_schema(connection)
+        connection.execute("PRAGMA user_version=53")
+        connection.commit()
+        monkeypatch.setattr(
+            usage_migration,
+            "MEMORY_USAGE_SCHEMA_SQL",
+            usage_migration.MEMORY_USAGE_SCHEMA_SQL + "SELECT nonexistent_column FROM memory_scopes;",
+        )
+        with pytest.raises(sqlite3.OperationalError):
+            usage_migration.migrate_memory_usage(connection)
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 53
+        assert not {"last_read_at", "read_count"} & {
+            row[1] for row in connection.execute("PRAGMA table_info(memory_documents)")
+        }
+
+
+def test_model_reads_update_usage_without_changing_versions(setup):
+    store, session = setup
+    service = store.database.memory
+    original = seed(service, session)
+    generation = service.list(MemoryListRequest(session_id=session["id"], scope="current")).scopes[-1].generation
+    run, _ = store.create_run(session["id"], "看看我的背景", approval_mode="manual")
+    RuntimeEngine(
+        store,
+        ScriptedModel(
+            [
+                call("memory_read", path="profile.md"),
+                call("memory_read"),
+                call("memory_search", order="oldest"),
+                ModelResponse(text="好"),
+            ]
+        ),
+        lambda _: None,
+    ).run(run["id"], threading.Event())
+    read, index, oldest = results(store, run)
+    assert read["data"]["updated"] and len(read["data"]["updated"]) == 10
+    assert index["outcome"] == oldest["outcome"] == "success"
+    row = store.connection.execute(
+        "SELECT read_count,last_read_at,current_revision FROM memory_documents WHERE id=?",
+        (original.document_id,),
+    ).fetchone()
+    assert row[0] == 1 and row[1] is not None and row[2] == 1
+    assert service.list(MemoryListRequest(session_id=session["id"], scope="current")).scopes[-1].generation == generation

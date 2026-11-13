@@ -25,12 +25,13 @@ export type Userowned = boolean;
 export type Archived = boolean;
 export type Createdat = number;
 export type Updatedat = number;
+export type Lastreadat = number | null;
 export type Itemid = string;
 export type Sessionid1 = string;
 export type Runid = string;
 export type Itemrevision = number;
 export type Sourcerevision = number;
-export type Evidenceclass = "explicit_user" | "observed_verified";
+export type Evidenceclass = "explicit_user" | "observed_verified" | "observed_external";
 export type Evidence = MemoryEvidence[];
 export type Documents = MemoryDocument[];
 export type Nextcursor = number | null;
@@ -138,6 +139,7 @@ export interface MemoryDocument {
   archived?: Archived;
   createdAt: Createdat;
   updatedAt: Updatedat;
+  lastReadAt?: Lastreadat;
   evidence?: Evidence;
 }
 export interface MemoryEvidence {

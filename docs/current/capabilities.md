@@ -162,7 +162,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - Runtime 使用随应用提供的 cl100k 词表和 tiktoken 进行离线参考计数。校准只使用同一已完成请求的冻结估算和 Provider usage，并可在重启后恢复。旧估算器不会混入新校准，思考回放按模型响应只计一次。
 - ContextBuilder 在摘要前尝试清理旧的大段成功读取、搜索和已结束 Shell 结果。系统保留近期完整交互、结果状态、来源和回读入口；原始事实仍在 SQLite。
 - `read_tool_output` 新增 `stream="result"` 和可选 `itemId`，支持分页读取当前 Session 和分叉历史中的允许工具结果。系统不会为了恢复旧输出再次运行工具。`stream="arguments"` 读取已保存的调用参数，用于回读被清理的写入参数。
-- `search_history` 按字面文本搜索当前 Session 已保存的消息和工具调用，包括已摘要或已清理的部分，返回片段和回读参数。
+- `search_history` 按字面文本搜索当前 Session 已保存的消息和工具调用，包括已摘要或已清理的部分，返回片段和回读参数。`scope="project"` 搜索同一项目其他会话的用户与 Assistant 消息，跟随记忆读取模式。
 - 旧工具结果清理覆盖 MCP、网页搜索、补丁和输出回读结果，以及成功写入调用的较大参数；占位约为原来的一半，批次大小随窗口增大。
 - 压缩摘要每条工具记录只写入一个字段，下一步计划每轮替换；模型可以返回带来源的工作交接，单条无效说明不再使整份模型摘要回退。窗口压力、Provider 拒绝、投影超限和手动压缩保留最近完整响应。
 - Runtime 会在预计输入达到可用输入预算减去一个工作集时尝试自动摘要压缩；工作集是可用输入预算的 1/8，限制在 1,024～32,768。系统已移除固定 64K、新增 32 条历史和窗口 85% 的触发条件。系统按 Token 预算保留完整近期响应、用户消息和 Skill 正文。手动压缩、请求输出预留、内部投影超限和 Provider 超限保护继续生效。原始证据仍保存在 SQLite 和 Context Snapshot 中。
@@ -181,9 +181,9 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - 设置页提供“个性化”，包含语言与表达、关于你和自定义指令。Runtime 把全局偏好保存在 SQLite，并在创建 Run 时固定到指令来源快照。后续修改不会改变已创建的任务，子 Agent 继承父任务配置。具体范围见[个性化说明](features/personalization.md)。
 
 - ProjectRuleResolver 支持 `EIDOS.override.md`、`EIDOS.md`、`AGENTS.override.md`、`AGENTS.md` 和 `CLAUDE.md`。
-- Resolver 从 Workspace root 到 effective cwd 逐目录解析。
+- Resolver 从 Workspace root 到 effective cwd 逐目录解析；本 Run 读写过文件的目录链在 cwd 链之后加载，最多 8 个规则文件。
 - 每个目录只选一个最高优先级的非空候选。
-- Resolver 使用共享 32 KiB byte budget，并记录 shadowed candidates、warning、原始 hash、包含字节数、directory level 和 effective cwd。
+- Resolver 使用共享 64 KiB byte budget，先分配给最深的目录，截断点在行边界并注明继续读取的行号；Resolver 记录 shadowed candidates、warning、原始 hash、包含字节数、directory level 和 effective cwd。
 - InstructionResolver 将 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 组成有来源的 immutable instructions。Skill Catalog 使用 developer capability context，实际加载的第三方 `SKILL.md` 使用 user context。 模型目录只显示唯一调用名称、用途和入口路径，不显示 Hash、qualifiedId、source 或 sourceVersion；Runtime 冻结快照继续保存完整身份和核验信息。当前权限层按审批模式独立生成，full_access 不包含普通沙盒扩权指引。
 - Step Resolution 保存 resolved instruction hash。Project Rules 不会改变 Runtime Permission、Approval 或 Sandbox 的真实执行约束。
 
@@ -358,7 +358,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Persistence
 
-- 当前 state schema 是 v43。v42 移除临时记忆模式，v43 新增记忆归档并移除普通聊天来源的连带撤销。v40 重建文档记忆并清除旧记忆，v41 修复历史自动版本的来源撤销。v37 保存插件版本身份，v38 保存远程连接状态和凭据引用，v39 保存 Hook 配置来源和后台接收记录。v32 → v33 增加可重建的聊天搜索正文、FTS5 trigram、待处理队列和索引版本。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
+- 当前 state schema 是 v54。v54 为记忆笔记增加上次读取时间和读取次数。v42 移除临时记忆模式，v43 新增记忆归档并移除普通聊天来源的连带撤销。v40 重建文档记忆并清除旧记忆，v41 修复历史自动版本的来源撤销。v37 保存插件版本身份，v38 保存远程连接状态和凭据引用，v39 保存 Hook 配置来源和后台接收记录。v32 → v33 增加可重建的聊天搜索正文、FTS5 trigram、待处理队列和索引版本。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
 - `state.sqlite` 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context lineage、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 使用独立 schema v2 索引有总量上限的日志 JSONL。Runtime 会兼容迁移使用 `content_sha256` 或 `chain_sha256` 的两种 v1 日志表。记忆正文使用私有 Markdown 文件，作用域、版本与撤销状态由 `state.sqlite` 管理；旧 `memories.sqlite` 在 v40 升级后删除。
 - ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。新 ContextSnapshot 将重复的模型上下文项和工具定义保存为共享块，顶层清单保留顺序和快照元数据；旧版完整快照仍可读取。主库保存带 checksum 和大小的顶层引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。

@@ -113,3 +113,115 @@ def test_invalid_query_is_rejected_without_reading_history(history):
     run, _ = store.create_run(session["id"], "read")
     result = search_history_entry(store.database, run["id"]).adapter.execute({"query": "x"}, threading.Event())
     assert result["outcome"] == "error" and result["code"] == "invalid_arguments"
+
+
+@pytest.fixture
+def projects(tmp_path: Path):
+    from eidos_runtime.persistence.worktrees import ProjectWorktreeRepository
+
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    roots = []
+    for name in ("alpha", "beta"):
+        root = tmp_path / name
+        root.mkdir()
+        ProjectWorktreeRepository(store.database).get_or_create_project(root)
+        roots.append(str(root))
+    try:
+        yield store, roots
+    finally:
+        store.close()
+
+
+def _conversation(store, session_id, text, reply):
+    run, user = store.create_run(session_id, text)
+    assistant = store.create_assistant_item(run["id"], 1)
+    store.append_item_content(assistant["id"], reply)
+    store.complete_assistant_item_committed(assistant["id"])
+    store.fail_run(run["id"], "fixture")
+    return run, user, assistant
+
+
+def _read_other(store, run_id, match):
+    return read_tool_output_entry(store, run_id).adapter.execute(
+        {"callId": match["readCallId"], "sessionId": match["sessionId"], "stream": "context"},
+        threading.Event(),
+    )
+
+
+def test_project_scope_finds_and_reads_messages_of_the_same_project_only(projects):
+    store, (alpha, beta) = projects
+    earlier = store.create_session(alpha)
+    _, _, decision = _conversation(store, earlier["id"], "迁移方案用哪种？", "迁移方案定为先双写再切读。")
+    elsewhere = store.create_session(beta)
+    _, _, foreign = _conversation(store, elsewhere["id"], "另一个项目的迁移方案", "迁移方案：直接切换。")
+    channel = store.create_session(alpha)
+    _conversation(store, channel["id"], "渠道里的迁移方案", "迁移方案来自渠道。")
+    store.connection.execute("INSERT INTO channel_sessions(route,session_id) VALUES('dingtalk:route',?)", (channel["id"],))
+    store.connection.commit()
+    current = store.create_session(alpha)
+    run, _ = store.create_run(current["id"], "上次定的迁移方案是什么？")
+
+    found = _search(store, run["id"], "迁移方案", scope="project")
+    assert [(m["itemId"], m["sessionId"]) for m in found["matches"]] == [
+        (decision["id"], earlier["id"]),
+        (store.connection.execute(
+            "SELECT id FROM items WHERE session_id=? AND kind='user_message'", (earlier["id"],)
+        ).fetchone()[0], earlier["id"]),
+    ]
+    assert found["matches"][0]["kind"] == "assistant"
+    assert len(found["matches"][0]["date"]) == 10
+    assert found["complete"] is True
+    own = _search(store, run["id"], "迁移方案")["matches"]
+    assert [m["snippet"] for m in own] == ["上次定的迁移方案是什么？"]
+    assert all("sessionId" not in m for m in own)
+
+    page = _read_other(store, run["id"], found["matches"][0])
+    assert page["data"]["content"] == "迁移方案定为先双写再切读。"
+    for session_id, item_id in ((elsewhere["id"], foreign["id"]), (channel["id"], decision["id"])):
+        refused = _read_other(store, run["id"], {"readCallId": item_id, "sessionId": session_id})
+        assert refused["code"] == "history_scope_unavailable"
+    wrong_stream = read_tool_output_entry(store, run["id"]).adapter.execute(
+        {"callId": decision["id"], "sessionId": earlier["id"], "stream": "result"}, threading.Event()
+    )
+    assert wrong_stream["outcome"] == "error"
+
+
+def test_project_scope_follows_memory_reading_and_excludes_channel_and_child_runs(projects):
+    from eidos_runtime.memory.contracts import MemoryPolicyRequest
+
+    store, (alpha, _) = projects
+    earlier = store.create_session(alpha)
+    _conversation(store, earlier["id"], "部署窗口", "部署窗口在周四。")
+    current = store.create_session(alpha)
+    run, _ = store.create_run(current["id"], "部署窗口是哪天？")
+    assert _search(store, run["id"], "部署窗口", scope="project")["matches"]
+
+    store.database.memory.policy(MemoryPolicyRequest(session_id=current["id"], scope="current", mode="off"))
+    disabled = search_history_entry(store.database, run["id"]).adapter.execute(
+        {"query": "部署窗口", "scope": "project"}, threading.Event()
+    )
+    assert disabled["code"] == "history_scope_disabled"
+    store.database.memory.policy(MemoryPolicyRequest(session_id=current["id"], scope="current", mode="read"))
+
+    store.connection.execute("INSERT INTO channel_run_origins(run_id,origin_json) VALUES(?, '{}')", (run["id"],))
+    store.connection.commit()
+    blocked = search_history_entry(store.database, run["id"]).adapter.execute(
+        {"query": "部署窗口", "scope": "project"}, threading.Event()
+    )
+    assert blocked["code"] == "history_scope_unavailable"
+
+    parent, _ = store.create_run(earlier["id"], "委派")
+    spawn = store.create_assistant_item(parent["id"], 1)
+    child = store.create_session(alpha)
+    child_run, _ = store.create_run(child["id"], "子任务")
+    store.connection.execute(
+        "INSERT INTO agent_delegations(id,parent_run_id,child_session_id,child_run_id,spawn_item_id,task_name,role,task,created_at)"
+        " VALUES('delegation',?,?,?,?,'task','explorer','task',0)",
+        (parent["id"], child["id"], child_run["id"], spawn["id"]),
+    )
+    store.connection.commit()
+    refused = search_history_entry(store.database, child_run["id"]).adapter.execute(
+        {"query": "部署窗口", "scope": "project"}, threading.Event()
+    )
+    assert refused["code"] == "history_scope_unavailable"

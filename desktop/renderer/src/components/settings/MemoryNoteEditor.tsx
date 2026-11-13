@@ -163,12 +163,9 @@ export function MemoryNoteEditor({
       onDirty(false);
       onSaved(action === "delete" ? "MEMORY.md" : path ?? draft.path);
       setReload((value) => value + 1);
-    } catch {
+    } catch (error) {
       if (mounted.current) {
-        onShowToast?.(
-          "保存失败，笔记可能已被其他任务修改。你的编辑仍在此处，请重新核对后保存。",
-          "error",
-        );
+        onShowToast?.(saveFailureMessage(error), "error");
       }
     } finally {
       if (mounted.current) setBusy(false);
@@ -266,6 +263,9 @@ export function MemoryNoteEditor({
                       <p className="memory-meta-updated">
                         更新时间：{new Date(read.document.updatedAt).toLocaleString()}
                       </p>
+                      <p className="memory-meta-updated">
+                        上次读取：{read.document.lastReadAt ? new Date(read.document.lastReadAt).toLocaleString() : "尚未读取"}
+                      </p>
                       <label className="memory-meta-version-select">
                         <span>版本</span>
                         <div className="memory-select-wrapper">
@@ -301,7 +301,7 @@ export function MemoryNoteEditor({
                               onOpenSource?.(source.sessionId);
                             }}
                           >
-                            查看来源对话
+                            {source.evidenceClass === "observed_external" ? "查看外部来源" : "查看来源对话"}
                           </Button>
                         ))}
                       </div>
@@ -419,4 +419,15 @@ export function MemoryNoteEditor({
       />
     </section>
   );
+}
+
+function saveFailureMessage(error: unknown): string {
+  const code = error instanceof Error ? error.message : "";
+  if (code.endsWith(":MEMORY_UNSAFE_TEXT")) {
+    return "笔记包含不可见的格式控制字符。你的编辑仍在此处，请删除这些字符后保存。";
+  }
+  if (code.endsWith(":MEMORY_SENSITIVE_CONTENT")) {
+    return "笔记包含疑似凭据。你的编辑仍在此处，请移除相关内容后保存。";
+  }
+  return "保存失败，笔记可能已被其他任务修改。你的编辑仍在此处，请重新核对后保存。";
 }

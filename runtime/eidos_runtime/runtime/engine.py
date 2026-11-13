@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Callable, Protocol
 from eidos_runtime.context.builder import ContextBuild, ContextBuilder
 from eidos_runtime.context.budget import estimate_model_request_budget
 from eidos_runtime.context.project_rules import ProjectRuleResolver
+from eidos_runtime.persistence.rule_paths import RulePathRepository
 from eidos_runtime.context.compactor import (
     ContextCompactionError, ContextCompactor,
 )
@@ -559,7 +560,11 @@ class RuntimeEngine:
                     warnings=(),
                 )
                 if projectless
-                else rule_resolver.resolve(workspace.path, effective_cwd)
+                else rule_resolver.resolve(
+                    workspace.path,
+                    effective_cwd,
+                    RulePathRepository(self.store.database).touched_paths(run.run_id),
+                )
             )
             step_policy = _build_step_policy(
                 run.resolution_snapshot.permission_profile_json,

@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, ClassVar, Literal
 
 from pydantic import Field, StrictInt, StrictStr, model_validator
 
+from eidos_runtime.domain.history_search import HistoryScopeError
+from eidos_runtime.persistence.history_search import HistorySearchRepository
 from eidos_runtime.db.repositories.execution import (
     ToolOutputPage,
     ToolOutputReadError,
@@ -50,11 +52,19 @@ class ReadToolOutputInput(StrictToolModel):
     )
     fromEnd: bool = False
     outputRevision: StrictInt | None = Field(default=None, ge=0, le=_JSON_SAFE_INTEGER_MAX)
+    sessionId: StrictStr | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+        description="For stream='context': the sessionId of a search_history(scope='project') match.",
+    )
 
     @model_validator(mode="after")
     def validate_tail_offset(self) -> ReadToolOutputInput:
         if self.fromEnd and self.offsetBytes:
             raise ValueError("tail_read_cannot_set_offset")
+        if self.sessionId is not None and self.stream != "context":
+            raise ValueError("session_requires_context_stream")
         if self.outputRevision is not None and self.stream not in {"stdout", "stderr"}:
             raise ValueError("output_revision_requires_shell_stream")
         return self
@@ -130,6 +140,8 @@ class ReadToolOutputAdapter:
             return _error("tool_canceled", "Output reading was canceled")
         try:
             request = ReadToolOutputInput.model_validate(arguments)
+            if request.sessionId is not None:
+                HistorySearchRepository(self.store.database).assert_readable(self.run_id, request.sessionId)
             max_bytes = min(request.maxBytes, READ_TOOL_OUTPUT_MODEL_PAGE_BYTES)
             while True:
                 page = self.store.read_tool_output(
@@ -142,6 +154,7 @@ class ReadToolOutputAdapter:
                     item_id=request.itemId,
                     output_revision=request.outputRevision,
                     live_output_reader=(self.shell_process_manager.read_output if self.shell_process_manager is not None else None),
+                    source_session_id=request.sessionId,
                 )
                 escaped_bytes = _escaped_content_bytes(page.content)
                 if (
@@ -158,6 +171,11 @@ class ReadToolOutputAdapter:
                 )
         except ToolOutputReadError as error:
             return _error(error.code, _summary_for_code(error.code))
+        except HistoryScopeError as error:
+            return _error(
+                error.code,
+                "This message is not readable from this Run; it belongs to another project, a child or channel Session, or memory reading is off.",
+            )
         except (TypeError, ValueError):
             return _error("invalid_arguments", "Invalid output read arguments")
         except Exception:

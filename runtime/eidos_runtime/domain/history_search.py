@@ -15,6 +15,18 @@ class HistoryMatch(EidosFrozenStrictModel):
     snippet: str
     call_id: str | None = None
     tool_name: str | None = None
+    # Set for matches from another Session of the same project.
+    session_id: str | None = None
+    session_title: str | None = None
+    date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class HistoryScopeError(ValueError):
+    """A stable reason why other Sessions cannot be searched or read."""
+
+    def __init__(self, code: Literal["history_scope_disabled", "history_scope_unavailable"]) -> None:
+        super().__init__(code)
+        self.code = code
 
 
 class HistorySearchResult(EidosFrozenStrictModel):

@@ -17,7 +17,7 @@ import { SkillSettings } from "./SkillSettings.js";
 import { McpSettings } from "./McpSettings.js";
 import { RuntimeSettings } from "./RuntimeSettings.js";
 import { prefetchResourceStatus } from "./ManagedResourceSettings.js";
-import { MemorySettings } from "./MemorySettings.js";
+import { MemorySettings, type MemoryTidyTarget } from "./MemorySettings.js";
 import { WebSearchSettings } from "./WebSearchSettings.js";
 import { ChannelSettings } from "./ChannelSettings.js";
 import { WorktreeSettings } from "./WorktreeSettings.js";
@@ -31,6 +31,7 @@ interface SettingsPageProps {
   initialCategory?: SettingsCategory;
   sessionId?: string | undefined;
   onOpenMemorySource?: ((id: string) => void) | undefined;
+  onTidyMemory?: ((target: MemoryTidyTarget) => void) | undefined;
   runtime: RuntimeStatus;
   modelList?: ModelListResult | undefined;
   modelLoading?: boolean | undefined;
@@ -63,6 +64,7 @@ export function SettingsPage({
   initialCategory = "model",
   sessionId,
   onOpenMemorySource,
+  onTidyMemory,
   runtime,
   modelList,
   modelLoading,
@@ -237,7 +239,7 @@ export function SettingsPage({
             {activeCategory === "personalization" && <PersonalizationSettings ready={storageReady} paused={pendingNavigation !== undefined} onShowToast={showToast} onDirtyChange={setPersonalizationDirty} onBusyChange={setPersonalizationBusy} />}
             {activeCategory === "web_search" && (storageReady ? <WebSearchSettings onShowToast={showToast}/> : <p role="alert">Runtime 尚未就绪。</p>)}
             {activeCategory === "channels" && (storageReady ? <ChannelSettings modelList={modelList} onShowToast={showToast} /> : <p role="alert">Runtime 尚未就绪。</p>)}
-            {activeCategory === "memory" && storageReady && <MemorySettings onOpenSource={onOpenMemorySource} onShowToast={showToast} />}
+            {activeCategory === "memory" && storageReady && <MemorySettings onOpenSource={onOpenMemorySource} onShowToast={showToast} onTidy={onTidyMemory} />}
             {activeCategory === "memory" && !storageReady && <p role="alert">Runtime 尚未就绪。</p>}
             {activeCategory === "model" && (
               <ModelSettings

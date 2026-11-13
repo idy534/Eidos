@@ -9,6 +9,7 @@ from typing import ClassVar, Literal
 from pydantic import Field, StrictInt, StrictStr
 
 from eidos_runtime.db.database import Database
+from eidos_runtime.domain.history_search import HistoryScopeError
 from eidos_runtime.persistence.history_search import HistorySearchRepository
 from eidos_runtime.tools.contracts import StrictToolModel, result_model
 from eidos_runtime.tools.registry import ToolProvenance, ToolRegistryEntry, ToolSpec
@@ -17,6 +18,10 @@ from eidos_runtime.tools.registry import ToolProvenance, ToolRegistryEntry, Tool
 class SearchHistoryInput(StrictToolModel):
     query: StrictStr = Field(min_length=2, max_length=200)
     limit: StrictInt = Field(default=8, ge=1, le=20)
+    scope: Literal["session", "project"] = Field(
+        default="session",
+        description="'project' searches the user and assistant messages of this project's other Sessions.",
+    )
 
 
 class SearchHistoryMatchData(StrictToolModel):
@@ -26,6 +31,9 @@ class SearchHistoryMatchData(StrictToolModel):
     readCallId: StrictStr
     stream: Literal["context", "result"]
     toolName: StrictStr | None = None
+    sessionId: StrictStr | None = None
+    sessionTitle: StrictStr | None = None
+    date: StrictStr | None = None
 
 
 class SearchHistoryResultData(StrictToolModel):
@@ -45,7 +53,11 @@ class SearchHistoryAdapter:
             return _error("tool_canceled", "History search was canceled")
         try:
             request = SearchHistoryInput.model_validate(arguments)
-            found = HistorySearchRepository(self.database).search(self.run_id, request.query, limit=request.limit)
+            found = HistorySearchRepository(self.database).search(
+                self.run_id, request.query, limit=request.limit, scope=request.scope
+            )
+        except HistoryScopeError as error:
+            return _error(error.code, _SCOPE_SUMMARIES[error.code])
         except (TypeError, ValueError):
             return _error("invalid_arguments", "Invalid history search arguments")
         except Exception:
@@ -69,6 +81,9 @@ class SearchHistoryAdapter:
                     "readCallId": match.call_id or match.item_id,
                     "stream": "result" if match.kind == "tool" else "context",
                     **({"toolName": match.tool_name} if match.tool_name else {}),
+                    **({"sessionId": match.session_id} if match.session_id else {}),
+                    **({"sessionTitle": match.session_title} if match.session_title else {}),
+                    **({"date": match.date} if match.date else {}),
                 } for match in found.matches],
                 "complete": found.complete,
             },
@@ -90,7 +105,11 @@ def search_history_entry(database: Database, run_id: str) -> ToolRegistryEntry:
             "or cleared from active context. Returns the newest matches with short snippets. Page an original "
             "with read_tool_output(callId=readCallId, itemId=itemId, stream=stream). complete=false means more "
             "matches may exist; refine the query. Searching never repeats an operation, and a saved result "
-            "does not prove the current state of a file. Memory tool payloads are not searched."
+            "does not prove the current state of a file. Memory tool payloads are not searched. "
+            "scope='project' searches only user and assistant messages in this project's other Sessions "
+            "(or other projectless Sessions); page a match with read_tool_output(callId=readCallId, "
+            "sessionId=sessionId, stream='context'). Use it when the user refers to earlier work that is "
+            "neither in this Session nor in memory."
         ),
         "sideEffect": "none",
         "approvalRequired": False,
@@ -114,6 +133,12 @@ def search_history_entry(database: Database, run_id: str) -> ToolRegistryEntry:
         input_model=SearchHistoryInput,
         result_data_model=SearchHistoryResultData,
     )
+
+
+_SCOPE_SUMMARIES = {
+    "history_scope_disabled": "Memory reading is off for this scope, so other Sessions cannot be searched. Continue with this Session's history.",
+    "history_scope_unavailable": "Other Sessions cannot be searched or read from this Run. Continue with this Session's history.",
+}
 
 
 def _error(code: str, summary: str) -> dict[str, object]:

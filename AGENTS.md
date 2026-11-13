@@ -13,7 +13,13 @@ Eidos 是可独立安装的 macOS 桌面 Agent Runtime。
 目标能力：多项目、多 Session、多编码线程、独立 Git Worktree、多 Provider、多 Model Profile、代码理解、搜索、修改、测试、完整 Diff、Checkpoint、Rewind、Fork、Sandbox、权限审查、长任务恢复、Skill、Plugin、MCP、有限并行 Agent、日志、诊断、备份、迁移和升级。
 优先完成可靠的产品闭环，不为假想需求提前构建复杂抽象。
 不要以理论上的绝对安全阻断主要流程；已建立的安全边界必须 fail closed。
-PR 应围绕用户的一次明确目标，范围可审查、可测试、可回滚。相关子任务可以在同一分支中分别提交多个 Commit，并统一创建一个 PR；不要仅因子任务数量拆出多个 PR。
+PR 应围绕用户的一次明确目标，范围可审查、可测试、可回滚。相关子任务可以在同一分支中分别提交多个 Commit，但颗粒度不宜过细，并统一创建一个 PR；不要仅因子任务数量拆出多个 PR。
+
+### 界面设计
+
+- Avoid unnecessary secondary labels and descriptions. Let the layout do the explaining.
+  避免不必要的辅助标签与说明。让布局本身发挥解释作用。
+
 ## 3. Overall architecture
 ```text
 Electron Renderer

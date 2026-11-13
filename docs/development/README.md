@@ -472,7 +472,15 @@ PYTHONPATH=runtime uv run --locked python scripts/evaluate-memory-learning.py --
 
 开发者可以使用重复的 `--case` 选择样本。`--disable-automatic-learning` 选择 read 模式，检查明确保存。报告中的状态检查只能证明保存路径，人工还应核对笔记内容、范围、适用条件与实际使用。真实模型结果不能由脚本模型测试代替。
 
-离线恢复接受 `eidos-data-backup-v2` 和 schema v40/v41/v42/v43。恢复会逐级升级为 v43，并保留归档笔记和历史。目标目录必须不存在，不能与运行数据合并：
+`scripts/evaluate-memory-cases.py` 回放 `scripts/fixtures/memory-cases.json` 中的分组用例：任务中纠正（C）、范围（P）、更新（U）、检索（R）、过期事实（T）、注入（I）、跨会话（X）和写入成本（E）。每个用例默认运行 5 次，每次使用新的临时数据目录与工作区，每次最多 24 个模型请求，每个 Run 最多 120 秒。部分用例开放文件和 Shell 工具。报告按用例和分组给出通过次数、请求数和 Token。该操作同样会产生模型费用：
+
+```bash
+PYTHONPATH=runtime uv run --locked python scripts/evaluate-memory-cases.py --model deepseek-v4.1-flash --output /absolute/path/memory-cases.json
+```
+
+开发者可以用重复的 `--group` 或 `--case` 缩小范围，用 `--repeats` 调整次数。检查只读取状态、工具调用和回答文字，结论前仍需阅读回答与笔记。
+
+离线恢复接受 `eidos-data-backup-v2` 和 schema v40 至 v54。恢复会逐级升级为 v54，并保留归档笔记和历史。目标目录必须不存在，不能与运行数据合并：
 
 ```bash
 uv run --locked python -m eidos_runtime.db.backup /absolute/path/backup.zip /absolute/path/new-eidos-data

@@ -60,7 +60,8 @@ export interface SessionControllerActions {
   loadProjects: () => Promise<void>;
   loadSessions: () => Promise<void>;
   createProject: (name: string | undefined, workspaceRoot: string) => Promise<Project | undefined>;
-  startDraft: (project?: Project | null) => void;
+  /** Opens a new draft and returns its draft Session ID. */
+  startDraft: (project?: Project | null) => string;
   updateDraftProject: (project: Project) => void;
   updateDraftExecutionMode: (mode: "local" | "worktree") => void;
   materializeDraft: (workspaceNameHint?: string, worktree?: {
@@ -246,7 +247,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     }
   }, []);
 
-  const startDraft = useCallback((project?: Project | null): void => {
+  const startDraft = useCallback((project?: Project | null): string => {
     const session: Session = {
       id: `draft-${crypto.randomUUID()}`,
       workspaceRoot: project?.workspaceRoot ?? "",
@@ -272,6 +273,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     setNavigationSessionId(undefined);
     selectedSessionIdRef.current = undefined;
     snapshotReads.select("");
+    return session.id;
   }, [snapshotReads]);
 
   const updateDraftExecutionMode = useCallback((mode: "local" | "worktree"): void => {

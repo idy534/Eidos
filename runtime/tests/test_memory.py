@@ -171,14 +171,108 @@ def test_context_budget_keeps_project_index_first_and_exposes_more_note_routes(
             summary="当前项目的工作约定",
         )
     )
-    projection = service.project(session["id"], 8000, run_id="run")
-    assert projection.rendered_payload.lstrip().startswith("project/MEMORY.md")
+    # A small window caps the index at 10% of the usable input.
+    projection = service.project(session["id"], 3000, run_id="run")
+    assert projection.rendered_payload.lstrip().startswith('Scope "current" — MEMORY.md:')
     assert "project.md" in projection.rendered_payload
+    assert 'Scope "global" — MEMORY.md:' in projection.rendered_payload
     assert "memory_search" in projection.rendered_payload
-    assert projection.token_estimate <= 400
+    assert projection.token_estimate <= 300
     item = MemoryContext.long_term_index(projection)
     assert item["content"] == LONG_TERM_MEMORY_HEADER + projection.rendered_payload
     assert "may be outdated" in item["content"]
+
+
+def test_index_groups_kinds_and_lists_recent_changes_first(store):
+    service = store.database.memory
+    for operation, path, kind in (
+        ("reference", "links.md", "reference"),
+        ("older-feedback", "a-feedback.md", "feedback"),
+        ("project", "build.md", "project"),
+        ("newer-feedback", "z-feedback.md", "feedback"),
+        ("user", "profile.md", "user"),
+    ):
+        service.edit(note(operation_id=operation, path=path, kind=kind))
+    body = service.read(MemoryReadRequest(scope="global")).content
+    order = [line for line in body.splitlines() if line.startswith(("## ", "- ["))]
+    assert order == [
+        "## feedback",
+        "- [z-feedback.md](z-feedback.md): 只在明确要求时运行全量测试。",
+        "- [a-feedback.md](a-feedback.md): 只在明确要求时运行全量测试。",
+        "## user",
+        "- [profile.md](profile.md): 只在明确要求时运行全量测试。",
+        "## project",
+        "- [build.md](build.md): 只在明确要求时运行全量测试。",
+        "## reference",
+        "- [links.md](links.md): 只在明确要求时运行全量测试。",
+    ]
+
+
+def test_index_keeps_200_lines_or_25_kb_and_counts_omitted_notes(store):
+    service = store.database.memory
+    for index in range(230):
+        service.edit(
+            note(operation_id=f"many-{index}", path=f"note-{index:03d}.md", summary=f"条目 {index}")
+        )
+    body = service.read(MemoryReadRequest(scope="global")).content
+    lines = body.splitlines()
+    assert len(lines) <= 200
+    assert len(body.encode()) <= 25 * 1024
+    listed = sum(line.startswith("- [") for line in lines)
+    assert lines[-1].startswith(f"{230 - listed} more notes are not listed.")
+    for index in range(80):
+        service.edit(
+            note(
+                operation_id=f"long-{index}",
+                path=f"long-{index:03d}.md",
+                summary="很长的摘要内容" * 34,
+            )
+        )
+    body = service.read(MemoryReadRequest(scope="global")).content
+    assert len(body.encode()) <= 25 * 1024
+    assert max(len(line) for line in body.splitlines()) < 200
+
+
+def test_project_notes_cannot_push_global_preferences_out(store, tmp_path):
+    session = store.create_session(str(tmp_path / "workspace"))
+    service = store.database.memory
+    service.edit(note(operation_id="preference", path="preference.md", kind="user"))
+    for index in range(260):
+        service.edit(
+            note(
+                session_id=session["id"],
+                scope="current",
+                operation_id=f"project-{index}",
+                path=f"project-{index:03d}.md",
+                summary="项目约定" * 10,
+                kind="project",
+            )
+        )
+    projection = service.project(session["id"], 1_000_000, run_id="run")
+    text = projection.rendered_payload
+    assert "preference.md" in text
+    assert text.index('Scope "current"') < text.index('Scope "global"')
+    assert len(text.splitlines()) <= 200 + 1
+    assert len(text.encode()) <= 25 * 1024
+    assert "more notes are not listed" in text.split('Scope "global"')[0]
+    scope_id = service.list(MemoryListRequest(session_id=session["id"], scope="current")).scopes[-1].id
+    assert service.index_hidden(session["id"], scope_id) > 0
+    assert service.index_hidden(session["id"], GLOBAL_SCOPE_ID) == 0
+
+
+def test_reading_notes_keeps_the_index_text_unchanged(store, tmp_path):
+    session = store.create_session(str(tmp_path / "workspace"))
+    service = store.database.memory
+    for index in range(3):
+        service.edit(note(operation_id=f"n-{index}", path=f"n-{index}.md"))
+    before = service.project(session["id"], 100_000, run_id="run").rendered_payload
+    for path in ("n-0.md", "n-2.md"):
+        read = service.read(MemoryReadRequest(session_id=session["id"], scope="global", path=path), for_use=True)
+        service.track_tool("run", f"item-{path}", read.epochs, {}, retrieval=True, read_document_id=read.document.id)
+    assert service.project(session["id"], 100_000, run_id="run").rendered_payload == before
+    listed = service.list(MemoryListRequest(scope="global"), order="oldest").documents
+    assert [document.path for document in listed][0] == "n-1.md"
+    assert listed[-1].last_read_at is not None
 
 
 def test_cancel_before_publication_leaves_no_fact(store):
@@ -626,3 +720,67 @@ def test_v39_upgrade_discards_legacy_memory_and_preserves_chat(
         ).fetchone()
     finally:
         upgraded.close()
+
+
+def test_external_tool_results_are_recorded_as_external_sources(store, tmp_path):
+    session = store.create_session(str(tmp_path / "workspace"))
+    run, _ = store.create_run(session["id"], "记住这个")
+    items = {}
+    for step, (name, provenance) in enumerate(
+        (
+            ("read_file", {"kind": "builtin"}),
+            ("web_search", {"kind": "builtin"}),
+            ("browser_snapshot", {"kind": "mcp"}),
+        ),
+        start=1,
+    ):
+        item = store.create_tool_item(run["id"], step, 0, f"call-{step}", name, "{}")
+        raw = json.dumps({"outcome": "success", "code": "ok", "summary": "done", "data": {}})
+        store.complete_tool_item(item["id"], raw, model_result_json=raw)
+        store.connection.execute(
+            "UPDATE tool_calls SET provenance_json=? WHERE item_id=?",
+            (json.dumps(provenance), item["id"]),
+        )
+        items[name] = item["id"]
+    store.connection.commit()
+    service = store.database.memory
+    saved = service.edit(
+        note(session_id=session["id"], scope="current", source_item_ids=list(items.values()))
+    )
+    classes = dict(
+        store.connection.execute(
+            "SELECT item_id,evidence_class FROM memory_evidence WHERE document_id=?",
+            (saved.document_id,),
+        ).fetchall()
+    )
+    assert classes == {
+        items["read_file"]: "observed_verified",
+        items["web_search"]: "observed_external",
+        items["browser_snapshot"]: "observed_external",
+    }
+    read = service.read(MemoryReadRequest(session_id=session["id"], path=note().path))
+    assert {value.evidence_class for value in read.document.evidence} == {
+        "observed_verified",
+        "observed_external",
+    }
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"summary": "看起来正常​"},
+        {"title": "标题⁦隐藏"},
+        {"path": "note‍.md"},
+        {"content": "正文‮反向"},
+        {"content": "带标签字符\U000E0041"},
+    ],
+)
+def test_hidden_characters_are_rejected_before_saving(store, changes):
+    with pytest.raises(MemoryRejected, match="memory_unsafe_text"):
+        store.database.memory.edit(note(**changes))
+    assert not store.database.memory.list(MemoryListRequest(scope="global")).documents
+
+
+def test_note_bodies_keep_joiners_used_by_emoji(store):
+    saved = store.database.memory.edit(note(content="用户的头像是 👩‍💻。"))
+    assert saved.code == "memory_saved"

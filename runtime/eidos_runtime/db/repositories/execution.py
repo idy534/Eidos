@@ -363,7 +363,10 @@ class ExecutionRepository(Repository):
         live_output_reader: Callable[[str], dict[str, object]] | None = None,
         item_id: str | None = None,
         output_revision: int | None = None,
+        source_session_id: str | None = None,
     ) -> ToolOutputPage:
+        """Page saved output. ``source_session_id`` reads a message of another
+        Session; the caller has already authorized it."""
         if stream not in {"stdout", "stderr", "result", "context", "arguments"}:
             raise ToolOutputReadError("invalid_output_stream")
         if (
@@ -389,14 +392,24 @@ class ExecutionRepository(Repository):
             return _output_page(tool_call_id, stream, content, offset_bytes, max_bytes, from_end,
                 raw_truncated=output.raw_truncated, raw_omitted_bytes=output.raw_omitted_bytes,
                 output_complete=not output.raw_truncated)
+        if source_session_id is not None and stream != "context":
+            raise ToolOutputReadError("tool_output_not_available")
         if stream == "context":
             with self.lock:
-                row = self._connection().execute(
-                    "SELECT i.content FROM items i JOIN runs r ON r.session_id=i.session_id "
-                    "WHERE r.id=? AND i.id=? AND i.kind IN ('user_message','assistant_message')",
-                    (run_id, item_id or tool_call_id),
-                ).fetchone()
-                current = self._connection().execute("SELECT session_id FROM runs WHERE id=?", (run_id,)).fetchone()
+                if source_session_id is not None:
+                    row = self._connection().execute(
+                        "SELECT content FROM items WHERE session_id=? AND id=? "
+                        "AND kind IN ('user_message','assistant_message')",
+                        (source_session_id, item_id or tool_call_id),
+                    ).fetchone()
+                    current = {"session_id": source_session_id}
+                else:
+                    row = self._connection().execute(
+                        "SELECT i.content FROM items i JOIN runs r ON r.session_id=i.session_id "
+                        "WHERE r.id=? AND i.id=? AND i.kind IN ('user_message','assistant_message')",
+                        (run_id, item_id or tool_call_id),
+                    ).fetchone()
+                    current = self._connection().execute("SELECT session_id FROM runs WHERE id=?", (run_id,)).fetchone()
             if row is not None:
                 content = row["content"] or ""
             elif current is not None:
