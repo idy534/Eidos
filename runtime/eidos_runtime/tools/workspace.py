@@ -5,6 +5,7 @@ import difflib
 import errno
 import fcntl
 import hashlib
+import logging
 import os
 from pathlib import Path
 import stat
@@ -21,6 +22,7 @@ from eidos_runtime.file_limits import (
     MAX_FILE_BYTES as MAX_EDIT_FILE_BYTES, MAX_PATCH_WORKING_BYTES, MAX_PATCH_RESULT_BYTES, tool_result_limit,
 )
 from eidos_runtime.protocol.schemas import ToolResultDto
+from eidos_runtime.repo_intelligence.syntax import syntax_errors
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 from eidos_runtime.db.storage import WorkspaceIdentity
 from eidos_runtime.sandbox.seatbelt import secure_workspace_move
@@ -83,6 +85,8 @@ from eidos_runtime.tools.contracts import (
     result_model,
 )
 
+
+logger = logging.getLogger("eidos.runtime")
 
 MAX_FILE_BYTES = 256 * 1024
 MAX_READ_FILE_BYTES = MAX_EDIT_FILE_BYTES
@@ -1368,11 +1372,11 @@ class ToolExecutor:
             if len(delta.changes) <= 20
             else f"Success. Updated {len(delta.changes)} files."
         )
-        return _success(
-            tool_name,
-            summary,
-            {"path": prepared.path, "changes": delta.as_dicts()},
-        ), delta
+        data: dict[str, object] = {"path": prepared.path, "changes": delta.as_dicts()}
+        syntax = _new_syntax_errors(delta)
+        if syntax:
+            data["possibleSyntaxErrors"] = syntax
+        return _success(tool_name, summary, data), delta
 
     def _list_files(
         self, arguments: dict[str, object], cancel: threading.Event
@@ -2228,6 +2232,38 @@ def _delta_for_file_change(change: FileChange) -> AppliedPatchChange:
         old_content=_decode_patch_bytes(change.old_content),
         new_content=new_content,
     )
+
+
+_PATCH_SYNTAX_ERROR_LIMIT = 16
+
+
+def _new_syntax_errors(delta: AppliedPatchDelta) -> list[dict[str, object]]:
+    """Parse errors a committed patch introduced, as a hint for the next step.
+
+    The files are already written, so this check never changes the outcome.
+    """
+    found: list[dict[str, object]] = []
+    for change in delta.changes:
+        if change.new_content is None or len(found) >= _PATCH_SYNTAX_ERROR_LIMIT:
+            continue
+        path = change.new_path or change.path
+        try:
+            issues = syntax_errors(path, change.new_content)
+            # A file that did not parse before the patch says nothing about
+            # it: the error was already there, or the grammar trails the language.
+            if not issues or (
+                change.old_content is not None
+                and syntax_errors(change.old_path or change.path, change.old_content)
+            ):
+                continue
+        except Exception:
+            logger.debug("patch_syntax_check_failed", exc_info=True)
+            continue
+        found.extend(
+            {"path": path, "line": issue.line, "column": issue.column, "message": issue.message}
+            for issue in issues
+        )
+    return found[:_PATCH_SYNTAX_ERROR_LIMIT]
 
 
 def _delta_summary(change: AppliedPatchChange) -> str:

@@ -126,6 +126,8 @@ class VerifiedCompactionRepository(Repository):
                                     "continuity_notes": [note.model_dump(mode="json")
                                                          for note in verified.summary.continuity_notes]}
                                    if verified.summary.continuity_notes else {}),
+                                **({"handoff": verified.summary.handoff.model_dump(mode="json")}
+                                   if verified.summary.handoff is not None else {}),
                                 "verified_summary_id": identifier,
                             },
                             ensure_ascii=False,

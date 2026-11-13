@@ -40,8 +40,9 @@ function mount(handler?: Handler, selection: { projectId: string | null; scope: 
     onNotification: vi.fn((callback) => { notify = callback; return unsubscribe; }),
   } as unknown as EidosRuntimeAPI;
   const onOpenSource = vi.fn();
-  return { ...render(<MemorySettings onOpenSource={onOpenSource} />), memory, exportMemoryNotes,
-    onOpenSource, unsubscribe, listProjects, notify: (notice: RuntimeNotification) => notify?.(notice) };
+  const onTidy = vi.fn();
+  return { ...render(<MemorySettings onOpenSource={onOpenSource} onTidy={onTidy} />), memory, exportMemoryNotes,
+    onOpenSource, onTidy, unsubscribe, listProjects, notify: (notice: RuntimeNotification) => notify?.(notice) };
 }
 
 function read(request: Record<string, unknown>, content = "用户只在明确要求时运行全量测试。", nextOffset: number | null = null): MemoryReadResult {
@@ -419,4 +420,52 @@ it("ignores a late response from the previously selected project", async () => {
   await act(async () => release(state));
   expect(within(screen.getByRole("navigation", { name: "记忆文件" })).queryByText(note.path)).not.toBeInTheDocument();
   expect(screen.getByRole("combobox", { name: "位置" })).toHaveValue("other");
+});
+
+it("starts tidying the selected scope and disables it when memory is off", async () => {
+  const current = structuredClone(state);
+  const { onTidy } = mount(async (method, request) => {
+    if (method === "memory/policy") current.scopes[1]!.mode = request.mode as "off";
+    if (method === "memory/list" || method === "memory/policy") return structuredClone(current);
+    if (method === "memory/read") return read(request);
+    return {};
+  });
+  const user = userEvent.setup();
+  await screen.findByRole("link", { name: note.path });
+  await user.click(within(document.querySelector(".memory-header") as HTMLElement).getByRole("button", { name: "整理" }));
+  expect(onTidy).toHaveBeenCalledWith({ projectId: "project", scope: "current" });
+  await user.selectOptions(screen.getByRole("combobox", { name: "模式" }), "off");
+  await waitFor(() => expect(screen.getByRole("button", { name: "整理" })).toBeDisabled());
+});
+
+it("shows the last read time and labels sources from external content", async () => {
+  const external: MemoryDocument = {
+    ...note,
+    lastReadAt: Date.UTC(2026, 10, 2, 3, 4),
+    evidence: [{ ...note.evidence![0]!, evidenceClass: "observed_external" }],
+  };
+  mount(async (method, request) => {
+    if (method === "memory/list") return { ...structuredClone(state), documents: [external] };
+    if (method === "memory/read") return { ...read(request), document: request.path === "MEMORY.md" ? null : external };
+    return {};
+  });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("link", { name: note.path }));
+  await user.click(await screen.findByText("来源和版本"));
+  expect(screen.getByText(new RegExp(`上次读取：${new Date(external.lastReadAt!).toLocaleString().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`))).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "查看外部来源" })).toBeInTheDocument();
+});
+
+it("explains hidden formatting characters when saving fails", async () => {
+  mount(async (method, request) => {
+    if (method === "memory/list") return structuredClone(state);
+    if (method === "memory/edit") throw new Error("EIDOS_RUNTIME_ERROR:MEMORY_UNSAFE_TEXT");
+    return read(request);
+  });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("link", { name: note.path }));
+  await user.click(await screen.findByRole("button", { name: "编辑" }));
+  await user.type(screen.getByRole("textbox", { name: "笔记正文" }), "补充");
+  await user.click(screen.getByRole("button", { name: "保存笔记" }));
+  expect(await screen.findByText(/不可见的格式控制字符/)).toBeInTheDocument();
 });

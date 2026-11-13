@@ -38,9 +38,11 @@ Provider 的实际 input usage 只描述已发送请求。设旧请求的实际�
 
 ## 系统先清理可回读投影
 
-Builder 在正文过大时先尝试清除旧工具结果的投影正文。清除阈值是 `min(65536, max(1, U × 3 // 4))`，目标是该阈值的四分之三。系统保护最近完整响应组，并保留旧结果的回读引用。系统没有删除原始结果，也没有重新执行工具。
+Builder 在正文过大时先尝试清除旧工具结果的投影正文。清除阈值是 `min(U × 3 // 4, max(65536, min(262144, U // 2)))`，目标是该阈值的四分之三。系统保护最近完整响应组，并保留旧结果的回读引用。系统没有删除原始结果，也没有重新执行工具。
 
-这一机制可以减少压缩请求的成本。它与 CompactSummary 的生成是两个步骤。相关工具的完整结果可以通过 `read_tool_output` 分页回读。
+清理覆盖成功且没有未决副作用的读取、搜索、Shell、补丁、网页搜索、输出回读、历史搜索和 MCP 结果，以及成功写入调用的较大参数。占位只保留状态、元数据、`contextCleared` 或 `argumentsCleared`、来源 `itemId` 和原始字节数，约为原占位的一半（一个带路径与行号的读取结果从 183 降到 97 个参考 Token）；回读说明写在 `read_tool_output` 的工具说明中。批次大小约等于一次清理释放的量，最少 64 KiB，窗口越大边界移动越少。
+
+这一机制可以减少压缩请求的成本。它与 CompactSummary 的生成是两个步骤。完整结果和参数可以通过 `read_tool_output` 的 `stream="result"` 或 `stream="arguments"` 分页回读；`search_history` 可以按字面文本找到已摘要或已清理的历史，并给出回读参数。
 
 ## 压缩触发与算法
 
@@ -50,21 +52,21 @@ Builder 在正文过大时先尝试清除旧工具结果的投影正文。清除
 
 | 入口 | 触发条件 | 系统怎样处理 |
 | --- | --- | --- |
-| 早期自动压缩 | 请求仍 `fits`，未取整的投影输入达到固定窗口 `W` 的 85%，且没有待审批 | 系统保护最近完整响应组。同一上下文状态只尝试一次早期压缩。 |
-| 窗口压力 | 请求超出可用输入预算 | 系统按 `pre_turn` 或 `mid_turn` 选择可压缩来源，然后重建。 |
-| 内部投影超限 | 候选历史超过内部边界 | 系统先压缩或采用容量恢复投影。 |
-| 用户手动压缩 | 存在持久压缩请求，且没有待审批 | 系统使用请求 ID 记录本次压缩。 |
+| 早期自动压缩 | 请求仍 `fits`，未取整的投影输入达到 `max(U × 3 // 4, U - S)`，且没有待审批；`S = min(32768, max(1024, U // 8))` 是一个工作集 | 系统保护最近完整响应组。同一上下文状态只尝试一次早期压缩；摘要提交后需再增长一个工作集。 |
+| 窗口压力 | 请求超出可用输入预算 | 系统按 `pre_turn` 或 `mid_turn` 选择可压缩来源，保留半个工作集的最近完整响应，然后重建。只剩受保护响应时，下一轮把它们也纳入摘要。 |
+| 内部投影超限 | 候选历史超过内部边界 | 系统先压缩（同样保留半个工作集）或采用容量恢复投影。 |
+| 用户手动压缩 | 存在持久压缩请求，且没有待审批 | 系统使用请求 ID 记录本次压缩，并保留一个工作集的最近完整响应。 |
 
-早期压缩的常量包含 `keep_recent_items=16`。当前 Engine 还传入 Token 预算 `min(16384, max(1024, U // 8))`，所以实际保护集合按最近响应组和 Token 预算选择，并非严格保留 16 个 Item。最新完整响应组即使超过目标预算也受到保护。早期压缩只选已结束的资料，并保留用户消息和 Skill 读取。
+早期压缩的常量包含 `keep_recent_items=16`。当前 Engine 还传入工作集 Token 预算 `min(32768, max(1024, U // 8))`，所以实际保护集合按最近响应组和 Token 预算选择，并非严格保留 16 个 Item。最新完整响应组即使超过目标预算也受到保护。早期压缩只选已结束的资料，并保留用户消息和 Skill 读取。
 
 压缩器按以下顺序运行：
 
 1. 压缩器读取 Run 活跃状态、原始 ContextFacts、上一份摘要和并发 guard。
 2. 压缩器排除当前目标、已覆盖资料和保护集合。`pre_turn` 排除当前 Run 的资料；`mid_turn` 可以处理当前 Run 已有的可用资料。
-3. 压缩器生成规则摘要，保存目标、约束、工具成功与失败、Workspace 变化、待办、审批和未知副作用。Assistant 的自述会带未验证标记。
+3. 压缩器生成规则摘要，保存目标、约束、工具成功与失败、Workspace 变化、待办、审批和未知副作用。每条工具记录只写入一个字段：成功写入 `completed_actions`，失败写入 `failed_attempts`。Assistant 的自述会带未验证标记。
 4. 压缩器按预算拟合规则摘要。摘要 Token 目标是 `min(4096, max(512, (W-O) // 12))`。序列化总上限另为 24 KiB。
-5. 模型可用且支持工具输出时，系统调用一次 `submit_context_summary`。该调用只返回结构化 notes，不执行业务工具。请求有 60 秒截止时间，输出最多 8 条 notes，每条需要 1 至 4 个精确引句。
-6. Runtime 核对引句、Item 身份和资料类型，再合并 notes。模型失败、超时或格式错误时，系统保留规则摘要。
+5. 模型可用且支持工具输出时，系统调用一次 `submit_context_summary`。该调用只返回结构化 notes 和可选的工作交接，不执行业务工具。来源预算按旧摘要大小和模型窗口自动缩小，并平均分配到各来源（单条 2～8 KiB）；已接受 notes 只以引句随旧摘要提供。请求有 60 秒截止时间，输出最多 8 条 notes，每条需要 1 至 4 个精确引句。
+6. Runtime 逐条核对引句、Item 身份和资料类型，丢弃无效的 note 或交接，接受其余部分并记录 `summary_notes_dropped`。交接写入 `handoff`，其下一步替换 `next_actions`。模型失败、超时、格式错误或没有任何有效内容时，系统保留规则摘要。
 7. 独立验证器再次核对来源覆盖、旧约束、Workspace 变化、审批、未知副作用、连续证据和并发状态。Repository 在事务边界保存摘要与来源，并记录事件。
 8. Builder 重建请求并重新测量。早期尝试失败时，只要原请求仍能放入真实预算，系统可以继续采样。关键资料超限或来源变化时，系统拒绝候选并保留旧摘要。
 
@@ -94,7 +96,7 @@ Builder 在正文过大时先尝试清除旧工具结果的投影正文。清除
 
 ## 当前限制与发布准备
 
-压缩无法保证模型第一次就选中所有重要信息。头尾之外的内容仍需按引用回读。系统没有任意历史片段的语义检索、事实自动失效或全窗口压后质量保证。连续证据保留到上限后，系统不会自动推断哪些事实已经过时。
+压缩无法保证模型第一次就选中所有重要信息。头尾之外的内容仍需按引用回读。`search_history` 只做字面匹配，`scope="project"` 只搜索同一项目其他会话的消息，工具调用只扫描最新 2,000 个且每条读取前缀，分叉历史中的工具结果不参与搜索；系统没有语义检索、事实自动失效或全窗口压后质量保证。工作交接是模型的解读，模型未写出时该轮没有交接。连续证据保留到上限后，系统不会自动推断哪些事实已经过时。
 
 源码中的版本校验、模拟长序列和失败用例可以约束机制。真实 Provider 的压缩质量、长期任务目标保持和成本变化仍需要单独评测。
 
@@ -104,9 +106,10 @@ Builder 在正文过大时先尝试清除旧工具结果的投影正文。清除
 | --- | --- | --- |
 | 请求投影与预算 | [builder.py](../../runtime/eidos_runtime/context/builder.py)、[budget.py](../../runtime/eidos_runtime/context/budget.py)、[tokens.py](../../runtime/eidos_runtime/context/tokens.py)、[plan.py](../../runtime/eidos_runtime/context/plan.py) | [ContextPlan](../../runtime/tests/test_context_plan.py)、[Usage](../../runtime/tests/test_context_usage_protocol.py) |
 | 输入引用与图片 | [input_context.py](../../runtime/eidos_runtime/application/input_context.py)、[view_image.py](../../runtime/eidos_runtime/tools/view_image.py)、[tool_content.py](../../runtime/eidos_runtime/persistence/tool_content.py) | [输入快照](../../runtime/tests/test_input_context.py) |
-| 旧工具结果清理 | [tool_history.py](../../runtime/eidos_runtime/context/tool_history.py)、[working_set.py](../../runtime/eidos_runtime/context/working_set.py) | [历史清理](../../runtime/tests/test_context_history_pruning.py) |
+| 旧工具结果清理 | [tool_history.py](../../runtime/eidos_runtime/context/tool_history.py)、[working_set.py](../../runtime/eidos_runtime/context/working_set.py)、[policy.py](../../runtime/eidos_runtime/context/policy.py) | [历史清理](../../runtime/tests/test_context_history_pruning.py) |
 | 压缩入口与规则 | [engine.py](../../runtime/eidos_runtime/runtime/engine.py)、[policy.py](../../runtime/eidos_runtime/context/policy.py)、[compactor.py](../../runtime/eidos_runtime/context/compactor.py) | [触发策略](../../runtime/tests/test_context_compaction_policy.py) |
 | 模型辅助与连续证据 | [model_summary.py](../../runtime/eidos_runtime/context/model_summary.py)、[summary_evidence.py](../../runtime/eidos_runtime/context/summary_evidence.py)、[facts.py](../../runtime/eidos_runtime/context/facts.py) | [模型摘要](../../runtime/tests/test_context_model_compaction.py)、[连续压缩](../../runtime/tests/test_context_compaction_continuity.py) |
+| 历史检索 | [search_history.py](../../runtime/eidos_runtime/tools/search_history.py)、[history_search.py](../../runtime/eidos_runtime/persistence/history_search.py) | [历史检索](../../runtime/tests/test_search_history.py) |
 | 独立验证与事务 | [verified_compaction.py](../../runtime/eidos_runtime/context/verified_compaction.py)、[持久化 Repository](../../runtime/eidos_runtime/persistence/verified_compaction.py) | [摘要验证](../../runtime/tests/test_verified_compaction.py)、[摘要持久化](../../runtime/tests/test_verified_compaction_persistence.py) |
 
 返回[组成总览](harness-overview.md)。

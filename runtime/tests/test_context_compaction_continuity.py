@@ -318,3 +318,68 @@ def test_generated_preview_marker_cannot_become_a_fact(history):
     summary = ContextCompactor(store, MarkerModel(store.read_model_profile(run["id"]))).compact(run["id"], "pre_turn")
     assert not summary.continuity_notes
     assert marker not in summary.model_dump_json()
+
+
+def _failed_shell(store, run_id, step):
+    item = store.create_tool_item(run_id, step, 0, f"call-{step}", "run_shell", '{"command":"make test"}')
+    store.complete_tool_item(item["id"], json.dumps({
+        "outcome": "error", "code": "shell_failed", "summary": "The test command failed",
+    }), item_status="failed", tool_status="failed")
+
+
+def test_tool_lines_have_one_field_and_do_not_displace_reports(history):
+    store, session = history
+    previous, _ = store.create_run(session["id"], "调查缓存过期。")
+    for step in range(1, 7):
+        report = store.create_assistant_item(previous["id"], step)
+        store.append_item_content(report["id"], f"finding {step}: cache entry expires early")
+        store.complete_assistant_item_committed(report["id"])
+    for step in range(7, 27):
+        read_record(store, previous["id"], step, "observed")
+    _failed_shell(store, previous["id"], 27)
+    store.fail_run(previous["id"], "fixture")
+    run, _ = store.create_run(session["id"], "继续。")
+
+    summary = ContextCompactor(store).compact(run["id"], "pre_turn")
+
+    facts = "\n".join(summary.important_facts)
+    assert all(f"finding {step}:" in facts for step in range(1, 7))
+    assert not any(value.startswith("item=") for value in summary.important_facts)
+    assert len(summary.completed_actions) == 16
+    assert all(value.startswith("Tool completed: item=") for value in summary.completed_actions)
+    assert any("shell_failed" in value for value in summary.failed_attempts)
+    assert summary.unresolved_problems == ()
+
+
+def test_duplicate_tool_lines_of_an_older_summary_move_to_their_field(history):
+    store, session = history
+    previous, _ = store.create_run(session["id"], "调查缓存过期。")
+    read_record(store, previous["id"], 1, "observed")
+    _failed_shell(store, previous["id"], 2)
+    store.fail_run(previous["id"], "fixture")
+    run, _ = store.create_run(session["id"], "继续。")
+    current = ContextCompactor(store).compact(run["id"], "pre_turn")
+    success = current.completed_actions[0].removeprefix("Tool completed: ")
+    failure = current.failed_attempts[0]
+    # The shape written before each tool line had one field. The second
+    # failure survived only in unresolved_problems.
+    only_copy = failure.replace("shell_failed", "shell_timeout")
+    older = current.model_copy(update={
+        "important_facts": (*current.important_facts, success),
+        "unresolved_problems": (failure, only_copy, "workspace result unknown"),
+    })
+    repository = store.verified_compaction_repository()
+    repository.verify_and_persist(
+        run_id=run["id"], summary=older,
+        input_range=repository.latest(run["id"]).compaction_input_range,
+    )
+    # The newest steps of the Run are never compaction candidates.
+    for step in range(1, 13):
+        read_record(store, run["id"], step, "observed again")
+
+    summary = ContextCompactor(store).compact(run["id"], "mid_turn")
+
+    assert success not in summary.important_facts
+    assert summary.completed_actions.count("Tool completed: " + success) == 1
+    assert summary.unresolved_problems == ("workspace result unknown",)
+    assert summary.failed_attempts == (failure, only_copy)

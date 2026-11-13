@@ -47,6 +47,7 @@ from eidos_runtime.tools.planning import planning_entries
 from eidos_runtime.tools.collaboration import collaboration_entries
 from eidos_runtime.persistence.collaboration import CollaborationRepository
 from eidos_runtime.tools.read_tool_output import read_tool_output_entry
+from eidos_runtime.tools.search_history import search_history_entry
 from eidos_runtime.tools.declare_outputs import declare_outputs_entry
 from eidos_runtime.tools.runtime_workspace import ToolExecutor
 from eidos_runtime.tools.view_image import ViewImageRootAuthority, view_image_entry
@@ -309,6 +310,7 @@ class RunResources:
                 *search_tools,
                 *self.tool_executor.registry.entries,
                 read_tool_output_entry(self.store, self.run_id, self.shell_process_manager),
+                search_history_entry(self.store.database, self.run_id),
                 declare_outputs_entry(self.tool_executor.workspace),
                 *((request_permissions_entry(),) if not self.tool_executor.full_access else ()),
                 *memory_entries(

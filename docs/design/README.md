@@ -9,6 +9,10 @@
 - [自定义子 Agent](custom-subagents-design.md)：TOML 定义、模型选择、引用、权限与分阶段实施记录。
 - [Session 聊天分叉](session-conversation-fork-design.md)：产品规则、继承历史、文件环境、持久化与界面方案。
 
+## 记忆
+
+- [记忆系统优化详细设计](memory-optimization-design.md)：索引容量、同项目会话检索、整理与遗忘、局部写入、规则文件预算、来源分类与评测；当前为设计方案。
+
 ## 本地定时任务
 
 - [本地定时任务整体方案 V3](scheduled-tasks-research-and-design.md)：任务范围、触发行为、架构、权限与实施顺序。

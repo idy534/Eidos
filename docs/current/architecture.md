@@ -1,5 +1,26 @@
 # Eidos 当前架构
 
+## 上下文阈值、容量恢复与写入反馈（2026-11-13）
+
+`context/policy.py` 的 `context_thresholds` 统一计算上下文清理和提前压缩的阈值。输入是当前 Run 冻结模型的可用输入预算 U，即窗口减去输出预留和安全余量。ContextBuilder 和 Engine 使用同一组结果。
+
+| 阈值 | 计算方式 | 用途 |
+| --- | --- | --- |
+| 工作集 | U 的 1/8，限制在 1,024～32,768 | 清理和提前压缩保护的近期证据；提前压缩为下一步预留的空间 |
+| 清理触发点 | U 的一半，限制在 65,536～262,144，且不超过 U 的 75% | 预计输入超过它时，Builder 清理旧的可回读工具正文 |
+| 清理目标 | 清理触发点的 75% | 一次清理要回到的大小 |
+| 提前压缩触发点 | U 减去一个工作集，且不低于 U 的 75% | 请求仍符合预算时，Engine 尝试保留近期证据的摘要压缩 |
+
+摘要提交后，预计输入需要再增长一个工作集，Engine 才会再次尝试提前压缩。输入已经超出预算时，原有的窗口压力压缩不受这个间隔限制。
+
+Engine 把输出上限和输入容量分开处理。模型连续两次因 `length` 结束时，Engine 在当前循环内结束该 Step，把输出上限的说明追加到请求尾部，并用完整上下文继续。这条路径不再进入容量恢复投影。压缩没有进展或 Provider 拒绝同一上下文时，Run 仍进入更小的恢复投影。Engine 为每一级恢复记录失败时的预计输入。每个 Step 开始时，Engine 构建上一级投影；该投影符合预算且不超过失败值的 75% 时，Run 回到上一级。恢复级别是内存中的协调状态，不写入 SQLite。
+
+ContextBuilder 在一个 Run 的执行循环内固定记忆短索引。可读范围和隐私 epoch 不变时，Builder 复用本 Run 第一次生成的索引。普通保存和归档从下一个 Run 开始进入索引；显式隐私撤销和关闭读取会改变 epoch，并在同一个 Run 立即生效。索引预算按 U 的 5% 计算，不再跟随历史占用后的剩余空间。Hook 反馈（`hook-feedback`）位于对话历史之后，新的反馈不再改写请求开头。
+
+`apply_patch` 成功提交后，`repo_intelligence/syntax.py` 用随包的 Tree-sitter 语法解析新增和修改的 Python、TypeScript、TSX、JavaScript 与 Go 文件。只有本次补丁新引入的解析错误进入结果的 `possibleSyntaxErrors`，每行一条，每次最多 16 条。改动前已经无法解析的文件、其他语言和超过 1 MiB 的文件不检查。补丁已经写入，检查不改变结果状态；检查自身出错时只写 debug 日志。
+
+本轮没有修改协议 DTO、SQLite Schema 和依赖。验证范围与已知限制见[当前限制](limitations.md#上下文阈值容量恢复与写入反馈2026-11-13)。
+
 ## 目标模式（2026-11-07）
 
 目标模式从 Composer 的“＋”菜单或 `/goal` 开启，标签与 Plan 模式互斥。用户直接提交输入，通过 `typed IPC → run/start → RunApplication → GoalRepository → SQLite` 原子保存真实用户消息、首轮 Run 和目标。目标管理继续使用 `goal/*`。Schema v51 保存目标、Run 来源和一次性续跑意图，v52 移除旧目标预算。Supervisor 使用现有受管理任务准备下一轮；Run 终态事务决定目标结算和续跑意图。模型声明只形成候选；Stop Hook、子任务、取消、新输入和版本检查继续决定最终提交。ContextBuilder 单独投影完整目标。目标不增加执行权限，也不设置跨 Session 配额。具体行为和恢复范围见[目标模式](features/goals.md)。
@@ -260,7 +281,7 @@ AGENTS.md
 CLAUDE.md
 ```
 
-每层只选择一个候选。Resolver 使用共享的 32 KiB UTF-8 byte budget。Resolver 记录 shadowed candidate、读取或预算 warning、原始 content hash、实际包含字节数、directory level、Workspace root 和 effective cwd。Run 使用 immutable rule snapshot，Step Resolution 保存 resolved instruction hash 和 effective cwd。
+每层只选择一个候选。Resolver 使用共享的 64 KiB UTF-8 byte budget，从 cwd 链最深的目录向根分配，根目录文件最先被截断。截断点退到行边界，规则末尾写明从哪一行继续读取。模型通过 `read_file`、`read_file_range` 读取或通过 `apply_patch` 修改某目录下的文件后，下一个 Step 追加该目录链上的规则文件，最多 8 个，排在 cwd 链之后。Shell 命令中的路径不触发加载。Resolver 记录 shadowed candidate、读取或预算 warning、原始 content hash、实际包含字节数、directory level、Workspace root 和 effective cwd。Run 使用 immutable rule snapshot，Step Resolution 保存 resolved instruction hash 和 effective cwd。
 
 `InstructionResolver` 按 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 形成分层 instructions。 项目情况、项目规则、全局自定义要求、用户偏好和长期记忆由 `memory/context.py` 统一投影为独立记忆上下文。个性化设置在 Run 创建时固定到 `RunResolutionSnapshot`。统计单独返回 `memory` 与 `skills` 分类，这些内容不合入 `system_text`。各来源继续保留原有存储、范围和隐私检查。用户背景和全局指令不会更改执行权限。详见[个性化说明](features/personalization.md)。Skill Catalog 与已加载的第三方 `SKILL.md` 属于独立技能上下文，Provider 适配器沿用较低权限的 user context 传输。Project Rules 和 Selected Skill 保留来源与 hash。 模型可见的 Skill 目录只保留唯一调用名称和说明；根路径与有界资源清单在读取主说明或显式加载后提供。完整身份、版本与 hash 留在 Runtime 的冻结快照中。skill_read 继续使用现有参数读取该名称对应的 Skill。它们不具备修改 Runtime Permission、Approval 或 Sandbox 的权限。 通用 Runtime 提示不包含具体审批模式的扩权流程。当前权限层按 manual、auto_review、full_access 分别生成；完全访问层不混入沙盒扩权、嵌套沙盒或自动审查指引。可用工具由当前 Tool Schema 暴露，权限文本不重复整份名称列表。
 
@@ -268,23 +289,27 @@ Context Budget 使用 `projected_input_tokens` 判断下一次模型请求是否
 
 压缩成功后，Engine 使用同一批工具定义、规则、Skill 和仓库上下文重新构建投影，并把新的 ContextPlan 与 Run Updated Event/Outbox 一起保存。系统不为统计伪造 ModelAttempt，也不等待下一次模型响应才刷新。新的 Provider Usage 只覆盖它实际对应的请求。若摘要已经提交，但新投影无法构建，系统显示暂无统计，旧请求总量不能重新冒充压缩后用量。ContextPlan 的原始分项仍保存参考 Token 数；详情按这个构成估算分项，并使分项 Token 合计严格等于当前总量。界面分项与总占用均使用设置上限作为百分比分母，十分之一百分点的舍入也保持合计一致。分项仍属于估算，Provider 没有返回逐项实测。
 
-统计读取不加载 Snapshot 正文或 Blob，内存撤销不要求读取已撤销内容。同一 Session、同一模型的新 Run 在提供有效统计前，Renderer 保留上一轮的圆环和详情读数；这份展示缓存不会作为新 Run 的统计写回 Runtime。新 Run 提供有效统计后，Renderer 使用新读数，并恢复无数据时清空的规则。切换 Session、模型、移除 Run 或 Runtime 未就绪时，Renderer 清空展示缓存。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发经验证的有界压缩或安全恢复。没有新的可压缩历史或投影没有进展时，Runtime 使用更小的历史证据视图继续可取消恢复；系统不创建容量暂停，也不重放不确定操作。
+统计读取不加载 Snapshot 正文或 Blob，内存撤销不要求读取已撤销内容。同一 Session、同一模型的新 Run 在提供有效统计前，Renderer 保留上一轮的圆环和详情读数；这份展示缓存不会作为新 Run 的统计写回 Runtime。新 Run 提供有效统计后，Renderer 使用新读数，并恢复无数据时清空的规则。切换 Session、模型、移除 Run 或 Runtime 未就绪时，Renderer 清空展示缓存。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发经验证的有界压缩或安全恢复。没有新的可压缩历史或投影没有进展时，Runtime 使用更小的历史证据视图继续可取消恢复，并在完整投影重新符合预算且不超过失败值的 75% 后回到完整投影；系统不创建容量暂停，也不重放不确定操作。
 
-Runtime 在预计输入达到当前 Run 冻结模型窗口的 85% 时尝试自动摘要压缩。系统直接比较未取整的 Token 数量，不使用界面四舍五入后的百分比。系统不再使用固定 65,536 Tokens 或新增 32 条 Item 作为摘要触发条件。这个路径在输入仍符合请求预算、没有待处理 Approval 或 reconciliation 时执行，并按 Token 预算保留完整近期响应、用户消息和 Skill 读取正文。系统复用现有事实验证与事务提交，不删除原始历史。自动摘要失败后，Runtime 保留原投影；同一上下文状态不会重复尝试这个提前压缩路径。输入预算已经不足时，系统继续执行原有窗口压力保护。
+Runtime 在预计输入达到可用输入预算减去一个工作集时尝试自动摘要压缩。可用输入预算是当前 Run 冻结模型窗口减去输出预留和安全余量；工作集是该预算的 1/8，限制在 1,024～32,768。这个触发点不低于可用输入预算的 75%。系统直接比较未取整的 Token 数量，不使用界面四舍五入后的百分比。系统不再使用固定 65,536 Tokens、新增 32 条 Item 或窗口的 85% 作为摘要触发条件。摘要提交后，预计输入再增长一个工作集，系统才会再次尝试这个提前压缩。这个路径在输入仍符合请求预算、没有待处理 Approval 或 reconciliation 时执行，并按 Token 预算保留完整近期响应、用户消息和 Skill 读取正文。系统复用现有事实验证与事务提交，不删除原始历史。自动摘要失败后，Runtime 保留原投影；同一上下文状态不会重复尝试这个提前压缩路径。输入预算已经不足时，系统继续执行原有窗口压力保护。窗口压力、Provider 拒绝和内部投影超限的压缩保留半个工作集的最近完整响应，手动压缩保留一个工作集；这类压缩不排除用户消息和 Skill 读取。可压缩来源只剩受保护的响应时，下一轮压缩把它们也纳入摘要，因此仍能逐轮降到预算内。
 
 在线历史投影继续使用有界数据库读取与完整响应分组。摘要候选批次和在线资源预算保持独立；系统不会删除原始 Item、Blob 或冻结历史。投影资源不足时，Engine 尝试摘要和更小的证据视图，并保留取消入口。当前延续记录有独立的资源上限，系统不会通过恢复预览悄悄截断有效记录。
 
-ContextBuilder 在摘要前独立清理旧工具正文。清理阈值是 65,536 与可用输入预算 75% 中的较小值，目标是阈值的 75%；这个阈值只控制工具正文清理，不触发摘要请求或压缩过程记录。Builder 按可用输入预算的 1/8 保留近期证据，参考 Token 目标限制在 1,024～16,384。系统按完整模型响应保留记录，至少保留最后一个响应，即使该响应本身超过目标。清理按原始工具历史的 64 KiB 批次推进：只有整批都早于近期证据窗口时才可以清理，达到目标后系统会清完当前批次。已清理边界因此约每 64 KiB 新工具输出才前移一次，不会在每次请求中改写 Provider 前缀缓存覆盖的历史。系统只清理较大的、已完成且成功的文件读取、文件列表、搜索和已结束 Shell 结果。失败、运行中、需要 reconciliation、Skill、记忆、MCP 和带图片正文的结果保持原样。模型输入保留结果状态、文件版本、来源 Item、原文 Hash 和 `read_tool_output` 回读参数。系统不修改 SQLite 原始结果，也不重新执行原操作。内部候选投影超限仍沿用已有摘要恢复。旧的直接调用仍支持按数量保留近期记录；在线百分比摘要使用 Token 预算。
+ContextBuilder 在摘要前独立清理旧工具正文。清理阈值是可用输入预算的一半，限制在 65,536～262,144，并且不超过可用输入预算的 75%；目标是阈值的 75%；这个阈值只控制工具正文清理，不触发摘要请求或压缩过程记录。Builder 按可用输入预算的 1/8 保留近期证据，参考 Token 目标限制在 1,024～32,768。系统按完整模型响应保留记录，至少保留最后一个响应，即使该响应本身超过目标。清理按原始工具历史的批次推进：批次大小约等于一次清理释放的量（触发阈值与目标之差，按每参考 Token 4 字节换算），最少 64 KiB，因此 1M 窗口的批次约 256 KiB。只有整批都早于近期证据窗口时才可以清理，达到目标后系统会清完当前批次。已清理边界因此按批前移，不会在每次请求中改写 Provider 前缀缓存覆盖的历史。系统清理较大的、已完成且成功、没有未决副作用的结果：文件读取、文件列表、搜索、Shell 与 stdin、补丁、网页搜索、输出回读、历史搜索和 MCP 工具结果。成功写入调用的较大参数（`apply_patch`、`write_file` 的整段补丁或文件内容）在同一批次中换成 `argumentsCleared` 标记。失败、运行中、需要 reconciliation、Skill、记忆、Agent 消息和带图片正文的结果保持原样。清理后的结果只保留状态、摘要、路径与行号等元数据、`contextCleared`、来源 `itemId` 和原始字节数；`callId` 已在结果外层。标记含义和回读方式只在 `read_tool_output` 的工具说明中写一次，不在每个占位中重复。系统不修改 SQLite 原始结果，也不重新执行原操作。内部候选投影超限仍沿用已有摘要恢复。旧的直接调用仍支持按数量保留近期记录；在线百分比摘要使用 Token 预算。
 
-`read_tool_output(stream="result", itemId=..., callId=...)` 对允许的历史工具结果提供 UTF-8 字节分页。读取范围只包含当前 Session 和该 Session 已冻结的分叉历史。源 Session 的原始 Item ID 不授权访问其他 Session。原有 stdout/stderr 和活动 Shell 读取保持兼容；记忆、Skill、MCP 和写入工具正文不进入这个回读出口。
+`read_tool_output(stream="result", itemId=..., callId=...)` 对允许的历史工具结果提供 UTF-8 字节分页。读取范围只包含当前 Session 和该 Session 已冻结的分叉历史。源 Session 的原始 Item ID 不授权访问其他 Session。`stream="arguments"` 以同样的范围和分页读取已保存的调用参数，用于回读被清理的写入参数。原有 stdout/stderr 和活动 Shell 读取保持兼容；记忆工具的结果和参数不进入这个回读出口。
+
+`search_history` 是只读工具，按字面、忽略大小写搜索当前 Session 已保存的历史，包括已摘要或已清理的部分。用户与 Assistant 消息使用已有的 trigram FTS5 消息索引；工具调用不在该索引中，系统用 SQLite `instr` 扫描本 Session 最新 2,000 个工具调用的参数（前 16 KiB 字符）和结果（前 256 KiB 字符），单次查询成本有界。记忆工具、`search_history` 和 `read_tool_output` 自身的结果不参与搜索。返回最新的匹配、片段和回读参数；`complete=false` 表示可能还有匹配。搜索不重新执行任何操作。
+
+`search_history(scope="project")` 用同一消息索引搜索同一项目其他会话的用户与 Assistant 消息，项目身份与记忆范围的解析一致。它跟随当前范围的记忆读取模式，排除子 Agent 与渠道会话；子 Run 和渠道来源的 Run 不能使用。`read_tool_output(stream="context", sessionId=...)` 读取命中原文前重新核对这些条件。
 
 Token 计量优先使用 Provider 返回的实际 Usage。该值只代表对应的已发请求，不能直接当作缩减或增长后的新请求大小。下一请求的预算以最近一次匹配请求的 Provider 输入量为起点，再估算内容变化量。增长部分至少采用一倍参考 Token 变化量；缩减部分采用已观察的 Provider/参考值比例。缺少 Provider Usage 时，系统才完全使用词表估算。所有未来请求的推算仍属于 estimated。
 
 本地辅助计数使用已锁定的 `tiktoken==0.13.0` 和随应用提供、带固定 SHA-256 的 cl100k 词表。Runtime 不下载词表，也不按模型名称猜测 tokenizer。系统按完整模型响应只计一次思考回放。校准读取同一已完成 ModelAttempt 的 Provider Usage 和冻结 Plan 估算，并核对估算器版本及完整 ModelProfile Hash。新快照还保存连接配置指纹，指纹不包含 API Key 或展示名称。同 Session 的新 Run 可以复用同配置请求的配对；不同模型、端点、协议、推理和请求配置不能混用。缺少连接指纹的旧快照只在当前 Run 内配对。预览、重复构建和重启不改变配对。旧估算器的 Plan 仍可读取，但不参与新校准。新 Plan 的 diagnostics 记录估算器版本，omissions 记录清理的工具调用。Plan 的可选计量来源与分项预算在缺省时不写入序列化，因此旧 Plan/Snapshot Hash 保持兼容。
 
-在线 compactor 先生成确定性的有界候选，再通过当前 Run 已持有的 ModelClient 请求模型辅助说明。这个独立请求只暴露 `submit_context_summary` 输出 Schema，不提供可执行工具。请求最多等待 60 秒，请求中的输出参数最多为 4,096 Tokens，输入有 96 KiB 和模型窗口双重限制。Provider 对思考 Tokens 的统计方式仍以实际 Usage 为准。模型逐条返回分类、来源 Item ID 与精确引句。事实、决定和验证说明必须摘取原文；模型只能改写明确标记的提议、计划和未验证报告。Runtime 拒绝未知来源、无效引句和不符合 Schema 的结果。Runtime 会把 Assistant 自述、失败工具的确认声明和来自非用户消息的决定降为未验证说明。模型请求失败、超时、不支持结构化工具输出或预算不够时，Runtime 使用规则候选。
+在线 compactor 先生成确定性的有界候选，再通过当前 Run 已持有的 ModelClient 请求模型辅助说明。这个独立请求只暴露 `submit_context_summary` 输出 Schema，不提供可执行工具。请求最多等待 60 秒，请求中的输出参数最多为 4,096 Tokens，输入有 96 KiB 和模型窗口双重限制。Provider 对思考 Tokens 的统计方式仍以实际 Usage 为准。模型逐条返回分类、来源 Item ID 与精确引句。事实、决定和验证说明必须摘取原文；模型只能改写明确标记的提议、计划和未验证报告。Runtime 逐条拒绝未知来源和无效引句的说明，同一结果中其余有据的说明照常接受，并记录 `summary_notes_dropped`；结果没有任何有效说明或交接时整体回退。不符合 Schema 的结果整体回退。Runtime 会把 Assistant 自述、失败工具的确认声明和来自非用户消息的决定降为未验证说明。模型请求失败、超时、不支持结构化工具输出或预算不够时，Runtime 使用规则候选。
 
-摘要模型的单条来源使用最多 8 KiB UTF-8 预览。较小资料完整提供，长资料保留头尾和明确的省略标记；全部来源继续受 64 KiB 预算约束。相同路径的不同内容版本分别取材。后续压缩先为已有延续记录重新加载原始来源，再选择新增资料。请求包含有界的当前用户目标；旧摘要只提供背景，不成为独立证据。模型不能引用只存在于预览省略标记中的句子。
+摘要模型的来源预算是 64 KiB 与 96 KiB 请求上限减去旧摘要和当前目标后的较小值；模型窗口放不下时预算逐次减半，低于 4 KiB 才回退规则摘要。预算按来源数量平均分配，单条预览在 2～8 KiB 之间，较长的一轮历史也能让模型看到大部分 Item。较小资料完整提供，长资料保留头尾和明确的省略标记。相同路径的不同内容版本分别取材。已接受的延续记录通过旧摘要中的引句提供给模型，系统不再为它们重新发送原始正文。请求包含有界的当前用户目标；旧摘要只提供背景，不成为独立证据。模型不能引用只存在于预览省略标记中的句子。
 
 模型接受的说明保存为 `CompactContinuityNote`，字段包含说明类型、来源类型、精确引句，以及 Runtime 从原记录派生的工具名称和 Call ID。确认类说明只保存引句；模型改写文本只用于提议、下一步和未验证说明。文档、源码和用户报告不能成为实际执行验证。`verification` 必须引用已完成、成功退出且结果完整的 Shell 输出；这仍是当时执行的历史证据，不证明当前文件状态或完整测试套件已经通过。持久化验证器会再次检查来源、引句、类型和回读引用。
 
@@ -317,7 +342,7 @@ Run 因 Provider 错误结束时，`ModelFailureNotice` 取代单行红字：认
 
 `context/details` 返回计量来源、参考分项、近期请求误差样本及最近压缩记录。分项按参考词表构成分配当前总量，并明确标为估算，不冒充 Provider 的分项实测。`context/compact` 把手动请求写入既有 SQLite Event/Outbox，同 Session 的重复待处理请求会去重。Engine 在下一次安全采样前处理；终态 Run 的请求由同 Session 下一 Run 处理。请求不创建额外 Run 或 Worker。开始与结束记录包含触发原因、策略、回退原因、前后完整投影预算、耗时和摘要模型 Usage。成功摘要与成功结果在同一个事务内提交；摘要已提交、后续统计未完成时，系统仍显示成功，后预算可以为空。Runtime 中断后，未提交摘要不会重放。Desktop 会把终态 Run 的未提交记录显示为中断，并允许重新请求。以上信息复用 Event JSON，不增加 DB Schema 或第二套状态机。
 
-Compactor 只向验证层提供摘要覆盖的 ToolCall 与工作区变更来源，并按完整响应保留近期记录。摘要的 completed_actions 只记录已成功的工具结果；Assistant 的决定自述明确标记为报告，普通将来计划不会成为已完成事项。不确定工具副作用使用原始 Item/ToolCall 的短引用，系统从持久来源重建这些引用，不反复复制旧错误正文。明确的用户历史报告不会仅因模型没有选择它而被删除。摘要预算随输入窗口调整到 512～4,096 个参考 Tokens，并受 24 KiB 正文上限约束。裁剪优先保留新事实，不通过删除明确约束、未解决问题、待审批或不确定副作用来强行满足预算。关键事实放不下时，系统保留上一份摘要。持久化事务再次检查取消请求，迟到摘要不能在取消后提交。软压缩失败日志只包含 Run ID 和受控原因。
+Compactor 只向验证层提供摘要覆盖的 ToolCall 与工作区变更来源，并按完整响应保留近期记录。摘要的 completed_actions 只记录已成功的工具结果，failed_attempts 只记录失败的工具结果；同一条工具记录不再重复写入 important_facts 或 unresolved_problems，旧摘要中的重复记录会在下一次压缩时归入对应字段。unresolved_problems 只保留工作区结果未知这类控制事实。Assistant 的决定自述只写入 important_decisions 并标记为报告，其他自述写入 important_facts；普通将来计划不会成为已完成事项。next_actions 每轮整体替换为本轮最新的最多 4 条计划，不再保留早期计划。模型可以同时返回结构化交接（当前工作、做法、进展、未决问题和下一步，并引用来源 Item）；交接每轮整体替换，模型未写出时不保留旧交接，模型投影标为未验证的解读。预算不足时交接先于任何约束和控制事实被移除。不确定工具副作用使用原始 Item/ToolCall 的短引用，系统从持久来源重建这些引用，不反复复制旧错误正文。明确的用户历史报告不会仅因模型没有选择它而被删除。摘要预算随输入窗口调整到 512～4,096 个参考 Tokens，并受 24 KiB 正文上限约束。裁剪优先保留新事实，不通过删除明确约束、未解决问题、待审批或不确定副作用来强行满足预算。关键事实放不下时，系统保留上一份摘要。持久化事务再次检查取消请求，迟到摘要不能在取消后提交。软压缩失败日志只包含 Run ID 和受控原因。
 
 ## 7. Model Gateway
 
@@ -571,7 +596,7 @@ ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。
 
 本地 JSONL 日志保存脱敏后的异常消息和调用位置，包括显式 cause 与未抑制的 context。普通消息最多 16 KiB，异常消息最多 4 KiB，调用栈最多 16 KiB；每个异常最多记录 32 个调用位置，异常链最多记录 8 层。日志不保存局部变量和源码行。日志字段使用现有凭据扫描并补充私钥正文、Authorization 与密钥赋值脱敏；诊断生成失败时只保存固定占位信息。该信息不进入 Session 正文，也不参与业务状态和恢复判断。
 
-当前 `SCHEMA_VERSION` 是 49。v48→v49 为 `events`、`context_plans`、`context_snapshots` 和 `model_attempts` 补充会话快照、事件游标、上下文压缩记录与上下文详情查询索引，消除大事件表上的全表扫描。v47→v48 新增会话级浏览器授权与目标配置表。v44→v47 保存多目录项目绑定、Session `project_id` 与根快照，以及 Worktree 私有 gitdir 身份。v43→v44 新增全局个性化设置表，并保留已有数据。v42→v43 保留已有笔记、历史版本、模式和撤销记录，新增归档状态并调整聊天来源触发器。v41→v42 删除会话级临时记忆字段和接口，保留笔记与原来源撤销状态，并让原临时会话按所属范围的模式工作。v40→v41 保留现有笔记，在事务中修复历史自动版本的来源撤销触发器，并补充撤销旧版遗漏的上下文。v39→v40 在事务中重置记忆表，撤销旧记忆上下文，并保留聊天、执行记录及其他配置；文件清理由可重试的启动标记完成。v25→v26 增加 `session_forks`、`session_history_entries`、`session_history_resources` 和 Worktree 生命周期请求校验值。迁移使用事务，旧 Session 没有继承历史。v16→v17 在事务内新增记忆作用域、版本、证据、任务、预算及隐私撤销表和索引。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
+当前 `SCHEMA_VERSION` 是 54。v53→v54 为记忆笔记增加上次读取时间和读取次数。v49→v53 的变更见各功能说明。v48→v49 为 `events`、`context_plans`、`context_snapshots` 和 `model_attempts` 补充会话快照、事件游标、上下文压缩记录与上下文详情查询索引，消除大事件表上的全表扫描。v47→v48 新增会话级浏览器授权与目标配置表。v44→v47 保存多目录项目绑定、Session `project_id` 与根快照，以及 Worktree 私有 gitdir 身份。v43→v44 新增全局个性化设置表，并保留已有数据。v42→v43 保留已有笔记、历史版本、模式和撤销记录，新增归档状态并调整聊天来源触发器。v41→v42 删除会话级临时记忆字段和接口，保留笔记与原来源撤销状态，并让原临时会话按所属范围的模式工作。v40→v41 保留现有笔记，在事务中修复历史自动版本的来源撤销触发器，并补充撤销旧版遗漏的上下文。v39→v40 在事务中重置记忆表，撤销旧记忆上下文，并保留聊天、执行记录及其他配置；文件清理由可重试的启动标记完成。v25→v26 增加 `session_forks`、`session_history_entries`、`session_history_resources` 和 Worktree 生命周期请求校验值。迁移使用事务，旧 Session 没有继承历史。v16→v17 在事务内新增记忆作用域、版本、证据、任务、预算及隐私撤销表和索引。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
 
 Outbox 投递失败不会删除事实。Runtime 重启会从 `state.sqlite`、Outbox、Long Task 和 Resource 状态恢复或记录实际中断与未知结果。其他数据库和文件不参与跨库业务 transaction。
 

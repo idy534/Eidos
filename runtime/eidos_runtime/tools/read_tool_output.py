@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, ClassVar, Literal
 
 from pydantic import Field, StrictInt, StrictStr, model_validator
 
+from eidos_runtime.domain.history_search import HistoryScopeError
+from eidos_runtime.persistence.history_search import HistorySearchRepository
 from eidos_runtime.db.repositories.execution import (
     ToolOutputPage,
     ToolOutputReadError,
@@ -38,7 +40,7 @@ _JSON_SAFE_INTEGER_MAX = 9_007_199_254_740_991
 
 class ReadToolOutputInput(StrictToolModel):
     callId: StrictStr = Field(min_length=1, max_length=256)
-    stream: Literal["stdout", "stderr", "result", "context"] = "stdout"
+    stream: Literal["stdout", "stderr", "result", "context", "arguments"] = "stdout"
     itemId: StrictStr | None = Field(default=None, min_length=1, max_length=256)
     offsetBytes: StrictInt = Field(
         default=0, ge=0, le=_JSON_SAFE_INTEGER_MAX
@@ -50,11 +52,19 @@ class ReadToolOutputInput(StrictToolModel):
     )
     fromEnd: bool = False
     outputRevision: StrictInt | None = Field(default=None, ge=0, le=_JSON_SAFE_INTEGER_MAX)
+    sessionId: StrictStr | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+        description="For stream='context': the sessionId of a search_history(scope='project') match.",
+    )
 
     @model_validator(mode="after")
     def validate_tail_offset(self) -> ReadToolOutputInput:
         if self.fromEnd and self.offsetBytes:
             raise ValueError("tail_read_cannot_set_offset")
+        if self.sessionId is not None and self.stream != "context":
+            raise ValueError("session_requires_context_stream")
         if self.outputRevision is not None and self.stream not in {"stdout", "stderr"}:
             raise ValueError("output_revision_requires_shell_stream")
         return self
@@ -66,7 +76,7 @@ class ReadToolOutputResultData(StrictToolModel):
         "nextOffset", "totalBytes", "hasMoreBefore", "hasMoreAfter",
     )
     callId: StrictStr | None = None
-    stream: Literal["stdout", "stderr", "result", "context"] | None = None
+    stream: Literal["stdout", "stderr", "result", "context", "arguments"] | None = None
     content: StrictStr | None = None
     startByte: StrictInt | None = Field(default=None, ge=0)
     endByte: StrictInt | None = Field(default=None, ge=0)
@@ -130,6 +140,8 @@ class ReadToolOutputAdapter:
             return _error("tool_canceled", "Output reading was canceled")
         try:
             request = ReadToolOutputInput.model_validate(arguments)
+            if request.sessionId is not None:
+                HistorySearchRepository(self.store.database).assert_readable(self.run_id, request.sessionId)
             max_bytes = min(request.maxBytes, READ_TOOL_OUTPUT_MODEL_PAGE_BYTES)
             while True:
                 page = self.store.read_tool_output(
@@ -142,6 +154,7 @@ class ReadToolOutputAdapter:
                     item_id=request.itemId,
                     output_revision=request.outputRevision,
                     live_output_reader=(self.shell_process_manager.read_output if self.shell_process_manager is not None else None),
+                    source_session_id=request.sessionId,
                 )
                 escaped_bytes = _escaped_content_bytes(page.content)
                 if (
@@ -158,6 +171,11 @@ class ReadToolOutputAdapter:
                 )
         except ToolOutputReadError as error:
             return _error(error.code, _summary_for_code(error.code))
+        except HistoryScopeError as error:
+            return _error(
+                error.code,
+                "This message is not readable from this Run; it belongs to another project, a child or channel Session, or memory reading is off.",
+            )
         except (TypeError, ValueError):
             return _error("invalid_arguments", "Invalid output read arguments")
         except Exception:
@@ -192,9 +210,12 @@ def read_tool_output_entry(
             "Set fromEnd=true for the tail; raw bytes omitted by the Shell output "
             "limit are not recoverable. When paging live stdout/stderr, pass the returned "
             "outputRevision on the next page; if it changed, restart or use fromEnd=true. "
-            "Use stream='result' and the itemId/callId "
-            "from a contextCleared marker to page the original saved JSON result "
-            "of any completed tool call, including fork history. Use stream='context' and a saved message itemId as callId to page the original user or assistant text. "
+            "A tool result marked contextCleared, or a call marked argumentsCleared, was omitted from "
+            "active context to save room. Page it with this tool and that call's callId and itemId: "
+            "stream='result' for the saved JSON result of any completed tool call, including fork history, "
+            "and stream='arguments' for its saved arguments. Never repeat the operation to recover output, "
+            "and treat saved file content as history rather than the current file version. "
+            "Use stream='context' and a saved message itemId as callId to page the original user or assistant text. "
             "Reading saved output does not execute the operation again."
             " Hook feedback can include a hook:<id> callId; use it with stdout, stderr or result to read the saved Hook output."
         ),
@@ -213,7 +234,7 @@ def read_tool_output_entry(
         provenance=ToolProvenance.model_validate({
             "kind": "builtin",
             "sourceId": "eidos.read-tool-output",
-            "sourceVersion": "3",
+            "sourceVersion": "4",
             "contentHash": hashlib.sha256(encoded).hexdigest(),
         }),
         adapter=ReadToolOutputAdapter(store, run_id, shell_process_manager),

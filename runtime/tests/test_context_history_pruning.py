@@ -15,7 +15,8 @@ from eidos_runtime.context.compactor import (
     ContextCompactionError,
     _fit_summary,
 )
-from eidos_runtime.context.facts import CompactSummary, ContextFacts, ContextItemFact
+from eidos_runtime.context.facts import CompactHandoff, CompactSummary, ContextFacts, ContextItemFact
+from eidos_runtime.context.policy import context_thresholds
 from eidos_runtime.context.tokens import _encoding, estimate_text_tokens
 from eidos_runtime.context.tool_history import clear_old_tool_results, retained_content_ids
 from eidos_runtime.db.errors import InvalidRunStateError
@@ -102,12 +103,10 @@ def test_old_outputs_clear_before_summary_and_keep_pairing_and_recent_results():
     assert cleared[0] == context[0]
     marker = json.loads(cleared[1]["result"])
     assert marker["contextCleared"] is True
-    assert marker["readBack"] == {
-        "tool": "read_tool_output",
-        "callId": "call-0",
-        "itemId": "item-0",
-        "stream": "result",
-    }
+    # The envelope carries callId; the stub adds only what resolves it.
+    assert cleared[1]["callId"] == "call-0"
+    assert marker["itemId"] == "item-0"
+    assert not {"readBack", "notice", "sideEffectsMayExist", "reconciliationRequired"} & marker.keys()
     assert "originalResultSha256" not in marker
     assert cleared[2:] == context[2:]
     assert clear_old_tool_results(context, facts, target_reduction=1, batch_bytes=1) == cleared
@@ -316,7 +315,7 @@ def test_builder_clears_old_output_without_deleting_and_can_page_it_back(history
     while True:
         result = entry.adapter.execute(
             {
-                **{k: v for k, v in marker["readBack"].items() if k != "tool"},
+                "callId": marker_item["callId"], "itemId": marker["itemId"], "stream": "result",
                 "offsetBytes": offset,
             },
             threading.Event(),
@@ -328,6 +327,41 @@ def test_builder_clears_old_output_without_deleting_and_can_page_it_back(history
         if not page["hasMoreAfter"]:
             break
     assert "".join(parts) == model_result_json(raw)
+    assert store.compaction_count(run["id"]) == 0
+
+
+def test_larger_window_keeps_old_output_that_a_smaller_window_clears(history_store):
+    store, session = history_store
+    run, _ = store.create_run(session["id"], "检查结果，先不要改代码。")
+    raw = _result("\n".join(f"field_{n} = unresolved_{n}" for n in range(9_000)))
+    old = store.create_tool_item(run["id"], 1, 0, "old-read", "read_file", "{}")
+    store.complete_tool_item(old["id"], raw, model_result_json=raw)
+    for n in range(8):
+        item = store.create_tool_item(run["id"], n + 2, 0, f"recent-{n}", "read_file", "{}")
+        store.complete_tool_item(item["id"], _result(f"recent {n}"))
+    base = store.read_model_profile(run["id"])
+
+    def old_read(window: int) -> tuple[str, int]:
+        profile = base.model_copy(
+            update={"context_window_tokens": window, "max_output_tokens": 8_192}
+        )
+        with patch.object(store, "read_model_profile", return_value=profile):
+            built = ContextBuilder(store).build(run["id"])
+        result = next(
+            item["result"] for item in built.model_context
+            if item.get("callId") == "old-read" and item["type"] == "tool_result"
+        )
+        return result, built.budget.projected_input_tokens
+
+    # About 98,000 tokens. A 128K window clears above 65,536; a 256K window
+    # has 248,709 usable tokens and clears above half of them (124,354).
+    cleared, cleared_tokens = old_read(131_072)
+    kept, kept_tokens = old_read(262_144)
+
+    assert json.loads(cleared)["contextCleared"] is True
+    assert cleared_tokens < 49_152
+    assert kept == model_result_json(raw)
+    assert 65_536 < kept_tokens < 124_354
     assert store.compaction_count(run["id"]) == 0
 
 
@@ -387,8 +421,14 @@ def test_engine_uses_cleared_snapshot_before_requesting_summary(history_store):
         )
         store.complete_tool_item(recent["id"], _result("recent evidence"))
     store.fail_run(old["id"], "fixture")
+    # The old read alone exceeds this window's 56,033 usable tokens and its
+    # 42,024-token clearing trigger. A larger window would keep it in place.
+    profile = store.read_model_profile(old["id"]).model_copy(
+        update={"context_window_tokens": 65_536, "max_output_tokens": 8_192}
+    )
     current, _ = store.create_run(
-        session["id"], "Continue reviewing the existing evidence"
+        session["id"], "Continue reviewing the existing evidence",
+        model_profile=profile,
     )
     model = ScriptedModel([ModelResponse(text="done")])
     with patch.object(
@@ -591,3 +631,98 @@ def test_result_pages_reopen_and_keep_utf8_offsets(history_store):
         == "invalid_output_offset"
     )
     restarted.close()
+
+
+def _writes(custom: bool) -> tuple[tuple[dict[str, object], ...], ContextFacts]:
+    patch_text = "*** Begin Patch\n*** Update File: big.py\n" + "+line\n" * 2_000 + "*** End Patch"
+    arguments = patch_text if custom else json.dumps({"path": "big.py", "patch": patch_text})
+    result = json.dumps({"outcome": "success", "code": "ok", "summary": "Patch applied",
+                         "sideEffectsMayExist": False, "reconciliationRequired": False,
+                         "data": {"paths": ["big.py"], "workspaceChanged": True}})
+    facts = tuple(
+        ContextItemFact(item_id=f"item-{n}", run_id="run", kind="tool_call", status="completed",
+                        provider_call_id=f"call-{n}", tool_name="apply_patch", model_step_index=n,
+                        payload_kind="custom" if custom else "function",
+                        arguments_json=json.dumps({"input": arguments}) if custom else arguments,
+                        model_result_json=result)
+        for n in range(12)
+    )
+    field = "input" if custom else "arguments"
+    context = tuple(value for item in facts for value in (
+        {"type": "tool_call", "callId": item.provider_call_id, "name": "apply_patch", field: arguments,
+         **({"payloadKind": "custom"} if custom else {})},
+        {"type": "tool_result", "callId": item.provider_call_id, "name": "apply_patch", "result": result,
+         **({"payloadKind": "custom"} if custom else {})},
+    ))
+    return context, ContextFacts(run_id="run", session_id="session", items=facts)
+
+
+@pytest.mark.parametrize("custom", [False, True])
+def test_old_successful_write_arguments_clear_and_recent_ones_stay(custom):
+    context, facts = _writes(custom)
+    cleared = clear_old_tool_results(context, facts, target_reduction=1, batch_bytes=1)
+    field = "input" if custom else "arguments"
+    stub = cleared[0][field]
+    assert "argumentsCleared" in stub and "item-0" in stub
+    if not custom:
+        assert json.loads(stub)["path"] == "big.py"
+    # Results stay paired with their call; small write results keep their bodies.
+    assert cleared[1] == context[1]
+    assert cleared[-2] == context[-2]
+
+
+def test_write_arguments_with_unresolved_effects_stay():
+    context, facts = _writes(False)
+    unknown = json.dumps({"outcome": "success", "data": {"workspaceChangeState": "unknown"}})
+    items = (facts.items[0].model_copy(update={"model_result_json": unknown}), *facts.items[1:])
+    cleared = clear_old_tool_results(
+        context, facts.model_copy(update={"items": items}), target_reduction=1, batch_bytes=1,
+    )
+    assert cleared[0] == context[0]
+
+
+def test_cleared_write_arguments_page_back_from_the_saved_call(history_store):
+    store, session = history_store
+    run, _ = store.create_run(session["id"], "write")
+    arguments = json.dumps({"path": "big.py", "patch": "+line\n" * 2_000})
+    item = store.create_tool_item(run["id"], 1, 0, "write-call", "apply_patch", arguments)
+    store.complete_tool_item(item["id"], json.dumps({"outcome": "success", "data": {"paths": ["big.py"]}}))
+    memory = store.create_tool_item(run["id"], 2, 0, "memory-call", "memory_edit", '{"body":"private"}')
+    store.complete_tool_item(memory["id"], json.dumps({"outcome": "success", "data": {}}))
+    entry = read_tool_output_entry(store, run["id"])
+
+    parts, offset = [], 0
+    while True:
+        page = entry.adapter.execute({"callId": "write-call", "itemId": item["id"], "stream": "arguments",
+                                      "offsetBytes": offset}, threading.Event())["data"]
+        parts.append(page["content"])
+        offset = page["nextOffset"]
+        if not page["hasMoreAfter"]:
+            break
+    assert "".join(parts) == arguments
+    assert entry.adapter.execute({"callId": "memory-call", "stream": "arguments"},
+                                 threading.Event())["code"] == "tool_output_not_available"
+
+
+def test_clearing_batches_grow_with_the_window():
+    small = context_thresholds(27_648)
+    mid = context_thresholds(164_000)
+    large = context_thresholds(1_032_192)
+    assert small.clearing_batch_bytes == 64 * 1024
+    assert mid.clearing_batch_bytes == (mid.clearing_trigger_tokens - mid.clearing_target_tokens) * 4
+    assert large.clearing_batch_bytes == 262_144
+    assert small.clearing_batch_bytes <= mid.clearing_batch_bytes <= large.clearing_batch_bytes
+
+
+def test_summary_drops_its_handoff_before_failing_on_budget():
+    handoff = CompactHandoff(current_work="w" * 600, progress=("p" * 300,) * 6, source_item_ids=("item",))
+    summary = CompactSummary(
+        task_goal="goal", constraints=("必须保留用户约束",), completed_actions=(), workspace_changes=(),
+        important_facts=(), unresolved_problems=(), next_actions=(), source_item_ids=(), handoff=handoff,
+    )
+    assert _fit_summary(summary, max_tokens=4_096).handoff == handoff
+    without = estimate_text_tokens(summary.model_copy(update={"handoff": None}).model_dump_json(exclude={"source_item_ids"}))
+    fitted = _fit_summary(summary, max_tokens=without + 8)
+    assert fitted.handoff is None and fitted.constraints == summary.constraints
+    with pytest.raises(ContextCompactionError, match="critical summary facts"):
+        _fit_summary(summary, max_tokens=without - 8)

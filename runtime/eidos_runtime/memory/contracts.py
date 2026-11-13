@@ -47,7 +47,7 @@ class MemoryEvidence(EidosFrozenStrictModel):
     run_id: str
     item_revision: PositiveRevision
     source_revision: PositiveRevision
-    evidence_class: Literal["explicit_user", "observed_verified"]
+    evidence_class: Literal["explicit_user", "observed_verified", "observed_external"]
 
 
 class MemoryDocument(EidosFrozenStrictModel):
@@ -62,6 +62,7 @@ class MemoryDocument(EidosFrozenStrictModel):
     archived: bool = False
     created_at: JsonSafeInt
     updated_at: JsonSafeInt
+    last_read_at: JsonSafeInt | None = None
     evidence: list[MemoryEvidence] = Field(default_factory=list)
 
 
@@ -150,6 +151,11 @@ class MemoryActionResult(EidosFrozenStrictModel):
     path: str
     revision: JsonSafeInt
     code: Literal["memory_saved", "memory_unchanged", "memory_deleted", "memory_archived"]
+
+
+class MemorySimilarNote(EidosFrozenStrictModel):
+    path: str
+    summary: str
 
 
 class MemoryPolicyRequest(MemoryTarget):

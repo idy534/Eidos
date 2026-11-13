@@ -81,7 +81,7 @@ Runtime 使用现有 AnyIO 内核并行执行同一事件的匹配命令，每�
 
 每个包或配置来源最多包含 128 个定义，单份解析定义最多 64 KiB。命令默认超时为 600 秒，计时不包含包核验和环境准备。SessionEnd 和 Interrupt 默认 1 秒，单个处理器最多 3 秒，整次清理分发最多 3 秒。单次输入最多 1 MiB，Shell 捕获的 stdout/stderr 总量最多 256 KiB。Runtime 会保留脱敏后的捕获输出。`additionalContextLimit` 当前使用字符估算，本地软限额约为该值的 4 倍字符；值 0 仍受 65,536 字符的硬限额约束。
 
-长上下文使用有界预览，并携带 `hook:<id>` 读取标识。模型可以通过 `read_tool_output(callId="hook:<id>", stream="stdout" | "stderr" | "result")` 分页读取。读取遵循当前 Session 边界，不重新执行脚本。Shell 硬限额丢弃的原始字节无法恢复。后置反馈是模型展示规则，它不回滚副作用，也不充当数据防泄漏隔离层。
+长上下文使用有界预览，并携带 `hook:<id>` 读取标识。模型可以通过 `read_tool_output(callId="hook:<id>", stream="stdout" | "stderr" | "result")` 分页读取。读取遵循当前 Session 边界，不重新执行脚本。Shell 硬限额丢弃的原始字节无法恢复。后置反馈是模型展示规则，它不回滚副作用，也不充当数据防泄漏隔离层。Runtime 把本 Run 的 Hook 反馈作为独立来源上下文放在对话历史之后，新的反馈不改写请求开头，Provider 前缀缓存可以继续复用。
 
 ## 后台命令与 MCP 处理器
 

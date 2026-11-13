@@ -32,7 +32,7 @@ FIXTURE = json.loads(
 
 @pytest.mark.parametrize("case", FIXTURE["cases"], ids=lambda value: value["name"])
 def test_memory_model_contract_keeps_canonical_and_ui_metadata(case):
-    entry = next(value for value in memory_entries() if value.spec.name == case["name"])
+    entry = next(value for value in memory_entries() if value.spec.name == case.get("tool", case["name"]))
     canonical = entry.validate_result(case["canonical"])
     original = deepcopy(canonical)
     projection = entry.projector.project(entry, canonical)
@@ -42,7 +42,7 @@ def test_memory_model_contract_keeps_canonical_and_ui_metadata(case):
     assert projection.ui_result["data"] == canonical["data"]
     assert len(json.dumps(projection.model_result)) < len(json.dumps(canonical))
     assert (
-        project_memory_tool_result(case["name"], projection.model_result)
+        project_memory_tool_result(case.get("tool", case["name"]), projection.model_result)
         == projection.model_result
     )
 
@@ -52,11 +52,11 @@ def test_legacy_context_and_summary_projection_use_the_same_compact_contract(cas
     raw = json.dumps(case["canonical"])
     assert json.loads(model_result_json(raw)) == case["model"]
     context = project_context(
-        ({"type": "tool_result", "name": case["name"], "result": raw},)
+        ({"type": "tool_result", "name": case.get("tool", case["name"]), "result": raw},)
     )
     assert json.loads(context[0]["result"]) == case["model"]
     assert (
-        json.loads(model_result_json(context[0]["result"], tool_name=case["name"]))
+        json.loads(model_result_json(context[0]["result"], tool_name=case.get("tool", case["name"])))
         == case["model"]
     )
     source = source_text(
@@ -66,7 +66,7 @@ def test_legacy_context_and_summary_projection_use_the_same_compact_contract(cas
             kind="tool_call",
             status="completed",
             provider_call_id="call",
-            tool_name=case["name"],
+            tool_name=case.get("tool", case["name"]),
             result_json=raw,
         )
     )
@@ -278,6 +278,7 @@ def test_model_and_provider_receive_compact_results_with_private_durable_guards(
             "title": "testing",
             "summary": "current 测试约定",
             "kind": "feedback",
+            "updated": read["data"]["updated"],
             "content": "current 原始正文",
         },
     }
@@ -475,6 +476,7 @@ def test_compact_fork_results_keep_their_private_guard_after_restart(memory_stor
             "title",
             "summary",
             "kind",
+            "updated",
             "content",
         }
         guarded = next(

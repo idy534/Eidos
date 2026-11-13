@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, ExitStack
+from dataclasses import dataclass
 import hashlib
 import json
 import logging
@@ -12,9 +13,13 @@ import sqlite3
 import threading
 import time
 from urllib.parse import quote
+from typing import Literal
+import unicodedata
 import uuid
 
 from pydantic import Field, TypeAdapter, ValidationError
+from rapidfuzz.fuzz import WRatio
+from rapidfuzz.utils import default_process
 
 from eidos_runtime.context.tokens import estimate_text_tokens
 from eidos_runtime.db.database import Database, now_ms
@@ -34,6 +39,7 @@ from eidos_runtime.memory.contracts import (
     MemoryReadRequest,
     MemoryReadResult,
     MemoryScope,
+    MemorySimilarNote,
     MemoryState,
     NonnegativeInt,
 )
@@ -44,6 +50,150 @@ from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 logger = logging.getLogger("eidos.runtime.memory")
 _EPOCHS = TypeAdapter(dict[str, NonnegativeInt])
 _REVISION = TypeAdapter(NonnegativeInt)
+
+# MEMORY.md and its request projection share one limit: the first 200 lines or
+# 25 KB, whichever comes first. Both readable scopes share that request budget.
+INDEX_MAX_LINES = 200
+INDEX_MAX_BYTES = 25 * 1024
+INDEX_SUMMARY_CHARS = 120
+# When both scopes have notes, the global scope keeps this share of the budget.
+INDEX_GLOBAL_SHARE = 0.4
+# A small model window must not be filled by the index.
+INDEX_WINDOW_SHARE = 0.10
+_INDEX_KINDS = ("feedback", "user", "project", "reference")
+# New notes are compared with this many recent notes of the same scope.
+SIMILAR_CANDIDATES = 500
+SIMILAR_THRESHOLD = 85
+_INDEX_INTRO = (
+    "# Memory",
+    "",
+    "Read a linked note when its scope or conditions matter.",
+    "",
+)
+_INDEX_FOOTER_LINES = 2
+# Each scope block opens with a blank line and a "Scope ... MEMORY.md:" line.
+_HEADING_LINES = 2
+_INDEX_FOOTER_BYTES = 192
+_INDEX_FOOTER_TOKENS = 48
+
+
+def _index_overflow(hidden: int) -> str:
+    noun = "note is" if hidden == 1 else "notes are"
+    return (
+        f"{hidden} more {noun} not listed. Use memory_search to find them, "
+        "or merge and archive notes to keep this index short."
+    )
+
+
+def _index_line(document: MemoryDocument) -> str:
+    summary = " ".join(document.summary.split())
+    if len(summary) > INDEX_SUMMARY_CHARS:
+        summary = summary[: INDEX_SUMMARY_CHARS - 1].rstrip() + "…"
+    path = quote(document.path, safe="/")
+    label = document.path.replace("[", "\\[").replace("]", "\\]")
+    return f"- [{label}]({path}): {summary}"
+
+
+@dataclass(frozen=True)
+class _IndexBudget:
+    lines: int
+    bytes: int
+    tokens: int | None = None
+
+
+@dataclass(frozen=True)
+class _ScopeIndex:
+    scope: MemoryScope
+    documents: list[MemoryDocument]
+    total: int
+    text: str
+    shown: int
+
+
+def _line_tokens(text: str) -> int:
+    """Token estimate summed per line, as the index fitting counts them."""
+    return sum(estimate_text_tokens(line) + 1 for line in text.splitlines())
+
+
+def _render_index_text(
+    documents: list[MemoryDocument], total: int, budget: _IndexBudget
+) -> tuple[str, int]:
+    """Render ordered notes within a line, byte and optional token budget.
+
+    Returns the text and the number of listed notes. A footer states how many
+    notes were left out; its room is reserved only when some notes do not fit.
+    """
+
+    def fit(lines_limit: int, bytes_limit: int, tokens_limit: int | None) -> tuple[list[str], int]:
+        lines = list(_INDEX_INTRO)
+        size = sum(len(line.encode()) + 1 for line in lines)
+        tokens = sum(estimate_text_tokens(line) + 1 for line in lines)
+        shown, kind = 0, None
+        for document in documents:
+            block = ([] if document.kind == kind else [f"## {document.kind}"]) + [
+                _index_line(document)
+            ]
+            block_bytes = sum(len(line.encode()) + 1 for line in block)
+            block_tokens = (
+                sum(estimate_text_tokens(line) + 1 for line in block)
+                if tokens_limit is not None
+                else 0
+            )
+            if (
+                len(lines) + len(block) > lines_limit
+                or size + block_bytes > bytes_limit
+                or (tokens_limit is not None and tokens + block_tokens > tokens_limit)
+            ):
+                break
+            lines.extend(block)
+            size += block_bytes
+            tokens += block_tokens
+            shown, kind = shown + 1, document.kind
+        return lines, shown
+
+    lines, shown = fit(budget.lines, budget.bytes, budget.tokens)
+    if shown < total:
+        lines, shown = fit(
+            max(0, budget.lines - _INDEX_FOOTER_LINES),
+            max(0, budget.bytes - _INDEX_FOOTER_BYTES),
+            None if budget.tokens is None else max(0, budget.tokens - _INDEX_FOOTER_TOKENS),
+        )
+        lines.extend(["", _index_overflow(total - shown)])
+    if total == 0:
+        lines.append("No notes yet.")
+    return "\n".join(lines) + "\n", shown
+
+
+# Bidirectional controls and tag characters can hide text from a reader while
+# the model still receives it. Zero-width joiners stay allowed in note bodies
+# because emoji and some scripts need them.
+_HIDDEN_BODY_CHARACTERS = frozenset(
+    [*range(0x202A, 0x202F), *range(0x2066, 0x206A), *range(0xE0000, 0xE0080)]
+)
+
+
+def _unsafe_text(request: MemoryEditRequest) -> bool:
+    """Whether a note carries characters that render invisibly.
+
+    Path, title and summary reach the request index, so they reject every
+    format character (Unicode category Cf). The body rejects only the hidden
+    controls above.
+    """
+    for value in (request.path, request.title, request.summary):
+        if any(unicodedata.category(character) == "Cf" for character in value):
+            return True
+    return any(ord(character) in _HIDDEN_BODY_CHARACTERS for character in request.content or "")
+
+
+def _split_budget(total: int, needs: list[int], shares: list[float]) -> list[int]:
+    """Give each scope its share, then pass unused room to scopes that need more."""
+    allocated = [min(need, int(total * share)) for need, share in zip(needs, shares)]
+    spare = total - sum(allocated)
+    for index, need in enumerate(needs):
+        extra = min(spare, need - allocated[index])
+        allocated[index] += extra
+        spare -= extra
+    return allocated
 
 
 class MemoryAccess(EidosFrozenStrictModel):
@@ -130,7 +280,13 @@ class MemoryService:
                 == session_id,
             )
 
-    def list(self, request: MemoryListRequest, *, for_use: bool = False) -> MemoryState:
+    def list(
+        self,
+        request: MemoryListRequest,
+        *,
+        for_use: bool = False,
+        order: Literal["path", "oldest"] = "path",
+    ) -> MemoryState:
         if for_use and request.project_id is not None:
             raise MemoryRejected("memory_model_target_forbidden")
         with self.database.transaction() as connection:
@@ -154,6 +310,7 @@ class MemoryService:
                 request.cursor,
                 request.limit,
                 include_archived=request.include_archived,
+                order=order,
             )
             return MemoryState(
                 scopes=scopes,
@@ -163,47 +320,45 @@ class MemoryService:
             )
 
     @staticmethod
-    def _render_index(documents: list[MemoryDocument], *, more: bool = False) -> str:
-        lines = [
-            "# Memory",
-            "",
-            "Read the linked note when its scope or conditions matter.",
-            "",
-        ]
-        for document in sorted(documents, key=lambda value: value.path):
-            summary = " ".join(document.summary.split())
-            path = quote(document.path, safe="/")
-            label = document.path.replace("[", "\\[").replace("]", "\\]")
-            line = f"- [{label}]({path}): {summary}"
-            if len(lines) >= 198 or len(("\n".join(lines) + line).encode()) > 24 * 1024:
-                more = True
-                break
-            lines.append(line)
-        if more:
-            lines.extend(
-                [
-                    "",
-                    "More notes are available through memory_search and paginated memory_read.",
-                ]
-            )
-        if not documents:
-            lines.append("No notes yet.")
-        return "\n".join(lines) + "\n"
+    def _render_index(documents: list[MemoryDocument], total: int) -> str:
+        """The full MEMORY.md: the first 200 lines or 25 KB of ordered notes."""
+        return _render_index_text(
+            documents, total, _IndexBudget(lines=INDEX_MAX_LINES, bytes=INDEX_MAX_BYTES)
+        )[0]
 
     def _index_documents(
         self, connection: sqlite3.Connection, scope_id: str
-    ) -> tuple[list[MemoryDocument], bool]:
-        documents = []
-        rows = connection.execute(
-            "SELECT * FROM memory_documents WHERE scope_id=? AND status='active' AND archived=0 ORDER BY path LIMIT 201",
+    ) -> tuple[list[MemoryDocument], int]:
+        """Notes in index order and the scope's active note count.
+
+        Corrections and personal preferences come first because they apply to
+        most tasks; within a type the most recently changed note comes first.
+        The order only uses write-time fields, so reading notes never changes
+        the index text or the request prefix built from it.
+        """
+        total = connection.execute(
+            "SELECT COUNT(*) FROM memory_documents WHERE scope_id=? AND status='active' AND archived=0",
             (scope_id,),
+        ).fetchone()[0]
+        order = " ".join(
+            f"WHEN '{kind}' THEN {index}" for index, kind in enumerate(_INDEX_KINDS)
+        )
+        rows = connection.execute(
+            f"""SELECT d.* FROM memory_documents d
+                JOIN memory_revisions r ON r.document_id=d.id AND r.revision=d.current_revision
+                WHERE d.scope_id=? AND d.status='active' AND d.archived=0
+                ORDER BY CASE r.kind {order} ELSE {len(_INDEX_KINDS)} END, d.updated_at DESC, d.path
+                LIMIT ?""",
+            (scope_id, INDEX_MAX_LINES),
         ).fetchall()
-        for row in rows[:200]:
+        documents = []
+        for row in rows:
             try:
                 documents.append(self.repository.document(connection, row)[0])
             except MemoryRejected:
+                total -= 1
                 continue
-        return documents, len(rows) > 200
+        return documents, total
 
     def read(
         self, request: MemoryReadRequest, *, for_use: bool = False
@@ -225,9 +380,9 @@ class MemoryService:
             document = None
             revisions: list[int] = []
             if request.path == "MEMORY.md":
-                documents, more = self._index_documents(connection, scope.id)
+                documents, total = self._index_documents(connection, scope.id)
                 body, revision = (
-                    self._render_index(documents, more=more),
+                    self._render_index(documents, total),
                     scope.generation,
                 )
             else:
@@ -308,6 +463,8 @@ class MemoryService:
     def validate_edit(
         self, request: MemoryEditRequest, *, automatic: bool = False
     ) -> str:
+        if _unsafe_text(request):
+            raise MemoryRejected("memory_unsafe_text")
         try:
             value = request.model_dump(mode="json")
             if default_scanner().scan_json(value) != value:
@@ -318,9 +475,19 @@ class MemoryService:
             return self._state(connection, request, automatic)[3]
 
     def edit_base(
-        self, run_id: str, scope_id: str, path: str, *, item_id: str
+        self,
+        run_id: str,
+        scope_id: str,
+        path: str,
+        *,
+        item_id: str,
+        require_read: bool = True,
     ) -> tuple[int, MemoryKind]:
-        """Use Run read/write evidence, or a private CAS base for explicit off-mode replacement."""
+        """Use Run read/write evidence, or a private CAS base for explicit off-mode replacement.
+
+        Appends and exact replacements are merged by Runtime against the
+        current version, so they take that version without a prior read.
+        """
         with self.database.lock:
             connection = self.database.connection()
             current = self.repository.row(connection, scope_id, path)
@@ -337,7 +504,7 @@ class MemoryService:
                 return _REVISION.validate_python(pending[0]), kind
             if current is None:
                 return 0, "feedback"
-            if self.repository.scope(connection, scope_id).mode == "off":
+            if not require_read or self.repository.scope(connection, scope_id).mode == "off":
                 # Off mode does not expose the existing body to the model.
                 # Its explicit replacement still captures CAS before approval.
                 document, _ = self.repository.document(connection, current)
@@ -360,6 +527,68 @@ class MemoryService:
                 raise MemoryRejected("memory_read_required")
             document, _ = self.repository.document(connection, current)
             return int(read["revision"]), document.kind
+
+    def current_body(self, scope_id: str, path: str) -> str | None:
+        """The current note body for a Runtime-side merge; never sent to the model."""
+        with self.database.lock:
+            connection = self.database.connection()
+            row = self.repository.row(connection, scope_id, path)
+            return None if row is None else self.repository.document(connection, row)[1]
+
+    def replayed(self, operation_id: str) -> MemoryActionResult | None:
+        """The stored result of an already published operation."""
+        with self.database.lock:
+            row = (
+                self.database.connection()
+                .execute(
+                    "SELECT result_json FROM memory_actions WHERE operation_id=?",
+                    (operation_id,),
+                )
+                .fetchone()
+            )
+        return None if row is None else MemoryActionResult.model_validate_json(row[0])
+
+    def similar_notes(
+        self, scope_id: str, path: str, *, limit: int = 3
+    ) -> list[MemorySimilarNote]:
+        """Active notes whose path, title and summary resemble one note.
+
+        A new note is saved first and the model is shown these candidates, so
+        it can merge a duplicate and archive the extra note. RapidFuzz compares
+        characters, which also works for unspaced Chinese summaries.
+        """
+        with self.database.lock:
+            rows = (
+                self.database.connection()
+                .execute(
+                    """SELECT d.path,r.title,r.summary FROM memory_documents d
+                       JOIN memory_revisions r ON r.document_id=d.id AND r.revision=d.current_revision
+                       WHERE d.scope_id=? AND d.status='active' AND d.archived=0
+                       ORDER BY d.updated_at DESC LIMIT ?""",
+                    (scope_id, SIMILAR_CANDIDATES + 1),
+                )
+                .fetchall()
+            )
+        target = next((row for row in rows if row["path"] == path), None)
+        if target is None:
+            return []
+
+        def text(row: sqlite3.Row) -> str:
+            return " ".join((row["path"].removesuffix(".md"), row["title"], row["summary"]))
+
+        scored = sorted(
+            (
+                (WRatio(text(target), text(row), processor=default_process), row)
+                for row in rows
+                if row["path"] != path
+            ),
+            key=lambda value: (-value[0], value[1]["path"]),
+        )
+        return [
+            MemorySimilarNote(path=row["path"], summary=row["summary"])
+            for score, row in scored[:limit]
+            if score >= SIMILAR_THRESHOLD
+        ]
 
     def audit_sources(self, run_id: str) -> list[str]:
         with self.database.lock:
@@ -600,11 +829,9 @@ class MemoryService:
                         "UPDATE memory_scopes SET generation=generation+1,privacy_epoch=? WHERE id=?",
                         (epoch, scope.id),
                     )
-                    documents, more = self._index_documents(connection, scope.id)
+                    documents, total = self._index_documents(connection, scope.id)
                     index_ref = prepared.enter_context(
-                        self.prepared(
-                            scope.id, self._render_index(documents, more=more)
-                        )
+                        self.prepared(scope.id, self._render_index(documents, total))
                     )
                     connection.execute(
                         "INSERT OR REPLACE INTO memory_indexes(scope_id,generation,privacy_epoch,file_ref) VALUES(?,?,?,?)",
@@ -659,11 +886,11 @@ class MemoryService:
                 selected = self.repository.scopes(
                     connection, request.session_id, request.scope, project_id=request.project_id
                 )[0]
-                documents, more = self._index_documents(connection, selected.id)
+                documents, total = self._index_documents(connection, selected.id)
                 files.append(
                     MemoryExportFile(
                         path="MEMORY.md",
-                        content=self._render_index(documents, more=more),
+                        content=self._render_index(documents, total),
                     )
                 )
             for document in state.documents:
@@ -679,42 +906,106 @@ class MemoryService:
             files=files, generation=generation, next_cursor=state.next_cursor
         )
 
+    @staticmethod
+    def _scope_heading(scope: MemoryScope) -> str:
+        label = "global" if scope.kind == "global" else "current"
+        return f'\nScope "{label}" — MEMORY.md:\n'
+
+    def _scope_indexes(
+        self,
+        connection: sqlite3.Connection,
+        session_id: str,
+        *,
+        available_tokens: int | None,
+    ) -> list[_ScopeIndex]:
+        """Fit each readable scope's MEMORY.md into one shared request budget.
+
+        The current project comes first. With both scopes present the global
+        scope keeps 40% of the lines, bytes and tokens, so project notes cannot
+        push personal preferences out; room one scope leaves unused goes to the
+        other. A token cap of 10% of the usable input applies only when the
+        line and byte limits would exceed it on a small model window.
+        """
+        access = self.access(session_id)
+        loaded = []
+        for scope in reversed(self.repository.scopes(connection, session_id)):
+            if not access.available or scope.mode == "off":
+                continue
+            documents, total = self._index_documents(connection, scope.id)
+            if total:
+                loaded.append((scope, documents, total))
+        if not loaded:
+            return []
+        full = [
+            _render_index_text(
+                documents, total, _IndexBudget(lines=INDEX_MAX_LINES, bytes=INDEX_MAX_BYTES)
+            )[0]
+            for _, documents, total in loaded
+        ]
+        headings = [self._scope_heading(scope) for scope, _, _ in loaded]
+        shares = (
+            [1.0]
+            if len(loaded) == 1
+            else [
+                INDEX_GLOBAL_SHARE if scope.kind == "global" else 1 - INDEX_GLOBAL_SHARE
+                for scope, _, _ in loaded
+            ]
+        )
+        lines = _split_budget(
+            INDEX_MAX_LINES,
+            [text.count("\n") + _HEADING_LINES for text in full],
+            shares,
+        )
+        sizes = _split_budget(
+            INDEX_MAX_BYTES,
+            [len((heading + text).encode()) for heading, text in zip(headings, full)],
+            shares,
+        )
+        tokens: list[int | None] = [None] * len(loaded)
+        if available_tokens is not None:
+            cap = max(0, int(available_tokens * INDEX_WINDOW_SHARE))
+            needs = [_line_tokens(heading + text) for heading, text in zip(headings, full)]
+            if sum(needs) > cap:
+                if cap < 2 * _INDEX_FOOTER_TOKENS:
+                    return []
+                tokens = list(_split_budget(cap, needs, shares))
+        indexes = []
+        for (scope, documents, total), heading, line_limit, byte_limit, token_limit in zip(
+            loaded, headings, lines, sizes, tokens
+        ):
+            text, shown = _render_index_text(
+                documents,
+                total,
+                _IndexBudget(
+                    lines=max(0, line_limit - _HEADING_LINES),
+                    bytes=max(0, byte_limit - len(heading.encode())),
+                    tokens=None
+                    if token_limit is None
+                    else max(0, token_limit - _line_tokens(heading)),
+                ),
+            )
+            indexes.append(_ScopeIndex(scope, documents, total, text, shown))
+        return indexes
+
+    def index_hidden(self, session_id: str, scope_id: str) -> int:
+        """Notes of one scope that the request index no longer lists."""
+        with self.database.transaction() as connection:
+            for index in self._scope_indexes(connection, session_id, available_tokens=None):
+                if index.scope.id == scope_id:
+                    return index.total - index.shown
+        return 0
+
     def project(
         self, session_id: str, available_tokens: int, *, run_id: str
     ) -> MemoryProjection:
         del run_id
-        budget = max(0, min(2000, int(available_tokens * 0.05)))
         with self.database.transaction() as connection:
-            scopes = [
-                scope
-                for scope in self.repository.scopes(connection, session_id)
-                if self.access(session_id).available and scope.mode != "off"
-            ]
             text, refs, generations, epochs = "", [], {}, {}
-            for scope in reversed(scopes):
-                documents, more = self._index_documents(connection, scope.id)
-                if not documents:
-                    continue
-                prefix = f"\n{scope.kind}/MEMORY.md (historical context):\n"
-                block = self._render_index(documents, more=more)
-                selected = []
-                truncated = False
-                footer = "More notes are available through memory_search and paginated memory_read."
-                for line in block.splitlines():
-                    if (
-                        estimate_text_tokens(
-                            text + prefix + "\n".join([*selected, line, footer])
-                        )
-                        > budget
-                    ):
-                        truncated = True
-                        break
-                    selected.append(line)
-                if not selected:
-                    continue
-                if truncated:
-                    selected.extend(["", footer])
-                text += prefix + "\n".join(selected) + "\n"
+            for index in self._scope_indexes(
+                connection, session_id, available_tokens=available_tokens
+            ):
+                scope = index.scope
+                text += self._scope_heading(scope) + index.text
                 epochs[scope.id], generations[scope.id] = (
                     scope.privacy_epoch,
                     scope.generation,
@@ -723,7 +1014,7 @@ class MemoryService:
                     MemoryProjectionRef(
                         entry_id=document.id, revision=document.revision
                     )
-                    for document in documents
+                    for document in index.documents
                 )
             return MemoryProjection(
                 epochs=self.use_epochs(connection, session_id, epochs) if text else {},
@@ -767,9 +1058,17 @@ class MemoryService:
         result: dict[str, object],
         *,
         retrieval: bool,
+        read_document_id: str | None = None,
     ) -> None:
         del result, retrieval
         with self.database.transaction() as connection:
+            if read_document_id is not None:
+                # Usage only orders the oldest-first listing; it never changes
+                # the note version, generation or the rendered index.
+                connection.execute(
+                    "UPDATE memory_documents SET last_read_at=?,read_count=read_count+1 WHERE id=?",
+                    (now_ms(), read_document_id),
+                )
             if not self.valid_epochs(connection, epochs):
                 raise MemoryRejected("memory_snapshot_revoked")
             old = connection.execute(

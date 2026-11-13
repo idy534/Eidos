@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
+from typing import Literal
 import uuid
 
 from rapidfuzz.fuzz import WRatio
@@ -15,6 +17,21 @@ logger = logging.getLogger("eidos.runtime.memory")
 
 class MemoryRejected(ValueError):
     """Stable content-free rejection for tools and typed IPC."""
+
+
+# Built-in tools whose results come from outside this computer. MCP tools,
+# including browser plugin tools, are external by their provenance.
+EXTERNAL_BUILTIN_TOOLS = frozenset({"web_search"})
+
+
+def _external_tool(tool_name: str, provenance_json: str | None) -> bool:
+    if tool_name in EXTERNAL_BUILTIN_TOOLS:
+        return True
+    try:
+        provenance = json.loads(provenance_json or "{}")
+    except ValueError:
+        return False
+    return isinstance(provenance, dict) and provenance.get("kind") == "mcp"
 
 
 class MemoryRepository:
@@ -151,7 +168,7 @@ class MemoryRepository:
                 evidence_class = "explicit_user"
             else:
                 tool = connection.execute(
-                    "SELECT tool_name FROM tool_calls WHERE item_id=? AND status IN ('completed','failed')",
+                    "SELECT tool_name,provenance_json FROM tool_calls WHERE item_id=? AND status IN ('completed','failed')",
                     (item_id,),
                 ).fetchone()
                 if (
@@ -159,7 +176,11 @@ class MemoryRepository:
                     or tool["tool_name"].startswith("memory_")
                 ):
                     continue
-                evidence_class = "observed_verified"
+                evidence_class = (
+                    "observed_external"
+                    if _external_tool(tool["tool_name"], tool["provenance_json"])
+                    else "observed_verified"
+                )
             values.append(
                 MemoryEvidence(
                     item_id=item_id,
@@ -227,6 +248,7 @@ class MemoryRepository:
             archived=bool(row["archived"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            last_read_at=row["last_read_at"] if "last_read_at" in row.keys() else None,
             evidence=evidence,
         ), body
 
@@ -238,6 +260,7 @@ class MemoryRepository:
         cursor: int,
         limit: int,
         *, include_archived: bool = False,
+        order: Literal["path", "oldest"] = "path",
     ) -> tuple[list[MemoryDocument], int | None, bool]:
         if not scope_ids:
             return [], None, False
@@ -290,8 +313,12 @@ class MemoryRepository:
                 for identifier in selected
             ]
         else:
+            # Oldest-first lists the notes nobody has read for the longest time.
+            ordering = (
+                "COALESCE(last_read_at,updated_at),path,id" if order == "oldest" else "path,id"
+            )
             rows = connection.execute(
-                f"SELECT * FROM memory_documents WHERE status='active' AND (? OR archived=0) AND scope_id IN ({placeholders}) ORDER BY path,id LIMIT ? OFFSET ?",
+                f"SELECT * FROM memory_documents WHERE status='active' AND (? OR archived=0) AND scope_id IN ({placeholders}) ORDER BY {ordering} LIMIT ? OFFSET ?",
                 (include_archived, *scope_ids, limit + 1, cursor),
             ).fetchall()
         documents = []

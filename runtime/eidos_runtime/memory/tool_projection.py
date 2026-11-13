@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
-from pydantic import JsonValue
+from pydantic import Field, JsonValue
 
 from eidos_runtime.memory.contracts import (
     GLOBAL_SCOPE_ID,
@@ -12,6 +13,7 @@ from eidos_runtime.memory.contracts import (
     MemoryDocument,
     MemoryKind,
     MemoryReadResult,
+    MemorySimilarNote,
     NonnegativeInt,
 )
 from eidos_runtime.models import EidosFrozenStrictModel
@@ -36,6 +38,8 @@ class MemoryModelRead(EidosFrozenStrictModel):
     summary: str | None = None
     kind: MemoryKind | None = None
     archived: Literal[True] | None = None
+    # The local date of the last change lets the model judge a fact's age.
+    updated: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     content: str
     next_offset: NonnegativeInt | None = None
 
@@ -49,6 +53,8 @@ class MemoryModelSearch(EidosFrozenStrictModel):
 class MemoryModelEdit(EidosFrozenStrictModel):
     path: str
     revision: NonnegativeInt | None = None
+    index_hidden: NonnegativeInt | None = None
+    similar: list[MemorySimilarNote] | None = None
 
 
 class MemoryModelResult(EidosFrozenStrictModel):
@@ -62,6 +68,10 @@ class MemoryModelResult(EidosFrozenStrictModel):
 
 def _scope(identifier: str) -> Literal["current", "global"]:
     return "global" if identifier == GLOBAL_SCOPE_ID else "current"
+
+
+def _date(milliseconds: int) -> str:
+    return datetime.fromtimestamp(milliseconds / 1000).date().isoformat()
 
 
 def _serialized_bytes(result: MemoryModelResult) -> int:
@@ -155,6 +165,7 @@ def project_memory_tool_result(
                 summary=read.document.summary if read.document else None,
                 kind=read.document.kind if read.document else None,
                 archived=True if read.document and read.document.archived else None,
+                updated=_date(read.document.updated_at) if read.document else None,
                 content=read.content,
                 next_offset=read.next_offset,
             )
@@ -199,9 +210,15 @@ def project_memory_tool_result(
     else:
         if isinstance(data.get("action"), dict):
             action = MemoryActionResult.model_validate(data["action"])
+            hidden = data.get("indexHidden", data.get("index_hidden"))
+            similar = data.get("similar")
             edit = MemoryModelEdit(
                 path=action.path,
                 revision=None if action.code == "memory_deleted" else action.revision,
+                index_hidden=hidden if isinstance(hidden, int) and hidden > 0 else None,
+                similar=[MemorySimilarNote.model_validate(note) for note in similar]
+                if isinstance(similar, list) and similar
+                else None,
             )
             code = action.code
         else:
@@ -214,7 +231,11 @@ def project_memory_tool_result(
                 "memory_archived",
             }:
                 raise ValueError("memory_result_invalid")
-        result = result.model_copy(update={"data": edit, "code": code})
+        update: dict[str, object] = {"data": edit, "code": code}
+        if edit.similar or edit.index_hidden:
+            # The summary carries the tidy-up hint only when there is one.
+            update["summary"] = str(value.get("summary", ""))[:2048] or None
+        result = result.model_copy(update=update)
     if _serialized_bytes(result) > max_bytes:
         raise ValueError("memory_projection_budget_invalid")
     return result.model_dump(mode="json", by_alias=True, exclude_none=True)

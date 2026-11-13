@@ -80,6 +80,7 @@ import {
   useCompleteSessionItems,
 } from "../components/TurnResults.js";
 import { ToastContainer, type ToastItem, type ToastType } from "../components/ToastContainer.js";
+import { memoryTidyPrompt } from "../memory-tidy.js";
 
 interface AppShellProps {
   runtime: RuntimeLifecycleState;
@@ -1779,6 +1780,16 @@ export function AppShell({ runtime }: AppShellProps) {
             onOpenMemorySource={(id) => {
               const source = sessionState.sessions.find((session) => session.id === id);
               if (source) {setSettingsOpen(false); void handleSelectSession(source);}
+            }}
+            onTidyMemory={({ projectId, scope }) => {
+              const project = projectId ? sessionState.projects.find((item) => item.id === projectId) : null;
+              if (projectId && !project) return;
+              setSettingsOpen(false);
+              setAutomationsOpen(false);
+              navHistoryActions.navigateTo("draft");
+              const draftId = sessionActions.startDraft(project);
+              runActions.setInputForSession(draftId, memoryTidyPrompt(scope === "global" ? "global" : project ? "project" : "global"));
+              requestAnimationFrame(() => composerRef.current?.focus());
             }}
             runtime={runtimeStatus}
             onShowToast={showToast}

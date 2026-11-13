@@ -159,6 +159,20 @@ export const memorySchema = {
           "title": "Updatedat",
           "type": "integer"
         },
+        "lastReadAt": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lastreadat"
+        },
         "evidence": {
           "items": {
             "$ref": "#/$defs/MemoryEvidence"
@@ -330,7 +344,8 @@ export const memorySchema = {
         "evidenceClass": {
           "enum": [
             "explicit_user",
-            "observed_verified"
+            "observed_verified",
+            "observed_external"
           ],
           "title": "Evidenceclass",
           "type": "string"

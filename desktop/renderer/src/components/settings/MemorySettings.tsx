@@ -19,9 +19,15 @@ import { useMemoryLocation } from "./useMemoryLocation.js";
 const modes = { off: "关闭", read: "只读", auto: "自动" } as const;
 type MemoryMode = MemoryScope["mode"];
 
+export interface MemoryTidyTarget {
+  projectId: string | null;
+  scope: "current" | "global";
+}
+
 export function MemorySettings(props: {
   onOpenSource?: ((id: string) => void) | undefined;
   onShowToast?: ((message: string, type: "success" | "info" | "error") => void) | undefined;
+  onTidy?: ((target: MemoryTidyTarget) => void) | undefined;
 }) {
   const location = useMemoryLocation();
   return <MemorySettingsContent key={`${location.projectId}:${location.scope}`} {...props} location={location} />;
@@ -31,10 +37,12 @@ function MemorySettingsContent({
   location,
   onOpenSource,
   onShowToast,
+  onTidy,
 }: {
   location: ReturnType<typeof useMemoryLocation>;
   onOpenSource?: ((id: string) => void) | undefined;
   onShowToast?: ((message: string, type: "success" | "info" | "error") => void) | undefined;
+  onTidy?: ((target: MemoryTidyTarget) => void) | undefined;
 }) {
   const { projectId, scope, valid } = location;
   const [path, setPath] = useState<string | null>("MEMORY.md");
@@ -201,6 +209,16 @@ function MemorySettingsContent({
           </label>
 
 
+          {onTidy && (
+            <Button
+              size="small"
+              variant="secondary"
+              disabled={!valid || !selected || busy || dirty || currentMode === "off"}
+              onClick={() => onTidy({ projectId: projectId ?? null, scope })}
+            >
+              整理
+            </Button>
+          )}
           <Button
             size="small"
             variant="secondary"

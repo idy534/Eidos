@@ -287,7 +287,7 @@ def _attempt_metadata(
 
 class ToolOutputPage(EidosFrozenStrictModel):
     call_id: str
-    stream: Literal["stdout", "stderr", "result", "context"]
+    stream: Literal["stdout", "stderr", "result", "context", "arguments"]
     content: str
     # The adapter scans this complete persisted stream before exposing the
     # bounded page. This field stays inside the Runtime repository boundary.
@@ -310,7 +310,7 @@ class ToolOutputReadError(LookupError):
 
 
 def _output_page(
-    call_id: str, stream: Literal["stdout", "stderr", "result", "context"], content: str,
+    call_id: str, stream: Literal["stdout", "stderr", "result", "context", "arguments"], content: str,
     offset_bytes: int, max_bytes: int, from_end: bool, *,
     raw_truncated: bool | None, raw_omitted_bytes: int | None, output_complete: bool | None,
 ) -> ToolOutputPage:
@@ -356,15 +356,18 @@ class ExecutionRepository(Repository):
         run_id: str,
         *,
         tool_call_id: str,
-        stream: Literal["stdout", "stderr", "result", "context"],
+        stream: Literal["stdout", "stderr", "result", "context", "arguments"],
         offset_bytes: int,
         max_bytes: int,
         from_end: bool,
         live_output_reader: Callable[[str], dict[str, object]] | None = None,
         item_id: str | None = None,
         output_revision: int | None = None,
+        source_session_id: str | None = None,
     ) -> ToolOutputPage:
-        if stream not in {"stdout", "stderr", "result", "context"}:
+        """Page saved output. ``source_session_id`` reads a message of another
+        Session; the caller has already authorized it."""
+        if stream not in {"stdout", "stderr", "result", "context", "arguments"}:
             raise ToolOutputReadError("invalid_output_stream")
         if (
             offset_bytes < 0
@@ -373,7 +376,7 @@ class ExecutionRepository(Repository):
         ):
             raise ToolOutputReadError("invalid_output_range")
         if tool_call_id.startswith("hook:"):
-            if item_id is not None or stream == "context":
+            if item_id is not None or stream in {"context", "arguments"}:
                 raise ToolOutputReadError("tool_output_not_available")
             with self.lock:
                 row = self._connection().execute(
@@ -389,14 +392,24 @@ class ExecutionRepository(Repository):
             return _output_page(tool_call_id, stream, content, offset_bytes, max_bytes, from_end,
                 raw_truncated=output.raw_truncated, raw_omitted_bytes=output.raw_omitted_bytes,
                 output_complete=not output.raw_truncated)
+        if source_session_id is not None and stream != "context":
+            raise ToolOutputReadError("tool_output_not_available")
         if stream == "context":
             with self.lock:
-                row = self._connection().execute(
-                    "SELECT i.content FROM items i JOIN runs r ON r.session_id=i.session_id "
-                    "WHERE r.id=? AND i.id=? AND i.kind IN ('user_message','assistant_message')",
-                    (run_id, item_id or tool_call_id),
-                ).fetchone()
-                current = self._connection().execute("SELECT session_id FROM runs WHERE id=?", (run_id,)).fetchone()
+                if source_session_id is not None:
+                    row = self._connection().execute(
+                        "SELECT content FROM items WHERE session_id=? AND id=? "
+                        "AND kind IN ('user_message','assistant_message')",
+                        (source_session_id, item_id or tool_call_id),
+                    ).fetchone()
+                    current = {"session_id": source_session_id}
+                else:
+                    row = self._connection().execute(
+                        "SELECT i.content FROM items i JOIN runs r ON r.session_id=i.session_id "
+                        "WHERE r.id=? AND i.id=? AND i.kind IN ('user_message','assistant_message')",
+                        (run_id, item_id or tool_call_id),
+                    ).fetchone()
+                    current = self._connection().execute("SELECT session_id FROM runs WHERE id=?", (run_id,)).fetchone()
             if row is not None:
                 content = row["content"] or ""
             elif current is not None:
@@ -409,8 +422,8 @@ class ExecutionRepository(Repository):
                 raise ToolOutputReadError("tool_output_not_available")
             return _output_page(tool_call_id, stream, content, offset_bytes, max_bytes, from_end,
                                 raw_truncated=None, raw_omitted_bytes=None, output_complete=True)
-        if stream == "result":
-            content = self._historical_context_result(run_id, tool_call_id, item_id)
+        if stream in {"result", "arguments"}:
+            content = self._historical_context_result(run_id, tool_call_id, item_id, arguments=stream == "arguments")
             return _output_page(tool_call_id, stream, content, offset_bytes, max_bytes, from_end,
                                 raw_truncated=None, raw_omitted_bytes=None, output_complete=True)
         with self.lock:
@@ -488,14 +501,16 @@ class ExecutionRepository(Repository):
                             raw_omitted_bytes=raw_omitted_bytes, output_complete=output_complete)
         return page.model_copy(update={"output_revision": revision})
 
-    def _historical_context_result(self, run_id: str, call_id: str, item_id: str | None) -> str:
+    def _historical_context_result(self, run_id: str, call_id: str, item_id: str | None, *, arguments: bool = False) -> str:
+        """The saved result, or with ``arguments`` the saved call arguments."""
         with self.lock:
             connection = self._connection()
             run = connection.execute("SELECT session_id FROM runs WHERE id=?", (run_id,)).fetchone()
             if run is None:
                 raise ToolOutputReadError("tool_output_not_available")
             rows = connection.execute("""
-                SELECT t.tool_name, COALESCE(t.result_json,t.model_result_json) AS result_json
+                SELECT t.tool_name, COALESCE(t.result_json,t.model_result_json) AS result_json,
+                       t.arguments_json
                 FROM tool_calls t JOIN items i ON i.id=t.item_id
                 WHERE i.session_id=? AND t.provider_call_id=? AND (? IS NULL OR i.id=?)
                   AND i.status IN ('completed','failed','canceled')
@@ -505,6 +520,10 @@ class ExecutionRepository(Repository):
             if len(rows) > 1:
                 raise ToolOutputReadError("ambiguous_tool_call")
             if rows:
+                if arguments:
+                    if rows[0]["tool_name"].startswith("memory_") or not isinstance(rows[0]["arguments_json"], str):
+                        raise ToolOutputReadError("tool_output_not_available")
+                    return str(rows[0]["arguments_json"])
                 if rows[0]["tool_name"].startswith("memory_") or not isinstance(rows[0]["result_json"], str):
                     raise ToolOutputReadError("tool_output_not_available")
                 return model_result_json(str(rows[0]["result_json"]))
@@ -516,9 +535,9 @@ class ExecutionRepository(Repository):
                     tool = record.item.tool_call
                     if (tool is not None and not tool.tool_name.startswith("memory_") and tool.provider_call_id == call_id
                             and tool.status in {"completed", "failed", "canceled"}):
-                        value = tool.result_json or record.model_result_json
+                        value = tool.arguments_json if arguments else tool.result_json or record.model_result_json
                         if isinstance(value, str):
-                            return model_result_json(value)
+                            return value if arguments else model_result_json(value)
         raise ToolOutputReadError("tool_output_not_available")
 
     def get_user_item(self, run_id: str) -> dict[str, object]:

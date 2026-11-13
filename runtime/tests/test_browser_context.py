@@ -43,15 +43,19 @@ def test_old_browser_pages_clear_to_a_preview_with_read_back():
     cleared = clear_old_tool_results(context, facts, target_reduction=1, batch_bytes=1)
     marker = json.loads(cleared[1]["result"])
     assert marker["contextCleared"] is True
-    assert marker["readBack"]["callId"] == "call-0"
+    assert cleared[1]["callId"] == "call-0" and marker["itemId"] == "item-0"
     assert marker["data"]["preview"].startswith("### Page state\n- Page URL: https://example.com/0")
     assert len(marker["data"]["preview"]) == BROWSER_PREVIEW_CHARS
     assert cleared[-1] == context[-1]
 
 
-def test_other_mcp_results_keep_their_bodies():
+def test_other_mcp_results_clear_without_a_browser_preview():
+    # Every saved MCP result pages back through read_tool_output(stream='result').
     context, facts = _history(["mcp__github__get_issue"] * 12)
-    assert clear_old_tool_results(context, facts, target_reduction=10**9, batch_bytes=1) == context
+    cleared = clear_old_tool_results(context, facts, target_reduction=10**9, batch_bytes=1)
+    marker = json.loads(cleared[1]["result"])
+    assert marker["contextCleared"] is True and "preview" not in marker["data"]
+    assert cleared[-1] == context[-1]
 
 
 def test_only_the_newest_browser_screenshots_stay_in_the_request():

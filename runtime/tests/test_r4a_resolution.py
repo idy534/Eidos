@@ -14,6 +14,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.context.project_rules import (  # noqa: E402
+    TOUCHED_RULE_LIMIT,
     PROJECT_RULE_BUDGET_BYTES,
     ProjectRuleResolver,
 )
@@ -108,10 +109,87 @@ class ProjectRuleResolverTests(unittest.TestCase):
         snapshot = ProjectRuleResolver().resolve(self.root, self.root)
 
         rule = snapshot.rules[0]
-        self.assertEqual(rule.included_byte_count, PROJECT_RULE_BUDGET_BYTES - 2)
-        self.assertEqual(rule.content.encode("utf-8"), b"\xe7\x95\x8c" * (rule.included_byte_count // 3))
+        self.assertTrue(0 < rule.included_byte_count < PROJECT_RULE_BUDGET_BYTES)
+        self.assertEqual(rule.included_byte_count % 3, 0)
+        shown, note = rule.content.rsplit("\n", 1)
+        self.assertEqual(shown.encode("utf-8"), b"\xe7\x95\x8c" * (rule.included_byte_count // 3))
+        self.assertIn("Read the file from line 1 for the rest.", note)
+        self.assertLessEqual(len(rule.content.encode()), PROJECT_RULE_BUDGET_BYTES)
+        self.assertLessEqual(snapshot.used_bytes, PROJECT_RULE_BUDGET_BYTES)
         self.assertTrue(rule.truncated)
         self.assertEqual([warning.code for warning in snapshot.warnings], ["RULE_BUDGET_TRUNCATED"])
+
+    def test_truncation_ends_on_a_line_and_names_the_next_line(self) -> None:
+        lines = [f"- rule {index}: " + "x" * 60 for index in range(2_000)]
+        (self.root / "AGENTS.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        rule = ProjectRuleResolver().resolve(self.root, self.root).rules[0]
+
+        shown, note = rule.content.rsplit("\n", 1)
+        kept = shown.split("\n")
+        self.assertEqual(kept, lines[: len(kept)])
+        self.assertIn(f"the first {len(kept)} lines of AGENTS.md are shown", note)
+        self.assertIn(f"Read the file from line {len(kept) + 1} for the rest.", note)
+
+    def test_deepest_rule_is_kept_whole_when_the_root_rule_is_too_large(self) -> None:
+        (self.root / "AGENTS.md").write_text("root rule\n" * 9_000, encoding="utf-8")
+        (self.root / "packages" / "AGENTS.md").write_text("packages rule\n", encoding="utf-8")
+        (self.cwd / "AGENTS.md").write_text("app rule\n", encoding="utf-8")
+
+        snapshot = ProjectRuleResolver().resolve(self.root, self.cwd)
+
+        self.assertEqual(
+            [rule.relative_path for rule in snapshot.rules],
+            ["AGENTS.md", "packages/AGENTS.md", "packages/app/AGENTS.md"],
+        )
+        root, middle, deepest = snapshot.rules
+        self.assertTrue(root.truncated)
+        self.assertFalse(middle.truncated or deepest.truncated)
+        self.assertEqual(deepest.content, "app rule\n")
+        self.assertEqual(middle.content, "packages rule\n")
+        self.assertLessEqual(snapshot.used_bytes, PROJECT_RULE_BUDGET_BYTES)
+
+    def test_touched_files_load_their_directory_rules_after_the_cwd_chain(self) -> None:
+        (self.root / "AGENTS.md").write_text("root rule\n", encoding="utf-8")
+        library = self.root / "packages" / "lib"
+        library.mkdir(parents=True)
+        (library / "AGENTS.md").write_text("library rule\n", encoding="utf-8")
+        (library / "module.py").write_text("x = 1\n", encoding="utf-8")
+        outside = self.root.parent / "outside"
+        outside.mkdir()
+        (outside / "AGENTS.md").write_text("outside rule\n", encoding="utf-8")
+        (self.root / "linked").symlink_to(outside, target_is_directory=True)
+
+        snapshot = ProjectRuleResolver().resolve(
+            self.root,
+            self.root,
+            (
+                "packages/lib/module.py",
+                str(library / "module.py"),
+                "linked/file.txt",
+                str(outside / "file.txt"),
+                "missing/dir/file.txt",
+            ),
+        )
+
+        self.assertEqual(
+            [rule.relative_path for rule in snapshot.rules],
+            ["AGENTS.md", "packages/lib/AGENTS.md"],
+        )
+        self.assertNotIn("outside rule", snapshot.model_dump_json())
+
+    def test_touched_rule_files_are_limited(self) -> None:
+        touched = []
+        for index in range(TOUCHED_RULE_LIMIT + 3):
+            directory = self.root / f"pkg{index:02d}"
+            directory.mkdir()
+            (directory / "AGENTS.md").write_text(f"rule {index}\n", encoding="utf-8")
+            touched.append(f"pkg{index:02d}/file.txt")
+
+        snapshot = ProjectRuleResolver().resolve(self.root, self.root, touched)
+
+        self.assertEqual(len(snapshot.rules), TOUCHED_RULE_LIMIT)
+        self.assertEqual(snapshot.rules[0].relative_path, "pkg00/AGENTS.md")
 
     def test_records_hash_source_shadow_and_read_warning(self) -> None:
         selected = self.root / "EIDOS.md"
@@ -274,6 +352,25 @@ class ResolutionPersistenceTests(unittest.TestCase):
             snapshots[1].rule_resolution_snapshot_hash,
         )
         self.assertNotEqual(snapshots[0].final_request_hash, snapshots[1].final_request_hash)
+
+    def test_reading_a_subdirectory_file_loads_its_rules_on_the_next_step(self) -> None:
+        package = self.workspace / "package"
+        package.mkdir()
+        (package / "AGENTS.md").write_text("package rule", encoding="utf-8")
+        (package / "notes.txt").write_text("notes", encoding="utf-8")
+        run, _ = self.store.create_run(self.session["id"], "inspect")
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall("read", "read_file", {"path": "package/notes.txt"}),)),
+            ModelResponse(text="done"),
+        ])
+        RuntimeEngine(self.store, model, lambda _message: None).run(run["id"], threading.Event())
+
+        first, second = (
+            json.loads(snapshot.context_payload_json)
+            for snapshot in self.store.read_step_resolution_snapshots(run["id"])
+        )
+        self.assertNotIn("package rule", json.dumps(first))
+        self.assertIn("package rule", json.dumps(second))
 
     def test_step_rule_and_request_snapshots_commit_atomically(self) -> None:
         (self.workspace / "EIDOS.md").write_text("rule", encoding="utf-8")

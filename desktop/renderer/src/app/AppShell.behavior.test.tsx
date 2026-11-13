@@ -13,6 +13,7 @@ const fixture = vi.hoisted(() => ({
   reviseRun: vi.fn(),
   submitInput: vi.fn(),
   setInput: vi.fn(),
+  setInputForSession: vi.fn(),
   input: "",
   selectedModelId: undefined as string | undefined,
 }));
@@ -24,7 +25,8 @@ vi.mock("./useSessionController.js", () => ({
 }));
 vi.mock("./useRunController.js", () => ({
   useRunController: () => [{ composerMode: "idle", input: fixture.input, references: [], draftReady: false },
-    { reviseRun: fixture.reviseRun, submitInput: fixture.submitInput, setInput: fixture.setInput }],
+    { reviseRun: fixture.reviseRun, submitInput: fixture.submitInput, setInput: fixture.setInput,
+      setInputForSession: fixture.setInputForSession }],
 }));
 vi.mock("./useApprovalController.js", () => ({
   useApprovalController: () => [{
@@ -249,6 +251,33 @@ describe("AppShell memory settings Session identity", () => {
       expect(window.eidosRuntime.exportMemoryNotes).toHaveBeenCalledWith({ scope, projectId });
     },
   );
+});
+
+describe("AppShell memory tidying", () => {
+  it("opens a projectless draft with an editable tidy request", async () => {
+    localStorage.removeItem("eidos.memory.location.v1");
+    window.eidosRuntime.memory = vi.fn(async (method: string) => method === "memory/read"
+      ? { path: "MEMORY.md", scopeId: "global", revision: 0, currentRevision: 0, revisions: [], document: null,
+          content: "# Memory", offset: 0, nextOffset: null }
+      : { scopes: [{ id: "global", kind: "global", mode: "auto", privacyEpoch: 0, generation: 0 }], documents: [] },
+    ) as typeof window.eidosRuntime.memory;
+    window.eidosRuntime.exportMemoryNotes = vi.fn(async () => {});
+    window.eidosRuntime.listProjects = vi.fn(async () => ({ items: [] }));
+    window.eidosRuntime.listModelPresets = vi.fn(async () => ({ providers: [] }));
+    fixture.startDraft.mockReturnValueOnce("draft-tidy");
+    fixture.setInputForSession.mockReset();
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "打开设置" }));
+    fireEvent.click(screen.getByRole("tab", { name: "记忆" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "整理" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "整理" }));
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "记忆" })).not.toBeInTheDocument());
+    expect(fixture.startDraft).toHaveBeenCalledExactlyOnceWith(null);
+    expect(fixture.setInputForSession).toHaveBeenCalledExactlyOnceWith(
+      "draft-tidy", expect.stringContaining("请整理全局记忆"),
+    );
+    expect(fixture.setInputForSession.mock.calls[0]![1]).toContain("order 设为 oldest");
+  });
 });
 
 describe("AppShell revision approval modes", () => {

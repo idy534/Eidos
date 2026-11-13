@@ -674,11 +674,13 @@ class ContextPersistenceTests(unittest.TestCase):
 
         self.assertIn("Analyze startup flow", summary.task_goal)
         self.assertTrue(any("Must preserve" in value for value in summary.constraints))
-        self.assertTrue(any("engine.py" in value for value in summary.important_facts))
-        self.assertTrue(any("RuntimeEngine" in value for value in summary.important_facts))
+        self.assertTrue(any("engine.py" in value for value in summary.completed_actions))
+        self.assertTrue(any("RuntimeEngine" in value for value in summary.completed_actions))
+        self.assertFalse(any("engine.py" in value for value in summary.important_facts))
         self.assertTrue(any("workspace state" in value for value in summary.important_facts))
         self.assertTrue(any("notes.txt" in value for value in summary.workspace_changes))
         self.assertTrue(any("shell_failed" in value for value in summary.failed_attempts))
+        self.assertEqual(summary.unresolved_problems, ())
         self.assertTrue(summary.important_decisions)
         self.assertTrue(summary.next_actions)
         self.assertLessEqual(
