@@ -326,3 +326,162 @@ def test_committed_summary_stays_successful_if_post_build_metrics_are_lost(histo
     assert details.compaction.status == "succeeded"
     assert details.compaction.after_tokens is None
 
+
+
+def _handoff(source_id: str, **extra):
+    return {"current_work": "Checking how notes.py is inspected", "approach": "Read the module first",
+            "progress": ["notes.py defines inspect_context"], "open_questions": ["Tests have not run"],
+            "next_steps": ["Run the notes tests"], "source_item_ids": [source_id], **extra}
+
+
+def test_model_handoff_replaces_next_actions_and_is_persisted_and_rendered(history):
+    store, _, run, _, tool = history
+
+    def change(args, cancel):
+        args["handoff"] = _handoff(tool["id"])
+
+    model = SummaryModel(store.read_model_profile(run["id"]), change)
+    summary = ContextCompactor(store, model).compact(run["id"], "pre_turn")
+
+    assert summary.handoff is not None
+    assert summary.handoff.current_work == "Checking how notes.py is inspected"
+    assert summary.handoff.source_item_ids == (tool["id"],)
+    assert summary.next_actions == ("Model next step, unverified: Run the notes tests",)
+    assert store.latest_compact_summary(run["id"]) == summary
+    rendered = str(ContextBuilder(store).build(run["id"]).model_context)
+    assert "Working handoff written by the summarizer" in rendered
+    assert "Checking how notes.py is inspected" in rendered
+    assert "search_history" in rendered
+
+
+def test_handoff_is_not_kept_once_a_later_round_cannot_write_one(history):
+    store, _, run, _, tool = history
+
+    def change(args, cancel):
+        args["handoff"] = _handoff(tool["id"])
+
+    profile = store.read_model_profile(run["id"])
+    ContextCompactor(store, SummaryModel(profile, change)).compact(run["id"], "pre_turn")
+    for step in range(1, 13):
+        item = store.create_tool_item(run["id"], step, 0, f"later-{step}", "read_file", "{}")
+        raw = json.dumps({"outcome": "success", "data": {"path": f"later_{step}.py", "content": "later"}})
+        store.complete_tool_item(item["id"], raw, model_result_json=raw)
+
+    summary = ContextCompactor(store).compact(run["id"], "mid_turn")
+
+    assert summary.handoff is None
+    assert "Working handoff" not in str(ContextBuilder(store).build(run["id"]).model_context)
+
+
+@pytest.mark.parametrize("invalid", ["note", "handoff"])
+def test_one_unsupported_part_does_not_discard_the_grounded_rest(history, invalid):
+    store, _, run, _, tool = history
+
+    def change(args, cancel):
+        if invalid == "note":
+            args["notes"].append({"kind": "fact", "text": "All tests passed", "evidence": [
+                {"item_id": tool["id"], "quote": "All tests passed"}]})
+        else:
+            args["handoff"] = _handoff("invented-item")
+
+    model = SummaryModel(store.read_model_profile(run["id"]), change)
+    summary = ContextCompactor(store, model).compact(run["id"], "pre_turn")
+
+    assert [note.evidence[0].quote for note in summary.continuity_notes] == ["def inspect_context(): pass"]
+    assert summary.handoff is None
+    assert "All tests passed" not in summary.model_dump_json()
+    details = ContextManagementRepository(store.database).details(run["id"], model.profile_snapshot)
+    assert details.compaction.strategy == "model"
+    assert details.compaction.reason == "summary_notes_dropped"
+
+
+def test_handoff_alone_is_an_accepted_summary(history):
+    store, _, run, _, tool = history
+
+    def change(args, cancel):
+        args["notes"] = []
+        args["handoff"] = _handoff(tool["id"])
+
+    model = SummaryModel(store.read_model_profile(run["id"]), change)
+    summary = ContextCompactor(store, model).compact(run["id"], "pre_turn")
+    assert summary.handoff is not None and not summary.continuity_notes
+    details = ContextManagementRepository(store.database).details(run["id"], model.profile_snapshot)
+    assert details.compaction.strategy == "model"
+
+
+def test_next_actions_follow_the_newest_round_and_decisions_have_one_field(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    try:
+        session = store.create_session(str(workspace))
+        first, _ = store.create_run(session["id"], "调查缓存。")
+        plan = store.create_assistant_item(first["id"], 1)
+        store.append_item_content(plan["id"], "Next, inspect cache.py.")
+        store.complete_assistant_item_committed(plan["id"])
+        decision = store.create_assistant_item(first["id"], 2)
+        store.append_item_content(decision["id"], "我决定采用 LRU 策略。")
+        store.complete_assistant_item_committed(decision["id"])
+        store.fail_run(first["id"], "fixture")
+        second, _ = store.create_run(session["id"], "继续。")
+        summary = ContextCompactor(store).compact(second["id"], "pre_turn")
+        assert any("inspect cache.py" in value for value in summary.next_actions)
+        assert any("决定采用 LRU" in value for value in summary.important_decisions)
+        assert not any("决定采用 LRU" in value for value in summary.important_facts)
+
+        for step in range(1, 13):
+            later = store.create_assistant_item(second["id"], step)
+            store.append_item_content(later["id"], f"Step {step}. Next, verify store.py.")
+            store.complete_assistant_item_committed(later["id"])
+        summary = ContextCompactor(store).compact(second["id"], "mid_turn")
+
+        assert not any("inspect cache.py" in value for value in summary.next_actions)
+        assert 0 < len(summary.next_actions) <= 4
+        assert all("verify store.py" in value for value in summary.next_actions)
+        assert any("决定采用 LRU" in value for value in summary.important_decisions)
+    finally:
+        store.close()
+
+
+def test_model_sees_most_of_a_long_round_and_not_the_bodies_of_retained_notes(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    try:
+        session = store.create_session(str(workspace))
+        previous, _ = store.create_run(session["id"], "检查模块。")
+        anchor = store.create_tool_item(previous["id"], 1, 0, "anchor", "read_file", "{}")
+        anchor_raw = json.dumps({"outcome": "success", "data": {"path": "anchor.py", "content": "ANCHOR = 1\n" + "a" * 9000}})
+        store.complete_tool_item(anchor["id"], anchor_raw, model_result_json=anchor_raw)
+        store.fail_run(previous["id"], "fixture")
+        run, _ = store.create_run(session["id"], "继续。")
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall("first", "submit_context_summary", {"notes": [
+                {"kind": "fact", "text": "ANCHOR = 1", "evidence": [{"item_id": anchor["id"], "quote": "ANCHOR = 1"}]},
+            ]}),)),
+            ModelResponse(tool_calls=(ModelToolCall("second", "submit_context_summary", {"notes": [
+                {"kind": "fact", "text": "VALUE_39 = 39", "evidence": [{"item_id": "placeholder", "quote": "VALUE_39 = 39"}]},
+            ]}),)),
+        ])
+        model.profile_snapshot = store.read_model_profile(run["id"])
+        ContextCompactor(store, model).compact(run["id"], "pre_turn")
+        ids = []
+        for step in range(1, 41):
+            item = store.create_tool_item(run["id"], step, 0, f"module-{step}", "read_file", "{}")
+            raw = json.dumps({"outcome": "success", "data": {"path": f"m{step}.py", "content": f"VALUE_{step} = {step}\n" + "x" * 10_000}})
+            store.complete_tool_item(item["id"], raw, model_result_json=raw)
+            ids.append(item["id"])
+
+        ContextCompactor(store, model).compact(run["id"], "mid_turn")
+
+        payload_text = model.contexts[1][0]["content"]
+        payload = json.loads(payload_text)
+        assert len(payload_text.encode()) <= 96 * 1024
+        cited = {source["itemId"] for source in payload["sources"]}
+        assert anchor["id"] not in cited
+        assert "ANCHOR = 1" in json.dumps(payload["previousSummary"])
+        assert len(cited & set(ids)) >= 20
+    finally:
+        store.close()

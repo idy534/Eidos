@@ -108,6 +108,8 @@ class ContextCompactionVerifier:
                       if value.startswith("Model note (")}
             if not legacy <= set(summary.important_facts):
                 raise CompactionVerificationError("continuity report omitted")
+        if summary.handoff is not None and not set(summary.handoff.source_item_ids) <= set(summary.source_item_ids):
+            raise CompactionVerificationError("handoff source is not covered")
         originals = {item.item_id: item for item in facts.items}
         for note in summary.continuity_notes:
             if any(ref.item_id not in summary.source_item_ids for ref in note.evidence):

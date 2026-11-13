@@ -33,6 +33,8 @@ SUMMARY_MAX_ITEMS = 16
 SUMMARY_ENTRY_MAX_BYTES = 512
 SUMMARY_TASK_GOAL_MAX_BYTES = 1_024
 SUMMARY_MAX_SERIALIZED_BYTES = 24 * 1_024
+NEXT_ACTION_MAX_ITEMS = 4
+NEXT_ACTION_MAX_BYTES = 320
 _SYMBOL_PATTERN = re.compile(
     r"(?m)^\s*(?:async\s+)?(?:def|class|fn|struct|enum|interface|type|function|const)\s+"
     r"([A-Za-z_][A-Za-z0-9_]*)"
@@ -67,6 +69,7 @@ class ContextCompactor:
         request_id: str | None = None, measure: Callable[[], int] | None = None,
         before_tokens: int | None = None,
         recent_token_budget: int | None = None,
+        protect_recent_tokens: int | None = None,
     ) -> CompactSummary:
         run = self.store.read_run(run_id)
         if run["status"] != "running" or run.get("cancelRequestedAt") is not None:
@@ -102,7 +105,8 @@ class ContextCompactor:
             if cancel.is_set():
                 raise ContextCompactionError("compaction canceled")
             summary = self._compact(
-                run_id, phase, keep_recent_items=keep_recent_items, recent_token_budget=recent_token_budget, cancel=cancel,
+                run_id, phase, keep_recent_items=keep_recent_items, recent_token_budget=recent_token_budget,
+                protect_recent_tokens=protect_recent_tokens, cancel=cancel,
                 record_on_commit=lambda: outcome_record("succeeded", self._assisted.reason if self._assisted else "model_unavailable"),
             )
             status = "succeeded"
@@ -128,6 +132,7 @@ class ContextCompactor:
                 self._on_recorded()
 
     def _compact(self, run_id: str, phase: str, *, keep_recent_items: int, recent_token_budget: int | None,
+                 protect_recent_tokens: int | None,
                  cancel: threading.Event, record_on_commit: Callable[[], ContextCompactionRecord]) -> CompactSummary:
         if phase not in {"pre_turn", "mid_turn"}:
             raise ValueError("invalid compaction phase")
@@ -160,6 +165,14 @@ class ContextCompactor:
                 and item.tool_name not in {"skill_read", "skill_read_resource"}
                 and item.item_id not in protected
             )
+        elif protect_recent_tokens:
+            # Pressure and manual compaction keep the newest whole responses
+            # verbatim while older history can carry the reduction. Once only
+            # those responses remain, the next round summarizes them too.
+            protected = _recent_groups(eligible, protect_recent_tokens)
+            older = tuple(item for item in eligible if item.item_id not in protected)
+            if older:
+                eligible = older
         if not eligible:
             raise ContextCompactionError("no compactable history")
         source_ids = tuple(dict.fromkeys((
@@ -173,7 +186,11 @@ class ContextCompactor:
             f"User reference: {reference.label}; kind: {reference.kind}; source: {reference.source}"
             for item in eligible for reference in item.input_references
         )
-        assistants = [item.content or "" for item in eligible if item.kind == "assistant_message"]
+        assistant_items = tuple(item for item in eligible if item.kind == "assistant_message")
+        decision_ids = {
+            item.item_id for item in assistant_items
+            if _contains_marker(item.content or "", _DECISION_MARKERS)
+        }
         tools = [item for item in eligible if item.provider_call_id is not None]
         tool_records = tuple((_tool_text(item), item) for item in tools)
         successful_tools = tuple(
@@ -192,16 +209,28 @@ class ContextCompactor:
         user_constraints = tuple(
             fragment for user in users for fragment in _constraint_fragments(user)
         )
+        # An assistant report has one home: a decision report or an ordinary
+        # report. Neither is user approval or proof of completed work.
         decisions = tuple(
-            _bounded("Assistant decision report (not user approval): " + assistant, SUMMARY_ENTRY_MAX_BYTES)
-            for assistant in assistants
-            if _contains_marker(assistant, _DECISION_MARKERS)
+            _bounded(f"Assistant decision report (not user approval), item={item.item_id}: {item.content or ''}",
+                     SUMMARY_ENTRY_MAX_BYTES)
+            for item in assistant_items if item.item_id in decision_ids
         )
+        # Next actions describe where the work stands now. Each round replaces
+        # them, so plans that later steps carried out or dropped do not stay.
         next_actions = tuple(
-            _bounded(assistant, SUMMARY_ENTRY_MAX_BYTES)
-            for assistant in assistants
-            if _contains_marker(assistant, _NEXT_ACTION_MARKERS)
-        ) or tuple(users[-1:])
+            _bounded(f"Assistant plan, unverified, item={item.item_id}: {item.content or ''}", NEXT_ACTION_MAX_BYTES)
+            for item in assistant_items
+            if _contains_marker(item.content or "", _NEXT_ACTION_MARKERS)
+        )[-NEXT_ACTION_MAX_ITEMS:] or tuple(
+            _bounded(user, NEXT_ACTION_MAX_BYTES) for user in users[-1:]
+        ) or (existing.next_actions if existing else ())
+        # A tool line has one home: completed_actions for a success and
+        # failed_attempts for a failure. Older summaries also copied successes
+        # into important_facts and failures into unresolved_problems, where the
+        # copies displaced reports; they move to their home field here.
+        legacy_successes = _tool_lines(existing.important_facts) if existing else ()
+        legacy_failures = _tool_lines(existing.unresolved_problems) if existing else ()
         summary = CompactSummary(
             task_goal=_bounded(
                 existing.task_goal if existing else (users[0] if users else "Continue the task"),
@@ -211,7 +240,10 @@ class ContextCompactor:
                 *(existing.constraints if existing else ()), *user_constraints,
             ))),
             completed_actions=_merge(
-                tuple(value for value in existing.completed_actions if value.startswith("Tool completed:")) if existing else (),
+                (
+                    *(value for value in existing.completed_actions if value.startswith("Tool completed:")),
+                    *("Tool completed: " + value for value in legacy_successes),
+                ) if existing else (),
                 tuple("Tool completed: " + value for value in successful_tools),
             ),
             workspace_changes=_merge(
@@ -219,7 +251,10 @@ class ContextCompactor:
                 source_facts.committed_workspace_changes,
             ),
             important_facts=(workspace_state, *_merge(
-                tuple(value for value in existing.important_facts if not value.startswith("workspace state:")) if existing else (),
+                tuple(
+                    value for value in existing.important_facts
+                    if not value.startswith("workspace state:") and value not in legacy_successes
+                ) if existing else (),
                 (*input_references, *(
                     text_preview(
                         f"Historical user request item={item.item_id}: {model_source_text(item)}",
@@ -229,24 +264,25 @@ class ContextCompactor:
                     for item in eligible if item.kind == "user_message"
                 ), *(
                     _bounded(f"Assistant report, unverified, item={item.item_id}: {item.content or ''}", SUMMARY_ENTRY_MAX_BYTES)
-                    for item in eligible if item.kind == "assistant_message"
+                    for item in assistant_items if item.item_id not in decision_ids
                 ), *(
                     value if value.startswith("Historical report, unverified:") else "Historical report, unverified: " + value
                     for value in (existing.completed_actions if existing else ()) if not value.startswith("Tool completed:")
-                ), *successful_tools),
+                )),
             )),
             unresolved_problems=_merge(
-                existing.unresolved_problems if existing else (),
-                (*failed_tools, *(("workspace result unknown",)
-                     if facts.reconciliation_required else ())),
+                tuple(
+                    value for value in existing.unresolved_problems if value not in legacy_failures
+                ) if existing else (),
+                ("workspace result unknown",) if facts.reconciliation_required else (),
             ),
-            next_actions=_merge(existing.next_actions if existing else (), next_actions),
+            next_actions=next_actions,
             source_item_ids=source_ids,
             important_decisions=_merge(
                 existing.important_decisions if existing else (), decisions
             ),
             failed_attempts=_merge(
-                existing.failed_attempts if existing else (), failed_tools
+                (*existing.failed_attempts, *legacy_failures) if existing else (), failed_tools
             ),
             pending_approvals=facts.pending_approval_ids,
             uncertain_side_effects=_merge(
@@ -261,10 +297,10 @@ class ContextCompactor:
         input_budget = profile.context_window_tokens - profile.max_output_tokens
         proposal = _fit_summary(summary, max_tokens=min(4_096, max(512, input_budget // 12)))
         if self.model is not None and hasattr(self.model, "profile_snapshot"):
-            retained_ids = {ref.item_id for note in proposal.continuity_notes for ref in note.evidence}
+            # Accepted notes travel with their quotes in the previous summary.
+            # Their original bodies would take the room this round's history needs.
             self._assisted = assist_summary(
                 self.model, proposal, eligible, cancel,
-                prior_items=tuple(item for item in source_facts.items if item.item_id in retained_ids),
                 task_context=project_input_mentions(
                     str(self.store.read_run(run_id).get("userInput") or ""),
                     tuple(snapshot.reference for snapshot in InputContextRepository(self.store.database).for_run(run_id)),
@@ -302,6 +338,16 @@ class ContextCompactor:
         return verified.summary
 
 
+def _recent_groups(items: tuple[ContextItemFact, ...], token_budget: int) -> set[str]:
+    """The newest whole responses under ``token_budget``, never half of one."""
+    protected = recent_item_ids(items, token_budget)
+    groups = {(item.run_id, item.model_step_index) for item in items
+              if item.item_id in protected and item.model_step_index is not None}
+    protected.update(item.item_id for item in items if item.model_step_index is not None
+                     and (item.run_id, item.model_step_index) in groups)
+    return protected
+
+
 def _tool_outcome(item: ContextItemFact) -> object:
     value = _tool_result(item)
     return value.get("outcome")
@@ -315,9 +361,20 @@ def _tool_result(item: ContextItemFact) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
+_MEMORY_TOOL_NOTE = ": historical memory reference; retrieve current evidence again when needed."
+
+
+def _tool_lines(values: Iterable[str]) -> tuple[str, ...]:
+    """Select the entries written by ``_tool_text``."""
+    return tuple(
+        value for value in values
+        if value.startswith("item=") or value.endswith(_MEMORY_TOOL_NOTE)
+    )
+
+
 def _tool_text(item: ContextItemFact) -> str:
     if (item.tool_name or "").startswith("memory_"):
-        return f"{item.tool_name}: historical memory reference; retrieve current evidence again when needed."
+        return f"{item.tool_name}{_MEMORY_TOOL_NOTE}"
     result = _tool_result(item)
     parts = [
         f"item={item.item_id};call={item.provider_call_id}",
@@ -486,7 +543,11 @@ def _fit_summary(summary: CompactSummary, *, max_tokens: int = 4_096) -> Compact
                 candidate = candidate.model_copy(update={field: remaining})
                 break
         else:
-            raise ContextCompactionError("critical summary facts exceed context budget")
+            # The handoff is an interpretation the next round writes again.
+            # It gives way before any control fact or constraint would.
+            if candidate.handoff is None:
+                raise ContextCompactionError("critical summary facts exceed context budget")
+            candidate = candidate.model_copy(update={"handoff": None})
     return candidate
 
 

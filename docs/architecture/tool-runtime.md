@@ -30,6 +30,8 @@ Tool Runtime 把模型声明转换成有权限、有执行前提和真实结果�
 
 文件工具的范围、Skill 目录和高危路径规则见[权限与 Sandbox](permissions-sandbox.md)。`unidiff` 负责 Unified Diff 解析；Eidos 继续负责版本、权限、提交和核验。
 
+`apply_patch` 提交成功后，Runtime 用随包的 Tree-sitter 语法解析新增和修改的 Python、TypeScript、TSX、JavaScript 与 Go 文件，并把本次补丁新引入的解析错误放入结果的 `possibleSyntaxErrors`。这是给模型的提示，不改变补丁结果，也不替代项目自己的检查。
+
 ## 并行与顺序
 
 ToolCallRuntime 只并行执行连续且满足 `parallel_safe` 的只读片段，并按模型声明顺序汇总结果。副作用片段之间保留顺序。
@@ -70,6 +72,7 @@ Main 的预览管理器通过 Runtime 读取获得授权的文件资源。浏览
 | 执行、Intent 与结果 | [tool_runtime.py](../../runtime/eidos_runtime/runtime/tool_runtime.py)、[tool_execution.py](../../runtime/eidos_runtime/runtime/tool_execution.py)、[tool_orchestrator.py](../../runtime/eidos_runtime/runtime/tool_orchestrator.py) | [控制器](../../runtime/tests/test_phase5b_tool_execution.py)、[未知结果恢复](../../runtime/tests/test_reconciliation_recovery_budget.py) |
 | 文件提交 | [file_commit_helper.py](../../runtime/eidos_runtime/sandbox/file_commit_helper.py)、[workspace.py](../../runtime/eidos_runtime/tools/workspace.py) | [文件 Helper](../../runtime/tests/test_file_commit_helper.py)、[Patch](../../runtime/tests/test_codex_apply_patch.py) |
 | Shell 与分页 | [shell_process_manager.py](../../runtime/eidos_runtime/runtime/shell_process_manager.py)、[shell.py](../../runtime/eidos_runtime/sandbox/shell.py)、[read_tool_output.py](../../runtime/eidos_runtime/tools/read_tool_output.py) | [Shell](../../runtime/tests/test_shell.py)、[输出投影](../../runtime/tests/test_shell_output_projection.py)、[收尾恢复](../../runtime/tests/test_shell_completion_recovery.py) |
+| 历史检索 | [search_history.py](../../runtime/eidos_runtime/tools/search_history.py)、[history_search.py](../../runtime/eidos_runtime/persistence/history_search.py) | [历史检索](../../runtime/tests/test_search_history.py) |
 | 产物与预览 | [declare_outputs.py](../../runtime/eidos_runtime/tools/declare_outputs.py)、[artifact-preview.ts](../../desktop/main/artifact-preview.ts) | [产物声明](../../runtime/tests/test_declare_outputs.py)、[预览](../../desktop/main/workspace-preview.test.ts) |
 
 真实进程组、PTY 和 Seatbelt 行为需要原生验证。返回[组成总览](harness-overview.md)。

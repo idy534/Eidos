@@ -38,7 +38,7 @@ _JSON_SAFE_INTEGER_MAX = 9_007_199_254_740_991
 
 class ReadToolOutputInput(StrictToolModel):
     callId: StrictStr = Field(min_length=1, max_length=256)
-    stream: Literal["stdout", "stderr", "result", "context"] = "stdout"
+    stream: Literal["stdout", "stderr", "result", "context", "arguments"] = "stdout"
     itemId: StrictStr | None = Field(default=None, min_length=1, max_length=256)
     offsetBytes: StrictInt = Field(
         default=0, ge=0, le=_JSON_SAFE_INTEGER_MAX
@@ -66,7 +66,7 @@ class ReadToolOutputResultData(StrictToolModel):
         "nextOffset", "totalBytes", "hasMoreBefore", "hasMoreAfter",
     )
     callId: StrictStr | None = None
-    stream: Literal["stdout", "stderr", "result", "context"] | None = None
+    stream: Literal["stdout", "stderr", "result", "context", "arguments"] | None = None
     content: StrictStr | None = None
     startByte: StrictInt | None = Field(default=None, ge=0)
     endByte: StrictInt | None = Field(default=None, ge=0)
@@ -192,9 +192,12 @@ def read_tool_output_entry(
             "Set fromEnd=true for the tail; raw bytes omitted by the Shell output "
             "limit are not recoverable. When paging live stdout/stderr, pass the returned "
             "outputRevision on the next page; if it changed, restart or use fromEnd=true. "
-            "Use stream='result' and the itemId/callId "
-            "from a contextCleared marker to page the original saved JSON result "
-            "of any completed tool call, including fork history. Use stream='context' and a saved message itemId as callId to page the original user or assistant text. "
+            "A tool result marked contextCleared, or a call marked argumentsCleared, was omitted from "
+            "active context to save room. Page it with this tool and that call's callId and itemId: "
+            "stream='result' for the saved JSON result of any completed tool call, including fork history, "
+            "and stream='arguments' for its saved arguments. Never repeat the operation to recover output, "
+            "and treat saved file content as history rather than the current file version. "
+            "Use stream='context' and a saved message itemId as callId to page the original user or assistant text. "
             "Reading saved output does not execute the operation again."
             " Hook feedback can include a hook:<id> callId; use it with stdout, stderr or result to read the saved Hook output."
         ),
@@ -213,7 +216,7 @@ def read_tool_output_entry(
         provenance=ToolProvenance.model_validate({
             "kind": "builtin",
             "sourceId": "eidos.read-tool-output",
-            "sourceVersion": "3",
+            "sourceVersion": "4",
             "contentHash": hashlib.sha256(encoded).hexdigest(),
         }),
         adapter=ReadToolOutputAdapter(store, run_id, shell_process_manager),

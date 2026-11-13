@@ -25,7 +25,7 @@ from eidos_runtime.context.project_rules import ProjectRuleResolver
 from eidos_runtime.context.compactor import (
     ContextCompactionError, ContextCompactor,
 )
-from eidos_runtime.context.policy import AUTO_COMPACTION_THRESHOLD_PERCENT, AUTO_COMPACTION_KEEP_ITEMS
+from eidos_runtime.context.policy import AUTO_COMPACTION_KEEP_ITEMS, context_thresholds
 from eidos_runtime.context.repository import RunRepositoryContext
 from eidos_runtime.db.storage import (
     ContextLimitExceeded,
@@ -303,8 +303,11 @@ class RuntimeEngine:
                         background_submit=self.hook_lifecycle.submit,
                         launch_window=lambda signal: self.tool_concurrency_gate.acquire(
                             ToolConcurrencyPolicy(mode="exclusive", max_concurrency=1), signal))
-                recovery_level = 0
                 self.context_recovery_level = 0
+                # Projected input of the view that failed at each level. A
+                # fuller view returns only when it is clearly smaller than that.
+                self.context_recovery_ceilings: list[int] = []
+                self.context_projected_tokens = 0
                 while True:
                     try:
                         self._drive(run_context, resources, cancel, repository_context)
@@ -320,7 +323,8 @@ class RuntimeEngine:
                         raise
                     except CapacityExceeded as error:
                         self.store.complete_current_step(run_id, "failed", reason="request_capacity")
-                        recovery_level += 1
+                        self.context_recovery_ceilings.append(self.context_projected_tokens)
+                        self.context_recovery_level += 1
                         run_context = run_context.model_copy(update={"model_context": ({
                             "type": "context", "sectionId": "runtime-feedback", "content": (
                                 "The last request could not be processed (" + error.reason + "). "
@@ -328,7 +332,6 @@ class RuntimeEngine:
                                 "read saved output by page, or use another approach. Do not repeat uncertain side effects."
                             ),
                         },)})
-                        self.context_recovery_level = recovery_level
                         if cancel.wait(1):
                             raise RuntimeCancelled
         except (PlanningSuspended, AgentSuspended):
@@ -405,6 +408,11 @@ class RuntimeEngine:
         pending_provider_recovery = False
         pending_projection_marker: tuple[object, ...] | None = None
         automatic_compaction_states: set[tuple[object, ...]] = set()
+        # After a committed summary, early compaction waits for one working set
+        # of growth. A summary that cannot reach the trigger would otherwise
+        # request another one on every step.
+        seen_compaction_count: int | None = None
+        compaction_floor: int | None = None
         finalizer = RunFinalizer(
             self.store,
             self.model,
@@ -560,7 +568,7 @@ class RuntimeEngine:
                 snapshot.available_names,
             )
             agent_baseline = self.collaboration.repository.state(run.run_id) if self.collaboration else None
-            def build_current_context() -> ContextBuild:
+            def build_current_context(recovery_level: int | None = None) -> ContextBuild:
                 if resources.hooks is not None:
                     resources.hooks.projected_frontier = resources.hooks.repository.frontier(run.run_id)
                 return context_builder.build(
@@ -571,7 +579,9 @@ class RuntimeEngine:
                     step_policy=step_policy,
                     repository_context=None if projectless else repository_context,
                     projectless=projectless,
-                    recovery_level=self.context_recovery_level,
+                    recovery_level=(
+                        self.context_recovery_level if recovery_level is None else recovery_level
+                    ),
                     callable_tool_names=frozenset((
                         *snapshot.available_names, *snapshot.deferred_names,
                         *(tool.name for tool in tool_definitions),
@@ -579,6 +589,30 @@ class RuntimeEngine:
                 )
 
             built = build_current_context()
+            if self.context_recovery_level:
+                # Capacity recovery is a state of the context, not of the Run.
+                # Return one level once the fuller view fits and is a quarter
+                # smaller than the view that failed there; the margin keeps a
+                # request the Provider rejected from being sent again unchanged.
+                relaxed = build_current_context(self.context_recovery_level - 1)
+                if (
+                    relaxed.budget.fits
+                    and relaxed.budget.projected_input_tokens * 4
+                    <= self.context_recovery_ceilings[-1] * 3
+                ):
+                    self.context_recovery_level -= 1
+                    self.context_recovery_ceilings.pop()
+                    built = relaxed
+            self.context_projected_tokens = built.budget.projected_input_tokens
+            thresholds = context_thresholds(built.budget.usable_input_budget)
+            # Over-budget compaction keeps half a working set of the newest
+            # responses; a later round takes them too if that is not enough.
+            pressure_working_set = thresholds.working_set_tokens // 2
+            if seen_compaction_count is None:
+                seen_compaction_count = built.facts.compaction_count
+            elif built.facts.compaction_count != seen_compaction_count:
+                seen_compaction_count = built.facts.compaction_count
+                compaction_floor = built.budget.projected_input_tokens
 
             def measure_current_projection() -> int:
                 current = build_current_context()
@@ -596,7 +630,8 @@ class RuntimeEngine:
                 context_application.publish_projection(run.run_id, plan, retrieval)
                 return current.budget.projected_input_tokens
 
-            def compact_context(phase: str, trigger: str, *, keep_recent_items: int = 0, request_id: str | None = None):
+            def compact_context(phase: str, trigger: str, *, keep_recent_items: int = 0, request_id: str | None = None,
+                                protect_recent_tokens: int | None = None):
                 hook_trigger = "manual" if trigger == "manual" else "auto"
                 hook_key = "compact:" + (request_id or str(built.facts.compaction_count))
                 if resources.hooks is not None:
@@ -607,7 +642,8 @@ class RuntimeEngine:
                 compacted = compactor.compact(
                     run.run_id, phase, trigger=trigger, cancel=cancel,
                     keep_recent_items=keep_recent_items, request_id=request_id,
-                    recent_token_budget=min(16_384, max(1_024, built.budget.usable_input_budget // 8)) if keep_recent_items else None,
+                    recent_token_budget=thresholds.working_set_tokens if keep_recent_items else None,
+                    protect_recent_tokens=None if keep_recent_items else protect_recent_tokens,
                     before_tokens=built.budget.projected_input_tokens,
                     measure=measure_current_projection,
                 )
@@ -626,7 +662,9 @@ class RuntimeEngine:
             manual = context_management.pending(run.run_id)
             if manual is not None and not built.facts.pending_approval_ids:
                 try:
-                    compact_context("mid_turn", "manual", request_id=manual.request_id)
+                    # A requested compaction still keeps one working set verbatim.
+                    compact_context("mid_turn", "manual", request_id=manual.request_id,
+                                    protect_recent_tokens=thresholds.working_set_tokens)
                 except ContextCompactionError:
                     if cancel.is_set():
                         raise RuntimeCancelled
@@ -658,19 +696,24 @@ class RuntimeEngine:
                         LoopStage.BEFORE_COMPACT, run.run_id,
                         reason="projection_overflow",
                     )
-                    compact_context(phase, "projection_limit")
+                    compact_context(phase, "projection_limit", protect_recent_tokens=pressure_working_set)
                 except ContextCompactionError as error:
                     raise ContextLimitExceeded(
                         "internal_projection_limit"
                     ) from error
                 continue
             context_state = _context_state(built)
-            # Compare unrounded projected input against the frozen model window.
-            # A failed early attempt never blocks a request that still fits.
+            # Compact while one working set of the usable input budget is still
+            # free, so the recent evidence survives verbatim. Compare unrounded
+            # tokens. A failed early attempt never blocks a request that fits.
             if (
                 built.budget.fits
-                and built.budget.projected_input_tokens * 100
-                >= built.budget.context_usage.context_window_tokens * AUTO_COMPACTION_THRESHOLD_PERCENT
+                and built.budget.projected_input_tokens >= thresholds.compaction_trigger_tokens
+                and (
+                    compaction_floor is None
+                    or built.budget.projected_input_tokens
+                    >= compaction_floor + thresholds.working_set_tokens
+                )
                 and not built.facts.pending_approval_ids
                 and context_state not in automatic_compaction_states
             ):
@@ -716,7 +759,7 @@ class RuntimeEngine:
                         LoopStage.BEFORE_COMPACT, run.run_id,
                         reason="context_over_budget",
                     )
-                    compact_context(phase, "window_pressure")
+                    compact_context(phase, "window_pressure", protect_recent_tokens=pressure_working_set)
                 except ContextLimitExceeded:
                     raise
                 except ContextCompactionError:
@@ -829,7 +872,8 @@ class RuntimeEngine:
                             step_id=step.step_id,
                             reason="provider_context_exceeded",
                         )
-                        compacted = compact_context(phase, "provider_limit")
+                        compacted = compact_context(phase, "provider_limit",
+                                                    protect_recent_tokens=pressure_working_set)
                     except ContextCompactionError:
                         raise CapacityExceeded("context_window_capacity")
                     if compacted is None:
@@ -914,7 +958,25 @@ class RuntimeEngine:
                                 break
                             continue
                     if str(error) == "length":
-                        raise CapacityExceeded("model_output_capacity") from error
+                        # The output limit says nothing about the input window.
+                        # Keep the whole context and ask for a shorter response;
+                        # shrinking the history would only remove the evidence
+                        # the next attempt needs.
+                        self.store.complete_current_step(run.run_id, "failed", reason="request_capacity")
+                        keep_runtime_feedback = True
+                        run = run.model_copy(update={"model_context": ({
+                            "type": "context", "sectionId": "runtime-feedback", "content": (
+                                "The previous response reached the model output limit again "
+                                "(model_output_capacity) and was discarded. No tool from that response "
+                                "was executed; the conversation and earlier results are unchanged. "
+                                "Reply with a shorter response: split a large write into several "
+                                "smaller tool calls and a long answer into parts."
+                            ),
+                        },)})
+                        context_recovered = True
+                        if cancel.wait(1):
+                            raise RuntimeCancelled
+                        break
                     self._handle_sampling_failure(run.run_id, error, step=step)
                     return
 

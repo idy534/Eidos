@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import sys
 import threading
 from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
 
-from eidos_runtime.tools.contracts import ApplyPatchInput
+from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
+from eidos_runtime.runtime.engine import RuntimeEngine
+from eidos_runtime.tools.contracts import ApplyPatchInput, ApplyPatchResultData
 from eidos_runtime.tools.workspace import TOOL_SPECS, ToolExecutor
 
 
@@ -512,3 +517,110 @@ def test_failed_later_commit_keeps_committed_prefix(tmp_path: Path) -> None:
     assert [change.path for change in delta.changes] == ["first.txt"]
     assert (tmp_path / "first.txt").read_text() == "ONE\n"
     assert (tmp_path / "second.txt").read_text() == "two\n"
+
+
+def test_patch_reports_the_syntax_errors_it_introduces(tmp_path: Path) -> None:
+    (tmp_path / "clean.py").write_text("def area(width, height):\n    return width * height\n")
+    with _executor(tmp_path) as executor:
+        result, _ = _run_patch(
+            executor,
+            {"patch": (
+                "*** Begin Patch\n"
+                "*** Add File: src/broken.ts\n"
+                "+export const total = (items: number[] => items.length;\n"
+                "*** Update File: clean.py\n"
+                "@@\n"
+                "-def area(width, height):\n"
+                "+def area(width, height:\n"
+                "*** Add File: valid.go\n"
+                "+package main\n"
+                "+\n"
+                "+func main() {}\n"
+                "*** End Patch\n"
+            )},
+        )
+
+    assert result["outcome"] == "success"
+    # The files are written as requested; the check only adds a hint.
+    assert (tmp_path / "clean.py").read_text().startswith("def area(width, height:\n")
+    errors = result["data"]["possibleSyntaxErrors"]
+    assert [(error["path"], error["line"]) for error in errors] == [
+        ("src/broken.ts", 1), ("clean.py", 1),
+    ]
+    assert all(error["column"] >= 1 and error["message"] for error in errors)
+    ApplyPatchResultData.model_validate(result["data"], strict=False)
+
+
+def test_patch_does_not_report_errors_it_did_not_introduce(tmp_path: Path) -> None:
+    (tmp_path / "legacy.py").write_text("def broken(:\n    pass\n\nvalue = 1\n")
+    with _executor(tmp_path) as executor:
+        result, _ = _run_patch(
+            executor,
+            {"patch": (
+                "*** Begin Patch\n"
+                # The file did not parse before; this patch says nothing about it.
+                "*** Update File: legacy.py\n"
+                "@@\n"
+                "-value = 1\n"
+                "+value = 2\n"
+                # Languages without a bundled grammar are not checked.
+                "*** Add File: notes.md\n"
+                "+# (unclosed\n"
+                "*** Add File: config.json\n"
+                "+{broken\n"
+                "*** Add File: fine.py\n"
+                "+VALUE = 1\n"
+                "*** End Patch\n"
+            )},
+        )
+
+    assert result["outcome"] == "success"
+    assert "possibleSyntaxErrors" not in result["data"]
+
+
+def test_syntax_check_failure_never_changes_a_committed_patch(tmp_path: Path) -> None:
+    with _executor(tmp_path) as executor, patch(
+        "eidos_runtime.tools.workspace.syntax_errors", side_effect=RuntimeError("parser"),
+    ):
+        result, _ = _run_patch(
+            executor,
+            {"patch": "*** Begin Patch\n*** Add File: module.py\n+def f(:\n*** End Patch\n"},
+        )
+
+    assert result["outcome"] == "success"
+    assert "possibleSyntaxErrors" not in result["data"]
+    assert (tmp_path / "module.py").read_text() == "def f(:\n"
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(sys.platform != "darwin", reason="Secure file commit helper requires macOS descriptor identity")
+def test_next_model_step_sees_the_syntax_errors_of_its_patch(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    try:
+        session = store.create_session(str(workspace))
+        run, _ = store.create_run(session["id"], "Add the module")
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall("patch-1", "apply_patch", {"patch": (
+                "*** Begin Patch\n*** Add File: module.py\n+def f(a, b:\n+    return a\n*** End Patch\n"
+            )}),)),
+            ModelResponse(text="Done"),
+        ])
+
+        RuntimeEngine(store, model, lambda _message: None).run(run["id"], threading.Event())
+
+        assert store.read_run(run["id"])["status"] == "succeeded"
+        returned = next(
+            item for item in model.contexts[1]
+            if item.get("type") == "tool_result" and item.get("callId") == "patch-1"
+        )
+        payload = json.loads(returned["result"])
+        assert payload["outcome"] == "success"
+        assert payload["data"]["possibleSyntaxErrors"] == [{
+            "path": "module.py", "line": 1, "column": 1,
+            "message": "unexpected syntax near `def f(a, b:`",
+        }]
+    finally:
+        store.close()

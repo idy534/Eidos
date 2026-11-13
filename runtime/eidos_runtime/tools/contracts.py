@@ -828,9 +828,18 @@ class AppliedPatchChangeData(StrictToolModel):
     newPath: StrictStr | None = None
 
 
+class PossibleSyntaxError(StrictToolModel):
+    path: StrictStr
+    line: StrictInt = Field(ge=1)
+    column: StrictInt = Field(ge=1)
+    message: StrictStr
+
+
 class ApplyPatchResultData(WorkspaceResultData):
     SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = ("changes",)
     changes: tuple[AppliedPatchChangeData, ...] | None = None
+    # Advisory parse errors this patch introduced; the patch is already applied.
+    possibleSyntaxErrors: tuple[PossibleSyntaxError, ...] | None = None
 
 
 class SkillInvocationMetadata(StrictToolModel):

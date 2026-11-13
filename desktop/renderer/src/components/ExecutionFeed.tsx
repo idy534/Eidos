@@ -3067,6 +3067,7 @@ function toolSummary(
     memory_read: "读取记忆",
     memory_edit: args.action === "delete" ? "删除记忆" : "保存记忆",
     read_tool_output: "查看工具输出",
+    search_history: query ? `搜索会话历史 "${query}"` : "搜索会话历史",
     skill_read: skillName ? `${skillName}技能 SKILL.md` : "技能 SKILL.md",
     skill_read_resource: skillName ? `${skillName}技能包` : "技能包",
   };
@@ -3079,6 +3080,8 @@ function toolSummary(
     : toolCall.toolName === "tool_search"
     ? baseLabels[toolCall.toolName]
     : toolCall.toolName === "request_permissions"
+    ? baseLabels[toolCall.toolName]
+    : toolCall.toolName === "search_history"
     ? baseLabels[toolCall.toolName]
     : (path || query || baseLabels[toolCall.toolName] || toolCall.toolName);
   if (isReconciliationGate(result)) {
@@ -3104,6 +3107,9 @@ function toolSummary(
     delete_file: running ? `正在删除 ${editFileName || "文件"}` : `已删除 ${editFileName || "文件"}`,
     declare_outputs: running ? "正在声明产物" : result.outcome === "success" ? "已声明产物" : "产物声明未完成",
     read_tool_output: "正在查看工具输出",
+    search_history: running
+      ? (query ? `正在搜索会话历史 "${query}"` : "正在搜索会话历史")
+      : (query ? `已搜索会话历史 "${query}"` : "已搜索会话历史"),
     skill_read: running
       ? (skillName ? `正在读取${skillName}技能 SKILL.md` : "正在读取技能 SKILL.md")
       : (skillName ? `已读取${skillName}技能 SKILL.md` : "已读取技能 SKILL.md"),

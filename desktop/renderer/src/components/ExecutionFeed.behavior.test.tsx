@@ -1757,6 +1757,46 @@ describe("ExecutionFeed skill and read_tool_output rendering", () => {
     expect(row.closest(".tool-item--read-done")).not.toBeNull();
   });
 
+  it.each([
+    ["running", "in_progress", '正在搜索会话历史 "deploy token"'],
+    ["completed", "completed", '已搜索会话历史 "deploy token"'],
+  ] as const)("labels a %s search_history call with its query", (toolStatus, itemStatus, label) => {
+    const item: Item = {
+      id: `tool-sh-${toolStatus}`,
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 1,
+      kind: "tool_call",
+      status: itemStatus,
+      createdAt: 1000,
+      toolCall: {
+        id: `tc-sh-${toolStatus}`,
+        itemId: `tool-sh-${toolStatus}`,
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: `p-sh-${toolStatus}`,
+        toolName: "search_history",
+        status: toolStatus === "running" ? "running" : "completed",
+        startedAt: 1000,
+        ...(toolStatus === "completed" ? { completedAt: 1100 } : {}),
+        argumentsJson: JSON.stringify({ query: "deploy token" }),
+        ...(toolStatus === "completed"
+          ? { resultJson: JSON.stringify({ outcome: "success", code: "ok", data: { query: "deploy token", matches: [], complete: true } }) }
+          : {}),
+      },
+    };
+
+    render(
+      <ExecutionFeed
+        items={[item]}
+        runs={[toolStatus === "running" ? { ...baseRun, status: "running" } : baseRun]}
+        approvals={[]}
+      />,
+    );
+
+    expect(screen.getByText(label)).toBeInTheDocument();
+  });
+
   it("renders skill_read and opens skill detail dialog when skill name button is clicked", async () => {
     const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
     const readSkillDetail = vi.fn().mockResolvedValue({

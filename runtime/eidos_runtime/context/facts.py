@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from eidos_runtime.domain.input_reference import InputReference
 from eidos_runtime.model.response_phase import AssistantMessagePhase
@@ -46,6 +46,25 @@ class CompactContinuityNote(EidosFrozenStrictModel):
         return self
 
 
+HandoffLine = Annotated[str, Field(min_length=1, max_length=300)]
+
+
+class CompactHandoff(EidosFrozenStrictModel):
+    """The summarizer's account of the work in progress.
+
+    It is an interpretation of the cited sources, never a confirmed fact. Each
+    compaction replaces it as a whole, so it never describes an older state.
+    """
+
+    current_work: str = Field(min_length=1, max_length=600)
+    approach: str | None = Field(default=None, max_length=600, exclude_if=lambda value: value is None)
+    progress: tuple[HandoffLine, ...] = Field(default=(), max_length=6)
+    open_questions: tuple[HandoffLine, ...] = Field(default=(), max_length=4)
+    source_item_ids: tuple[Annotated[str, Field(min_length=1, max_length=256)], ...] = Field(
+        min_length=1, max_length=8,
+    )
+
+
 class _Fact(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
@@ -89,6 +108,7 @@ class CompactSummary(_Fact):
     continuity_notes: tuple[CompactContinuityNote, ...] = Field(
         default=(), max_length=128, exclude_if=lambda value: not value,
     )
+    handoff: CompactHandoff | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ReconciliationOrigin(_Fact):

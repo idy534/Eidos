@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from eidos_runtime.domain.planning import RequestUserInput
 
 from eidos_runtime.protocol.tool_text import project_tool_text
-from eidos_runtime.context.facts import CompactContinuityNote, CompactSummary
+from eidos_runtime.context.facts import CompactContinuityNote, CompactHandoff, CompactSummary
 from eidos_runtime.persistence.errors import PersistenceCorruptionError
 from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.protocol.schemas import (
@@ -192,6 +192,8 @@ def _compact_summary_from_row(row: sqlite3.Row | None) -> CompactSummary | None:
         if not isinstance(notes, list) or len(notes) > 128:
             raise ValueError("invalid continuity notes")
         continuity_notes = tuple(CompactContinuityNote.model_validate_json(json.dumps(note)) for note in notes)
+        handoff = (CompactHandoff.model_validate_json(json.dumps(metadata["handoff"]))
+                   if "handoff" in metadata else None)
     except (ValueError, TypeError) as error:
         raise PersistenceCorruptionError("persistence_record_invalid", record="compact_summary") from error
 
@@ -209,6 +211,7 @@ def _compact_summary_from_row(row: sqlite3.Row | None) -> CompactSummary | None:
         pending_approvals=metadata_tuple("pending_approvals"),
         uncertain_side_effects=metadata_tuple("uncertain_side_effects"),
         continuity_notes=continuity_notes,
+        handoff=handoff,
     )
 
 def _run_from_row(
