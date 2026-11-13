@@ -1,6 +1,6 @@
 import { isQoderConnectionRequest } from "../shared/qoder.js";
 import { validateSessionCreateOptions } from "./session-create-options.js";
-import { isGitWorkspaceRequest, isProjectCreateFoldersRequest, isProjectReadRequest, isProjectUpdateRequest } from "../shared/project-workspaces.js";
+import { isGitWorkspaceRequest, isProjectCreateFoldersRequest, isProjectGitContextBinding, isProjectReadRequest, isProjectUpdateRequest } from "../shared/project-workspaces.js";
 import { isShellEnvironmentReadRequest, isShellEnvironmentRefreshRequest, isShellEnvironmentSaveRequest } from "../shared/shell-environment.js";
 import { isPersonalizationReadRequest, isPersonalizationSaveRequest } from "../shared/personalization.js";
 import { isHookConfigurationRequest, isHookHistoryRequest } from "../shared/hooks.js";
@@ -793,9 +793,11 @@ ipcMain.handle(IPC.WORKTREE_SETTINGS_UPDATE, (_event, input: unknown) => {
   const settings = input as { automaticCleanup: boolean; managedWorktreeLimit: number };
   return clientOrThrow().updateWorktreeSettings(settings);
 });
-ipcMain.handle(IPC.PROJECT_GIT_CONTEXT, (_event, workspaceRoot: unknown) => {
-  if (typeof workspaceRoot !== "string") throw new Error("Workspace 参数无效。");
-  return clientOrThrow().readProjectGitContext(workspaceRoot);
+ipcMain.handle(IPC.PROJECT_GIT_CONTEXT, (_event, target: unknown) => {
+  if (typeof target !== "string" && !isProjectGitContextBinding(target)) {
+    throw new Error("Git 目标参数无效。");
+  }
+  return clientOrThrow().readProjectGitContext(target);
 });
 ipcMain.handle(IPC.SESSION_RENAME, (_event, sessionId: unknown, title: unknown) => {
   if (typeof sessionId !== "string" || typeof title !== "string") {

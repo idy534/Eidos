@@ -9,10 +9,13 @@ const schema = JSON.parse(execFileSync(path.join(root, ".venv/bin/python"), ["-c
 import json
 from eidos_runtime.protocol.schemas import ClosedModel, ProjectDto
 from eidos_runtime.protocol.git_workspaces import GitWorkspaceContract
+from eidos_runtime.protocol.methods import GitContextRequestDto, GitContextResponseDto
 from eidos_runtime.protocol.project_workspaces import ProjectReadRequest, ProjectUpdateRequest, ProjectCreateFoldersRequest
 class ProjectWorkspaceContract(ClosedModel):
     project: ProjectDto
     git: GitWorkspaceContract
+    git_context_request: GitContextRequestDto
+    git_context_response: GitContextResponseDto
     read_request: ProjectReadRequest
     update_request: ProjectUpdateRequest
     create_request: ProjectCreateFoldersRequest

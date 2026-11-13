@@ -1,5 +1,5 @@
 import { isQoderConnectionState, isQoderModelSettings, type QoderConnectionRequest, type QoderConnectionState } from "../shared/qoder.js";
-import { isProjectRoot, isProjectWorkspace, type ProjectUpdateRequest, type ProjectCreateFoldersRequest, type GitWorkspaceRequest, type GitWorkspaceContract } from "../shared/project-workspaces.js";
+import { isProjectGitContext, isProjectRoot, isProjectWorkspace, type ProjectGitContextBinding, type ProjectUpdateRequest, type ProjectCreateFoldersRequest, type GitWorkspaceRequest, type GitWorkspaceContract } from "../shared/project-workspaces.js";
 import { isShellEnvironmentResponse, type ShellEnvironmentReadRequest, type ShellEnvironmentRefreshRequest, type ShellEnvironmentSaveRequest, type ShellEnvironmentResponse } from "../shared/shell-environment.js";
 import { isPersonalizationResponse, type PersonalizationReadRequest, type PersonalizationSaveRequest, type PersonalizationResponse } from "../shared/personalization.js";
 import { isHookActivity, isHookActivityPage, isHookSourceList, isPluginHookReview, isPluginCompatibility } from "../shared/hooks.js";
@@ -515,9 +515,9 @@ export class RuntimeClient {
     return this.validatedRequest("settings/update", input, isWorktreeSettings);
   }
 
-  readProjectGitContext(workspaceRoot: string): Promise<ProjectGitContext> {
+  readProjectGitContext(target: string | ProjectGitContextBinding): Promise<ProjectGitContext> {
     return this.validatedRequest(
-      "project/gitContext", { workspaceRoot }, isProjectGitContext,
+      "project/gitContext", typeof target === "string" ? { workspaceRoot: target } : { ...target }, isProjectGitContext,
     );
   }
 
@@ -2034,22 +2034,6 @@ function isWorkspaceFilePreview(value: unknown): value is WorkspaceFilePreview {
     && (value.content === undefined || typeof value.content === "string")
     && (value.language === undefined || typeof value.language === "string")
     && (value.reason === undefined || ["binary", "unsupported"].includes(String(value.reason)))
-  );
-}
-
-function isProjectGitContext(value: unknown): value is ProjectGitContext {
-  return (
-    isRecord(value)
-    && hasOnlyKeys(value, [
-      "gitAvailable", "currentBranch", "head", "branches", "dirty", "changedFileCount",
-    ])
-    && typeof value.gitAvailable === "boolean"
-    && (value.currentBranch === null || typeof value.currentBranch === "string")
-    && (value.head === null || typeof value.head === "string")
-    && Array.isArray(value.branches)
-    && value.branches.every((branch) => typeof branch === "string")
-    && typeof value.dirty === "boolean"
-    && isNonNegativeInteger(value.changedFileCount)
   );
 }
 

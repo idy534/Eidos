@@ -27,6 +27,7 @@ export interface GitReviewState {
 export interface GitReviewActions {
   selectScope(scope: GitDiffScope): void;
   refresh(): void;
+  invalidateCachedStatuses(sessionIds: readonly string[]): void;
   handleNotification(notification: RuntimeNotification): void;
   clearError(): void;
 }
@@ -226,6 +227,15 @@ export function useGitReviewController({
     }
   }, [loadSummary]);
 
+  const invalidateCachedStatuses = useCallback((sessionIds: readonly string[]) => {
+    setStatusBySessionId((previous) => {
+      if (!sessionIds.some((id) => previous.has(id))) return previous;
+      const remaining = new Map(previous);
+      for (const id of sessionIds) remaining.delete(id);
+      return remaining;
+    });
+  }, []);
+
   const handleNotification = useCallback((notification: RuntimeNotification): void => {
     const sessionId = selectedSessionIdRef.current;
     if (
@@ -286,6 +296,12 @@ export function useGitReviewController({
     }
   }, []);
 
+  useEffect(() => {
+    if (!ready || !session?.project?.gitAvailable) return;
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [ready, refresh, session?.project?.gitAvailable]);
+
   return [{
     scope,
     status,
@@ -298,6 +314,7 @@ export function useGitReviewController({
   }, {
     selectScope,
     refresh,
+    invalidateCachedStatuses,
     handleNotification,
     clearError: () => setError(undefined),
   }] as const;

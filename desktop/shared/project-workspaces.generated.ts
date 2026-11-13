@@ -92,10 +92,13 @@ export type Operationid3 = string | null;
 export type Rootid7 = string | null;
 export type Sessionid6 = string;
 export type Message = string;
+export type Sessionid7 = string;
+export type Projectid2 = string | null;
 export type Operationid4 = string;
 export type Rootid8 = string | null;
-export type Sessionid7 = string;
 export type Branch = string;
+export type Expectedbranch = string | null;
+export type Expectedhead = string | null;
 export type Operationid5 = string;
 export type Rootid9 = string | null;
 export type Sessionid8 = string;
@@ -250,8 +253,20 @@ export type Head13 = string;
 export type Branch16 = string | null;
 export type Operationstate4 = "none" | "merge" | "rebase";
 export type Conflictfiles5 = string[];
-export type Projectid2 = string;
-export type Projectid3 = string;
+export type Workspaceroot1 = string | null;
+export type Projectid3 = string | null;
+export type Rootid19 = string | null;
+export type Gitavailable1 = boolean;
+export type Currentbranch = string | null;
+export type Head14 = string | null;
+export type Branches = string[];
+export type Dirty2 = boolean;
+export type Changedfilecount = number;
+export type Repositoryroot1 = string | null;
+export type Switchblockedreason = ("dirty" | "busy" | "operation" | "unborn") | null;
+export type Occupiedbranches = string[] | null;
+export type Projectid4 = string;
+export type Projectid5 = string;
 export type Operationid14 = string;
 export type Expectedrevision = number;
 export type Name2 = string | null;
@@ -275,6 +290,8 @@ export type Primaryrootid2 = string;
 export interface ProjectWorkspaceContract {
   project: ProjectDto;
   git: GitWorkspaceContract;
+  git_context_request: GitContextRequestDto;
+  git_context_response: GitContextResponseDto;
   read_request: ProjectReadRequest;
   update_request: ProjectUpdateRequest;
   create_request: ProjectCreateFoldersRequest;
@@ -356,10 +373,13 @@ export interface SessionGitCommitRequestDto {
   message: Message;
 }
 export interface SessionGitSwitchBranchRequestDto {
+  sessionId: Sessionid7;
+  projectId?: Projectid2;
   operationId: Operationid4;
   rootId?: Rootid8;
-  sessionId: Sessionid7;
   branch: Branch;
+  expectedBranch?: Expectedbranch;
+  expectedHead?: Expectedhead;
 }
 export interface SessionGitCreateBranchRequestDto {
   operationId: Operationid5;
@@ -576,11 +596,27 @@ export interface SessionGitRebaseAbortResponseDto {
   operationState: Operationstate4;
   conflictFiles: Conflictfiles5;
 }
+export interface GitContextRequestDto {
+  workspaceRoot?: Workspaceroot1;
+  projectId?: Projectid3;
+  rootId?: Rootid19;
+}
+export interface GitContextResponseDto {
+  gitAvailable: Gitavailable1;
+  currentBranch: Currentbranch;
+  head: Head14;
+  branches: Branches;
+  dirty: Dirty2;
+  changedFileCount: Changedfilecount;
+  repositoryRoot?: Repositoryroot1;
+  switchBlockedReason?: Switchblockedreason;
+  occupiedBranches?: Occupiedbranches;
+}
 export interface ProjectReadRequest {
-  projectId: Projectid2;
+  projectId: Projectid4;
 }
 export interface ProjectUpdateRequest {
-  projectId: Projectid3;
+  projectId: Projectid5;
   operationId: Operationid14;
   expectedRevision: Expectedrevision;
   name?: Name2;

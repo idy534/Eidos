@@ -4,7 +4,7 @@ from eidos_runtime.domain.project_workspace import SessionRoot
 
 import hashlib
 from collections.abc import Callable
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import logging
@@ -63,8 +63,10 @@ from eidos_runtime.domain.worktree import (
     WorktreeOwnership,
     WorktreeState,
 )
-from eidos_runtime.git.errors import WorktreeError
+from eidos_runtime.git.backend import GitBackend
+from eidos_runtime.git.errors import GitCommandTimeoutError, GitError, WorktreeError
 from eidos_runtime.git.models import (
+    GitOperationState,
     GitRepositoryContext,
     GitRepositoryDiscovery,
     GitSourceSnapshot,
@@ -345,6 +347,8 @@ class RepositoryWorkspaceRuntimePort(Protocol):
 
 class ManagedWorktreePort(Protocol):
     """Application port for Session-owned Worktree provisioning."""
+
+    git: GitBackend
 
     def resolve_project(
         self, workspace_seed: Path | str
@@ -1988,9 +1992,12 @@ class SessionApplication:
         preflight: Callable[[], GitPlanT],
         execute: Callable[[GitPlanT], ResultT],
         after_execute: Callable[[GitPlanT], None] | None = None,
+        branch_checkout_root: Path | None = None,
     ) -> ResultT:
         operation_request = request.to_json_value()
         operation_request.pop("operationId", None)
+        if isinstance(request, SessionGitSwitchBranchRequestDto) and request.project_id is not None:
+            operation_request.pop("sessionId", None)
         operation_guard = (
             self._lifecycle.hold_operation(scope, request.operation_id)
             if request.operation_id is not None
@@ -2006,7 +2013,12 @@ class SessionApplication:
                 )
                 if replay is not None:
                     return replay
-            with self._lifecycle.hold(request.session_id):
+            workspace_guard = (
+                self._lifecycle.hold_workspace(branch_checkout_root)
+                if branch_checkout_root is not None
+                else nullcontext()
+            )
+            with self._lifecycle.hold(request.session_id), workspace_guard:
                 plan = preflight()
                 if request.operation_id is not None:
                     try:
@@ -2017,7 +2029,18 @@ class SessionApplication:
                         raise ApplicationError("OPERATION_ID_REUSED") from error
                     except OperationInProgressError as error:
                         raise ApplicationError("OPERATION_IN_PROGRESS") from error
-                result = execute(plan)
+                try:
+                    result = execute(plan)
+                except ApplicationError as error:
+                    if branch_checkout_root is not None and request.operation_id is not None:
+                        self._store.fail_operation(
+                            request.operation_id, scope, operation_request, error_code=error.code,
+                            side_effects_may_exist=error.code not in {
+                                "GIT_BRANCH_CHANGED", "GIT_BRANCH_OCCUPIED", "GIT_CHECKOUT_CONFLICT",
+                                "GIT_OPERATION_IN_PROGRESS", "GIT_WORKFLOW_BUSY", "GIT_WORKTREE_DIRTY",
+                            },
+                        )
+                    raise
                 if after_execute is not None:
                     after_execute(plan)
             if request.operation_id is None:
@@ -2047,30 +2070,45 @@ class SessionApplication:
         session = self._repository.read_session(request.session_id)
         if session is None:
             raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
-        workspace_lock = (
-            self._lifecycle.hold_workspace(session.workspace_root)
-            if session.worktree_id is None
-            else nullcontext()
-        )
-        with workspace_lock:
-            return self._execute_git_mutation(
-                request,
-                scope=scope,
-                result_type=result_type,
-                preflight=preflight,
-                execute=execute,
-                after_execute=lambda plan: self._invalidate_repository_workspace(
-                    plan.root
-                ),
+        checkout_root = None
+        if session.worktree_id is None:
+            first_root = session.roots[0] if session.roots else None
+            checkout_root = Path(
+                (first_root.repository_root if first_root is not None else None)
+                or session.workspace_root
             )
 
-    def _invalidate_repository_workspace(self, root: Path) -> None:
+        def check_target() -> GitBranchPlan:
+            if isinstance(request, SessionGitSwitchBranchRequestDto) and request.project_id is not None:
+                current = self.for_git_request(request)._repository.read_session(request.session_id)
+                if current is None or current.roots != session.roots:
+                    raise ApplicationError("WORKSPACE_IDENTITY_CHANGED")
+            plan = preflight()
+            if checkout_root is not None and checkout_root != plan.root:
+                raise ApplicationError("WORKSPACE_IDENTITY_CHANGED")
+            return plan
+
+        return self._execute_git_mutation(
+            request,
+            scope=scope,
+            result_type=result_type,
+            preflight=check_target,
+            execute=execute,
+            after_execute=lambda plan: self._invalidate_repository_workspace(
+                plan.root, *(Path(root.path) for root in plan.session.roots
+                             if root.repository_root == str(plan.root))
+            ),
+            branch_checkout_root=checkout_root,
+        )
+
+    def _invalidate_repository_workspace(self, *roots: Path) -> None:
         if self._repository_runtime is None:
             return
-        self._repository_runtime.invalidate(
-            root,
-            (RepositoryChange(path=".git/HEAD", change="modified"),),
-        )
+        for root in dict.fromkeys(roots):
+            self._repository_runtime.invalidate(
+                root,
+                (RepositoryChange(path=".git/HEAD", change="modified"),),
+            )
 
     def _git_operation_replay(
         self,
@@ -2092,7 +2130,7 @@ class SessionApplication:
     def handoff(
         self, request: SessionHandoffRequestDto
     ) -> SessionHandoffResponseDto:
-        manager = self._require_manager()
+        self._require_manager()
         target_mode = SessionExecutionMode(request.target)
         scope = (
             SessionHandoffScope.LOCAL
@@ -2101,7 +2139,7 @@ class SessionApplication:
         )
         operation_id = request.operation_id or f"handoff-{uuid.uuid4().hex}"
         with self._lifecycle.hold_operation(scope.value, operation_id):
-            with self._lifecycle.hold(request.session_id):
+            with self._lifecycle.hold(request.session_id), ExitStack() as guards:
                 session = self._repository.read_session(request.session_id)
                 if session is None:
                     raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
@@ -2125,10 +2163,27 @@ class SessionApplication:
                             "Session is already using the requested execution mode",
                         )
                     self._repository.assert_session_idle(request.session_id)
+                    checkout = None
+                    if target_mode is SessionExecutionMode.LOCAL and (
+                        operation is None or operation.state not in {
+                            SessionHandoffState.COMPLETED, SessionHandoffState.CLEANUP_REQUIRED,
+                        }
+                    ):
+                        if operation is None:
+                            resolution = self._resolve_session_project(session)
+                            if resolution.git is None:
+                                raise WorktreeError("handoff_not_supported")
+                            checkout = resolution.git.repository_root
+                        else:
+                            checkout = operation.target_root
+                        guards.enter_context(self._lifecycle.hold_workspace(checkout))
+                        self._assert_handoff_local_available(checkout)
                     if operation is None:
                         plan = self._build_handoff_plan(
                             session, target_mode, operation_id
                         )
+                        if checkout is not None and checkout != plan.target_root:
+                            raise WorktreeError("handoff_target_changed")
                         now = _handoff_timestamp()
                         operation = handoffs.prepare(
                             SessionHandoffOperation(
@@ -2209,12 +2264,21 @@ class SessionApplication:
         recovered: list[SessionHandoffOperation] = []
         for operation in repository.list_unfinished():
             try:
-                with self._lifecycle.hold(operation.session_id):
+                with (
+                    self._lifecycle.hold_operation(operation.scope.value, operation.operation_id),
+                    self._lifecycle.hold(operation.session_id),
+                    ExitStack() as guards,
+                ):
                     current = repository.read(
                         operation.scope, operation.operation_id
                     )
-                    if current is None:
+                    if current is None or current.state in {
+                        SessionHandoffState.COMPLETED, SessionHandoffState.CLEANUP_REQUIRED,
+                    }:
                         continue
+                    if current.target_mode is SessionExecutionMode.LOCAL:
+                        guards.enter_context(self._lifecycle.hold_workspace(current.target_root))
+                        self._assert_handoff_local_available(current.target_root)
                     self._resume_handoff(current)
                     completed = repository.read(
                         operation.scope, operation.operation_id
@@ -2222,6 +2286,8 @@ class SessionApplication:
                     if completed is not None:
                         recovered.append(completed)
             except Exception as error:
+                if isinstance(error, ApplicationError) and error.code == "GIT_WORKFLOW_BUSY":
+                    continue
                 current = repository.read(operation.scope, operation.operation_id)
                 if current is None or current.state in {
                     SessionHandoffState.COMPLETED,
@@ -2392,6 +2458,10 @@ class SessionApplication:
             target_dirty=target.status.dirty,
             target_fingerprint=target.fingerprint,
         )
+
+    def _assert_handoff_local_available(self, checkout: str) -> None:
+        if self._repository.has_active_run_for_workspace(checkout):
+            raise ApplicationError("GIT_WORKFLOW_BUSY", "local checkout has an active Run")
 
     def _resume_handoff(
         self, operation: SessionHandoffOperation
@@ -2739,6 +2809,8 @@ class SessionApplication:
             )
 
     def git_context(self, request: GitContextRequestDto) -> GitContextResponseDto:
+        if request.project_id is not None:
+            return self._project_git_context(request.project_id, request.root_id)
         manager = self._worktree_manager
         if manager is None:
             return _result(
@@ -2752,6 +2824,7 @@ class SessionApplication:
                     changed_file_count=0,
                 ).model_dump(mode="json"),
             )
+        assert request.workspace_root is not None
         try:
             discovery = manager.discover(Path(request.workspace_root))
         except WorktreeError as error:
@@ -2794,6 +2867,60 @@ class SessionApplication:
                 "dirty": context.dirty,
                 "changedFileCount": context.changed_file_count,
             },
+        )
+
+    def _project_git_context(
+        self, project_id: str, root_id: str | None
+    ) -> GitContextResponseDto:
+        from eidos_runtime.application.git_workspace import resolve_project_git_root
+
+        manager = self._require_manager()
+        _, root = resolve_project_git_root(manager, project_id, root_id, primary_only=True)
+        if root.repository_root is None:
+            return GitContextResponseDto(
+                gitAvailable=False, currentBranch=None, head=None,
+                branches=[], dirty=False, changedFileCount=0,
+            )
+        repository_root = Path(root.repository_root)
+        try:
+            branch = manager.git.current_branch(repository_root)
+            branches = manager.git.local_branches(repository_root)
+            if branch is not None and branch not in branches:
+                return GitContextResponseDto(
+                    gitAvailable=True, currentBranch=branch, head=None,
+                    branches=list(branches), dirty=False, changedFileCount=0,
+                    repositoryRoot=root.repository_root, switchBlockedReason="unborn",
+                )
+            status = manager.git.status(repository_root)
+            occupied = sorted({
+                entry.branch for entry in manager.git.worktree_list(repository_root)
+                if entry.branch is not None and entry.worktree_root != root.repository_root
+            })
+            if self._repository.has_active_run_for_workspace(root.repository_root):
+                blocked = "busy"
+            elif manager.git.operation_state(repository_root) is not GitOperationState.NONE:
+                blocked = "operation"
+            elif status.dirty:
+                blocked = "dirty"
+            else:
+                blocked = None
+        except GitCommandTimeoutError as error:
+            raise ApplicationError("GIT_COMMAND_TIMEOUT") from error
+        except GitError as error:
+            raise ApplicationError("GIT_COMMAND_FAILED") from error
+        return GitContextResponseDto(
+            gitAvailable=True,
+            currentBranch=status.branch,
+            head=status.head,
+            branches=list(branches),
+            dirty=status.dirty,
+            changedFileCount=len(
+                set(status.staged_paths) | set(status.unstaged_paths)
+                | set(status.untracked_paths) | set(status.conflict_paths)
+            ),
+            repositoryRoot=root.repository_root,
+            switchBlockedReason=blocked,
+            occupiedBranches=occupied,
         )
 
     def rename(self, request: SessionRenameRequestDto) -> SessionRenameResponseDto:

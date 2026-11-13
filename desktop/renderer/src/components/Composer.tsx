@@ -3,7 +3,7 @@ import { canonicalizeInlineText } from "../../../shared/inline-references.js";
 import { InputReferenceCards, isInlineReference, isShelfReference, useInputContext, useReferenceActivation } from "./InputContext.js";
 import { InlineRichEditor } from "./InlineRichEditor.js";
 import { InputPicker, type InputPickerMode, LightbulbIcon, TargetGoalIcon } from "./InputPicker.js";
-import { forwardRef, useCallback, useState, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
+import { forwardRef, useCallback, useState, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import type { ApprovalMode, ContextUsage, ModelId, ModelReasoningSelection, Run, Session } from "../contracts.js";
 import type { ComposerMode } from "../session-state.js";
 import { formatContextUsage } from "../context-usage.js";
@@ -15,6 +15,11 @@ import { ToastContainer } from "./ToastContainer.js";
 import { ModelSelector } from "./ModelSelector.js";
 import { Tooltip } from "./Tooltip.js";
 import { AgentEditorDialog } from "./settings/AgentEditorDialog.js";
+import { RefreshIcon } from "./settings/ChannelIcons.js";
+import { DropdownMenu } from "./DropdownMenu.js";
+import { MoreHorizontalIcon } from "./MenuIcons.js";
+import { LocalIcon, WorktreeIcon } from "./ExecutionModeIcons.js";
+import type { DraftGitView } from "../app/useDraftGit.js";
 
 export type ComposerWorkMode = "execute" | "plan" | "goal";
 
@@ -55,6 +60,7 @@ export interface ComposerProps {
   branches?: string[] | undefined;
   onBranchChange?: ((branch: string) => void) | undefined;
   branchChanging?: boolean;
+  draftGit?: DraftGitView | undefined;
   onSelectProject?: (() => void) | undefined;
   onLeaveProject?: (() => void) | undefined;
   onExecutionModeChange?: ((mode: "local" | "worktree") => void) | undefined;
@@ -97,6 +103,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   branches,
   onBranchChange,
   branchChanging = false,
+  draftGit,
   onSelectProject,
   onLeaveProject,
   onExecutionModeChange,
@@ -333,6 +340,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
     || composerMode === "read_only"
     || !modelConfigured
     || !selectedModelId
+    || (executionMode === "worktree" && Boolean(draftGit?.context && !draftGit.context.head))
     || (!input.trim() && references.length === 0);
 
   const hasProjectContext = showSessionContext && (project !== undefined || projectless);
@@ -340,6 +348,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   const modelReasoning = selectedModel?.reasoning ?? undefined;
   const selectedReasoning = reasoningSelection ?? modelReasoning?.defaultSelection ?? undefined;
   const projectName = project?.name?.trim() || (project ? basename(project.workspaceRoot) : undefined);
+  const gitAvailable = draftGit?.context?.gitAvailable ?? project?.gitAvailable;
 
   return (
     <form
@@ -369,9 +378,10 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
                 )}
                 <span>{projectName}</span>
               </span>
-              {project.gitAvailable && (
+              {gitAvailable && (
                 <>
                   <label className="composer-context-mode">
+                    {executionMode === "worktree" ? <WorktreeIcon /> : <LocalIcon />}
                     <span className="sr-only">执行方式</span>
                     <select
                       aria-label="执行方式"
@@ -380,10 +390,12 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
                       onChange={(event) => onExecutionModeChange?.(event.target.value as "local" | "worktree")}
                     >
                       <option value="local">本地</option>
-                      <option value="worktree">新建本地工作树</option>
+                      <option value="worktree" disabled={Boolean(draftGit && !draftGit.context?.head)}>新建本地工作树</option>
                     </select>
                   </label>
-                  {onBranchChange && branches && branches.length > 0 ? (
+                  {draftGit ? (
+                    <DraftBranchControl view={draftGit} worktree={executionMode === "worktree"} disabled={isSubmitting || !isIdle} />
+                  ) : onBranchChange && branches && branches.length > 0 ? (
                     <label className="composer-context-branch">
                       <BranchIcon />
                       <span className="sr-only">本地分支</span>
@@ -404,6 +416,9 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
                     </span>
                   )}
                 </>
+              )}
+              {!gitAvailable && draftGit?.error && (
+                <DraftBranchControl view={draftGit} worktree={false} disabled={isSubmitting} />
               )}
             </>
           ) : (
@@ -711,6 +726,148 @@ function FolderIcon() {
     <svg viewBox="0 0 20 20" width="20" height="20" fill="none" aria-hidden="true">
       <path d="M2.5 5C2.5 3.9 3.4 3 4.5 3h3.1c.5 0 1 .2 1.3.6L10 5h5.5C16.9 5 18 6.1 18 7.5v7C18 15.9 16.9 17 15.5 17h-11C3.1 17 2 15.9 2 14.5v-9c0-.3.2-.5.5-.5Z" fill="currentColor" fillOpacity=".12" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
     </svg>
+  );
+}
+
+type BranchBlocker = NonNullable<NonNullable<DraftGitView["context"]>["switchBlockedReason"]>;
+
+interface BranchStatus {
+  title: string;
+  details: string[];
+  retry?: boolean;
+}
+
+const BRANCH_BLOCKED_STATUS: Record<BranchBlocker, { title: string; detail: string }> = {
+  dirty: { title: "有未提交改动 · 本地切换不可用", detail: "请先提交改动或使用 Git stash，再切换本地分支。" },
+  busy: { title: "目录正在使用 · 本地切换不可用", detail: "这个目录还有排队或运行中的任务。" },
+  operation: { title: "Git 操作未完成 · 本地切换不可用", detail: "请先完成当前 Git 操作。" },
+  unborn: { title: "尚无提交", detail: "首次提交后可以新建工作树。" },
+};
+
+function draftBranchStatus(blocker: BranchBlocker | undefined, dirty: boolean, selectedMissing: boolean): BranchStatus | undefined {
+  if (selectedMissing) return { title: "所选分支已不存在", details: ["请选择其他分支，或刷新 Git 状态。"] };
+  if (!blocker) return undefined;
+  const { title, detail } = BRANCH_BLOCKED_STATUS[blocker];
+  return { title, details: blocker !== "dirty" && dirty ? [detail, "工作区另有未提交改动。"] : [detail] };
+}
+
+/** Git status for the branch trigger, shown in a hover card rather than inline in the composer. */
+function BranchStatusCard({ status, onRefresh, disabled }: { status: BranchStatus; onRefresh: () => void; disabled: boolean }) {
+  return (
+    <span className="composer-git-card">
+      <span className="composer-git-card__title">{status.title}</span>
+      <button type="button" className="composer-git-card__action" aria-label={status.retry ? "重新读取 Git 状态" : "刷新 Git 状态"}
+        onClick={onRefresh} disabled={disabled}>
+        <RefreshIcon size={12} />
+        {status.retry ? "重试" : "刷新"}
+      </button>
+      {status.details.map((detail) => <span key={detail} className="composer-git-card__detail">{detail}</span>)}
+    </span>
+  );
+}
+
+/** Same dot as the sidebar's dirty indicator: tells the user the branch has a status to hover. */
+function BranchStatusDot() {
+  return <span className="git-dirty-indicator composer-branch-status" aria-hidden="true" />;
+}
+
+function DraftBranchControl({ view, worktree, disabled }: { view: DraftGitView; worktree: boolean; disabled: boolean }) {
+  const { context, error } = view;
+  const statusId = useId();
+  if (!context) {
+    return error ? (
+      <Tooltip interactive className="composer-git-tooltip"
+        content={<BranchStatusCard status={{ title: "无法读取 Git 状态", details: [error], retry: true }} onRefresh={view.onRefresh} disabled={disabled} />}>
+        <span className="composer-context-branch composer-context-branch--muted" tabIndex={0} aria-describedby={statusId}
+          onFocus={disabled ? undefined : view.onRefresh}>
+          <BranchIcon />
+          <span>Git 状态不可用</span>
+          <BranchStatusDot />
+          <span id={statusId} className="sr-only">{error}</span>
+        </span>
+      </Tooltip>
+    ) : (
+      <span className="composer-context-branch composer-context-branch--muted" role="status">
+        <BranchIcon />
+        <span>正在读取 Git…</span>
+      </span>
+    );
+  }
+  const currentLabel = context.currentBranch ?? "分离 HEAD";
+  const selected = worktree ? view.selectedBase ?? "" : context.currentBranch ?? "";
+  const branchLabel = worktree ? "起点分支" : "当前分支";
+  const selectedMissing = Boolean(selected && !context.branches.includes(selected));
+  const blocker = worktree ? undefined : context.switchBlockedReason ?? (context.dirty ? "dirty" : undefined);
+  const status = draftBranchStatus(blocker, context.dirty, selectedMissing);
+  const selectDisabled = disabled || Boolean(blocker);
+  // The worktree base defaults to the current checkout, listed first under its branch name; the
+  // current branch is not repeated below it, so an explicit pick of it shows as that first option.
+  const displayValue = worktree && selected === context.currentBranch ? "" : selected;
+  const otherBranches = worktree ? context.branches.filter((name) => name !== context.currentBranch) : context.branches;
+  const hoverContent = status
+    ? <BranchStatusCard status={status} onRefresh={view.onRefresh} disabled={disabled} />
+    : `${branchLabel}：${displayValue || currentLabel}`;
+  const statusText = status ? <span id={statusId} className="sr-only">{[status.title, ...status.details].join("。")}</span> : null;
+  return (
+    // Branch and its "⋯" wrap to the next line together in a narrow composer.
+    <span className="composer-branch-group">
+      {context.head && context.branches.length > 0 ? (
+        <Tooltip interactive className={status ? "composer-git-tooltip" : ""} content={hoverContent}>
+          <label
+            className="composer-context-branch composer-context-branch--draft"
+            // A disabled select cannot take focus; keep the trigger reachable so keyboard users get the status and a refresh.
+            tabIndex={status && selectDisabled ? 0 : undefined}
+            onFocus={disabled ? undefined : view.onRefresh}
+          >
+            <BranchIcon />
+            <span className="sr-only">{branchLabel}</span>
+            <select
+              aria-label={branchLabel}
+              aria-describedby={status ? statusId : undefined}
+              value={displayValue}
+              disabled={selectDisabled}
+              onChange={(event) => view.onSelectBranch(event.target.value)}
+            >
+              {(worktree || !context.currentBranch) && <option value="">{currentLabel}</option>}
+              {selectedMissing && <option value={selected} disabled>{selected}（分支已不存在）</option>}
+              {otherBranches.map((name) => {
+                const occupied = !worktree && name !== context.currentBranch && context.occupiedBranches?.includes(name);
+                return <option key={name} value={name} disabled={occupied}>{name}{occupied ? "（其他工作树使用中）" : ""}</option>;
+              })}
+            </select>
+            {status && <BranchStatusDot />}
+            {statusText}
+          </label>
+        </Tooltip>
+      ) : (
+        <Tooltip interactive className={status ? "composer-git-tooltip" : ""} content={status ? hoverContent : undefined}>
+          <span className="composer-context-branch" title={status ? undefined : currentLabel}
+            tabIndex={status ? 0 : undefined} onFocus={status && !disabled ? view.onRefresh : undefined}>
+            <BranchIcon />
+            <span>{currentLabel}{!context.head ? " · 尚无提交" : ""}</span>
+            {status && <BranchStatusDot />}
+            {statusText}
+          </span>
+        </Tooltip>
+      )}
+      {worktree && view.canCopy && (
+        <DropdownMenu
+          className="composer-git-more"
+          triggerClassName={`composer-git-more__trigger${view.copyChanges ? " is-active" : ""}`}
+          triggerAriaLabel={view.copyChanges ? "更多工作树选项：将复制当前未提交改动" : "更多工作树选项"}
+          title={view.copyChanges ? "将复制当前未提交改动" : "更多选项"}
+          label="工作树选项"
+          trigger={<MoreHorizontalIcon />}
+          items={[{
+            key: "copy-changes",
+            label: "复制当前未提交改动",
+            checked: view.copyChanges,
+            disabled,
+            onClick: () => view.onCopyChanges(!view.copyChanges),
+          }]}
+        />
+      )}
+    </span>
   );
 }
 

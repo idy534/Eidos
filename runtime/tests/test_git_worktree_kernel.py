@@ -128,6 +128,34 @@ def test_create_persists_frozen_base_and_keeps_worktrees_isolated(
     assert manager.recover().updated_worktrees == ()
 
 
+def test_create_uses_actual_head_and_exact_local_branch_for_worktree_base(
+    tmp_path: Path, database: Database
+) -> None:
+    repository = _repository(tmp_path)
+    tag_commit = _git(repository, "rev-parse", "HEAD")
+    _git(repository, "tag", "feature")
+    _git(repository, "switch", "-qc", "feature")
+    (repository / "README.md").write_text("feature\n", encoding="utf-8")
+    _git(repository, "commit", "-qam", "feature content")
+    feature_commit = _git(repository, "rev-parse", "HEAD")
+    manager = WorktreeManager(database, managed_root=tmp_path / "managed")
+
+    default = manager.create(repository)
+    selected = manager.create(repository, base_ref="refs/heads/feature")
+    explicit_tag = manager.create(repository, base_ref="refs/tags/feature")
+
+    assert default.base_ref == "feature"
+    assert default.base_commit == selected.base_commit == feature_commit
+    assert explicit_tag.base_commit == tag_commit
+    assert (Path(default.worktree_root) / "README.md").read_text(encoding="utf-8") == "feature\n"
+    assert (Path(selected.worktree_root) / "README.md").read_text(encoding="utf-8") == "feature\n"
+
+    _git(repository, "tag", "refs/heads/deleted-branch")
+    with pytest.raises(WorktreeError) as error:
+        manager.create(repository, base_ref="refs/heads/deleted-branch")
+    assert error.value.code == "base_ref_not_found"
+
+
 def test_failed_worktree_observation_does_not_mutate_lifecycle_state(
     tmp_path: Path, database: Database
 ) -> None:

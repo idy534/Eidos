@@ -161,8 +161,24 @@ class _SessionGitBranchRequest(_GitRootRequest, _OperationRequest):
     )
 
 
-class SessionGitSwitchBranchRequestDto(_SessionGitBranchRequest):
-    pass
+class SessionGitSwitchBranchRequestDto(_SessionGitBranchRequest, _ProjectBoundSessionRequest):
+    expected_branch: StrictStr | None = Field(
+        default=None, alias="expectedBranch", min_length=1, max_length=4096
+    )
+    expected_head: StrictStr | None = Field(
+        default=None, alias="expectedHead", min_length=1, max_length=4096
+    )
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("operation_id",)
+
+    @model_validator(mode="after")
+    def _validate_branch_target(self) -> "SessionGitSwitchBranchRequestDto":
+        expected = {"expected_branch", "expected_head"}
+        if self.session_id.startswith("draft-"):
+            if self.root_id is None or not expected.issubset(self.model_fields_set):
+                raise ValueError("draft branch switch requires rootId and observed Git state")
+        elif self.project_id is not None or expected.intersection(self.model_fields_set):
+            raise ValueError("project binding and observed Git state are for draft branch switches")
+        return self
 
 
 class SessionGitCreateBranchRequestDto(_SessionGitBranchRequest):
@@ -170,9 +186,24 @@ class SessionGitCreateBranchRequestDto(_SessionGitBranchRequest):
 
 
 class GitContextRequestDto(MethodRequestDto):
-    workspace_root: StrictStr = Field(
-        alias="workspaceRoot", min_length=1, max_length=4096
+    workspace_root: StrictStr | None = Field(
+        default=None, alias="workspaceRoot", min_length=1, max_length=4096
     )
+    project_id: StrictStr | None = Field(
+        default=None, alias="projectId", min_length=1, max_length=256
+    )
+    root_id: StrictStr | None = Field(
+        default=None, alias="rootId", min_length=1, max_length=256
+    )
+
+    @model_validator(mode="after")
+    def _validate_git_context_target(self) -> "GitContextRequestDto":
+        if self.workspace_root is not None:
+            if self.project_id is not None or self.root_id is not None:
+                raise ValueError("workspaceRoot cannot be combined with a project binding")
+        elif self.project_id is None or self.root_id is None:
+            raise ValueError("project Git context requires projectId and rootId")
+        return self
 
 
 class ProjectListRequestDto(MethodRequestDto):
@@ -777,11 +808,16 @@ class SessionGitStatusResponseDto(MethodResultDto):
 
 class GitContextResponseDto(MethodResultDto):
     git_available: bool = Field(alias="gitAvailable")
-    current_branch: StrictStr | None = Field(default=None, alias="currentBranch")
-    head: StrictStr | None = None
+    current_branch: StrictStr | None = Field(alias="currentBranch")
+    head: StrictStr | None
     branches: list[StrictStr]
-    dirty: bool = False
-    changed_file_count: StrictInt = Field(default=0, alias="changedFileCount", ge=0)
+    dirty: bool
+    changed_file_count: StrictInt = Field(alias="changedFileCount", ge=0)
+    repository_root: StrictStr | None = Field(default=None, alias="repositoryRoot")
+    switch_blocked_reason: Literal["dirty", "busy", "operation", "unborn"] | None = Field(
+        default=None, alias="switchBlockedReason"
+    )
+    occupied_branches: list[StrictStr] | None = Field(default=None, alias="occupiedBranches")
 
     def to_json_value(self) -> dict[str, JsonValue]:
         value = super().to_json_value()

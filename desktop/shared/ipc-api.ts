@@ -1,5 +1,5 @@
 import type { QoderConnectionRequest, QoderConnectionState } from "./qoder.js";
-import type { ProjectUpdateRequest, ProjectCreateFoldersRequest, GitWorkspaceRequest, GitWorkspaceContract } from "./project-workspaces.js";
+import type { ProjectUpdateRequest, ProjectCreateFoldersRequest, GitWorkspaceRequest, GitWorkspaceContract, ProjectGitContextBinding } from "./project-workspaces.js";
 import type { ResourceStatus, ResourceRetryRequest, ResourceRetryResponse } from "./managed-resources.js";
 import type { ShellEnvironmentReadRequest, ShellEnvironmentRefreshRequest, ShellEnvironmentSaveRequest, ShellEnvironmentResponse } from "./shell-environment.js";
 import type { PersonalizationReadRequest, PersonalizationSaveRequest, PersonalizationResponse } from "./personalization.js";
@@ -204,7 +204,7 @@ export interface EidosRuntimeAPI {
     automaticCleanup: boolean;
     managedWorktreeLimit: number;
   }): Promise<WorktreeSettings>;
-  readProjectGitContext(workspaceRoot: string): Promise<ProjectGitContext>;
+  readProjectGitContext(target: string | ProjectGitContextBinding): Promise<ProjectGitContext>;
   renameSession(sessionId: string, title: string): Promise<Session>;
   deleteSession(sessionId: string): Promise<DeleteSessionResult>;
   readSessionGitStatus(sessionId: string): Promise<SessionGitStatus>;

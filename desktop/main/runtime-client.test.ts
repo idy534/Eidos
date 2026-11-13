@@ -15,7 +15,7 @@ import {
 } from "./runtime-client.js";
 import type { RuntimeNotification } from "./runtime-client.js";
 import type { Session } from "../shared/domain-contracts.js";
-import { isGitWorkspaceRequest } from "../shared/project-workspaces.js";
+import { isGitWorkspaceRequest, isProjectGitContext, isProjectGitContextBinding } from "../shared/project-workspaces.js";
 
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -493,6 +493,71 @@ test("shares draft Git review request fixtures with the Runtime", async () => {
   for (const { method, params } of Object.values(fixture.draftGitReview)) {
     const { rootId, ...parameters } = params;
     assert.equal(isGitWorkspaceRequest({ rootId, method, parameters }), true);
+  }
+});
+
+test("shares draft Git branch fixtures with the Runtime", async () => {
+  const { draftGitBranch: fixture } = JSON.parse(await readFile(protocolV1Fixture, "utf8"));
+  assert.equal(isProjectGitContextBinding(fixture.contextRequest.params), true);
+  assert.equal(isProjectGitContextBinding({ ...fixture.contextRequest.params, workspaceRoot: "/other" }), false);
+  assert.equal(isProjectGitContext(fixture.contextResponse.result), true);
+  const { rootId, ...parameters } = fixture.switchRequest.params;
+  assert.equal(isGitWorkspaceRequest({ rootId, method: fixture.switchRequest.method, parameters }), true);
+});
+
+test("switches a clean draft checkout and creates a worktree from a different branch", async () => {
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-draft-git-data-"));
+  const repository = await createGitRepository("eidos-draft-git-repo-");
+  let client: RuntimeClient | undefined;
+  try {
+    const git = (...args: string[]) => execFileAsync("git", args, { cwd: repository });
+    await git("switch", "-c", "topic");
+    await writeFile(path.join(repository, "README.md"), "# Topic checkout\n");
+    await git("commit", "-qam", "topic");
+    await git("switch", "main");
+    client = new RuntimeClient({ pythonExecutable, runtimeRoot: path.join(projectRoot, "runtime"), dataDirectory });
+    await client.initialize();
+    const rootId = "primary";
+    const project = await client.createProjectFolders({
+      operationId: randomUUID(), name: "Draft branch", primaryRootId: rootId,
+      roots: [{ id: rootId, path: repository }],
+    });
+    const binding = { projectId: project.id, rootId };
+    const before = await client.readProjectGitContext(binding);
+    assert.equal(before.currentBranch, "main");
+    assert.equal(before.repositoryRoot, await realpath(repository));
+    assert.deepEqual(before.branches, ["main", "topic"]);
+    const parameters = {
+      sessionId: `draft-${randomUUID()}`, projectId: project.id, branch: "topic",
+      operationId: randomUUID(), expectedBranch: before.currentBranch, expectedHead: before.head,
+    };
+    const result = await client.repositoryGit({ rootId, method: "session/gitSwitchBranch", parameters });
+    assert.ok("status" in result);
+    assert.equal(result.status.branch, "topic");
+    assert.match(await readFile(path.join(repository, "README.md"), "utf8"), /Topic checkout/);
+    assert.deepEqual((await client.listSessions()).items, []);
+
+    await writeFile(path.join(repository, "README.md"), "# Dirty topic checkout\n");
+    const dirty = await client.readProjectGitContext(binding);
+    assert.equal(dirty.switchBlockedReason, "dirty");
+    await assert.rejects(client.repositoryGit({
+      rootId, method: "session/gitSwitchBranch", parameters: {
+        ...parameters, branch: "main", operationId: randomUUID(), expectedBranch: dirty.currentBranch, expectedHead: dirty.head,
+      },
+    }), (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "GIT_WORKTREE_DIRTY");
+
+    const created = await client.createSession(null, { projectId: project.id, executionMode: "worktree", baseRef: "refs/heads/main" });
+    assert.equal(created.executionMode, "worktree");
+    const worktree = await managedWorktreeRoot(repository);
+    assert.equal(await readFile(path.join(worktree, "README.md"), "utf8"), "# Fixture\n");
+    assert.equal((await git("branch", "--show-current")).stdout.trim(), "topic");
+    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "# Dirty topic checkout\n");
+  } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
+    await rm(dataDirectory, { recursive: true, force: true });
+    await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
+    await rm(repository, { recursive: true, force: true });
   }
 });
 

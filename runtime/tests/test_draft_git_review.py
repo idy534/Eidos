@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from test_multi_workspace_execution import _repository
+from test_multi_workspace_execution import _git, _repository
 from test_project_workspaces import _request, _server
 
 
@@ -212,3 +212,75 @@ def test_draft_git_read_fixtures_match_the_runtime_contract() -> None:
         assert request.session_id == params["sessionId"]
         assert request.project_id == params["projectId"]
         assert request.root_id == params["rootId"]
+
+
+def test_draft_branch_switch_rejects_checkout_drift_and_secondary_roots(
+    tmp_path: Path,
+) -> None:
+    primary = _repository(tmp_path / "primary", "primary\n")
+    secondary = _repository(tmp_path / "secondary", "secondary\n")
+    _git(primary, "branch", "feature")
+    _git(secondary, "branch", "feature")
+    server, output = _server(tmp_path)
+    try:
+        project = _project(
+            server, output, [("primary", primary), ("secondary", secondary)], "primary"
+        )
+        target = {"projectId": project["id"], "rootId": "primary"}
+        response = _request(
+            server, output, str(uuid4()), "project/gitContext", target
+        )
+        context = response["result"]
+        assert context["currentBranch"] == "main"
+        assert context["repositoryRoot"] == str(primary)
+        assert context["branches"] == ["feature", "main"]
+        switch = {
+            **target, "sessionId": f"draft-{uuid4()}", "operationId": str(uuid4()),
+            "branch": "feature", "expectedBranch": "main", "expectedHead": context["head"],
+        }
+        response = _request(
+            server, output, str(uuid4()), "session/gitSwitchBranch",
+            {**switch, "rootId": "secondary"},
+        )
+        assert response["error"]["data"]["code"] == "WORKSPACE_BOUNDARY_VIOLATION"
+        _git(primary, "commit", "--allow-empty", "-qm", "external update")
+        response = _request(
+            server, output, str(uuid4()), "session/gitSwitchBranch", switch
+        )
+        assert response["error"]["data"]["code"] == "GIT_BRANCH_CHANGED"
+        assert _git(primary, "branch", "--show-current") == "main"
+        assert _git(secondary, "branch", "--show-current") == "main"
+        assert server.store.connection.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0
+    finally:
+        server.close()
+
+
+def test_project_git_context_discovers_new_and_unborn_repositories(tmp_path: Path) -> None:
+    repository = tmp_path / "source"
+    repository.mkdir()
+    server, output = _server(tmp_path)
+    try:
+        project = _project(server, output, [("main", repository)], "main")
+        params = {"projectId": project["id"], "rootId": "main"}
+        empty = _request(server, output, str(uuid4()), "project/gitContext", params)["result"]
+        assert empty["gitAvailable"] is False
+        assert "repositoryRoot" not in empty
+
+        _git(repository, "init", "-q", "-b", "main")
+        _git(repository, "config", "user.name", "Eidos Tests")
+        _git(repository, "config", "user.email", "eidos-tests@example.com")
+        unborn = _request(server, output, str(uuid4()), "project/gitContext", params)["result"]
+        assert unborn["gitAvailable"] is True
+        assert unborn["currentBranch"] == "main"
+        assert unborn["head"] is None
+        assert unborn["switchBlockedReason"] == "unborn"
+
+        _git(repository, "commit", "--allow-empty", "-qm", "initial")
+        _git(repository, "branch", "occupied")
+        _git(repository, "worktree", "add", str(tmp_path / "other"), "occupied")
+        ready = _request(server, output, str(uuid4()), "project/gitContext", params)["result"]
+        assert ready["currentBranch"] == "main"
+        assert ready["occupiedBranches"] == ["occupied"]
+        assert "switchBlockedReason" not in ready
+    finally:
+        server.close()

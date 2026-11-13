@@ -63,7 +63,10 @@ export interface SessionControllerActions {
   startDraft: (project?: Project | null) => void;
   updateDraftProject: (project: Project) => void;
   updateDraftExecutionMode: (mode: "local" | "worktree") => void;
-  materializeDraft: (workspaceNameHint?: string) => Promise<SessionSnapshot | undefined>;
+  materializeDraft: (workspaceNameHint?: string, worktree?: {
+    baseRef?: string;
+    includeLocalChanges?: boolean;
+  }) => Promise<SessionSnapshot | undefined>;
   discardDraft: () => void;
   rollbackMaterializedSession: (session: Session, draft: SessionSnapshot) => Promise<boolean>;
   selectSession: (session: Session, focusItemId?: string) => Promise<SessionSnapshot | undefined>;
@@ -508,12 +511,16 @@ export function useSessionController(): [SessionControllerState, SessionControll
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const materializeDraft = useCallback(async (workspaceNameHint?: string): Promise<SessionSnapshot | undefined> => {
+  const materializeDraft = useCallback(async (
+    workspaceNameHint?: string,
+    worktree?: { baseRef?: string; includeLocalChanges?: boolean },
+  ): Promise<SessionSnapshot | undefined> => {
     const currentDraft = draft;
     if (!currentDraft) return undefined;
     const projectRoot = currentDraft.session.project?.workspaceRoot ?? null;
     return createSession(projectRoot, {
       executionMode: currentDraft.session.executionMode ?? "local",
+      ...(currentDraft.session.executionMode === "worktree" ? worktree : undefined),
       ...(currentDraft.session.project ? { projectId: currentDraft.session.project.id } : {}),
       ...(projectRoot === null ? { workspaceNameHint: workspaceNameHint ?? "新会话" } : {}),
     });

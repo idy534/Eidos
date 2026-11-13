@@ -303,4 +303,58 @@ describe("Tooltip component", () => {
 
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
+  it("keeps an interactive bubble open while the pointer moves into it", () => {
+    const onRefresh = vi.fn();
+    render(
+      <Tooltip interactive content={<button type="button" onClick={onRefresh}>刷新</button>}>
+        <span>main</span>
+      </Tooltip>,
+    );
+
+    const trigger = screen.getByText("main");
+    fireEvent.mouseEnter(trigger);
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    const bubble = screen.getByRole("tooltip");
+    expect(bubble).toHaveClass("eidos-tooltip--interactive");
+
+    // Leaving the trigger toward the bubble does not close it right away.
+    fireEvent.mouseLeave(trigger);
+    fireEvent.mouseEnter(bubble);
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+
+    // Clicking inside the bubble neither dismisses it nor gets lost.
+    const action = screen.getByRole("button", { name: "刷新" });
+    fireEvent.pointerDown(action);
+    fireEvent.click(action);
+    expect(onRefresh).toHaveBeenCalledOnce();
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+
+    fireEvent.mouseLeave(bubble);
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("still hides a plain tooltip as soon as the pointer leaves", () => {
+    render(
+      <Tooltip content="提示">
+        <span>main</span>
+      </Tooltip>,
+    );
+
+    const trigger = screen.getByText("main");
+    fireEvent.mouseEnter(trigger);
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(screen.getByRole("tooltip")).not.toHaveClass("eidos-tooltip--interactive");
+    fireEvent.mouseLeave(trigger);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
 });

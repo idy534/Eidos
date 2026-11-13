@@ -76,13 +76,16 @@ describe("welcome conversation", () => {
   it("moves the Composer as soon as sending begins, while session creation is pending", async () => {
     let resolve!: (session: Session) => void;
     const realCreate = window.eidosRuntime.createSession;
-    vi.spyOn(window.eidosRuntime, "createSession").mockImplementation(() => new Promise((done) => { resolve = done; }));
+    const create = vi.spyOn(window.eidosRuntime, "createSession").mockImplementation(() => new Promise((done) => { resolve = done; }));
     const submit = vi.spyOn(window.eidosRuntime, "startRun");
     const { container } = renderShell();
     const input = await screen.findByRole("textbox");
     await waitFor(() => expect(input).toBeEnabled());
     fireEvent.change(input, { target: { value: "开始" } });
     fireEvent.submit(input.closest("form")!);
+    expect(container.querySelector(".session-canvas--welcome")).toBeNull();
+    // Session creation starts after the draft's Git state is confirmed, so wait for the pending call.
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
     expect(container.querySelector(".session-canvas--welcome")).toBeNull();
     expect(submit).not.toHaveBeenCalled();
     await act(async () => resolve(await realCreate(null)));

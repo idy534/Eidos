@@ -8,6 +8,8 @@ import pytest
 
 from eidos_runtime.git.backend import DulwichGitBackend
 from eidos_runtime.git.errors import (
+    GitBranchOccupiedError,
+    GitCheckoutConflictError,
     GitConflictError,
     GitIdentityUnavailableError,
     GitNothingStagedError,
@@ -551,10 +553,15 @@ def test_dulwich_read_and_native_create_paths_do_not_execute_git_helpers(
     )
     _git(repository, "add", ".gitattributes")
     _git(repository, "commit", "-qm", "configure helpers")
+    _git(repository, "switch", "-qc", "feature")
+    (repository / "tracked.txt").write_text("feature\n", encoding="utf-8")
+    _git(repository, "commit", "-qam", "feature content")
+    _git(repository, "switch", "-q", "main")
     _git(repository, "config", "core.hooksPath", ".hooks")
     _git(repository, "config", "core.fsmonitor", str(executable))
     _git(repository, "config", "filter.evil.driver.clean", str(executable))
     _git(repository, "config", "filter.evil.driver.process", str(executable))
+    _git(repository, "config", "filter.evil.driver.smudge", str(executable))
     _git(repository, "config", "filter.evil.driver.required", "true")
     _git(repository, "config", "diff.evil.textconv", str(executable))
     _git(repository, "config", "diff.external", str(executable))
@@ -567,8 +574,75 @@ def test_dulwich_read_and_native_create_paths_do_not_execute_git_helpers(
     backend.worktree_add(repository, linked, "eidos/helper-safety", backend.head(repository))
     changes = backend.capture_worktree_changes(repository)
     backend.apply_worktree_changes(linked, changes)
+    backend.switch_branch(repository, "feature")
+    assert (repository / "tracked.txt").read_text(encoding="utf-8") == "feature\n"
 
     assert not marker.exists()
+
+
+def test_switch_branch_checks_out_local_branch_even_with_same_name_tag(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    _git(repository, "tag", "feature")
+    _git(repository, "switch", "-qc", "feature")
+    file = repository / "tracked.txt"
+    file.write_text("feature\n", encoding="utf-8")
+    _git(repository, "commit", "-qam", "feature content")
+    expected = _git(repository, "rev-parse", "HEAD")
+    _git(repository, "switch", "-q", "main")
+
+    backend = DulwichGitBackend()
+    backend.switch_branch(repository, "feature")
+
+    assert backend.current_branch(repository) == "feature"
+    assert backend.head(repository) == expected
+    assert file.read_text(encoding="utf-8") == "feature\n"
+    assert _git(repository, "status", "--porcelain") == ""
+
+
+def test_switch_branch_refuses_branch_checked_out_in_another_worktree(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    linked = tmp_path / "linked"
+    _git(repository, "worktree", "add", "-qb", "feature", str(linked))
+
+    backend = DulwichGitBackend()
+    with pytest.raises(GitBranchOccupiedError):
+        backend.switch_branch(repository, "feature")
+
+    assert backend.current_branch(repository) == "main"
+    assert backend.current_branch(linked) == "feature"
+
+
+@pytest.mark.parametrize("detach", [False, True])
+@pytest.mark.parametrize("ignored_directory", [False, True])
+def test_switch_refuses_overwriting_ignored_files(
+    tmp_path: Path, detach: bool, ignored_directory: bool
+) -> None:
+    repository = _repository(tmp_path)
+    (repository / ".gitignore").write_text("config.local\n", encoding="utf-8")
+    _git(repository, "add", ".gitignore")
+    _git(repository, "commit", "-qm", "ignore local config")
+    _git(repository, "switch", "-qc", "feature")
+    config_file = repository / "config.local"
+    config_file.write_text("versioned config\n", encoding="utf-8")
+    _git(repository, "add", "-f", "config.local")
+    _git(repository, "commit", "-qm", "track default config")
+    target_head = _git(repository, "rev-parse", "HEAD")
+    _git(repository, "switch", "-q", "main")
+    if ignored_directory:
+        config_file.mkdir()
+        config_file = config_file / "config.ini"
+    config_file.write_text("private local config\n", encoding="utf-8")
+
+    backend = DulwichGitBackend()
+    assert _git(repository, "status", "--porcelain") == ""
+    with pytest.raises(GitCheckoutConflictError):
+        if detach:
+            backend.switch_detached(repository, target_head)
+        else:
+            backend.switch_branch(repository, "feature")
+
+    assert config_file.read_text(encoding="utf-8") == "private local config\n"
+    assert backend.current_branch(repository) == "main"
 
 
 def test_branch_delete_is_compare_and_delete(tmp_path: Path) -> None:

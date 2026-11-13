@@ -227,7 +227,7 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
       if (results.some(({ result }) => result.truncated)) setError("当前目录结果较多。");
     }, (cause) => { if (active) { setFiles([]); setError(userFacingError(cause)); } });
     return () => { active = false; };
-  }, [mode, context?.sessionId, JSON.stringify(context?.workspaceRoots), context?.projectId]);
+  }, [mode, context?.sessionId, JSON.stringify(context?.workspaceRoots), context?.projectId, context?.workspaceRevision]);
 
   const needle = query.toLocaleLowerCase();
   const cleanNeedle = (mode === "commands" && needle.startsWith("/")) ? needle.slice(1) : needle;

@@ -20,6 +20,8 @@ class GitError(RuntimeError):
 
 
 class GitCommandFailedError(GitError):
+    _code = "git_command_failed"
+
     def __init__(
         self,
         operation: str,
@@ -28,11 +30,19 @@ class GitCommandFailedError(GitError):
         stderr: str = "",
     ) -> None:
         super().__init__(
-            "git_command_failed",
+            self._code,
             operation,
             returncode=returncode,
             stderr=stderr,
         )
+
+
+class GitBranchOccupiedError(GitCommandFailedError):
+    _code = "git_branch_occupied"
+
+
+class GitCheckoutConflictError(GitCommandFailedError):
+    _code = "git_checkout_conflict"
 
 
 class GitCommandTimeoutError(GitError):
@@ -95,6 +105,8 @@ class WorktreeError(RuntimeError):
 
 
 __all__ = [
+    "GitBranchOccupiedError",
+    "GitCheckoutConflictError",
     "GitCommandFailedError",
     "GitCommandTimeoutError",
     "GitConflictError",

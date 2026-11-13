@@ -351,3 +351,7 @@
   white-space: nowrap;
 }
 .browser-grant-revoke.btn--ghost { color: var(--danger); }
+.draft-git-switch-dialog .modal-header h3,
+.draft-git-switch-dialog .modal-body {
+  overflow-wrap: anywhere;
+}

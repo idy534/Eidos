@@ -401,20 +401,20 @@ class WorktreeManager:
         project = project or self.repository.get_or_create_project(
             discovery.repository_root, discovery
         )
-        if base_ref is not None:
-            resolved_base_ref = base_ref
-        else:
+        root = Path(discovery.repository_root)
+        resolved_base_ref = base_ref
+        if resolved_base_ref is None:
             try:
-                resolved_base_ref = self.git.current_branch(
-                    Path(discovery.repository_root)
-                ) or "HEAD"
+                resolved_base_ref = self.git.current_branch(root) or "HEAD"
             except GitCommandTimeoutError:
                 raise WorktreeError("git_command_timeout") from None
             except GitCommandFailedError as error:
                 raise WorktreeError("git_command_failed") from error
         try:
-            base_commit = self.git.resolve_revision(
-                Path(discovery.repository_root), resolved_base_ref
+            base_commit = (
+                self.git.head(root)
+                if base_ref is None
+                else self.git.resolve_revision(root, base_ref)
             )
         except GitCommandTimeoutError:
             raise WorktreeError("git_command_timeout") from None

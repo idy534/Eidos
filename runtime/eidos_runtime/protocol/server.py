@@ -643,7 +643,9 @@ class _DeferredGitObserveAdapter:
         self, request_id: str, request: BaseModel
     ) -> BaseModel | DeferredMethodResult:
         def method(value):
-            application = self._server._applications_or_error().sessions.for_git_request(value)
+            application = self._server._applications_or_error().sessions
+            if not isinstance(value, method_dtos.GitContextRequestDto):
+                application = application.for_git_request(value)
             return getattr(application, self._method_name)(value)
 
         def _run(_cancel: threading.Event) -> None:

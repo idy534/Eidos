@@ -16,6 +16,8 @@ import time
 from collections.abc import Collection, Sequence
 
 from eidos_runtime.git.errors import (
+    GitBranchOccupiedError,
+    GitCheckoutConflictError,
     GitCommandFailedError,
     GitCommandTimeoutError,
     GitConflictError,
@@ -114,6 +116,7 @@ class HardenedGitRunner:
         cancel: threading.Event | None = None,
         editor_policy: GitEditorPolicy = GitEditorPolicy.DISABLED,
         git_index_file: Path | None = None,
+        disable_transport: bool = False,
     ) -> GitCliResult:
         if not cwd.is_absolute() or not cwd.is_dir():
             raise GitCommandFailedError(operation, returncode=None)
@@ -178,6 +181,9 @@ class HardenedGitRunner:
                 environment["SSH_AUTH_SOCK"] = ssh_auth_sock
         if git_index_file is not None:
             environment["GIT_INDEX_FILE"] = str(git_index_file)
+        if disable_transport:
+            environment["GIT_ALLOW_PROTOCOL"] = ""
+            environment["GIT_NO_LAZY_FETCH"] = "1"
         command_timeout = (
             DEFAULT_GIT_REMOTE_TIMEOUT_SECONDS
             if timeout_seconds is None and profile is GitExecutionProfile.REMOTE
@@ -312,6 +318,56 @@ class GitCli:
             operation="worktree-add",
             config_overrides=overrides,
         )
+
+    def switch(self, cwd: Path, target: str, *, detach: bool) -> None:
+        operation = "worktree-switch-detached" if detach else "worktree-switch-branch"
+        options = ("--detach",) if detach else ("--no-guess",)
+        try:
+            self._runner.run(
+                (
+                    "switch",
+                    "--no-overwrite-ignore",
+                    "--no-recurse-submodules",
+                    *options,
+                    "--",
+                    target,
+                ),
+                cwd=cwd,
+                operation=operation,
+                config_overrides=(
+                    "-c",
+                    "checkout.workers=1",
+                    *filter_config_overrides(self._runner, cwd),
+                ),
+                disable_transport=True,
+            )
+        except GitCommandFailedError as error:
+            if error.operation != operation:
+                raise
+            messages = error.stderr.splitlines()
+            occupied_prefix = f"fatal: '{target}' is already "
+            if not detach and any(
+                line.startswith((
+                    occupied_prefix + "used by worktree at ",
+                    occupied_prefix + "checked out at ",
+                ))
+                for line in messages
+            ):
+                raise GitBranchOccupiedError(
+                    operation, returncode=error.returncode
+                ) from error
+            if any(
+                line.startswith((
+                    "error: The following untracked working tree files would be overwritten by checkout",
+                    "error: Your local changes to the following files would be overwritten by checkout",
+                    "error: Updating the following directories would lose untracked files in them",
+                ))
+                for line in messages
+            ):
+                raise GitCheckoutConflictError(
+                    operation, returncode=error.returncode
+                ) from error
+            raise
 
     def clean_destructive(self, worktree_root: Path) -> None:
         self._runner.run(

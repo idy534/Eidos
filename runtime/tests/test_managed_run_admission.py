@@ -3,10 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 import threading
+from uuid import uuid4
 
 import pytest
 
 from eidos_runtime.application.errors import ApplicationError
+from eidos_runtime.application.projects import ProjectApplication
 from eidos_runtime.application.runs import RunApplication
 from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
 from eidos_runtime.application.sessions import SessionApplication
@@ -19,7 +21,9 @@ from eidos_runtime.protocol.methods import (
     RunStartRequestDto,
     SessionCreateRequestDto,
     SessionDeleteRequestDto,
+    SessionGitSwitchBranchRequestDto,
 )
+from test_multi_workspace_execution import _create_project
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -425,5 +429,80 @@ def test_run_start_and_session_delete_are_serialized_per_session(
         worktree_id = str(session["worktree"]["worktreeId"])
         assert manager.repository.read_worktree(worktree_id).state is WorktreeState.ACTIVE
         assert store.connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 1
+    finally:
+        store.close()
+
+
+def test_managed_run_admission_shares_checkout_lock_for_a_secondary_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    primary = _repository(tmp_path)
+    secondary_parent = tmp_path / "shared"
+    secondary_parent.mkdir()
+    secondary = _repository(secondary_parent)
+    subdir = secondary / "packages"
+    subdir.mkdir()
+    _git(secondary, "branch", "feature")
+    store, manager, sessions, runs, _lifecycle = _setup(tmp_path)
+    try:
+        projects = ProjectApplication(manager.repository, create_project=manager.create_project)
+        multi = _create_project(projects, [("primary", primary), ("shared", subdir)], "primary")
+        local = sessions.create(SessionCreateRequestDto(workspaceRoot=str(secondary))).root
+        managed = sessions.create(
+            SessionCreateRequestDto(projectId=multi.id, executionMode="worktree")
+        ).root
+
+        entered_enqueue = threading.Event()
+        allow_enqueue = threading.Event()
+        switching = threading.Event()
+        switched = threading.Event()
+        run_errors: list[BaseException] = []
+        switch_errors: list[BaseException] = []
+        enqueue = store.enqueue_run
+
+        def blocked_enqueue(*args: object, **kwargs: object) -> object:
+            entered_enqueue.set()
+            assert allow_enqueue.wait(timeout=5)
+            return enqueue(*args, **kwargs)
+
+        def start_run() -> None:
+            try:
+                _start(runs, managed["id"]).mark_response_delivered()
+            except BaseException as error:
+                run_errors.append(error)
+
+        def switch_branch() -> None:
+            switching.set()
+            try:
+                sessions.git_switch_branch(SessionGitSwitchBranchRequestDto(
+                    sessionId=local["id"], operationId=str(uuid4()), branch="feature",
+                ))
+            except BaseException as error:
+                switch_errors.append(error)
+            finally:
+                switched.set()
+
+        monkeypatch.setattr(store, "enqueue_run", blocked_enqueue)
+        run_thread = threading.Thread(target=start_run)
+        switch_thread = threading.Thread(target=switch_branch)
+        run_thread.start()
+        try:
+            assert entered_enqueue.wait(timeout=5)
+            switch_thread.start()
+            assert switching.wait(timeout=5)
+            assert not switched.wait(timeout=0.2)
+        finally:
+            allow_enqueue.set()
+            run_thread.join(timeout=5)
+            if switch_thread.ident is not None:
+                switch_thread.join(timeout=5)
+
+        assert not run_thread.is_alive()
+        assert not switch_thread.is_alive()
+        assert not run_errors
+        assert len(switch_errors) == 1
+        assert isinstance(switch_errors[0], ApplicationError)
+        assert switch_errors[0].code == "GIT_WORKFLOW_BUSY"
+        assert _git(secondary, "branch", "--show-current") == "main"
     finally:
         store.close()

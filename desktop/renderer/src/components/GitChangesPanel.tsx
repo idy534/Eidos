@@ -98,6 +98,8 @@ interface GitChangesPanelProps {
   reviewFeedbackDisabled?: boolean;
   workflowDisabled?: boolean;
   workspaceMutationDisabled?: boolean;
+  sourceWorkspace?: boolean;
+  workspaceRevision?: string | undefined;
   workflowOpenRequest?: number | undefined;
   onWorkflowClose?: (() => void) | undefined;
   onCreateBranch?: (() => void) | undefined;
@@ -218,7 +220,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
       .catch((cause) => { if (current) setError(userFacingError(cause)); })
       .finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
-  }, [client, scoped, props.sessionId, refresh, root?.path, props.status?.observedAt, props.latestRunId, props.items?.at(-1)?.id]);
+  }, [client, scoped, props.sessionId, refresh, root?.path, props.status?.observedAt, props.latestRunId, props.items?.at(-1)?.id, props.workspaceRevision]);
   if (!scoped || !client || !root) return <GitChangesContent {...props} repositories={repositories} selectedRepositoryId={selected} onSelectRepository={setSelected} />;
   const { summary: _summary, ...scopedProps } = props;
   return <div className="git-repository-panel">
@@ -692,6 +694,7 @@ function GitChangesContent(props: GitChangesPanelProps) {
           )}
         </div>
       </header>
+      {props.sourceWorkspace && <p className="git-diff-empty">源工作区的改动</p>}
       {(localError || summaryError || error) && (
         <ToastContainer
           toasts={[{
@@ -891,6 +894,11 @@ function GitChangesContent(props: GitChangesPanelProps) {
         {selections.length === 0 && (
           loading || summaryLoading ? (
             <p className="git-diff-empty" role="status">正在读取…</p>
+          ) : error || summaryError ? (
+            <div className="git-review-empty" role="status">
+              <strong>无法读取 Git 状态</strong>
+              <span>请检查目录后刷新。</span>
+            </div>
           ) : (
             <div className="git-review-empty" role="status">
               <strong>当前范围没有变更</strong>
