@@ -1201,3 +1201,37 @@ describe("SessionSidebar fork origin hover", () => {
     expect(screen.queryByRole("button", { name: /打开来源会话/ })).not.toBeInTheDocument();
   });
 });
+
+describe("SessionSidebar brand header", () => {
+  it("renders the integrated [E]idos wordmark with tight-cropped glyph and minimal Desktop pill", () => {
+    const { container } = render(
+      <SessionSidebar
+        sessions={[]}
+        projects={[]}
+        disabled={false}
+        readCompletedSessions={new Set()}
+        runtimePresentation={{ tone: "success", label: "Ready" }}
+        onCreate={vi.fn()}
+        onCreateInProject={vi.fn()}
+        onSelect={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+
+    const wordmark = container.querySelector(".brand-wordmark");
+    expect(wordmark).not.toBeNull();
+    const glyphSvg = wordmark?.querySelector(".brand-mark svg");
+    expect(glyphSvg).toHaveAttribute("viewBox", "80 80 352 352");
+    expect(glyphSvg).toHaveAttribute("aria-hidden", "true");
+
+    const name = wordmark?.querySelector(".brand-name");
+    expect(name).toHaveTextContent("Eidos");
+    expect(name?.querySelector(".sr-only")).toHaveTextContent("E");
+
+    const badge = container.querySelector(".brand-titles .brand-badge");
+    expect(badge).toHaveTextContent("Desktop");
+  });
+});
