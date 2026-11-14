@@ -1,6 +1,6 @@
 interface EidosMarkProps {
   className?: string;
-  variant?: "mark" | "icon" | "hero";
+  variant?: "mark" | "glyph" | "icon" | "hero";
 }
 
 export function EidosMark({ className, variant = "mark" }: EidosMarkProps) {
@@ -119,8 +119,10 @@ export function EidosMark({ className, variant = "mark" }: EidosMarkProps) {
     );
   }
 
+  const viewBox = variant === "glyph" ? "80 80 352 352" : "0 0 512 512";
+
   return (
-    <svg className={className} viewBox="0 0 512 512" focusable="false" aria-hidden="true">
+    <svg className={className} viewBox={viewBox} focusable="false" aria-hidden="true">
       <path
         fill="currentColor"
         fillRule="evenodd"
