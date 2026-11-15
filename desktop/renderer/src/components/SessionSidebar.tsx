@@ -608,11 +608,15 @@ export const SessionSidebar = memo(function SessionSidebar({
     <aside className="sidebar" aria-label="任务导航" inert={collapsed} aria-hidden={collapsed}>
       {navigationSlot && <div className="sidebar-top-bar">{navigationSlot}</div>}
       <div className="brand-row">
-        <span className="brand-mark" aria-hidden="true">
-          <EidosMark />
-        </span>
         <div className="brand-titles">
-          <span className="brand-name">Eidos</span>
+          <span className="brand-wordmark">
+            <span className="brand-mark" aria-hidden="true">
+              <EidosMark variant="glyph" />
+            </span>
+            <span className="brand-name">
+              <span className="sr-only">E</span>idos
+            </span>
+          </span>
           <span className="brand-badge">Desktop</span>
         </div>
         <Tooltip content="搜索所有会话" shortcut="⌘K">
