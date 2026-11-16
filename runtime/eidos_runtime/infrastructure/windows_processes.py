@@ -151,7 +151,7 @@ class JobProcess(subprocess.Popen[bytes]):
             os.set_handle_inheritable(handle, True)
             startup = subprocess.STARTUPINFO(lpAttributeList={"handle_list": [handle]})
             super().__init__(
-                [sys.executable, "-I", "-S", "-u", str(_BOOTSTRAP), str(handle), *argv],
+                [sys.executable, "-I", "-B", "-S", "-u", str(_BOOTSTRAP), str(handle), *argv],
                 cwd=cwd, env=env, stdin=stdin, stdout=stdout, stderr=stderr,
                 startupinfo=startup, close_fds=True,
                 creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,

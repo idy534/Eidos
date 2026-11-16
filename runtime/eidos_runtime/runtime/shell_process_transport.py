@@ -133,7 +133,7 @@ def spawn_shell_process(
         termios.tcsetwinsize(slave, (launch.rows, launch.columns))
         argv = launch.terminal_command(device)
         process = subprocess.Popen(
-            (str(runtime_python_executable()), "-I", str(PTY_HELPER),
+            (str(runtime_python_executable()), "-I", "-B", str(PTY_HELPER),
              str(slave), str(error_write), str(start_read), *argv),
             cwd=launch.cwd, env=launch.environment,
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

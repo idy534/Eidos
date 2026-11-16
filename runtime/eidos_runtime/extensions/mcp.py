@@ -690,7 +690,7 @@ class McpConnection:
             environment["SYSTEMROOT"] = system_root
             environment["PYTHONIOENCODING"] = "utf-8"
             arguments[2:2] = [str(os.getpid()), str(owner_start_time())]
-            arguments.insert(0, "-I")
+            arguments[:0] = ["-I", "-B"]
         return StdioServerParameters(
             command=executable,
             args=arguments,

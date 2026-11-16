@@ -237,7 +237,7 @@ with tempfile.TemporaryDirectory(prefix="eidos-bundled-pty-") as terminal_direct
     manager = ShellProcessManager(owner_run_id="bundled-pty")
     try:
         launch = ShellLaunchSpec(
-            argv=(sys.executable, "-I", "-c", "import os; fd=os.open('/dev/tty',os.O_RDWR); os.close(fd); print([os.isatty(i) for i in (0,1,2)])"),
+            argv=(sys.executable, "-I", "-B", "-c", "import os; fd=os.open('/dev/tty',os.O_RDWR); os.close(fd); print([os.isatty(i) for i in (0,1,2)])"),
             cwd=Path(terminal_directory), environment={"PATH":"/usr/bin:/bin"}, sandboxed=False, tty=True,
         )
         terminal_result = manager.start(launch, yield_time_ms=3000)

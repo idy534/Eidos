@@ -541,7 +541,7 @@ export function refreshManifestHashesSync({ bundleRoot, manifestPath } = {}) {
       `executable ${executable.name}`,
     ),
   }));
-  const files = inventoryFiles(normalizedBundleRoot);
+  const files = inventoryFiles(normalizedBundleRoot, loaded.manifest.target);
   const refreshed = {
     ...loaded.manifest,
     executables,
@@ -566,7 +566,7 @@ export function verifyRuntimeManifestSync({ bundleRoot, manifestPath } = {}) {
       fail(`executable hash mismatch for ${executable.path}`);
     }
   }
-  const actualFiles = inventoryFiles(normalizedBundleRoot);
+  const actualFiles = inventoryFiles(normalizedBundleRoot, loaded.manifest.target);
   const expectedFiles = [...loaded.manifest.files].sort((left, right) => compareBytes(left.path, right.path));
   if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
     fail("inventory hash or file set mismatch; the Runtime bundle may be tampered");

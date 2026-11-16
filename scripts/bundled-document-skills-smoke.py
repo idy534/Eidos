@@ -1,6 +1,6 @@
 """Exercise bundled document Skills through real Shells and fixed resources.
 
-Run with the bundled Python and PYTHONPATH=<bundle>/app. No host document
+Run with the bundled Python (-B) and PYTHONPATH=<bundle>/app. No host document
 libraries, Python, Node, Office installation, or Homebrew PATH are used.
 """
 from datetime import datetime, timezone

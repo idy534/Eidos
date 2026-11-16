@@ -40,7 +40,7 @@ jobs:
           $env:PYTHONNOUSERSITE = '1'
           $env:PYTHONUTF8 = '1'
           $env:OTEL_SDK_DISABLED = 'true'
-          & ./build/windows-runtime/python/python.exe ./scripts/bundled-document-skills-smoke.py
+          & ./build/windows-runtime/python/python.exe -B ./scripts/bundled-document-skills-smoke.py
       - uses: actions/upload-artifact@v4
         with:
           name: eidos-windows-x64
