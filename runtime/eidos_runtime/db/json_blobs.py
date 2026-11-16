@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from dataclasses import dataclass
 import gzip
 import hashlib
@@ -150,12 +152,12 @@ class JsonBlobStore:
         )
         temporary = Path(temporary_name)
         try:
-            os.fchmod(descriptor, 0o600)
+            local_files.set_file_mode(descriptor, 0o600)
             with os.fdopen(descriptor, "wb", closefd=True) as stream:
                 stream.write(compressed)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, destination)
+            local_files.replace(temporary, destination)
             _fsync_directory(destination.parent)
         except Exception:
             try:
@@ -190,15 +192,14 @@ class JsonBlobStore:
         path = self.root.joinpath(*PurePosixPath(reference.relative_path).parts)
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
         try:
-            descriptor = os.open(path, flags)
+            descriptor = local_files.open_file(path, flags)
         except OSError as error:
             raise JsonBlobCorruptionError("blob file is unavailable") from error
         try:
             metadata = os.fstat(descriptor)
             if (
                 not stat.S_ISREG(metadata.st_mode)
-                or metadata.st_uid != os.getuid()
-                or stat.S_IMODE(metadata.st_mode) != 0o600
+                or not local_files.has_private_access(descriptor, metadata, 0o600)
                 or metadata.st_size != reference.compressed_bytes
             ):
                 raise JsonBlobCorruptionError("blob file metadata is invalid")
@@ -315,7 +316,7 @@ class JsonBlobStore:
                 if relative in retained:
                     continue
                 metadata = path.stat()
-                if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
+                if not stat.S_ISREG(metadata.st_mode) or not local_files.owned_by_user(path, metadata):
                     raise JsonBlobCorruptionError("blob file is invalid")
                 path.unlink()
                 deleted += 1
@@ -401,18 +402,13 @@ def _prepare_private_directory(path: Path) -> None:
     metadata = path.stat()
     if (
         not stat.S_ISDIR(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or not local_files.has_private_access(path, metadata, 0o700)
     ):
         raise JsonBlobCorruptionError("blob directory metadata is invalid")
 
 
 def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    local_files.sync_directory(path)
 
 
 __all__ = [

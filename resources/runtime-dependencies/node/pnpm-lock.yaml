@@ -15,9 +15,6 @@ importers:
       '@deepseek-ai/libreoffice-kit':
         specifier: 0.2.3
         version: 0.2.3
-      '@deepseek-ai/libreoffice-kit-darwin-arm64':
-        specifier: 0.2.3
-        version: 0.2.3
       '@playwright/mcp':
         specifier: 0.0.84
         version: 0.0.84
@@ -543,7 +540,8 @@ packages:
 
 snapshots:
 
-  '@deepseek-ai/libreoffice-kit-darwin-arm64@0.2.3': {}
+  '@deepseek-ai/libreoffice-kit-darwin-arm64@0.2.3':
+    optional: true
 
   '@deepseek-ai/libreoffice-kit-darwin-x64@0.2.3':
     optional: true

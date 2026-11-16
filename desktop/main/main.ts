@@ -19,7 +19,7 @@ import type { RunPlanningOptions } from "../shared/planning.generated.js";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, powerMonitor, shell as electronShell } from "electron";
 import { fileURLToPath } from "node:url";
 import { realpath, stat, mkdtemp, writeFile, rm } from "node:fs/promises";
-import { clipboardFilePaths, MAX_PASTED_IMAGE_BYTES, readPastedImageFile } from "./clipboard-image.js";
+import { clipboardFilePaths, MAX_PASTED_IMAGE_BYTES, readPastedImageFile, windowsClipboardFilePaths } from "./clipboard-image.js";
 import os from "node:os";
 import { isInputPrepareRequest, isInputDraft } from "../shared/input-context.js";
 import { isAgentDefinitionSaveRequest, isAgentDefinitionRemoveRequest } from "../shared/agent-definitions.js";
@@ -286,8 +286,9 @@ function createWindow(): BrowserWindow {
     vibrancy: "under-window",
     visualEffectState: "active",
     title: "Eidos",
-    titleBarStyle: "hidden",
-    trafficLightPosition: { x: 16, y: 16 },
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hidden", trafficLightPosition: { x: 16, y: 16 } }
+      : { titleBarStyle: "default" }),
     webPreferences: {
       preload: path.join(currentDirectory, "preload.cjs"),
       contextIsolation: true,
@@ -948,7 +949,9 @@ ipcMain.handle(IPC.WORKSPACE_SHOW_IN_FINDER, async (_event, targetPath: unknown)
     await stat(canonicalTarget);
     electronShell.showItemInFolder(canonicalTarget);
   } catch {
-    throw new Error("无法在 Finder 中显示该路径。");
+    throw new Error(process.platform === "win32"
+      ? "无法在文件资源管理器中显示该路径。"
+      : "无法在 Finder 中显示该路径。");
   }
 });
 ipcMain.handle(IPC.WORKSPACE_OPEN_PATH, async (_event, targetPath: unknown) => {
@@ -1313,7 +1316,9 @@ ipcMain.handle(IPC.INPUT_PASTE_IMAGE, async (event, source: unknown) => {
     bytes = picture.toPNG();
   } else {
     ({ bytes, extension } = await readPastedImageFile(source, {
-      clipboardPaths: clipboardFilePaths((format) => clipboard.read(format)),
+      clipboardPaths: process.platform === "win32"
+        ? windowsClipboardFilePaths((format) => clipboard.readBuffer(format))
+        : clipboardFilePaths((format) => clipboard.read(format)),
       dataDirectory: runtimeDataDirectory(),
     }));
   }

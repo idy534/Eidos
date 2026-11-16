@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from dataclasses import dataclass, field
 from contextlib import AsyncExitStack
 import hashlib
@@ -8,6 +10,7 @@ import logging
 import math
 import os
 from pathlib import Path
+import secrets
 import signal
 import shutil
 import stat
@@ -21,6 +24,7 @@ import base64
 import binascii
 
 import anyio
+from anyio.abc import SocketAttribute
 import httpx2
 from mcp import ClientSession as SdkClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -34,7 +38,8 @@ from eidos_runtime.extensions.browser_plugin import (
 )
 from eidos_runtime.domain.browser import USER_CHROME_BLOCKED_BROWSER_TOOLS, BrowserToolClass, browser_tool_class
 from eidos_runtime.infrastructure.chrome_extension import (
-    BROKER_SOCKET_NAME, CONNECT_HELPER_NAME, CONNECT_HELPER_SCRIPT, LOOPBACK_SHIM_NAME, LOOPBACK_SHIM_SCRIPT,
+    BROKER_PORT_ENV, BROKER_SOCKET_NAME, BROKER_TOKEN_ENV, CONNECT_HELPER_NAME, CONNECT_HELPER_SCRIPT,
+    LOOPBACK_SHIM_NAME, LOOPBACK_SHIM_SCRIPT,
     ConnectPageBroker,
 )
 from eidos_runtime.extensions.contracts import McpServerConfigV1
@@ -161,7 +166,10 @@ class McpConnection:
         # Keep the whole connection tree short, including TMPDIR and the
         # server's own socket subdirectories. Never inherit a deep temp root.
         try:
-            parent = Path("/private/tmp" if sys.platform == "darwin" else "/tmp").resolve(strict=True)
+            parent = Path(
+                tempfile.gettempdir() if sys.platform == "win32"
+                else "/private/tmp" if sys.platform == "darwin" else "/tmp"
+            ).resolve(strict=True)
             self.runtime_root = Path(tempfile.mkdtemp(prefix="eidos-mcp-", dir=parent))
             self._runtime_identity = self.runtime_root.lstat()
         except OSError:
@@ -326,6 +334,8 @@ class McpConnection:
         return True
 
     def _terminate_process_group(self) -> bool:
+        if sys.platform == "win32":
+            return True  # The SDK has already closed the Job-owning launcher.
         pid_path = self.runtime_root / "server.pid"
         try:
             if getattr(self, "_runtime_identity", None) is not None:
@@ -431,7 +441,9 @@ class McpConnection:
                     else:
                         parameters = await anyio.to_thread.run_sync(self._prepare_parameters)
                         if self.browser_launch is not None and self.browser_launch.mode == "extension":
-                            await self._start_connect_broker(stack)
+                            broker_env = await self._start_connect_broker(stack)
+                            if broker_env:
+                                parameters.env = {**(parameters.env or {}), **broker_env}
                         error_log = stack.enter_context(open(os.devnull, "w", encoding="utf-8"))
                         streams = await stack.enter_async_context(stdio_client(parameters, errlog=error_log))
                     client_name = self.browser_launch.client_name if self.browser_launch is not None else None
@@ -559,6 +571,8 @@ class McpConnection:
         except OSError:
             raise McpUnavailable("mcp_temporary_directory_unavailable") from None
         config = resolve_package_mcp(self.config, str(self.plugin_root), str(runtime_python_executable()))
+        if self.sandbox and local_files.WINDOWS:
+            raise McpUnavailable("mcp_sandbox_unavailable")
         browser = self.config.permission_profile == BROWSER_PERMISSION_PROFILE
         if browser:
             if self.browser_launch is None:
@@ -575,7 +589,7 @@ class McpConnection:
         executable = config.executable
         if executable in {"python", "python3"}:
             executable = str(runtime_python_executable())
-        if "/" in executable and not Path(executable).is_absolute():
+        if ("/" in executable or (local_files.WINDOWS and "\\" in executable)) and not Path(executable).is_absolute():
             executable = str(self.plugin_root / executable)
         if Path(executable).resolve() == runtime_python_executable():
             executable = str(runtime_python_executable())
@@ -587,13 +601,25 @@ class McpConnection:
             "LANG": "en_US.UTF-8",
             "LC_ALL": "en_US.UTF-8",
         }
+        if local_files.WINDOWS:
+            system_root = os.environ.get("SYSTEMROOT", "")
+            if not Path(system_root).is_absolute():
+                raise McpUnavailable("mcp_environment_missing")
+            environment.update({
+                "SYSTEMROOT": system_root,
+                "PATH": os.pathsep.join((str(Path(sys.executable).parent), str(Path(system_root) / "System32"))),
+                "USERPROFILE": environment["HOME"],
+                "TEMP": environment["TMPDIR"],
+                "TMP": environment["TMPDIR"],
+            })
         Path(environment["HOME"]).mkdir(mode=0o700)
         Path(environment["TMPDIR"]).mkdir(mode=0o700)
         extension = browser and self.browser_launch is not None and self.browser_launch.mode == "extension"
         if browser:
             (Path(environment["TMPDIR"]) / "browser-output").mkdir(mode=0o700)
         if extension:
-            _write_private(Path(environment["TMPDIR"]) / CONNECT_HELPER_NAME, CONNECT_HELPER_SCRIPT, 0o700)
+            if not local_files.WINDOWS:
+                _write_private(Path(environment["TMPDIR"]) / CONNECT_HELPER_NAME, CONNECT_HELPER_SCRIPT, 0o700)
             _write_private(Path(environment["TMPDIR"]) / LOOPBACK_SHIM_NAME, LOOPBACK_SHIM_SCRIPT, 0o600)
         inherited = sanitize_shell_environment(os.environ)
         for name in self.config.env_names:
@@ -611,10 +637,13 @@ class McpConnection:
         if extension and self.browser_launch is not None:
             # Playwright reads its extension settings from the environment.
             tmp = Path(environment["TMPDIR"])
+            helper = self.browser_launch.runtime.connect_helper if local_files.WINDOWS else tmp / CONNECT_HELPER_NAME
+            if helper is None:
+                raise McpUnavailable("browser_runtime_unavailable")
             environment.update({
                 "PLAYWRIGHT_MCP_EXTENSION": "1",
-                "PLAYWRIGHT_MCP_EXECUTABLE_PATH": str(tmp / CONNECT_HELPER_NAME),
-                "NODE_OPTIONS": f'--require "{tmp / LOOPBACK_SHIM_NAME}"',
+                "PLAYWRIGHT_MCP_EXECUTABLE_PATH": str(helper),
+                "NODE_OPTIONS": f'--require "{(tmp / LOOPBACK_SHIM_NAME).as_posix()}"',
                 **self.browser_launch.environment,
             })
         if self.sandbox:
@@ -655,6 +684,13 @@ class McpConnection:
             executable, *arguments,
         ]
         executable = sys.executable
+        if local_files.WINDOWS:
+            from eidos_runtime.infrastructure.windows_processes import owner_start_time
+
+            environment["SYSTEMROOT"] = system_root
+            environment["PYTHONIOENCODING"] = "utf-8"
+            arguments[2:2] = [str(os.getpid()), str(owner_start_time())]
+            arguments.insert(0, "-I")
         return StdioServerParameters(
             command=executable,
             args=arguments,
@@ -666,20 +702,28 @@ class McpConnection:
             encoding_error_handler="strict",
         )
 
-    async def _start_connect_broker(self, stack: AsyncExitStack) -> None:
-        """The sandboxed relay asks this broker to open the extension's connect page."""
+    async def _start_connect_broker(self, stack: AsyncExitStack) -> dict[str, str]:
+        """Open only verified extension requests from this relay."""
 
-        listener = await anyio.create_unix_listener(self.runtime_root / "tmp" / BROKER_SOCKET_NAME)
+        broker_env = {}
+        token = None
+        if local_files.WINDOWS:
+            token = secrets.token_urlsafe(32)
+            listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0, backlog=8)
+            broker_env = {BROKER_PORT_ENV: str(listener.extra(SocketAttribute.local_port)), BROKER_TOKEN_ENV: token}
+        else:
+            listener = await anyio.create_unix_listener(self.runtime_root / "tmp" / BROKER_SOCKET_NAME)
         await stack.enter_async_context(listener)
         group = await stack.enter_async_context(anyio.create_task_group())
         # Exit order is LIFO: stop serving before the group waits for its task.
         stack.callback(group.cancel_scope.cancel)
-        group.start_soon(ConnectPageBroker().serve, listener)
+        group.start_soon(ConnectPageBroker(token=token).serve, listener)
+        return broker_env
 
     def _verify_runtime_directory(self) -> None:
         current = self.runtime_root.lstat()
         expected = self._runtime_identity
-        if not stat.S_ISDIR(current.st_mode) or (
+        if local_files.is_link(current) or not stat.S_ISDIR(current.st_mode) or (
             current.st_dev, current.st_ino, current.st_uid
         ) != (expected.st_dev, expected.st_ino, expected.st_uid):
             raise OSError("mcp_runtime_directory_changed")
@@ -1270,7 +1314,7 @@ def _result(
 
 
 def _write_private(path: Path, content: str, mode: int) -> None:
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+    descriptor = local_files.open_file(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
     with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
         stream.write(content)
 

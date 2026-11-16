@@ -7,12 +7,14 @@ import os
 from pathlib import Path
 import stat
 
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.infrastructure.managed_resources import ManagedResourceManager, ResourceError
 from eidos_runtime.infrastructure.runtime_dependencies import RuntimeDependencyCatalogError
 
 BROWSER_PACK_ID = "browser"
 NODE_PACK_ID = "node"
 PLAYWRIGHT_MCP_ENTRY = "@playwright/mcp/cli.js"
+CONNECT_HELPER_EXECUTABLE = "browser-connect"
 
 
 class BrowserRuntimeUnavailable(RuntimeError):
@@ -26,6 +28,7 @@ class BrowserRuntime:
     node: Path
     entry: Path
     read_roots: tuple[Path, ...]
+    connect_helper: Path | None = None
 
 
 def resolve_browser_runtime(manager: ManagedResourceManager | None) -> BrowserRuntime:
@@ -61,20 +64,26 @@ def resolve_browser_runtime(manager: ManagedResourceManager | None) -> BrowserRu
     # what Node will run, so its bytes are checked against the release too.
     if _file_sha256(entry_path) != declared.sha256:
         raise BrowserRuntimeUnavailable("browser_runtime_not_ready")
+    helper = next((item for item in browser_pack.manifest.executables if item.name == CONNECT_HELPER_EXECUTABLE), None)
+    if local_files.WINDOWS and helper is None:
+        raise BrowserRuntimeUnavailable("browser_runtime_unavailable")
+    if helper is not None and _file_sha256(browser_root / helper.path) != helper.sha256:
+        raise BrowserRuntimeUnavailable("browser_runtime_not_ready")
     return BrowserRuntime(
         node=node_root / executable.path,
         entry=entry_path,
         read_roots=(node_root, browser_root),
+        connect_helper=browser_root / helper.path if helper is not None else None,
     )
 
 
 def _file_sha256(path: Path) -> str | None:
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        descriptor = local_files.open_file(path)
     except OSError:
         return None
     with os.fdopen(descriptor, "rb") as stream:
         metadata = os.fstat(stream.fileno())
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_size > 16 * 1024**2:
+        if not stat.S_ISREG(metadata.st_mode) or not local_files.owned_by_user(descriptor, metadata) or metadata.st_size > 16 * 1024**2:
             return None
         return hashlib.sha256(stream.read()).hexdigest()

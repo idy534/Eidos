@@ -1,0 +1,48 @@
+name: Windows x64
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - 'runtime/**'
+      - 'protocol/**'
+      - 'resources/runtime-dependencies/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'electron-builder.windows.yml'
+      - 'assets/branding/**'
+      - '.github/actions/setup/**'
+      - '.github/workflows/windows.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: uv sync --locked --python 3.12
+      - run: pnpm package:win
+      - run: pnpm test:electron-smoke
+      - run: uv run --locked --python 3.12 pytest -q runtime/tests/test_windows_platform.py
+      - name: Exercise bundled document Skills in PowerShell
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = (Resolve-Path build/windows-runtime/app).Path
+          $env:PYTHONNOUSERSITE = '1'
+          $env:PYTHONUTF8 = '1'
+          $env:OTEL_SDK_DISABLED = 'true'
+          & ./build/windows-runtime/python/python.exe ./scripts/bundled-document-skills-smoke.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eidos-windows-x64
+          path: release/Eidos-*-win-x64.exe
+          if-no-files-found: error

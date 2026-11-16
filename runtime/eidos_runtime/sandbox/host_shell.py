@@ -6,11 +6,12 @@ from datetime import datetime, timezone
 import logging
 import os
 from pathlib import Path
-import pwd
 import selectors
 import signal
 import stat
 import subprocess
+import sys
+import tempfile
 import threading
 import time
 from types import MappingProxyType
@@ -19,7 +20,7 @@ from typing import Literal
 from eidos_runtime.domain.shell_environment import ShellEnvironmentPolicy
 
 
-HostShellKind = Literal["zsh", "bash", "sh"]
+HostShellKind = Literal["zsh", "bash", "sh", "powershell"]
 SnapshotSource = Literal["captured", "fallback"]
 PwdResolver = Callable[[], object]
 ShellRunner = Callable[
@@ -44,7 +45,8 @@ DEFAULT_SHELL_PATHS: tuple[Path, ...] = (
 SAFE_SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 SAFE_HOME = "/var/empty"
 SAFE_TMPDIR = "/tmp"
-_ALLOWED_SHELL_KINDS = frozenset(("zsh", "bash", "sh"))
+_POSIX_SHELL_KINDS = frozenset(("zsh", "bash", "sh"))
+_ALLOWED_SHELL_KINDS = _POSIX_SHELL_KINDS | {"powershell"}
 _SCRUBBED_ENV_NAMES = frozenset(
     (
         "PYTHONHOME",
@@ -88,6 +90,12 @@ class HostShellResolver:
         self._pwd_resolver = pwd_resolver or _default_pwd_resolver
 
     def resolve(self) -> HostShell:
+        if sys.platform == "win32":
+            root = Path(self._parent_environment.get("SYSTEMROOT", ""))
+            executable = root / "System32/WindowsPowerShell/v1.0/powershell.exe"
+            if root.is_absolute() and executable.is_file():
+                return HostShell(executable, "powershell")
+            raise HostShellUnavailableError("Windows PowerShell is unavailable")
         passwd_record = _safe_pwd_record(self._pwd_resolver)
         candidates: list[object] = []
         if passwd_record is not None:
@@ -155,6 +163,11 @@ class ShellEnvironmentSnapshotProvider:
         command_wrapper: CommandWrapper | None = None,
         environment_policy: ShellEnvironmentPolicy | None = None,
     ) -> ShellEnvironmentSnapshot:
+        if shell.kind == "powershell":
+            return ShellEnvironmentSnapshot(
+                shell=shell, environment=self.fallback_environment(shell), captured_at=self._clock(),
+                source="fallback", diagnostic="host_environment",
+            )
         canonical_shell = shell.executable.resolve(strict=False)
         canonical_cwd = Path(cwd).resolve(strict=False)
         capture_argv = (str(shell.executable), "-lc", CAPTURE_SCRIPT)
@@ -198,6 +211,12 @@ class ShellEnvironmentSnapshotProvider:
 
     def fallback_environment(self, shell: HostShell) -> dict[str, str]:
         """Return the sanitized, completed parent environment without capture."""
+        if shell.kind == "powershell":
+            environment = sanitize_shell_environment(self._parent_environment)
+            environment["HOME"] = str(Path.home())
+            environment["TMPDIR"] = tempfile.gettempdir()
+            environment["SHELL"] = str(shell.executable)
+            return environment
         passwd_record = _safe_pwd_record(self._pwd_resolver)
         return _complete_environment(
             sanitize_shell_environment(self._parent_environment),
@@ -298,6 +317,8 @@ class ShellEnvironmentSnapshotProvider:
 
 
 def _default_pwd_resolver() -> object:
+    import pwd
+
     return pwd.getpwuid(os.getuid())
 
 
@@ -321,7 +342,7 @@ def _validated_shell(candidate: object) -> HostShell | None:
         path = Path(candidate)
     except (TypeError, ValueError, OSError):
         return None
-    if not path.is_absolute() or path.name not in _ALLOWED_SHELL_KINDS:
+    if not path.is_absolute() or path.name not in _POSIX_SHELL_KINDS:
         return None
     try:
         metadata = path.stat()
@@ -340,9 +361,10 @@ def sanitize_shell_environment(environment: Mapping[str, str]) -> dict[str, str]
     for key, value in environment.items():
         if not isinstance(key, str) or not isinstance(value, str):
             continue
-        if key.startswith("EIDOS_") or key in _SCRUBBED_ENV_NAMES:
+        name = key.upper() if sys.platform == "win32" else key
+        if name.startswith("EIDOS_") or name in _SCRUBBED_ENV_NAMES:
             continue
-        sanitized[key] = value
+        sanitized[name] = value
     return sanitized
 
 

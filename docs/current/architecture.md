@@ -93,7 +93,7 @@ Schema v33 增加 `search_documents`、`search_fts`、`search_pending` 和 `sear
 
 ## 1. System Boundary
 
-Eidos 是一个面向 macOS 的本地桌面 Agent Runtime。系统包含 Electron Desktop、Python Runtime、SQLite、本地 Workspace 和远端 Model Provider。
+Eidos 是一个本地桌面 Agent Runtime。系统包含 Electron Desktop、Python Runtime、SQLite、本地 Workspace 和远端 Model Provider。正式产品面向 macOS arm64。Windows x64 预览沿用相同的 typed IPC、stdio JSON-RPC 和业务状态机。
 
 Renderer 是展示边界。Renderer 不能直接访问 Node 系统能力，也不能直接连接 Python Runtime。Electron Main 是 Desktop 和 Runtime 之间的控制边界。Python Runtime 是 Session、Run、Item、ToolCall、Approval、事件和副作用状态的业务协调边界。
 
@@ -483,6 +483,8 @@ Runtime 在 Run 开始时固定核心与资源发布声明。准备成功后，�
 ApprovalCoordinator 把扩权 Approval request、用户 decision、feedback、暂停状态和恢复状态写入 SQLite。普通 Workspace 文件变更和默认 Workspace Seatbelt Shell 不创建 Approval。模型可以用 `networkAccess=request` 表达高层联网意图，也可以用 `gitWriteAccess=request` 请求当前已验证 repository 的 Git metadata 写入。两个 intent 可以在同一条命令中合并。Shell contract 会把 intent 规范化为现有 additional permission。Runtime 会在启动进程前请求一次 Approval，获批后仍使用 Seatbelt。旧的底层权限输入继续兼容。联网、Git metadata 写入、附加路径、unsandboxed、MCP 和 Eidos-state 副作用继续使用 Approval。Approval 不能修改 Tool 参数。Eidos 受保护数据、Runtime、系统 Skill 和受管资源需要高危人工确认。普通 Git 与项目 metadata 的明确扩权走普通审批，auto_review 根据实际影响判断。批准仅开放窗口中展示的范围，其他保护仍生效。
 
 默认 Shell attempt 使用 macOS Seatbelt。Seatbelt Policy 根据 Workspace、Runtime root、Eidos 数据目录、永久拒绝、附加权限和网络权限物化为 effective permission profile，并保存 profile hash。默认 Workspace profile 在权限校验和 Durable Intent 后直接启动。显式权限升级会创建新的 Approval attempt。用户可以通过高危人工审批允许显式 unsandboxed attempt。窗口说明命令及其子进程会使用当前 macOS 用户的权限。Runtime 不因未知副作用自动重放命令。
+
+Windows 使用 NTFS 句柄执行已准备的文件提交。Runtime 保留权限物化、Durable Intent、目标与版本核对、排他创建、原地写入和结果验证。Windows 的 Job Object 管理授权的 Shell、ConPTY 和浏览器进程。Runtime 使用同一托管资源目录安装随包提供的 Windows 文档与浏览器资源。默认受限 Shell 与本地 MCP 仍返回沙盒不可用。Windows 的范围和实机验收见 [当前限制](limitations.md#平台与分发) 和 [开发参考](../development/README.md#windows-x64-预览)。
 
 ### Shell
 

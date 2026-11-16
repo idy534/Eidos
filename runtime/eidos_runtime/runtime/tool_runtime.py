@@ -113,6 +113,7 @@ from eidos_runtime.sandbox.sensitive import (
     SensitiveScanError,
     SensitiveScanner,
 )
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.sandbox.host_shell import HostShellUnavailableError
 from eidos_runtime.sandbox.seatbelt import (
     SeatbeltUnavailableError,
@@ -420,7 +421,7 @@ class FileChangeToolHandler:
         external = bool(executor._external_writers)
         permissions = executor.write_permissions
         full_access = bool(permissions and permissions.full_access)
-        unsandboxed = full_access or not is_seatbelt_ready()
+        unsandboxed = full_access or (not local_files.WINDOWS and not is_seatbelt_ready())
         if unsandboxed and permissions is None:
             return VerifiedToolExecutionResult(result=tool_error(
                 runtime.spec.name, "sandbox_unavailable", "File sandbox is unavailable and escalation is forbidden",

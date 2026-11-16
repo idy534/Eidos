@@ -1,4 +1,4 @@
-"""Exercise bundled document Skills through real, offline Seatbelt Shells.
+"""Exercise bundled document Skills through real Shells and fixed resources.
 
 Run with the bundled Python and PYTHONPATH=<bundle>/app. No host document
 libraries, Python, Node, Office installation, or Homebrew PATH are used.
@@ -19,22 +19,25 @@ from eidos_runtime.db.storage import SessionStore, WorkspaceIdentity
 from eidos_runtime.extensions.plugins import PluginCatalog
 from eidos_runtime.extensions.skills import SkillCatalog, deploy_system_skills
 from eidos_runtime.extensions.skill_access import SkillAccess
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.infrastructure.runtime_dependencies import RuntimeDependencyCatalog
 from eidos_runtime.infrastructure.managed_resources import ManagedResourceManager, load_resource_index
 from eidos_runtime.infrastructure.managed_resource_catalog import ManagedResourceCatalog
 from eidos_runtime.application.managed_resources import installation_operation
-from eidos_runtime.runtime.runtime_dependencies import RuntimeDependencyCoordinator
-from eidos_runtime.sandbox.host_shell import HostShell, ShellEnvironmentSnapshot
+from eidos_runtime.runtime.runtime_dependencies import RuntimeDependencyCoordinator, discover_runtime_dependency_catalog
+from eidos_runtime.sandbox.host_shell import HostShell, HostShellResolver, ShellEnvironmentSnapshot
 from eidos_runtime.sandbox.permissions import (
     SandboxAttempt, SandboxType, base_permission_profile_for_workspace,
     materialize_effective_profile,
 )
 from eidos_runtime.sandbox.shell import run_shell
+from eidos_runtime.workspace.reader import capture_directory_identity
 
 
 def main() -> None:
-    bundle = Path(sys.executable).resolve().parents[2]
-    base_catalog = RuntimeDependencyCatalog.from_manifest(bundle / "runtime.json")
+    bundle = Path(sys.executable).resolve().parents[1 if local_files.WINDOWS else 2]
+    manifest = bundle / "runtime.json"
+    base_catalog = RuntimeDependencyCatalog.from_manifest(manifest)
     with tempfile.TemporaryDirectory(prefix="eidos-document-smoke-") as directory:
         root = Path(directory).resolve()
         workspace, home, temporary = (root / name for name in ("workspace with spaces", "home with spaces", "tmp"))
@@ -43,7 +46,13 @@ def main() -> None:
         store = SessionStore(root / "data")
         store.initialize()
         try:
-            if (bundle / "resource-index.json").is_file():
+            requests = []
+            resource_root = home / "Eidos/Resource"
+            if local_files.WINDOWS:
+                dependency_catalog = discover_runtime_dependency_catalog(manifest_path=manifest, store=store, resource_root=resource_root)
+                assert isinstance(dependency_catalog, ManagedResourceCatalog)
+                manager = dependency_catalog.resources
+            elif (bundle / "resource-index.json").is_file():
                 class FileStream(httpx.SyncByteStream):
                     def __init__(self, path):
                         self.path = path
@@ -53,7 +62,6 @@ def main() -> None:
                                 yield chunk
 
                 archives = Path(__file__).resolve().parents[1] / "build/resource-packages"
-                requests = []
                 def transport(request):
                     requests.append(str(request.url))
                     file = archives / Path(urlsplit(str(request.url)).path).name
@@ -64,7 +72,7 @@ def main() -> None:
                     assert all("libreoffice-kit-wasm" not in file.path and "/react-icons/" not in file.path
                                and "/tests/" not in file.path for file in pack.manifest.files)
                 manager = ManagedResourceManager(
-                    index, root=home / "Eidos/Resource",
+                    index, root=resource_root,
                     client_factory=lambda: httpx.Client(transport=httpx.MockTransport(transport)),
                 )
                 manager.installation_operation = installation_operation(store, manager)
@@ -84,19 +92,31 @@ def main() -> None:
             )
             metadata = workspace.stat()
             identity = WorkspaceIdentity(path=workspace, device=metadata.st_dev, inode=metadata.st_ino, owner=metadata.st_uid)
-            shell = HostShell(Path("/bin/sh"), "sh")
+            shell = HostShellResolver().resolve() if local_files.WINDOWS else HostShell(Path("/bin/sh"), "sh")
+            shell_environment = {"HOME": str(home), "TMPDIR": str(temporary), "LANG": "en_US.UTF-8"}
+            if local_files.WINDOWS:
+                system = shell.executable.parents[3]
+                shell_environment.update({
+                    "PATH": str(system / "System32"), "SYSTEMROOT": str(system), "USERPROFILE": str(home),
+                    "TEMP": str(temporary), "TMP": str(temporary), "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8",
+                })
+                identity = capture_directory_identity(workspace)
+            else:
+                shell_environment.update({"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "SHELL": "/bin/sh"})
             shell_snapshot = ShellEnvironmentSnapshot(
-                shell=shell, environment={
-                    "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(home),
-                    "TMPDIR": str(temporary), "LANG": "en_US.UTF-8", "SHELL": "/bin/sh",
-                }, captured_at=datetime.now(timezone.utc), source="captured", diagnostic="captured",
+                shell=shell, environment=shell_environment,
+                captured_at=datetime.now(timezone.utc), source="captured", diagnostic="captured",
             )
 
             def invoke(name, arguments, *, resource=None, timeout=90, success=True):
                 skill_root = store.data_directory / "skills/.system" / name
                 if resource is not None:
                     arguments = ["--resource", resource, *arguments]
-                command = '"$RUNTIME_PYTHON" ' + shlex.join([str(skill_root / "scripts/run.py"), *arguments])
+                command_args = [str(skill_root / "scripts/run.py"), *arguments]
+                if local_files.WINDOWS:
+                    command = "& $env:RUNTIME_PYTHON " + " ".join("'" + argument.replace("'", "''") + "'" for argument in command_args)
+                else:
+                    command = '"$RUNTIME_PYTHON" ' + shlex.join(command_args)
                 invocation = access.activate_implicit(command, workspace)
                 assert invocation and invocation.qualified_id == f"system:{name}"
                 profile = coordinator.prepare_skill_resources(
@@ -107,10 +127,14 @@ def main() -> None:
                 coordinator.verify_binding(binding, qualified_skill_id=invocation.qualified_id)
                 base = base_permission_profile_for_workspace(workspace, store.data_directory)
                 base = coordinator.permission_profile(base, binding).model_copy(update={"active_skill_roots": (str(skill_root),)})
+                if local_files.WINDOWS:
+                    base = base.with_full_access()
                 effective = materialize_effective_profile(base)
-                assert not effective.network_enabled and not effective.full_access
+                if not local_files.WINDOWS:
+                    assert not effective.network_enabled and not effective.full_access
                 attempt = SandboxAttempt(
-                    ordinal=0, sandbox=SandboxType.MACOS_SEATBELT, sandboxRequested=True,
+                    ordinal=0, sandbox=SandboxType.NONE if local_files.WINDOWS else SandboxType.MACOS_SEATBELT,
+                    sandboxRequested=not local_files.WINDOWS,
                     permissions=effective, sandboxCwd=str(workspace), workspaceRoots=(str(workspace),),
                 )
                 with (
@@ -216,15 +240,20 @@ try:
 except OSError: pass
 else: raise AssertionError('bundle unexpectedly writable')
 """)
-            invoke("pdf", ["python", "boundary.py"], resource="ocr-eng")
+            if not local_files.WINDOWS:
+                invoke("pdf", ["python", "boundary.py"], resource="ocr-eng")
             (workspace / "sleep.py").write_text("import time\ntime.sleep(120)\n")
             timed = invoke("pdf", ["python", "sleep.py"], timeout=1, success=False)
             assert timed["outcome"] == "error", timed
-            print("Passed bundled PDF, Chinese fonts, offline OCR, protected paths and timeout", flush=True)
+            print("Passed bundled PDF, Chinese fonts, offline OCR and timeout", flush=True)
             if isinstance(dependency_catalog, ManagedResourceCatalog):
+                packs = ("office", "ocr-eng", "pdf")
+                receipts = [manager.location(pack) / "runtime.json" for pack in packs]
+                mtimes = [receipt.stat().st_mtime_ns for receipt in receipts]
                 before = len(requests)
-                manager.ensure(("office", "ocr-eng", "pdf"), threading.Event())
+                manager.ensure(packs, threading.Event())
                 assert len(requests) == before, "ready resources unexpectedly downloaded again"
+                assert [receipt.stat().st_mtime_ns for receipt in receipts] == mtimes
                 print("Passed clean managed resource installation, CJS/ESM, shared Python and reuse", flush=True)
         finally:
             store.close()

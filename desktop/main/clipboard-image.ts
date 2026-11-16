@@ -27,6 +27,18 @@ export function clipboardFilePaths(read: (format: string) => string): string[] {
   return [...found];
 }
 
+export function windowsClipboardFilePaths(read: (format: string) => Buffer): string[] {
+  // FileNameW is a registered Windows format for one Unicode file name.
+  try {
+    const value = read("FileNameW");
+    if (value.length > 8194 || value.length % 2 !== 0) return [];
+    const filename = value.toString("utf16le").split("\0", 1)[0] ?? "";
+    return /^[A-Za-z]:[\\/][^:\x00-\x1f]*$/.test(filename) ? [path.win32.normalize(filename)] : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Read the bytes of a pasted image file so Main can hand the Runtime a private
  * copy. Only a file the pasteboard itself lists is read, never one inside the
@@ -45,21 +57,24 @@ export async function readPastedImageFile(
   const listed = await Promise.all(options.clipboardPaths.map((value) => realpath(value).catch(() => undefined)));
   if (resolved === undefined || !listed.includes(resolved)) throw new Error("剪贴板中没有这个文件。");
   const data = await realpath(options.dataDirectory).catch(() => path.resolve(options.dataDirectory));
-  if (resolved === data || resolved.startsWith(data + path.sep)) {
+  const relation = path.relative(data, resolved);
+  if (!relation || (!path.isAbsolute(relation) && relation !== ".." && !relation.startsWith(`..${path.sep}`))) {
     throw new Error("不能粘贴 Eidos 数据目录中的文件。");
   }
-  const checked = await stat(resolved);
+  const checked = await stat(resolved, { bigint: true });
+  if (!checked.isFile()) throw new Error("图片文件已变化，请重新复制。");
   const handle = await open(resolved, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const opened = await handle.stat();
+    const opened = await handle.stat({ bigint: true });
     if (!opened.isFile() || opened.dev !== checked.dev || opened.ino !== checked.ino) {
       throw new Error("图片文件已变化，请重新复制。");
     }
-    if (opened.size > MAX_PASTED_IMAGE_BYTES) throw new Error("图片不能超过 10 MiB。");
-    const bytes = Buffer.alloc(opened.size);
+    if (opened.size > BigInt(MAX_PASTED_IMAGE_BYTES)) throw new Error("图片不能超过 10 MiB。");
+    const size = Number(opened.size);
+    const bytes = Buffer.alloc(size);
     let offset = 0;
-    while (offset < opened.size) {
-      const { bytesRead } = await handle.read(bytes, offset, opened.size - offset, offset);
+    while (offset < size) {
+      const { bytesRead } = await handle.read(bytes, offset, size - offset, offset);
       if (bytesRead === 0) throw new Error("图片文件已变化，请重新复制。");
       offset += bytesRead;
     }

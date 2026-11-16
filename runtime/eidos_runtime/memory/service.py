@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
 import hashlib
 import json
 import logging
-import os
 import shutil
 import stat
 import sqlite3
@@ -258,7 +259,7 @@ class MemoryService:
                     metadata = path.lstat()
                 except FileNotFoundError:
                     continue
-                if metadata.st_uid != os.getuid():
+                if not local_files.owned_by_user(path, metadata):
                     raise MemoryRejected("memory_legacy_owner_invalid")
                 if stat.S_ISDIR(metadata.st_mode):
                     shutil.rmtree(path)

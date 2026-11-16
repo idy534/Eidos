@@ -1,3 +1,4 @@
+import { revealFileLabel } from "../platform.js";
 import { createContext, Fragment, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode, type DragEvent } from "react";
 import { createPortal } from "react-dom";
 import type { InputPrepareRequest, InputPreview, InputReference } from "../../../shared/input-context.js";
@@ -198,7 +199,7 @@ export function getReferenceButtonTitle(reference: InputReference): string {
       return "跳转到该对话";
     case "file":
     case "directory":
-      return `在 Finder 中显示：${reference.source}`;
+      return `${revealFileLabel}：${reference.source}`;
     case "skill":
       return `查看技能详情：${reference.label}`;
     case "agent":

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 import hashlib
 import json
 import os
@@ -578,7 +580,7 @@ def _read_source(source: Path) -> dict[str, bytes]:
         metadata = source.lstat()
     except OSError:
         raise PluginImportError("plugin_source_invalid") from None
-    if source.is_symlink() or not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+    if local_files.is_link(metadata) or not stat.S_ISDIR(metadata.st_mode) or not local_files.owned_by_user(source, metadata):
         raise PluginImportError("plugin_source_invalid")
     files: dict[str, bytes] = {}
     total = 0
@@ -590,7 +592,7 @@ def _read_source(source: Path) -> dict[str, bytes]:
                 entry = candidate.lstat()
             except OSError:
                 raise PluginImportError("plugin_source_invalid") from None
-            if stat.S_ISLNK(entry.st_mode) or entry.st_uid != os.getuid():
+            if local_files.is_link(entry) or not local_files.owned_by_user(candidate, entry):
                 raise PluginImportError("plugin_source_invalid")
             if name in names:
                 if not stat.S_ISDIR(entry.st_mode):
@@ -604,17 +606,14 @@ def _read_source(source: Path) -> dict[str, bytes]:
             if entry.st_size > MAX_PLUGIN_FILE_BYTES:
                 raise PluginImportError("plugin_source_invalid")
             relative = candidate.relative_to(root).as_posix()
-            flags = os.O_RDONLY
-            if hasattr(os, "O_NOFOLLOW"):
-                flags |= os.O_NOFOLLOW
             try:
-                descriptor = os.open(candidate, flags)
+                descriptor = local_files.open_file(candidate)
                 try:
                     opened = os.fstat(descriptor)
                     if (
                         not stat.S_ISREG(opened.st_mode)
                         or opened.st_nlink != 1
-                        or opened.st_uid != os.getuid()
+                        or not local_files.owned_by_user(descriptor, opened)
                         or (opened.st_dev, opened.st_ino) != (entry.st_dev, entry.st_ino)
                     ):
                         raise PluginImportError("plugin_source_invalid")
@@ -692,7 +691,7 @@ def _manual_cwd(value: str | None, data_directory: Path | None, server_id: str) 
         metadata = resolved.stat()
     except (OSError, RuntimeError, ValueError):
         raise ValueError("mcp_cwd_invalid") from None
-    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+    if not stat.S_ISDIR(metadata.st_mode) or not local_files.owned_by_user(resolved, metadata):
         raise ValueError("mcp_cwd_invalid")
     if data_directory is not None:
         data_root = data_directory.resolve()
@@ -712,7 +711,7 @@ def _install_files(destination: Path, files: dict[str, bytes]) -> None:
             flags |= os.O_NOFOLLOW
         # Package scripts must stay directly executable after the safe copy.
         # A shebang is part of the content reviewed by Hook trust.
-        descriptor = os.open(target, flags, 0o700 if data.startswith(b"#!") else 0o600)
+        descriptor = local_files.open_file(target, flags, 0o700 if data.startswith(b"#!") else 0o600)
         try:
             offset = 0
             while offset < len(data):
@@ -729,11 +728,7 @@ def _private_directory(path: Path) -> None:
 
 
 def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    local_files.sync_directory(path)
 
 
 def _remove_tree(path: Path, root: Path) -> None:

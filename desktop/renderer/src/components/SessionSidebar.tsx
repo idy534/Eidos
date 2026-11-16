@@ -1,3 +1,4 @@
+import { revealFileLabel } from "../platform.js";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Project, Session, SessionGitStatus } from "../contracts.js";
@@ -782,7 +783,7 @@ export const SessionSidebar = memo(function SessionSidebar({
             },
             {
               key: "show-in-finder",
-              label: "在 Finder 中显示",
+              label: revealFileLabel,
               icon: <FinderIcon />,
               onClick: () => {
                 setContextMenu(undefined);

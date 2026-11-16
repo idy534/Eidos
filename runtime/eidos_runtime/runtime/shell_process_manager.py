@@ -14,6 +14,7 @@ import time
 import uuid
 import logging
 
+from eidos_runtime.infrastructure import host_processes
 from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
     RuntimeResource,
@@ -54,7 +55,7 @@ class ShellSessionFinalizationError(RuntimeError):
 class ShellProcessSession:
     session_id: str
     owner_run_id: str
-    process: subprocess.Popen[bytes]
+    process: host_processes.OwnedProcess
     process_group_id: int
     launch: ShellLaunchSpec
     started_at: float
@@ -114,6 +115,19 @@ class ShellProcessSession:
             MAX_OUTPUT_METADATA_BYTES,
             max(0, self.original_bytes - sum(buffer.retained_bytes for buffer in self.output.values())),
         )
+
+
+def _owned_process_exists(session: ShellProcessSession) -> bool:
+    if host_processes.WINDOWS:
+        return host_processes.has_members(session.process)
+    return _process_group_exists(session.process_group_id)
+
+
+def _terminate_owned_process(session: ShellProcessSession) -> None:
+    if host_processes.WINDOWS:
+        host_processes.terminate_tree(session.process)
+    else:
+        _terminate_group(session.process_group_id)
 
 
 class ShellProcessManager:
@@ -178,7 +192,7 @@ class ShellProcessManager:
                 close=lambda: session.stop.set(),
                 wait=lambda timeout: session.done.wait(timeout),
                 is_quiescent=lambda: session.execution_status == "exited"
-                and not _process_group_exists(session.process_group_id),
+                and not _owned_process_exists(session) and transport.quiescent,
             )
             session.resource = resource
             with self._lock:
@@ -200,6 +214,13 @@ class ShellProcessManager:
                 transport.start_execution()
         except Exception:
             self._terminate(session)
+            if session.thread is not None and session.thread.ident is not None:
+                # The drain owns the descriptors as soon as its thread starts.
+                session.done.wait(2)
+                if session.done.is_set():
+                    with self._lock:
+                        self._sessions.pop(session_id, None)
+                raise
             try:
                 process.wait(timeout=2)
             except (subprocess.SubprocessError, OSError):
@@ -263,7 +284,10 @@ class ShellProcessManager:
                     if on_input is not None:
                         on_input()
                     try:
-                        os.killpg(session.process_group_id, signal.SIGINT)
+                        if host_processes.WINDOWS:
+                            _terminate_owned_process(session)
+                        else:
+                            os.killpg(session.process_group_id, signal.SIGINT)
                     except (ProcessLookupError, PermissionError):
                         pass
         elif chars:
@@ -308,7 +332,7 @@ class ShellProcessManager:
                 if action == "resize":
                     if columns is None or rows is None or not (2 <= columns <= 500 and 2 <= rows <= 500):
                         raise RuntimeError("shell_invalid_terminal_size")
-                    if transport.terminal_fd is None:
+                    if not transport.is_terminal:
                         raise RuntimeError("shell_not_a_terminal")
                     if on_input is not None:
                         on_input()
@@ -316,7 +340,7 @@ class ShellProcessManager:
                     with session.lock:
                         session.columns, session.rows = columns, rows
                 elif action == "close_stdin":
-                    if transport.terminal_fd is not None:
+                    if transport.is_terminal:
                         raise RuntimeError("shell_terminal_cannot_close_stdin")
                     if on_input is not None and not transport.stdin_closed:
                         on_input()
@@ -392,11 +416,11 @@ class ShellProcessManager:
             if thread is not None and thread is not threading.current_thread():
                 thread.join(timeout=2.0)
             if thread is not None and thread.is_alive():
-                _terminate_group(session.process_group_id)
+                _terminate_owned_process(session)
                 thread.join(timeout=2.0)
             self._close_pipes(session)
             resource = session.resource
-            quiescent = session.done.is_set() and not _process_group_exists(session.process_group_id)
+            quiescent = session.done.is_set() and not _owned_process_exists(session)
             if resource is not None and quiescent and resource.diagnostics().state.value != "closed":
                 resource.close()
             self._finalize(session)
@@ -557,11 +581,14 @@ class ShellProcessManager:
                 if session.stop.is_set() or (cancel is not None and cancel.is_set()):
                     raise RuntimeError("shell_stdin_canceled")
                 try:
-                    written = os.write(descriptor, payload[offset:])
+                    written = host_processes.write_pipe(descriptor, payload[offset:])
                 except BlockingIOError:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         raise RuntimeError("shell_stdin_write_timeout")
+                    if host_processes.WINDOWS:
+                        time.sleep(min(0.025, remaining))
+                        continue
                     _readable, writable, _exceptional = select.select(
                         [], [descriptor], [], min(0.1, remaining)
                     )
@@ -579,14 +606,14 @@ class ShellProcessManager:
     def _terminate(self, session: ShellProcessSession, *, termination: str = "canceled") -> bool:
         with session.lock:
             session.stop.set()
-            stopped = session.process.poll() is None or _process_group_exists(session.process_group_id)
+            stopped = session.process.poll() is None or _owned_process_exists(session)
             if stopped and session.execution_status == "running":
                 session.termination = termination
-        _terminate_group(session.process_group_id)
+        _terminate_owned_process(session)
         return stopped
 
     def _drain(self, session: ShellProcessSession) -> None:
-        selector = selectors.DefaultSelector()
+        selector = host_processes.pipe_selector()
         decoders = {
             stream: codecs.getincrementaldecoder("utf-8")(errors="replace")
             for stream in ("stdout", "stderr")
@@ -596,6 +623,7 @@ class ShellProcessManager:
             for name, descriptor in session.transport.output_descriptors():
                 selector.register(descriptor, selectors.EVENT_READ, name)
             termination_started_at: float | None = None
+            terminal_close_started_at: float | None = None
             while True:
                 ready = selector.select(timeout=0.1) if selector.get_map() else ()
                 for key, _mask in ready:
@@ -623,7 +651,7 @@ class ShellProcessManager:
                             session.exit_code = session.process.returncode
                             if session.termination == "running":
                                 session.termination = "exit"
-                    if _process_group_exists(session.process_group_id):
+                    if _owned_process_exists(session):
                         with session.lock:
                             adopted = session.termination == "exit"
                         if adopted:
@@ -635,11 +663,20 @@ class ShellProcessManager:
                             session.wake.set()
                         elif termination_started_at is None:
                             termination_started_at = time.monotonic()
-                            _terminate_group(session.process_group_id)
+                            _terminate_owned_process(session)
                         if not selector.get_map():
                             time.sleep(BACKGROUND_POLL_SECONDS)
-                    elif not selector.get_map():
-                        break
+                    else:
+                        terminal = session.transport.windows_terminal
+                        if terminal is not None and terminal_close_started_at is None:
+                            terminal.finish_output()
+                            terminal_close_started_at = time.monotonic()
+                        if not selector.get_map():
+                            break
+                        if (terminal_close_started_at is not None
+                            and time.monotonic() - terminal_close_started_at >= POST_TERMINATION_DRAIN_SECONDS):
+                            session.drain_error = "output_read_failed"
+                            break
                 if (
                     termination_started_at is not None
                     and time.monotonic() - termination_started_at
@@ -654,12 +691,12 @@ class ShellProcessManager:
             try:
                 session.process.wait(timeout=1)
             except subprocess.TimeoutExpired:
-                _terminate_group(session.process_group_id)
+                _terminate_owned_process(session)
                 session.process.wait(timeout=1)
         except Exception:
             with session.lock:
                 session.drain_error = "process_drain_failed"
-            _terminate_group(session.process_group_id)
+            _terminate_owned_process(session)
             try:
                 session.process.wait(timeout=1)
             except (subprocess.SubprocessError, OSError):

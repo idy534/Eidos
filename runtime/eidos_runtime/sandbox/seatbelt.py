@@ -385,6 +385,17 @@ def secure_workspace_move(
         or not effective_permissions.allows_file_write(source_path)
     ):
         return "failed"
+    if sys.platform == "win32":
+        from eidos_runtime.sandbox.windows_file_commit import commit
+
+        if root_fd is None or effective_permissions is None:
+            return "failed"
+        if unsandboxed and not effective_permissions.full_access:
+            return "failed"
+        return commit(
+            root_fd, workspace, source_path, target_path, expected_sha256,
+            delete=delete, candidate=candidate_sha256, content=content,
+        )
 
     python_executable = runtime_python_executable()
     if (

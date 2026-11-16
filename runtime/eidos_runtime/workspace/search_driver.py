@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import host_processes, local_files
+
 import base64
 import binascii
 from dataclasses import dataclass
@@ -95,6 +97,9 @@ class RipgrepBinaryResolver:
         resource_root: Path | None = None,
         explicit_path: Path | None = None,
     ) -> None:
+        if resource_root is None and local_files.WINDOWS and not (_RESOURCE_ROOT / "win32-x64" / "rg.exe").is_file():
+            repository = Path(__file__).resolve().parents[3]
+            resource_root = repository / "build/windows-runtime/app/eidos_runtime/resources/bin/ripgrep"
         self._resource_root = resource_root or _RESOURCE_ROOT
         self._explicit_path = explicit_path
 
@@ -208,20 +213,17 @@ class RipgrepFileEnumerator:
             allow_metadata=allow_metadata,
         )
         try:
-            process = subprocess.Popen(
+            process = host_processes.start(
                 argv,
                 cwd=workspace_path,
-                env={"LC_ALL": "C", "LANG": "C"},
+                env=_ripgrep_environment(),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                start_new_session=True,
-                close_fds=True,
-                shell=False,
             )
         except OSError:
             raise SearchDriverError("search_backend_unavailable") from None
-        selector = selectors.DefaultSelector()
+        selector = host_processes.pipe_selector()
         assert process.stdout is not None and process.stderr is not None
         selector.register(process.stdout, selectors.EVENT_READ, "stdout")
         selector.register(process.stderr, selectors.EVENT_READ, "stderr")
@@ -262,7 +264,7 @@ class RipgrepFileEnumerator:
                             raise SearchDriverError(
                                 "search_backend_protocol_error"
                             ) from None
-                        path = path.removeprefix("./")
+                        path = _relative_rg_path(path)
                         if is_discovery_path_allowed(path, allow_metadata=allow_metadata):
                             paths.append(path)
                             if len(paths) >= max_entries:
@@ -280,7 +282,7 @@ class RipgrepFileEnumerator:
                     path = buffer.decode("utf-8", errors="strict")
                 except UnicodeDecodeError:
                     raise SearchDriverError("search_backend_protocol_error") from None
-                path = path.removeprefix("./")
+                path = _relative_rg_path(path)
                 if is_discovery_path_allowed(path, allow_metadata=allow_metadata):
                     paths.append(path)
             if not truncated:
@@ -299,6 +301,7 @@ class RipgrepFileEnumerator:
                 _terminate_and_reap(process)
             process.stdout.close()
             process.stderr.close()
+            host_processes.close_job(process)
 
     def ignore_files(
         self,
@@ -315,16 +318,13 @@ class RipgrepFileEnumerator:
             "--glob", "**/.gitignore", "--", ".",
         ]
         try:
-            process = subprocess.Popen(
+            process = host_processes.start(
                 argv,
                 cwd=workspace_path,
-                env={"LC_ALL": "C", "LANG": "C"},
+                env=_ripgrep_environment(),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                start_new_session=True,
-                close_fds=True,
-                shell=False,
             )
         except OSError:
             raise SearchDriverError("search_backend_unavailable") from None
@@ -346,9 +346,9 @@ class RipgrepFileEnumerator:
                 if process.returncode not in {0, 1}:
                     raise SearchDriverError("search_backend_failed")
                 paths = tuple(
-                    path.removeprefix("./")
+                    _relative_rg_path(path)
                     for path in output.decode("utf-8", errors="strict").split("\0")
-                    if path and is_discovery_path_allowed(path.removeprefix("./"))
+                    if path and is_discovery_path_allowed(_relative_rg_path(path))
                 )
                 return _ignore_files(workspace_path) + tuple(
                     workspace_path / path for path in paths
@@ -363,6 +363,7 @@ class RipgrepFileEnumerator:
                 _terminate_and_reap(process)
             process.stdout.close()
             process.stderr.close()
+            host_processes.close_job(process)
 
 
 class RipgrepSearchDriver:
@@ -392,21 +393,18 @@ class RipgrepSearchDriver:
             allow_metadata=allow_metadata,
         )
         try:
-            process = subprocess.Popen(
+            process = host_processes.start(
                 argv,
                 cwd=request.workspace_path,
-                env={"LC_ALL": "C", "LANG": "C"},
+                env=_ripgrep_environment(),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                start_new_session=True,
-                close_fds=True,
-                shell=False,
             )
         except OSError:
             raise SearchDriverError("search_backend_unavailable") from None
         parser = _RipgrepEventParser(request, allow_metadata=allow_metadata)
-        selector = selectors.DefaultSelector()
+        selector = host_processes.pipe_selector()
         assert process.stdout is not None and process.stderr is not None
         selector.register(process.stdout, selectors.EVENT_READ, "stdout")
         selector.register(process.stderr, selectors.EVENT_READ, "stderr")
@@ -485,6 +483,7 @@ class RipgrepSearchDriver:
                 _terminate_and_reap(process)
             process.stdout.close()
             process.stderr.close()
+            host_processes.close_job(process)
 
 
 class _RipgrepEventParser:
@@ -601,7 +600,22 @@ class _RipgrepEventParser:
         )
 
 
+def _relative_rg_path(value: str) -> str:
+    if local_files.WINDOWS:
+        value = value.replace("\\", "/")
+    return value.removeprefix("./")
+
+
+def _ripgrep_environment() -> dict[str, str]:
+    environment = {"LC_ALL": "C", "LANG": "C"}
+    if local_files.WINDOWS and (system_root := os.environ.get("SYSTEMROOT")):
+        environment["SYSTEMROOT"] = system_root
+    return environment
+
+
 def _artifact_key() -> str:
+    if local_files.WINDOWS and platform.machine().lower() in {"amd64", "x86_64"}:
+        return "win32-x64"
     if sys.platform == "darwin" and platform.machine() == "arm64":
         return "darwin-arm64"
     raise SearchDriverError("search_backend_unavailable")
@@ -614,6 +628,10 @@ def _validate_binary_file(path: Path) -> os.stat_result:
         raise SearchDriverError("search_backend_unavailable") from None
     except OSError:
         raise SearchDriverError("search_backend_invalid") from None
+    if local_files.WINDOWS:
+        if path.suffix.lower() != ".exe" or not stat.S_ISREG(metadata.st_mode) or not local_files.trusted_asset(path, metadata):
+            raise SearchDriverError("search_backend_invalid")
+        return metadata
     if (
         not stat.S_ISREG(metadata.st_mode)
         or metadata.st_uid not in {0, os.geteuid()}
@@ -812,8 +830,7 @@ def _event_path(data: dict[str, object]) -> str:
         path = path_value["text"]
         if not isinstance(path, str):
             raise SearchDriverError("search_backend_protocol_error")
-    if path.startswith("./"):
-        path = path[2:]
+    path = _relative_rg_path(path)
     if not is_discovery_path_allowed(path):
         # Hard discovery directories are filtered; malformed paths are always
         # a backend protocol violation.
@@ -852,18 +869,12 @@ def _validate_matched_file(workspace: Path, relative_path: str) -> int | None:
     directory_fd = -1
     descriptor = -1
     try:
-        directory_flags = os.O_RDONLY | os.O_DIRECTORY
-        if hasattr(os, "O_NOFOLLOW"):
-            directory_flags |= os.O_NOFOLLOW
-        directory_fd = os.open(workspace, directory_flags)
+        directory_fd = local_files.open_directory(workspace)
         for part in parts[:-1]:
-            next_fd = os.open(part, directory_flags, dir_fd=directory_fd)
+            next_fd = local_files.open_directory(part, dir_fd=directory_fd)
             os.close(directory_fd)
             directory_fd = next_fd
-        file_flags = os.O_RDONLY | os.O_NONBLOCK
-        if hasattr(os, "O_NOFOLLOW"):
-            file_flags |= os.O_NOFOLLOW
-        descriptor = os.open(parts[-1], file_flags, dir_fd=directory_fd)
+        descriptor = local_files.open_file(parts[-1], dir_fd=directory_fd)
         before = os.fstat(descriptor)
         if (
             not stat.S_ISREG(before.st_mode)
@@ -916,6 +927,13 @@ def _validate_matched_file(workspace: Path, relative_path: str) -> int | None:
 
 
 def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
+    if host_processes.WINDOWS:
+        host_processes.terminate_tree(process)
+        try:
+            process.wait(timeout=_TERMINATION_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            raise SearchDriverError("search_backend_failed") from None
+        return
     if process.poll() is not None:
         process.wait()
         return

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from contextlib import AbstractContextManager
 import hashlib
 import json
@@ -259,7 +261,7 @@ class ThreadHistoryStore:
             if metadata.st_size < committed_bytes:
                 reset_required = True
             elif metadata.st_size > committed_bytes:
-                descriptor = os.open(
+                descriptor = local_files.open_file(
                     path, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
                 )
                 try:
@@ -278,7 +280,7 @@ class ThreadHistoryStore:
                 *PurePosixPath(str(row["relative_path"])).parts
             )
             if path.exists() and not path.is_symlink():
-                descriptor = os.open(
+                descriptor = local_files.open_file(
                     path, os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
                 )
                 try:
@@ -313,13 +315,12 @@ def _relative_path(stream_id: str) -> str:
 
 def _append_at_committed_offset(path: Path, committed: int, record: bytes) -> int:
     flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags, 0o600)
+    descriptor = local_files.open_file(path, flags, 0o600)
     try:
         metadata = os.fstat(descriptor)
         if (
             not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
-            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or not local_files.has_private_access(descriptor, metadata, 0o600)
             or metadata.st_size < committed
         ):
             raise StorageError("thread_history_file_invalid")
@@ -344,8 +345,7 @@ def _verify_history_file(path: Path) -> os.stat_result:
     metadata = path.stat()
     if (
         not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or not local_files.has_private_access(path, metadata, 0o600)
     ):
         raise StorageError("thread_history_file_invalid")
     return metadata
@@ -359,18 +359,13 @@ def _prepare_private_directory(path: Path) -> None:
     metadata = path.stat()
     if (
         not stat.S_ISDIR(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or not local_files.has_private_access(path, metadata, 0o700)
     ):
         raise StorageError("thread_history_directory_invalid")
 
 
 def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    local_files.sync_directory(path)
 
 
 __all__ = ["ThreadHistoryStore"]

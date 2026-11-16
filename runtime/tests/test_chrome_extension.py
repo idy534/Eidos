@@ -7,6 +7,7 @@ import sqlite3
 from unittest.mock import patch
 
 import anyio
+from anyio.abc import SocketAttribute
 import pytest
 
 from eidos_runtime.application.browser import BrowserApplication
@@ -38,6 +39,31 @@ from schema_fixtures import remove_goal_schema
 TOKEN = "Abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE"
 RELAY = "ws%3A%2F%2F127.0.0.1%3A50123%2Fextension%2F5733f635-0f0a-41ef-9972-305b283803db"
 CONNECT = f"chrome-extension://{PLAYWRIGHT_EXTENSION_ID}/connect.html?mcpRelayUrl={RELAY}"
+
+
+def test_loopback_broker_requires_its_connection_token():
+    opened = []
+
+    async def open_page(url):
+        opened.append(url)
+
+    async def exercise():
+        broker = ConnectPageBroker(open_page, token=TOKEN)
+        async with await anyio.create_tcp_listener(local_host="127.0.0.1") as listener:
+            port = listener.extra(SocketAttribute.local_port)
+            async with anyio.create_task_group() as group:
+                group.start_soon(broker.serve, listener)
+                for packet in (f"bad {CONNECT}\n", f"{TOKEN} https://example.test\n", f"{TOKEN} {CONNECT}",
+                               f"{TOKEN} {CONNECT}\n"):
+                    async with await anyio.connect_tcp("127.0.0.1", port) as stream:
+                        await stream.send(packet.encode("ascii"))
+                        await stream.send_eof()
+                        with anyio.fail_after(5), pytest.raises(anyio.EndOfStream):
+                            await stream.receive()
+                group.cancel_scope.cancel()
+
+    anyio.run(exercise)
+    assert opened == [CONNECT]
 
 
 # --- token, presence and connect page -------------------------------------------------

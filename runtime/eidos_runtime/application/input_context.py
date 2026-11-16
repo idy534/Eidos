@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from eidos_runtime.application.agent_catalog import AgentCatalog
 
 import base64
@@ -288,6 +290,8 @@ def _rejection_reason(error: BaseException) -> str:
 
 
 def _open_path(path: Path) -> int:
+    if local_files.WINDOWS:
+        return local_files.open_directory(path) if path.is_dir() else local_files.open_file(path)
     descriptor = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
     try:
         for index, part in enumerate(path.parts[1:]):

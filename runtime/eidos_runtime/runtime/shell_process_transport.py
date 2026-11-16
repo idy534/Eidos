@@ -8,25 +8,35 @@ from pathlib import Path
 import select
 import stat
 import subprocess
-import termios
+import sys
 import threading
 import time
+from typing import TYPE_CHECKING
 
+from eidos_runtime.infrastructure import host_processes
 from eidos_runtime.sandbox.seatbelt import runtime_python_executable
 from eidos_runtime.sandbox.shell import ShellLaunchSpec, _terminate_group
 
+if TYPE_CHECKING:
+    from eidos_runtime.infrastructure.windows_terminal import ConPtyProcess
 
 PTY_HELPER = Path(__file__).parents[1] / "sandbox" / "pty_exec_helper.py"
 
 
 @dataclass
 class ShellProcessTransport:
-    process: subprocess.Popen[bytes]
+    process: host_processes.OwnedProcess
     terminal_fd: int | None = None
     stdin_closed: bool = False
     start_fd: int | None = None
+    windows_terminal: ConPtyProcess | None = None
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.terminal_fd is not None or self.windows_terminal is not None
 
     def start_execution(self) -> None:
+        host_processes.release(self.process)
         if self.start_fd is not None:
             try:
                 os.write(self.start_fd, b"g")
@@ -54,16 +64,25 @@ class ShellProcessTransport:
         )
 
     def resize(self, rows: int, columns: int) -> None:
+        if self.windows_terminal is not None:
+            self.windows_terminal.resize(rows, columns)
+            return
+        import termios
+
         if self.terminal_fd is None:
             raise RuntimeError("shell_not_a_terminal")
         termios.tcsetwinsize(self.terminal_fd, (rows, columns))
 
     def close_stdin(self) -> None:
-        if self.terminal_fd is not None:
+        if self.is_terminal:
             raise RuntimeError("shell_terminal_cannot_close_stdin")
         if not self.stdin_closed and self.process.stdin is not None:
             self.process.stdin.close()
         self.stdin_closed = True
+
+    @property
+    def quiescent(self) -> bool:
+        return self.windows_terminal is None or self.windows_terminal.quiescent
 
     def close(self) -> None:
         if self.start_fd is not None:
@@ -78,17 +97,27 @@ class ShellProcessTransport:
                     stream.close()
                 except OSError:
                     pass
+        host_processes.close_job(self.process)
 
 
 def spawn_shell_process(
     launch: ShellLaunchSpec, *, cancel: threading.Event | None = None,
 ) -> ShellProcessTransport:
     if not launch.tty:
-        return ShellProcessTransport(subprocess.Popen(
+        return ShellProcessTransport(host_processes.start(
             launch.argv, cwd=launch.cwd, env=launch.environment,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            start_new_session=True,
+            hold=True,
         ))
+    if sys.platform == "win32":
+        from eidos_runtime.infrastructure.windows_terminal import ConPtyProcess
+
+        if launch.sandboxed:
+            raise OSError("Windows terminal sandbox is unavailable")
+        terminal = ConPtyProcess(launch.argv, launch.cwd, launch.environment, launch.rows, launch.columns)
+        return ShellProcessTransport(terminal, windows_terminal=terminal)
+    import termios
+
     master = slave = error_read = error_write = start_read = start_write = -1
     process: subprocess.Popen[bytes] | None = None
     try:

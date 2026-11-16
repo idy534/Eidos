@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 
@@ -10,13 +11,15 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-electron-smoke-"));
 const dataDirectory = path.join(temporaryRoot, "eidos-data");
 const userDataDirectory = path.join(temporaryRoot, "electron-user-data");
-const executable = path.join(root, "node_modules", ".bin", "electron");
+const executable = createRequire(import.meta.url)("electron");
 const environment = {
   ...process.env,
   EIDOS_DATA_DIR: dataDirectory,
   EIDOS_PROJECTLESS_ROOT: `${dataDirectory}-workspaces`,
   EIDOS_ELECTRON_SMOKE: "1",
-  EIDOS_PYTHON: process.env.EIDOS_PYTHON ?? path.join(root, ".venv", "bin", "python"),
+  EIDOS_PYTHON: process.env.EIDOS_PYTHON ?? (process.platform === "win32"
+    ? path.join(root, ".venv", "Scripts", "python.exe")
+    : path.join(root, ".venv", "bin", "python")),
 };
 delete environment.EIDOS_FAKE_MODEL;
 delete environment.ELECTRON_RUN_AS_NODE;

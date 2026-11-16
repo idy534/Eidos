@@ -11,6 +11,9 @@ Resolve `<skill root>` to this Skill's canonical directory from the catalog.
 Keep cwd in the Run workspace. Put generated scripts, outputs and temporary files there.
 Run every example through this Skill's launcher using its absolute path:
 
+In Windows PowerShell, use `& $env:RUNTIME_PYTHON "<skill root>/scripts/run.py" python generated.py`.
+Use that same PowerShell prefix for the examples below, keeping their arguments unchanged.
+
 ```bash
 "$RUNTIME_PYTHON" "<skill root>/scripts/run.py" python generated.py
 "$RUNTIME_PYTHON" "<skill root>/scripts/run.py" node generated.js

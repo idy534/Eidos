@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from contextlib import AbstractContextManager, contextmanager
 import os
 import logging
@@ -1021,7 +1023,7 @@ def _prepare_private_database(path: Path) -> None:
     if path.is_symlink():
         raise StorageError("database must not be a symlink")
     if not path.exists():
-        descriptor = os.open(
+        descriptor = local_files.open_file(
             path,
             os.O_CREAT | os.O_EXCL | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
             0o600,
@@ -1038,8 +1040,7 @@ def _prepare_private_directory(path: Path) -> None:
     metadata = path.stat()
     if (
         not stat.S_ISDIR(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or not local_files.has_private_access(path, metadata, 0o700)
     ):
         raise StorageError("data directory owner or mode is invalid")
 
@@ -1050,7 +1051,7 @@ def _verify_private_database(path: Path) -> None:
     metadata = path.stat()
     if not stat.S_ISREG(metadata.st_mode):
         raise StorageError("database must be a regular file")
-    if metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o600:
+    if not local_files.has_private_access(path, metadata, 0o600):
         raise StorageError("database owner or mode is invalid")
 
 
@@ -1065,8 +1066,7 @@ def _retry_state_compaction(state: StateDatabase) -> None:
     metadata = marker.stat()
     if (
         not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or not local_files.has_private_access(marker, metadata, 0o600)
     ):
         raise StorageError("state_security_invalid")
     try:
@@ -1083,7 +1083,7 @@ def _write_empty_marker(path: Path) -> None:
         if path.is_symlink():
             raise StorageError("state_security_invalid")
         return
-    descriptor = os.open(
+    descriptor = local_files.open_file(
         path,
         os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
         0o600,
@@ -1113,7 +1113,7 @@ def _verify_connection(connection: sqlite3.Connection) -> None:
 
 
 def _fsync_file(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    descriptor = local_files.open_file(path, os.O_RDWR if local_files.WINDOWS else os.O_RDONLY)
     try:
         os.fsync(descriptor)
     finally:
@@ -1121,11 +1121,7 @@ def _fsync_file(path: Path) -> None:
 
 
 def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    local_files.sync_directory(path)
 
 
 __all__ = [

@@ -493,6 +493,38 @@ ZIP 含私有聊天、记忆和执行状态，也可能含 MCP 环境配置，�
 
 ## 构建打包与原生验证
 
+### Windows x64 预览
+
+开发者在 Windows 11 x64 的本地 NTFS 目录构建。构建机使用 Node、pnpm、uv、Python 3.12.4 或更高的 3.12 修订版，以及 Windows 提供的 .NET Framework C# 编译器。用户安装生成的 App 后使用包内 Python、MinGit、ripgrep、Node 和文档资源。浏览器工具使用用户安装的 Google Chrome。
+
+```powershell
+pnpm install
+uv sync --locked --python 3.12
+pnpm build:runtime:win
+pnpm start
+```
+
+`pnpm build:runtime:win` 的输出在 `build/windows-runtime/`。构建器校验上游资产，从锁文件安装 CPython 3.12 wheel 和 Windows Node 模块，然后生成 `runtime.json`、`resource-index.json` 和 `resource-packs/`。源码运行和安装后的 App 都使用这套资源。启动烟测通过临时数据目录检查初始化、健康、资源状态和退出。
+
+```powershell
+pnpm package:win
+pnpm test:electron-smoke
+uv run --locked --python 3.12 pytest -q runtime/tests/test_windows_platform.py
+```
+
+安装包在 `release/Eidos-*-win-x64.exe`。本地预览可以生成未签名包。Windows CI 单独构建该安装包并保留产物。维护者配置 Authenticode 所需的构建凭据后再验证签名。
+
+实机验收使用普通用户和临时工作区。验收人先检查以下流程。
+
+1. 验收人从未预装 Python、Git 或 ripgrep 的机器安装 App，启动并发起对话，再关闭和重开。验收人核对历史和模型配置仍可读取。
+2. 验收人在包含中文和空格的仓库中检查预览、搜索、创建、更新、删除、Diff、Worktree、快照恢复和取消。验收人检查已有文件身份、写前冲突、受保护路径、硬链接和目录 junction。
+3. 验收人检查默认方式拒绝启动没有隔离后端的 Shell 和本地 MCP。验收人在临时仓库内确认完全访问，检查 PowerShell PIPE 和 Agent PTY。验收人用 `run_shell` 的 `tty=true` 启动交互程序，检查中文输入输出、`control_shell` 尺寸调整、Ctrl-C 和取消后的子进程清理。验收人另外检查桌面终端的输入、尺寸调整和关闭。
+4. 验收人检查文件定位、拖放、中文输入、窗口缩放、覆盖安装和卸载后的数据保留。
+5. 验收人在 Chrome 中检查三种浏览器目标。验收人检查专用 Chrome 的下载拦截与退出清理、用户 Chrome 的远程调试确认，以及 Playwright Extension 的令牌、标签组和重新连接。
+6. 验收人在新装环境打开完全访问 Run，使用 DOCX、PPTX、XLSX 和 PDF Skill。验收人断网检查首次解包、Office 转换、公式重算、缩略图、PDF 渲染和中英文 OCR，再重启检查资源复用。Windows CI 同时执行 `scripts/bundled-document-skills-smoke.py`。
+
+Windows 预览对本地 NTFS 目录执行路径、句柄和 ACL 核验。网络盘、reparse point 和启用了大小写敏感的目录在此范围外。Windows 默认 Shell 和本地 MCP 的隔离后端，以及 Qoder 资源包仍待实现。
+
 ### 原生 Seatbelt
 
 ```bash

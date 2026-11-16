@@ -26,6 +26,7 @@ import urllib.error
 import urllib.request
 from typing import Protocol
 
+from eidos_runtime.infrastructure import host_processes, local_files
 from eidos_runtime.sandbox.host_shell import sanitize_shell_environment
 
 logger = logging.getLogger(__name__)
@@ -61,10 +62,25 @@ class BrowserHostStatus:
     running: bool
 
 
-def find_chrome(candidates: Sequence[Path] = CHROME_APPLICATIONS) -> ChromeInstallation | None:
+def find_chrome(candidates: Sequence[Path] | None = None) -> ChromeInstallation | None:
     """Accept only a Google Chrome bundle owned by root or the current user."""
 
-    for bundle in candidates:
+    if local_files.WINDOWS:
+        from eidos_runtime.infrastructure.windows_files import executable_version
+
+        if candidates is None:
+            roots = (Path(os.environ.get(name, "")) for name in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"))
+            candidates = tuple(root / "Google/Chrome/Application/chrome.exe" for root in roots if root.is_absolute())
+        for executable in candidates:
+            try:
+                metadata = executable.lstat()
+                if not stat.S_ISREG(metadata.st_mode) or not local_files.trusted_asset(executable, metadata):
+                    continue
+                return ChromeInstallation(executable, executable_version(executable))
+            except OSError:
+                continue
+        return None
+    for bundle in CHROME_APPLICATIONS if candidates is None else candidates:
         try:
             info_path = bundle / "Contents" / "Info.plist"
             metadata = info_path.lstat()
@@ -154,7 +170,7 @@ class BrowserHost:
         profile_root: Path,
         *,
         chrome: Callable[[], ChromeInstallation | None] = find_chrome,
-        popen: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
+        popen: Callable[..., subprocess.Popen[bytes]] | None = None,
         probe: Callable[[int], bool] = _probe_cdp,
         control: Callable[[int], _Closable] | None = None,
         clock: Callable[[], float] = time.monotonic,
@@ -163,7 +179,7 @@ class BrowserHost:
     ) -> None:
         self.profile = profile_root
         self._chrome = chrome
-        self._popen = popen
+        self._popen = popen or (host_processes.start if local_files.WINDOWS else subprocess.Popen)
         self._probe = probe
         self._control_factory = control or _deny_downloads
         self._control: _Closable | None = None
@@ -215,6 +231,8 @@ class BrowserHost:
             installation = self._chrome()
             if installation is None:
                 raise BrowserUnavailable("browser_unavailable")
+            if local_files.WINDOWS and self._windows_profile_locked():
+                raise BrowserUnavailable("browser_profile_in_use")
             owner = self._profile_lock_pid()
             if owner is not None:
                 if self._probe(port):
@@ -265,12 +283,16 @@ class BrowserHost:
             if self._profile_lock_pid() is not None and not self._running():
                 raise BrowserUnavailable("browser_profile_in_use")
             self._stop()
+            if local_files.WINDOWS and self._windows_profile_locked():
+                raise BrowserUnavailable("browser_profile_in_use")
             self._remove_state()
             try:
                 metadata = self.profile.lstat()
             except FileNotFoundError:
                 return False
-            if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+            if not stat.S_ISDIR(metadata.st_mode) or local_files.is_link(metadata) or not local_files.owned_by_user(self.profile, metadata):
+                raise BrowserUnavailable("browser_profile_invalid")
+            if local_files.WINDOWS and not local_files.has_private_access(self.profile, metadata):
                 raise BrowserUnavailable("browser_profile_invalid")
             shutil.rmtree(self.profile)
             return True
@@ -320,7 +342,10 @@ class BrowserHost:
         if self._process is not None:
             if self._process.poll() is None:
                 return True
-            self._process = None
+            if local_files.WINDOWS:
+                self._stop()
+            else:
+                self._process = None
         if self._adopted_pid is not None:
             if _pid_alive(self._adopted_pid):
                 return True
@@ -333,6 +358,7 @@ class BrowserHost:
             str(installation.executable),
             f"--user-data-dir={self.profile}",
             f"--remote-debugging-port={port}",
+            *(("--remote-debugging-address=127.0.0.1",) if local_files.WINDOWS else ()),
             "--no-first-run",
             "--no-default-browser-check",
             *self._extra_arguments,
@@ -343,7 +369,7 @@ class BrowserHost:
                 arguments,
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 env=sanitize_shell_environment(os.environ), cwd=str(self.profile),
-                start_new_session=True, close_fds=True,
+                **({} if local_files.WINDOWS else {"start_new_session": True, "close_fds": True}),
             )
         except OSError:
             raise BrowserUnavailable("browser_start_failed") from None
@@ -354,11 +380,19 @@ class BrowserHost:
                 self._stop()
                 raise BrowserUnavailable("browser_start_canceled")
             if process.poll() is not None:
-                self._process = None
+                if local_files.WINDOWS:
+                    self._stop()
+                else:
+                    self._process = None
                 raise BrowserUnavailable("browser_start_failed")
             if self._probe(port):
-                self._write_state(port, process.pid)
-                self._attach_control(port)
+                try:
+                    if not local_files.WINDOWS:
+                        self._write_state(port, process.pid)
+                    self._attach_control(port)
+                except (OSError, BrowserUnavailable):
+                    self._stop()
+                    raise
                 return
             cancel.wait(0.1)
         self._stop()
@@ -367,11 +401,15 @@ class BrowserHost:
     def _prepare_profile(self) -> None:
         self.profile.mkdir(mode=0o700, parents=True, exist_ok=True)
         metadata = self.profile.lstat()
-        if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+        if not stat.S_ISDIR(metadata.st_mode) or local_files.is_link(metadata) or not local_files.owned_by_user(self.profile, metadata):
             raise BrowserUnavailable("browser_profile_invalid")
-        if stat.S_IMODE(metadata.st_mode) != 0o700:
+        if local_files.WINDOWS:
+            if not local_files.has_private_access(self.profile, metadata):
+                raise BrowserUnavailable("browser_profile_invalid")
+        elif stat.S_IMODE(metadata.st_mode) != 0o700:
             os.chmod(self.profile, 0o700)
-        self._remove_state()
+        if not local_files.WINDOWS:
+            self._remove_state()
 
     @property
     def _state_path(self) -> Path:
@@ -418,6 +456,8 @@ class BrowserHost:
     def _profile_lock_pid(self) -> int | None:
         """Chrome's SingletonLock names the live owner of this profile."""
 
+        if local_files.WINDOWS:
+            return None
         try:
             target = os.readlink(self.profile / "SingletonLock")
         except OSError:
@@ -429,11 +469,22 @@ class BrowserHost:
         return pid if _pid_alive(pid) else None
 
     def _adoptable_port(self) -> int | None:
+        if local_files.WINDOWS:
+            return None  # The owning Job Object closes the Windows browser on Runtime exit.
         owner = self._profile_lock_pid()
         state = self._read_state()
         if owner is None or state is None or state[1] != owner:
             return None
         return state[0] if self._probe(state[0]) else None
+
+    def _windows_profile_locked(self) -> bool:
+        try:
+            (self.profile / "lockfile").lstat()
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return True
+        return True
 
     def _stop(self) -> None:
         pid = self._process.pid if self._process is not None else self._adopted_pid
@@ -442,6 +493,18 @@ class BrowserHost:
         self._adopted_pid = None
         self._close_control()
         if pid is None:
+            return
+        if local_files.WINDOWS and process is not None:
+            try:
+                host_processes.terminate_tree(process)
+                deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
+                while host_processes.has_members(process):
+                    if time.monotonic() >= deadline:
+                        raise BrowserUnavailable("browser_profile_in_use")
+                    time.sleep(0.05)
+                process.wait(timeout=STOP_TIMEOUT_SECONDS)
+            finally:
+                host_processes.close_job(process)
             return
         self._remove_state()
         _signal_group(pid, signal.SIGTERM)

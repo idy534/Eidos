@@ -349,6 +349,17 @@ export function buildRuntimeEnvironment(
     ...options.baseEnvironment,
     ...options.overrides,
   };
+  if (process.platform === "win32") {
+    for (const [key, value] of Object.entries(environment)) {
+      const canonical = key.toUpperCase();
+      if (key !== canonical) {
+        delete environment[key];
+        environment[canonical] ??= value;
+      }
+    }
+    environment.PYTHONIOENCODING = "utf-8";
+    environment.PYTHONUTF8 = "1";
+  }
   if (options.policy === "packaged") {
     environment.PYTHONPATH = options.runtimeRoot;
     delete environment.PYTHONHOME;
@@ -421,6 +432,7 @@ export class RuntimeClient {
     this.child = spawn(options.pythonExecutable, ["-u", "-m", "eidos_runtime"], {
       cwd: options.runtimeRoot,
       env: environment,
+      windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
 

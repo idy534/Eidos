@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from functools import lru_cache
-import os
 from pathlib import Path
 import re
 import stat
@@ -66,8 +67,7 @@ class SensitiveScanner:
             if (
                 path.is_symlink()
                 or not stat.S_ISREG(metadata.st_mode)
-                or metadata.st_uid != os.getuid()
-                or stat.S_IMODE(metadata.st_mode) & 0o022
+                or not local_files.trusted_asset(path, metadata)
             ):
                 raise ValueError("rules resource is not read-only")
             rules = SensitiveRuleSet.model_validate_json(path.read_text(encoding="utf-8"))

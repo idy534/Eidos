@@ -13,23 +13,38 @@ import re
 import socket
 import stat
 
-USER_CHROME_DATA = Path.home() / "Library" / "Application Support" / "Google" / "Chrome"
+from eidos_runtime.infrastructure import local_files
+
+
+def chrome_user_data() -> Path | None:
+    if local_files.WINDOWS:
+        local = Path(os.environ.get("LOCALAPPDATA", ""))
+        return local / "Google/Chrome/User Data" if local.is_absolute() else None
+    return Path.home() / "Library/Application Support/Google/Chrome"
+
+
 _MAX_PORT_FILE_BYTES = 4096
 _BROWSER_PATH = re.compile(r"^/devtools/browser/[A-Za-z0-9-]{1,64}$")
 
 
-def user_chrome_endpoint(data_directory: Path = USER_CHROME_DATA) -> str | None:
+def user_chrome_endpoint(data_directory: Path | None = None) -> str | None:
     """Return the browser WebSocket URL when the user's Chrome is listening."""
 
+    data_directory = data_directory or chrome_user_data()
+    if data_directory is None:
+        return None
     try:
-        descriptor = os.open(data_directory / "DevToolsActivePort", os.O_RDONLY | os.O_NOFOLLOW)
+        descriptor = local_files.open_file(data_directory / "DevToolsActivePort")
     except OSError:
         return None
     with os.fdopen(descriptor, "rb") as stream:
         metadata = os.fstat(stream.fileno())
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
+        if not stat.S_ISREG(metadata.st_mode) or not local_files.owned_by_user(descriptor, metadata):
             return None
-        lines = stream.read(_MAX_PORT_FILE_BYTES).decode("ascii", "replace").splitlines()
+        raw = stream.read(_MAX_PORT_FILE_BYTES + 1)
+    if len(raw) > _MAX_PORT_FILE_BYTES:
+        return None
+    lines = raw.decode("ascii", "replace").splitlines()
     if len(lines) < 2 or not lines[0].strip().isdigit() or not _BROWSER_PATH.fullmatch(lines[1].strip()):
         return None
     port = int(lines[0].strip())

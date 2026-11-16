@@ -12,7 +12,7 @@ from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.infrastructure.managed_resource_catalog import ManagedResourceCatalog
 from eidos_runtime.infrastructure.managed_resources import ManagedResourceManager, ResourceError
 from eidos_runtime.infrastructure.runtime_dependencies import RuntimeDependencyCatalog
-from eidos_runtime.models.managed_resources import ResourceIndex, ResourcePack
+from eidos_runtime.models.managed_resources import ResourceIndex, ResourcePack, resource_archive_name
 from eidos_runtime.models.runtime_dependencies import (
     RuntimeDependencyExecutable, RuntimeDependencyInventoryFile,
     RuntimeDependencyManifest, RuntimeDependencyPythonPackage,
@@ -69,6 +69,45 @@ def resources(tmp_path):
         client_factory=lambda: httpx.Client(transport=httpx.MockTransport(transport)),
     )
     return manager, calls, payload
+
+
+def test_windows_pack_checks_the_bundled_archive_and_can_retry(resources, tmp_path, monkeypatch):
+    original, calls, payload = resources
+    pack = original.index.packs[0]
+    pack = pack.model_copy(update={
+        "manifest": pack.manifest.model_copy(update={"target": "win32-x64"}), "url": None,
+    })
+    # Check the local source on this host. Native path checks run in Windows CI.
+    monkeypatch.setattr("eidos_runtime.infrastructure.managed_resources._verify_platform", lambda _pack: None)
+    root = tmp_path / "bundled"
+    root.mkdir()
+    resource = root / resource_archive_name(pack.id, pack.version, "win32-x64")
+    manager = ManagedResourceManager(
+        ResourceIndex(version="1.0.0", target="win32-x64", packs=(pack,)), root=original.root,
+        archive_root=root, client_factory=original.client_factory,
+    )
+    cancel = threading.Event()
+    with pytest.raises(ResourceError, match="resource_archive_missing"):
+        manager.ensure((pack.id,), cancel)
+    resource.write_bytes(payload[:-1] + bytes([payload[-1] ^ 1]))
+    with pytest.raises(ResourceError, match="resource_archive_mismatch"):
+        manager.ensure((pack.id,), cancel)
+    assert not manager.location(pack.id).exists()
+    resource.write_bytes(payload)
+    manager.ensure((pack.id,), cancel)
+    resource.unlink()
+    manager.ensure((pack.id,), cancel)
+    assert manager.is_ready(pack.id)
+    assert not calls
+
+
+@pytest.mark.parametrize("paths", [("app/A.py", "app/a.py"), ("app/COM1.txt",), ("app/file.py:stream",)])
+def test_windows_manifest_refuses_aliases_reserved_names_and_streams(paths):
+    with pytest.raises(ValueError):
+        RuntimeDependencyManifest(
+            schema_version=1, bundle_id="com.idy.eidos.fixture", bundle_version="1.0.0", target="win32-x64",
+            files=tuple(RuntimeDependencyInventoryFile(path=path, sha256="0" * 64) for path in paths),
+        )
 
 
 def test_pack_status_checks_only_the_requested_pack(resources, monkeypatch):
@@ -267,7 +306,7 @@ def test_offline_and_disk_full_failures_can_be_retried(resources, monkeypatch):
         manager.ensure(("document-python",), threading.Event())
     assert manager.status().packs[0].phase == "failed"
     with monkeypatch.context() as context:
-        context.setattr(manager, "_download", lambda *args: (_ for _ in ()).throw(OSError(errno.ENOSPC, "disk full")))
+        context.setattr(manager, "_prepare_archive", lambda *args: (_ for _ in ()).throw(OSError(errno.ENOSPC, "disk full")))
         with pytest.raises(ResourceError, match="resource_disk_full"):
             manager.ensure(("document-python",), threading.Event())
     assert manager.status().packs[0].error_code == "resource_disk_full"

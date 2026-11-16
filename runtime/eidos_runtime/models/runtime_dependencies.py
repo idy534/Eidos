@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import PureWindowsPath
 import re
 from typing import Literal
 
@@ -26,6 +27,15 @@ MAX_MANIFEST_ROOTS = 256
 MAX_MANIFEST_PACKAGES = 256
 MAX_MANIFEST_FILES = 32 * 1024
 MAX_MANIFEST_DEPENDENCIES = 32
+RuntimeDependencyTarget = Literal["darwin-arm64", "win32-x64"]
+
+
+def validate_windows_resource_path(value: str) -> str:
+    for part in value.split("/"):
+        if (part.endswith((".", " ")) or any(ord(c) < 32 or c in ':*?"<>|' for c in part)
+            or PureWindowsPath(part).is_reserved()):
+            raise ValueError("resource path contains an unsafe Windows name")
+    return value
 
 
 def _validate_relative_path(value: str) -> str:
@@ -113,7 +123,7 @@ class RuntimeDependencyManifest(EidosFrozenStrictModel):
     schema_version: Literal[1]
     bundle_id: str = Field(min_length=1, max_length=128)
     bundle_version: str = Field(min_length=1, max_length=128)
-    target: Literal["darwin-arm64"]
+    target: RuntimeDependencyTarget
     executables: tuple[RuntimeDependencyExecutable, ...] = Field(
         default=(), max_length=MAX_MANIFEST_EXECUTABLES
     )
@@ -176,6 +186,13 @@ class RuntimeDependencyManifest(EidosFrozenStrictModel):
         inventory_paths = [value.path for value in self.files]
         if len(inventory_paths) != len(set(inventory_paths)):
             raise ValueError("files must not contain duplicate paths")
+        if self.target == "win32-x64":
+            if len({path.casefold() for path in inventory_paths}) != len(inventory_paths):
+                raise ValueError("files must not contain Windows aliases")
+            for path in (*inventory_paths, *self.python_path, *self.native_bin_paths,
+                         self.node_modules, self.node_loader, *(item.path for item in self.executables)):
+                if path is not None:
+                    validate_windows_resource_path(path)
         if self.node_packages:
             if self.node_modules is None:
                 raise ValueError("nodeModules is required when nodePackages is declared")
@@ -227,7 +244,7 @@ class RuntimeDependencySnapshot(EidosFrozenStrictModel):
     manifest_sha256: str = Field(pattern=_SHA256_PATTERN)
     bundle_id: str = Field(min_length=1, max_length=128)
     bundle_version: str = Field(min_length=1, max_length=128)
-    target: Literal["darwin-arm64"]
+    target: RuntimeDependencyTarget
     snapshot_sha256: str = Field(pattern=_SHA256_PATTERN)
     executables: tuple[RuntimeDependencyExecutablePath, ...] = Field(
         default=(), max_length=MAX_MANIFEST_EXECUTABLES

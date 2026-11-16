@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 import codecs
 from collections.abc import Iterator
 from contextlib import closing, contextmanager, ExitStack
@@ -199,8 +201,8 @@ def deploy_system_skills(data_directory: Path) -> None:
     try:
         _write_tree(staging, source_files)
         if destination.exists():
-            os.replace(destination, backup)
-        os.replace(staging, destination)
+            local_files.replace(destination, backup)
+        local_files.replace(staging, destination)
         _fsync_directory(skills_root)
         if backup.exists():
             shutil.rmtree(backup, ignore_errors=True)
@@ -208,7 +210,7 @@ def deploy_system_skills(data_directory: Path) -> None:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
         if not destination.exists() and backup.exists():
-            os.replace(backup, destination)
+            local_files.replace(backup, destination)
         raise SkillReadError("system_skills_unavailable") from None
 
 
@@ -482,7 +484,7 @@ class SkillCatalog:
         try:
             _validate_resource_parent_chain(root, relative)
             metadata = resource_file.lstat()
-            if stat.S_ISLNK(metadata.st_mode) or metadata.st_uid != os.getuid():
+            if local_files.is_link(metadata) or not local_files.owned_by_user(resource_file, metadata):
                 raise SkillReadError("skill_path_invalid")
             if stat.S_ISDIR(metadata.st_mode):
                 return {
@@ -1082,7 +1084,7 @@ def _commit_skill_tree(
         if os.path.lexists(destination):
             shutil.rmtree(staging, ignore_errors=True)
             return _skill_error(tool_name, "skill_already_exists", "Skill already exists")
-        os.replace(staging, destination)
+        local_files.replace(staging, destination)
         committed = True
         _fsync_directory(skills_root)
         catalog.plugins.store.restore_removed_skill(f"user:{creation.name}")
@@ -1315,7 +1317,7 @@ def _directory_sources(
         if (
             root.is_symlink()
             or not stat.S_ISDIR(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
+            or not local_files.owned_by_user(root, metadata)
         ):
             raise SkillReadError("skill_catalog_invalid")
         children = sorted(root.iterdir(), key=lambda value: value.name.encode("utf-8"))
@@ -1330,7 +1332,7 @@ def _directory_sources(
             if (
                 child.is_symlink()
                 or not stat.S_ISDIR(child_metadata.st_mode)
-                or child_metadata.st_uid != os.getuid()
+                or not local_files.owned_by_user(child, child_metadata)
             ):
                 continue
             sources.append(_source(
@@ -1432,14 +1434,14 @@ def _skill_resource_rank(path: PurePosixPath) -> tuple[int, int, bytes]:
 def _skill_directory_fd(root: Path, relative: PurePosixPath) -> Iterator[int]:
     """Anchor traversal at the known root without following replaced links."""
     with ExitStack() as stack:
-        descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptor = local_files.open_directory(root)
         stack.callback(os.close, descriptor)
-        if os.fstat(descriptor).st_uid != os.getuid():
+        if not local_files.owned_by_user(descriptor, os.fstat(descriptor)):
             raise SkillReadError("skill_path_invalid")
         for part in relative.parts:
-            descriptor = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            descriptor = local_files.open_directory(part, dir_fd=descriptor)
             stack.callback(os.close, descriptor)
-            if os.fstat(descriptor).st_uid != os.getuid():
+            if not local_files.owned_by_user(descriptor, os.fstat(descriptor)):
                 raise SkillReadError("skill_path_invalid")
         yield descriptor
 
@@ -1451,7 +1453,7 @@ def _walk_skill_resources(
 
     def walk(descriptor: int, parent: PurePosixPath) -> Iterator[tuple[PurePosixPath, os.stat_result, int]]:
         nonlocal visited
-        with os.scandir(descriptor) as scan:
+        with local_files.scan_directory(descriptor) as scan:
             entries = list(islice(scan, MAX_SKILL_FILES - visited + 1))
         for entry in sorted(entries, key=lambda value: value.name):
             visited += 1
@@ -1466,17 +1468,17 @@ def _walk_skill_resources(
                 ):
                     continue
                 _safe_relative(path.as_posix())
-                metadata = entry.stat(follow_symlinks=False)
+                metadata = local_files.lstat_at(entry.name, descriptor)
             except (OSError, UnicodeError, SkillReadError):
                 continue
-            if metadata.st_uid != os.getuid():
+            if local_files.is_link(metadata) or not local_files.owned_by_user(root.joinpath(*path.parts), metadata):
                 continue
             is_directory = stat.S_ISDIR(metadata.st_mode)
             if not is_directory and not stat.S_ISREG(metadata.st_mode):
                 continue
             yield path, metadata, descriptor
             if recursive and is_directory:
-                child = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+                child = local_files.open_directory(entry.name, dir_fd=descriptor)
                 try:
                     opened = os.fstat(child)
                     if (opened.st_dev, opened.st_ino, opened.st_uid) != (metadata.st_dev, metadata.st_ino, metadata.st_uid):
@@ -1494,7 +1496,7 @@ def _skill_resource_type(
 ) -> Literal["text", "binary", "script", "directory"]:
     if stat.S_ISDIR(metadata.st_mode):
         return "directory"
-    descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd)
+    descriptor = local_files.open_file(path.name, dir_fd=parent_fd)
     try:
         opened = os.fstat(descriptor)
         if (
@@ -1654,17 +1656,14 @@ def _read_bytes(path: Path, limit: int) -> bytes:
         metadata = path.lstat()
         if (
             not stat.S_ISREG(metadata.st_mode)
-            or stat.S_ISLNK(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
+            or local_files.is_link(metadata)
+            or not local_files.owned_by_user(path, metadata)
             or metadata.st_size > limit
         ):
             raise SkillReadError(
                 "skill_resource_too_large" if metadata.st_size > limit else "skill_path_invalid"
             )
-        flags = os.O_RDONLY
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        descriptor = os.open(path, flags)
+        descriptor = local_files.open_file(path)
         try:
             opened = os.fstat(descriptor)
             if (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino):
@@ -1712,9 +1711,9 @@ def _read_tree(
         or not stat.S_ISDIR(metadata.st_mode)
         or (
             (private or owned)
-            and metadata.st_uid != os.getuid()
+            and not local_files.owned_by_user(root, metadata)
         )
-        or (private and stat.S_IMODE(metadata.st_mode) != 0o700)
+        or (private and not local_files.has_private_access(root, metadata, 0o700))
     ):
         raise SkillReadError("system_skills_unavailable")
     files = _SkillFiles()
@@ -1730,16 +1729,16 @@ def _read_tree(
                 entry = candidate.lstat()
             except OSError:
                 raise SkillReadError("system_skills_unavailable") from None
-            if stat.S_ISLNK(entry.st_mode):
+            if local_files.is_link(entry):
                 raise SkillReadError("system_skills_unavailable")
             if name in names:
                 if (
                     not stat.S_ISDIR(entry.st_mode)
                     or (
                         (private or owned)
-                        and entry.st_uid != os.getuid()
+                        and not local_files.owned_by_user(candidate, entry)
                     )
-                    or (private and stat.S_IMODE(entry.st_mode) != 0o700)
+                    or (private and not local_files.has_private_access(candidate, entry, 0o700))
                 ):
                     raise SkillReadError("system_skills_unavailable")
                 continue
@@ -1748,12 +1747,13 @@ def _read_tree(
                 or entry.st_size > MAX_SKILL_FILE_BYTES
                 or (
                     (private or owned)
-                    and entry.st_uid != os.getuid()
+                    and not local_files.owned_by_user(candidate, entry)
                 )
                 or (
                     private
-                    and stat.S_IMODE(entry.st_mode)
-                    != (0o700 if _is_executable_mode(entry.st_mode) else 0o600)
+                    and not local_files.has_private_access(
+                        candidate, entry, 0o700 if _is_executable_mode(entry.st_mode) else 0o600,
+                    )
                 )
             ):
                 raise SkillReadError("system_skills_unavailable")
@@ -1856,13 +1856,13 @@ def _write_tree(
             parent = parent / part
             _private_directory(parent)
         mode = 0o700 if safe_relative.as_posix() in executable_paths else 0o600
-        descriptor = os.open(
+        descriptor = local_files.open_file(
             target,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
             mode,
         )
         try:
-            os.fchmod(descriptor, mode)
+            local_files.set_file_mode(descriptor, mode)
             offset = 0
             while offset < len(data):
                 offset += os.write(descriptor, data[offset:])
@@ -1881,14 +1881,14 @@ def _private_directory(path: Path) -> None:
         raise SkillReadError("skill_catalog_invalid")
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     metadata = path.stat()
-    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+    if not stat.S_ISDIR(metadata.st_mode) or not local_files.owned_by_user(path, metadata):
         raise SkillReadError("skill_catalog_invalid")
-    os.chmod(path, 0o700)
+    if local_files.WINDOWS:
+        if not local_files.has_private_access(path, metadata, 0o700):
+            raise SkillReadError("skill_catalog_invalid")
+    else:
+        os.chmod(path, 0o700)
 
 
 def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    local_files.sync_directory(path)

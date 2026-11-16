@@ -13,14 +13,18 @@ import importlib.metadata
 import json
 from pathlib import Path
 import shutil
+import stat
 import tarfile
 import tempfile
 
-from eidos_runtime.models.managed_resources import ResourceIndex, ResourcePack
+from eidos_runtime.models.managed_resources import ResourceIndex, ResourcePack, resource_archive_name
+from eidos_runtime.infrastructure.browser_runtime import CONNECT_HELPER_EXECUTABLE
+from eidos_runtime.infrastructure.chrome_extension import WINDOWS_CONNECT_HELPER
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.model.qoder_protocol import RESOURCE_VERSION
 from eidos_runtime.models.runtime_dependencies import (
     RuntimeDependencyExecutable, RuntimeDependencyInventoryFile,
-    RuntimeDependencyManifest, RuntimeDependencyNodePackage, RuntimeDependencyPythonPackage,
+    RuntimeDependencyManifest, RuntimeDependencyNodePackage, RuntimeDependencyPythonPackage, RuntimeDependencyTarget,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,7 +32,7 @@ RELEASE = json.loads((ROOT / "resources/runtime-dependencies/resource-release.js
 VERSION = RELEASE["version"]
 NODE_VERSION = json.loads((ROOT / "resources/runtime-dependencies/node/node-release.json").read_text())["version"]
 PYTHON_GROUPS = {
-    "pandas": "data", "numpy": "data", "python-dateutil": "data", "six": "data",
+    "pandas": "data", "numpy": "data", "python-dateutil": "data", "six": "data", "tzdata": "data",
     "reportlab": "pdf", "pdfminer-six": "pdf", "pdfplumber": "pdf", "pypdfium2": "pdf",
 }
 TITLES = {
@@ -57,9 +61,9 @@ def copy_file(source: Path, target: Path) -> None:
     shutil.copy2(source, target)
 
 
-def python_packages(bundle: Path, staging: Path) -> tuple[dict[str, list[RuntimeDependencyPythonPackage]], list[RuntimeDependencyPythonPackage]]:
-    source, core = bundle / "dependencies/python", bundle / "app"
-    declared = {}
+def python_packages(bundle: Path, staging: Path, core: Path) -> tuple[dict[str, list[RuntimeDependencyPythonPackage]], list[RuntimeDependencyPythonPackage]]:
+    source = bundle / "dependencies/python"
+    declared = {"tzdata": "tzdata"}  # pandas selects this only on Windows.
     for line in (ROOT / "resources/runtime-dependencies/python/top_level.txt").read_text().splitlines():
         if line and not line.startswith("#"):
             package, name = line.split(": ")
@@ -91,17 +95,18 @@ def python_packages(bundle: Path, staging: Path) -> tuple[dict[str, list[Runtime
     return groups, shared
 
 
-def node_group(relative: Path) -> str | None:
+def node_group(relative: Path, target: RuntimeDependencyTarget) -> str | None:
     parts = relative.parts
     if parts[0].startswith("."):
         return None
+    windows_office = target == "win32-x64" and parts[:2] == ("@deepseek-ai", "libreoffice-kit-win32-x64")
+    if windows_office:
+        return "office"  # Keep the Windows engine, resources and notices intact.
     if any(p in {"test", "tests", "examples", ".gitkeep", "__pycache__"} for p in parts):
         return None
     if parts[0] == "@deepseek-ai":
-        if parts[1] == "libreoffice-kit-wasm":
-            return None
-        if parts[1] == "libreoffice-kit-darwin-arm64":
-            return "office"
+        if parts[1].startswith("libreoffice-kit-"):
+            return "office" if parts[1] == f"libreoffice-kit-{target}" else None
         if "frame-forwarding" in parts:
             return None
     if parts[0] in {"react", "react-dom", "react-icons", "scheduler"}:
@@ -122,14 +127,17 @@ def node_group(relative: Path) -> str | None:
     return "document-node"
 
 
-def node_packages(bundle: Path, staging: Path) -> dict[str, list[RuntimeDependencyNodePackage]]:
+def node_packages(bundle: Path, staging: Path, target: RuntimeDependencyTarget) -> dict[str, list[RuntimeDependencyNodePackage]]:
     source = bundle / "dependencies/node/node_modules"
     for file in sorted(source.rglob("*")):
-        if file.is_symlink():
+        relative = file.relative_to(source)
+        if relative.parts[0].startswith("."):
+            continue
+        metadata = file.lstat()
+        if local_files.is_link(metadata):
             raise ValueError("Node source must already be flattened")
-        if file.is_file():
-            relative = file.relative_to(source)
-            group = node_group(relative)
+        if stat.S_ISREG(metadata.st_mode):
+            group = node_group(relative, target)
             if group:
                 copy_file(file, staging / group / "node_modules" / relative)
     groups = {}
@@ -146,31 +154,39 @@ def node_packages(bundle: Path, staging: Path) -> dict[str, list[RuntimeDependen
                 value = json.loads(metadata.read_text())
                 descriptors.append(RuntimeDependencyNodePackage(name=value["name"], version=value["version"]))
         groups[group.name] = descriptors
-    copy_file(bundle / "dependencies/node/bin/node", staging / "node/bin/node")
+    shutil.copytree(bundle / "dependencies/node/bin", staging / "node/bin")
     copy_file(bundle / "dependencies/node/LICENSE", staging / "node/LICENSE")
+    if target == "win32-x64":
+        copy_file(bundle / "dependencies/browser" / WINDOWS_CONNECT_HELPER, staging / "browser" / WINDOWS_CONNECT_HELPER)
     return groups
 
 
-def pack_group(group: Path, output: Path, python: list[RuntimeDependencyPythonPackage], node: list[RuntimeDependencyNodePackage]) -> ResourcePack:
+def pack_group(group: Path, output: Path, target: RuntimeDependencyTarget,
+               python: list[RuntimeDependencyPythonPackage], node: list[RuntimeDependencyNodePackage]) -> ResourcePack:
     pack_id = group.name
     version = RESOURCE_VERSION if pack_id == "qoder" else NODE_VERSION if pack_id == "node" else VERSION
     files = [p for p in sorted(group.rglob("*")) if p.is_file()]
     inventory = tuple(RuntimeDependencyInventoryFile(path=p.relative_to(group).as_posix(), sha256=digest(p)) for p in files)
-    executable = ()
+    binary = None
     if pack_id == "node":
-        executable = (RuntimeDependencyExecutable(name="node", version=NODE_VERSION, path="bin/node", sha256=digest(group / "bin/node")),)
+        binary = ("node", NODE_VERSION, "bin/node.exe" if target == "win32-x64" else "bin/node")
     if pack_id == "qoder":
-        relative = "lib/qoder_agent_sdk/_bundled/qodercli"
-        executable = (RuntimeDependencyExecutable(name="qodercli", version="1.1.79", path=relative, sha256=digest(group / relative)),)
+        binary = ("qodercli", "1.1.79", "lib/qoder_agent_sdk/_bundled/qodercli")
     if pack_id == "office":
-        relative = "node_modules/@deepseek-ai/libreoffice-kit-darwin-arm64/bin/dsoffice"
-        executable = (RuntimeDependencyExecutable(name="office", version="0.2.3", path=relative, sha256=digest(group / relative)),)
+        program = "dsoffice.exe" if target == "win32-x64" else "dsoffice"
+        binary = ("office", "0.2.3", f"node_modules/@deepseek-ai/libreoffice-kit-{target}/bin/{program}")
+    if pack_id == "browser" and target == "win32-x64":
+        binary = (CONNECT_HELPER_EXECUTABLE, VERSION, WINDOWS_CONNECT_HELPER)
+    executables = ()
+    if binary is not None:
+        name, binary_version, relative = binary
+        executables = (RuntimeDependencyExecutable(name=name, version=binary_version, path=relative, sha256=digest(group / relative)),)
     manifest = RuntimeDependencyManifest(
-        schema_version=1, bundle_id=f"com.idy.eidos.resources.{pack_id}", bundle_version=version, target="darwin-arm64",
-        executables=executable, python_path=("lib",) if python else (), python_packages=tuple(python),
+        schema_version=1, bundle_id=f"com.idy.eidos.resources.{pack_id}", bundle_version=version, target=target,
+        executables=executables, python_path=("lib",) if python else (), python_packages=tuple(python),
         node_modules="node_modules" if node else None, node_packages=tuple(node), files=inventory,
     )
-    filename = f"eidos-{pack_id}-{version}-darwin-arm64.tar.gz"
+    filename = resource_archive_name(pack_id, version, target)
     archive_path = output / filename
     with archive_path.open("wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
         with tarfile.open(fileobj=compressed, mode="w") as archive:
@@ -182,20 +198,23 @@ def pack_group(group: Path, output: Path, python: list[RuntimeDependencyPythonPa
                 with file.open("rb") as stream:
                     archive.addfile(entry, stream)
     if pack_id == "node":
-        location = f"runtimes/node/{version}/darwin-arm64"
+        location = f"runtimes/node/{version}/{target}"
     elif python:
-        location = f"packages/python/{pack_id}/{version}/cp312-darwin-arm64"
+        location = f"packages/python/{pack_id}/{version}/cp312-{target}"
     elif pack_id == "office":
-        location = f"native/office/{version}/darwin-arm64"
+        location = f"native/office/{version}/{target}"
     elif pack_id.startswith("ocr-"):
         location = f"models/ocr/{pack_id.removeprefix('ocr-')}/{version}"
     elif pack_id == "fonts":
         location = f"fonts/document/{version}"
     else:
         location = f"packages/node/{pack_id}/{version}"
+    if target == "win32-x64" and not (pack_id in {"node", "office"} or python):
+        location += f"/{target}"
     pack = ResourcePack(
         id=pack_id, title=TITLES[pack_id], version=version, location=location,
-        url=f"https://github.com/{RELEASE['repository']}/releases/download/{RELEASE['tag']}/{filename}",
+        url=(f"https://github.com/{RELEASE['repository']}/releases/download/{RELEASE['tag']}/{filename}"
+             if target == "darwin-arm64" else None),
         archive_sha256=digest(archive_path), archive_bytes=archive_path.stat().st_size,
         expanded_bytes=sum(p.stat().st_size for p in files), requires=REQUIRES.get(pack_id, ()),
         font_directory="fonts" if pack_id == "fonts" else None, manifest=manifest,
@@ -230,6 +249,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle", type=Path, default=ROOT / "build/macos-runtime")
     parser.add_argument("--output", type=Path, default=ROOT / "build/resource-packages")
+    parser.add_argument("--target", choices=("darwin-arm64", "win32-x64"), default="darwin-arm64")
     parser.add_argument("--keep-payloads", action="store_true")
     args = parser.parse_args()
     bundle, output = args.bundle.resolve(), args.output.resolve()
@@ -239,13 +259,15 @@ def main() -> None:
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="resource-packs-", dir=output) as folder:
         stage = Path(folder)
-        python, shared = python_packages(bundle, stage)
-        node = node_packages(bundle, stage)
-        python["qoder"] = qoder_packages(bundle, stage)
+        core = bundle / ("python/Lib/site-packages" if args.target == "win32-x64" else "app")
+        python, shared = python_packages(bundle, stage, core)
+        node = node_packages(bundle, stage, args.target)
+        if args.target == "darwin-arm64":
+            python["qoder"] = qoder_packages(bundle, stage)
         shutil.copytree(bundle / "dependencies/fonts", stage / "fonts/fonts")
-        packs = tuple(pack_group(group, output, python.get(group.name, []), node.get(group.name, []))
+        packs = tuple(pack_group(group, output, args.target, python.get(group.name, []), node.get(group.name, []))
                       for group in sorted(stage.iterdir()) if group.is_dir())
-    index = ResourceIndex(version=VERSION, packs=packs)
+    index = ResourceIndex(version=VERSION, target=args.target, packs=packs)
     encoded = index.model_dump_json(by_alias=True).encode()
     (bundle / "resource-index.json").write_bytes(encoded)
     (output / "resource-index.json").write_bytes(encoded)

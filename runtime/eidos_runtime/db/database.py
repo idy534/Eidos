@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-import fcntl
 import hashlib
 import json
 import os
@@ -662,7 +663,6 @@ class Database:
             self._connection = None
         self._json_blobs = None
         if self._lock_descriptor is not None:
-            fcntl.flock(self._lock_descriptor, fcntl.LOCK_UN)
             os.close(self._lock_descriptor)
             self._lock_descriptor = None
 
@@ -1113,17 +1113,16 @@ def _acquire_state_lock(path: Path) -> int:
     if path.is_symlink():
         raise StorageError("state_security_invalid")
     flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags, 0o600)
+    descriptor = local_files.open_file(path, flags, 0o600)
     try:
         metadata = os.fstat(descriptor)
         if (
             not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
-            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or not local_files.has_private_access(descriptor, metadata, 0o600)
         ):
             raise StorageError("state_security_invalid")
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            local_files.lock_exclusive(descriptor)
         except BlockingIOError:
             raise StorageError("state_locked") from None
         return descriptor
@@ -1136,7 +1135,7 @@ def _prepare_reserve(path: Path) -> None:
     if path.is_symlink():
         raise StorageError("reserve_invalid")
     if not path.exists():
-        descriptor = os.open(
+        descriptor = local_files.open_file(
             path,
             os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
             0o600,
@@ -1152,8 +1151,7 @@ def _prepare_reserve(path: Path) -> None:
     allocated = getattr(metadata, "st_blocks", 0) * 512
     if (
         not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or not local_files.has_private_access(path, metadata, 0o600)
         or metadata.st_size != RESERVE_BYTES
         or (allocated and allocated < RESERVE_BYTES)
     ):
@@ -1196,7 +1194,7 @@ def _write_integrity_stamp(stamp: Path) -> None:
         temporary = stamp.with_name(stamp.name + ".tmp")
         temporary.write_text(str(int(time.time())), encoding="ascii")
         os.chmod(temporary, 0o600)
-        os.replace(temporary, stamp)
+        local_files.replace(temporary, stamp)
     except OSError:
         pass
 
@@ -1216,7 +1214,7 @@ def _prepare_private_directory(path: Path) -> None:
     metadata = path.stat()
     if not stat.S_ISDIR(metadata.st_mode):
         raise StorageError("data directory must be a directory")
-    if metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
+    if not local_files.has_private_access(path, metadata, 0o700):
         raise StorageError("data directory owner or mode is invalid")
 
 
@@ -1224,7 +1222,7 @@ def _prepare_private_database(path: Path) -> None:
     if path.is_symlink():
         raise StorageError("database must not be a symlink")
     if not path.exists():
-        descriptor = os.open(
+        descriptor = local_files.open_file(
             path,
             os.O_CREAT | os.O_EXCL | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
             0o600,
@@ -1233,5 +1231,5 @@ def _prepare_private_database(path: Path) -> None:
     metadata = path.stat()
     if not stat.S_ISREG(metadata.st_mode):
         raise StorageError("database must be a regular file")
-    if metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o600:
+    if not local_files.has_private_access(path, metadata, 0o600):
         raise StorageError("database owner or mode is invalid")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 import os
 from pathlib import Path, PurePosixPath
 import stat
@@ -42,19 +44,17 @@ class MemoryFiles:
         return parts
 
     def _directory(self, parts: tuple[str, ...], *, create: bool = False) -> int:
-        fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        fd = local_files.open_directory(self.root)
         try:
             for part in parts:
                 if not part or part in {".", ".."} or "/" in part:
                     raise ValueError("memory_path_invalid")
                 if create:
                     try:
-                        os.mkdir(part, 0o700, dir_fd=fd)
+                        local_files.mkdir_at(part, fd, 0o700)
                     except FileExistsError:
                         pass
-                next_fd = os.open(
-                    part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd
-                )
+                next_fd = local_files.open_directory(part, dir_fd=fd)
                 os.close(fd)
                 fd = next_fd
             return fd
@@ -72,9 +72,9 @@ class MemoryFiles:
         directory = self._directory(("scopes", scope_id, "revisions"), create=True)
         staging = "." + str(uuid.uuid4())
         try:
-            fd = os.open(
+            fd = local_files.open_file(
                 staging,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
                 0o600,
                 dir_fd=directory,
             )
@@ -82,12 +82,12 @@ class MemoryFiles:
                 stream.write(raw)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.rename(staging, name, src_dir_fd=directory, dst_dir_fd=directory)
-            os.fsync(directory)
+            local_files.replace_at(staging, name, directory)
+            local_files.sync_directory(directory)
             return f"scopes/{scope_id}/revisions/{name}"
         finally:
             try:
-                os.unlink(staging, dir_fd=directory)
+                local_files.unlink_at(staging, directory)
             except FileNotFoundError:
                 pass
             os.close(directory)
@@ -96,7 +96,7 @@ class MemoryFiles:
         parts = self.reference_parts(reference)
         directory = self._directory(parts[:-1])
         try:
-            fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+            fd = local_files.open_file(parts[-1], dir_fd=directory)
             with os.fdopen(fd, "rb") as stream:
                 before = os.fstat(stream.fileno())
                 if (
@@ -120,7 +120,7 @@ class MemoryFiles:
         parts = self.reference_parts(reference)
         directory = self._directory(parts[:-1])
         try:
-            fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+            fd = local_files.open_file(parts[-1], dir_fd=directory)
             try:
                 value = os.fstat(fd)
                 if not stat.S_ISREG(value.st_mode) or value.st_nlink != 1:
@@ -141,11 +141,8 @@ class MemoryFiles:
         except FileNotFoundError:
             return 0
         try:
-            names = [
-                entry.name
-                for entry in os.scandir(scopes)
-                if entry.is_dir(follow_symlinks=False)
-            ]
+            with local_files.scan_directory(scopes) as entries:
+                names = [entry.name for entry in entries if entry.is_dir(follow_symlinks=False)]
         finally:
             os.close(scopes)
         for scope in names:
@@ -155,22 +152,23 @@ class MemoryFiles:
             except (OSError, ValueError):
                 continue
             try:
-                for entry in os.scandir(directory):
-                    scanned += 1
-                    if scanned > 100000:
-                        return removed
-                    reference = f"scopes/{scope}/revisions/{entry.name}"
-                    if reference in referenced or not entry.is_file(
-                        follow_symlinks=False
-                    ):
-                        continue
-                    metadata = entry.stat(follow_symlinks=False)
-                    # The grace interval protects the small pre-registration
-                    # window of file preparation; age alone never deletes a ref.
-                    if metadata.st_mtime > time.time() - grace_seconds:
-                        continue
-                    os.unlink(entry.name, dir_fd=directory)
-                    removed += 1
+                with local_files.scan_directory(directory) as entries:
+                    for entry in entries:
+                        scanned += 1
+                        if scanned > 100000:
+                            return removed
+                        reference = f"scopes/{scope}/revisions/{entry.name}"
+                        if reference in referenced or not entry.is_file(
+                            follow_symlinks=False
+                        ):
+                            continue
+                        metadata = entry.stat(follow_symlinks=False)
+                        # The grace interval protects the small pre-registration
+                        # window of file preparation; age alone never deletes a ref.
+                        if metadata.st_mtime > time.time() - grace_seconds:
+                            continue
+                        local_files.unlink_at(entry.name, directory)
+                        removed += 1
             finally:
                 os.close(directory)
         return removed
@@ -180,7 +178,7 @@ class MemoryFiles:
         directory = self._directory(parts[:-1])
         try:
             try:
-                os.unlink(parts[-1], dir_fd=directory)
+                local_files.unlink_at(parts[-1], directory)
             except FileNotFoundError:
                 pass
         finally:

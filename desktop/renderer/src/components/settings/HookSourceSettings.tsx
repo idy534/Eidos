@@ -1,3 +1,4 @@
+import { revealFileLabel } from "../../platform.js";
 import { useEffect, useRef, useState } from "react";
 import type { HookConfigurationRequest, HookSourceReview } from "../../../../shared/hooks.js";
 import { userFacingError } from "../../session-state.js";
@@ -197,7 +198,7 @@ export function HookSourceSettings({ sessionId }: { sessionId?: string | undefin
               },
               {
                 key: "show-in-finder",
-                label: "在 Finder 中显示",
+                label: revealFileLabel,
                 icon: <FinderIcon />,
                 disabled: !firstPath,
                 onClick: () => {

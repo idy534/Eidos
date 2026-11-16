@@ -1,12 +1,13 @@
 """Read only the managed launcher's documented resource selector."""
 from pathlib import Path
-import shlex
+
+from eidos_runtime.extensions.skill_invocation import skill_command_tokens
 
 
 def resource_profile(command: str, cwd: Path, script_path: Path) -> str:
     if script_path.name != "run.py":
         return "python"
-    tokens = shlex.split(command)
+    tokens = skill_command_tokens(command)
     for index, token in enumerate(tokens):
         if token.startswith("$"):
             continue

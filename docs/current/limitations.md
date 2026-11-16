@@ -365,8 +365,9 @@ Run `e277e61b`（`deepseek-v4-1-flash-261017`，reasoning high）共 10 步。�
 
 ## 平台与分发
 
-- Eidos 当前只支持 macOS arm64 Desktop、Runtime Bundle、App 和 DMG。
-- Linux、Windows、macOS x64、Universal binary 和其他平台的 bundled Runtime 与 Ripgrep artifact 尚未实现。
+- Eidos 的正式交付目标是 macOS arm64。仓库增加了 Windows 11 x64、本地 NTFS 的预览代码、安装包入口和原生验收用例。Windows 实机结果见后续验收记录。
+- Windows 预览接入了 Desktop、独立 Python Runtime、MinGit、ripgrep、受控文件提交、PowerShell PIPE 和 ConPTY。浏览器桥接与文档 Skill 使用随 Windows 安装包发布的资源。默认受限 Shell 和本地 MCP 仍因缺少对应的沙盒后端而拒绝执行。Windows 浏览器工具需要用户确认完全访问。Windows Qoder 资源包仍待适配。
+- Linux、Windows ARM64、macOS x64 和 Universal binary 仍无交付入口。
 - Auto Update、GitHub Release 发布闭环和其他平台 artifact 尚未实现。
 - Release packaging 的签名、notarization、stapling 和 Gatekeeper 命令已经接入脚本，但这些步骤需要 Apple credentials。没有 credentials 时不能证明已生成可发布的 Release artifact。
 

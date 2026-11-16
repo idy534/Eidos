@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from enum import StrEnum
 import hashlib
 import json
@@ -337,14 +339,11 @@ class RepositoryIndexer:
     def _read_verified(self, record: FileRecord) -> bytes:
         if record.device is None or record.inode is None:
             raise IndexError("inventory file identity is incomplete")
-        root_fd = os.open(
-            self.root,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
-        )
+        root_fd = local_files.open_directory(self.root)
         try:
             # Recreate the exact nanosecond identity fields used by the
             # inventory instead of trusting path-based metadata.
-            current = os.stat(record.path, dir_fd=root_fd, follow_symlinks=False)
+            current = local_files.lstat_at(record.path, root_fd)
             if (
                 current.st_dev != record.device
                 or current.st_ino != record.inode

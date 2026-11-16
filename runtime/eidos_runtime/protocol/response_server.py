@@ -111,6 +111,8 @@ class ResponseActionRuntimeServer(RuntimeServer):
 
 
 def run() -> int:
+    if sys.platform == "win32":
+        sys.stdout.reconfigure(encoding="utf-8", newline="\n")
     configure_stderr_logging()
     telemetry = initialize_telemetry()
     server: ResponseActionRuntimeServer | None = None

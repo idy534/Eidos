@@ -2,6 +2,8 @@
 
 Agent Shell 由 Python Runtime 按 Run 管理。`run_shell` 默认继续使用 PIPE。模型可以设置 `tty=true`，为需要终端的程序创建 PTY。Desktop Terminal 是用户操作的另一条路径。
 
+Windows Agent Shell 使用 Windows PowerShell。`tty=true` 接入 ConPTY，支持 UTF-8 输入输出、Ctrl-C 和尺寸调整。Runtime 登记启动后才放行命令。Job Object 管理 PIPE、PTY 及其子进程。Windows 的 PIPE Ctrl-C 会结束进程树，PTY 会把 Ctrl-C 交给终端。Windows 普通模式下的 Shell 需要明确授权才能无沙盒运行。Windows 的用户终端仍使用 `node-pty`。下文的 `openpty`、Unix 信号和 Seatbelt 说明适用于 macOS。
+
 ## 工具
 
 模型可以按以下顺序使用工具：

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from dataclasses import dataclass
 import logging
 from pathlib import Path
@@ -104,9 +106,8 @@ class RepositoryWatchController:
             on_invalidate(normalized)
 
     def _load_discovery_scope(self) -> WorkspaceDiscoveryScope | None:
-        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
         try:
-            root_fd = os.open(self.root, flags)
+            root_fd = local_files.open_directory(self.root)
         except OSError:
             return None
         try:

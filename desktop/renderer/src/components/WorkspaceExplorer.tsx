@@ -1,3 +1,4 @@
+import { revealFileLabel } from "../platform.js";
 import type { ProjectRootDto } from "../../../shared/project-workspaces.js";
 import { ArtifactProvider } from "./ArtifactContext.js";
 import { FileFind } from "./FileFind.js";
@@ -690,7 +691,7 @@ function WorkspaceExplorerContent({
               ? [
                   {
                     key: "finder",
-                    label: "在 Finder 中显示",
+                    label: revealFileLabel,
                     icon: <FinderIcon />,
                     onClick: () => {
                       setTreeContextMenu(undefined);

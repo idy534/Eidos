@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from collections.abc import Callable
 from itertools import islice
 import os
@@ -20,17 +22,16 @@ class SecretFiles:
         info = self.directory.lstat()
         if (
             not stat.S_ISDIR(info.st_mode)
-            or info.st_uid != os.getuid()
-            or info.st_mode & 0o077
+            or not local_files.has_private_access(self.directory, info)
         ):
             raise ValueError("credential directory permissions invalid")
 
     def write(self, secret: str) -> str:
         self._directory()
         identifier = str(uuid4())
-        descriptor = os.open(
+        descriptor = local_files.open_file(
             self.directory / identifier,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
             0o600,
         )
         try:
@@ -38,13 +39,7 @@ class SecretFiles:
                 stream.write(secret.encode())
                 stream.flush()
                 os.fsync(stream.fileno())
-            directory_fd = os.open(
-                self.directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-            )
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            local_files.sync_directory(self.directory)
         except BaseException:
             (self.directory / identifier).unlink(missing_ok=True)
             raise
@@ -55,16 +50,15 @@ class SecretFiles:
             if str(UUID(identifier)) != identifier:
                 raise ValueError
             self._directory()
-            descriptor = os.open(
-                self.directory / identifier, os.O_RDONLY | os.O_NOFOLLOW
+            descriptor = local_files.open_file(
+                self.directory / identifier, os.O_RDONLY
             )
             with os.fdopen(descriptor, "rb") as stream:
                 info = os.fstat(stream.fileno())
                 if (
                     not stat.S_ISREG(info.st_mode)
                     or info.st_nlink != 1
-                    or info.st_uid != os.getuid()
-                    or info.st_mode & 0o077
+                    or not local_files.has_private_access(descriptor, info)
                 ):
                     raise ValueError
                 raw = stream.read(self.max_bytes + 1)

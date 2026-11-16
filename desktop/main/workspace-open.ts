@@ -9,6 +9,7 @@ export async function resolveWorkspaceFileForOpen(
   if (
     !relativePath
     || relativePath.includes("\0")
+    || (process.platform === "win32" && /[\\:]/.test(relativePath))
     || path.isAbsolute(relativePath)
     || relativePath.split("/").some((part) => part === "" || part === "." || part === "..")
   ) {

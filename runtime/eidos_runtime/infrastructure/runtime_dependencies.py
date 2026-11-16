@@ -14,6 +14,7 @@ from packaging.version import InvalidVersion, Version
 from pydantic import ValidationError
 from semantic_version import NpmSpec, Version as NpmVersion
 
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.models.runtime_dependencies import (
     RuntimeDependencyBinding,
     RuntimeDependencyDiagnostic,
@@ -82,6 +83,9 @@ class RuntimeDependencyCatalog:
 
         try:
             path = Path(manifest_path)
+            if local_files.WINDOWS:
+                _verify_directory(path.parent, "bundle_root")
+                _verify_regular_file(path, "manifest")
             bundle_root = path.parent.resolve(strict=True)
             canonical_manifest_path = path.resolve(strict=True)
             _verify_directory(bundle_root, "bundle_root")
@@ -907,12 +911,16 @@ def _resolve_declared_path(root: Path, relative: str, label: str) -> Path:
 
 
 def _resolve_path_candidate(root: Path, candidate: Path, label: str) -> Path:
+    if not _is_contained(candidate, root):
+        raise RuntimeDependencyCatalogError("path_outside_bundle", f"{label} path escapes bundle root")
     try:
         current = candidate
         while current != root:
             metadata = current.lstat()
-            if stat.S_ISLNK(metadata.st_mode):
-                _verify_owner(metadata, f"{label} symlink")
+            if local_files.is_link(metadata):
+                if local_files.WINDOWS:
+                    raise RuntimeDependencyCatalogError("path_invalid", f"{label} contains a reparse point")
+                _verify_owner(current, metadata, f"{label} symlink")
                 target = current.resolve(strict=True)
                 if not _is_contained(target, root):
                     raise RuntimeDependencyCatalogError(
@@ -937,8 +945,9 @@ def _resolve_path_candidate(root: Path, candidate: Path, label: str) -> Path:
     return resolved
 
 
-def _verify_owner(metadata: os.stat_result, label: str) -> None:
-    if metadata.st_uid not in {0, os.getuid()}:
+def _verify_owner(path: Path, metadata: os.stat_result, label: str) -> None:
+    trusted = local_files.trusted_asset(path, metadata) if local_files.WINDOWS else metadata.st_uid in {0, os.getuid()}
+    if not trusted:
         raise RuntimeDependencyCatalogError(
             "owner_invalid", f"{label} is not owned by root or the current user"
         )
@@ -955,7 +964,7 @@ def _verify_directory(path: Path, label: str) -> None:
         raise RuntimeDependencyCatalogError(
             "directory_invalid", f"{label} is not a directory"
         )
-    _verify_owner(metadata, label)
+    _verify_owner(path, metadata, label)
 
 
 def _verify_regular_file(path: Path, label: str) -> os.stat_result:
@@ -969,7 +978,7 @@ def _verify_regular_file(path: Path, label: str) -> os.stat_result:
         raise RuntimeDependencyCatalogError(
             "file_type_invalid", f"{label} is not a regular file"
         )
-    _verify_owner(metadata, label)
+    _verify_owner(path, metadata, label)
     if metadata.st_nlink > 1:
         raise RuntimeDependencyCatalogError(
             "file_type_invalid", f"{label} is a hard link"
@@ -988,7 +997,7 @@ def _read_bounded_file(path: Path, limit: int, label: str) -> bytes:
             "file_too_large", f"{label} exceeds the bounded manifest size"
         )
     try:
-        with path.open("rb") as stream:
+        with os.fdopen(local_files.open_file(path), "rb") as stream:
             content = stream.read(limit + 1)
     except OSError as error:
         raise RuntimeDependencyCatalogError(
@@ -1015,7 +1024,8 @@ def _verify_expected_file(
             "file_not_in_inventory", f"{label} is not in files inventory"
         )
     metadata = _verify_regular_file(path, label)
-    if executable and not metadata.st_mode & 0o111:
+    can_execute = path.suffix.lower() == ".exe" if local_files.WINDOWS else bool(metadata.st_mode & 0o111)
+    if executable and not can_execute:
         raise RuntimeDependencyCatalogError(
             "executable_invalid", f"{label} is not executable"
         )

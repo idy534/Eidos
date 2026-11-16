@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from contextlib import contextmanager
 from datetime import datetime
 import os
@@ -83,21 +85,20 @@ def creation_date(timestamp_ms: int) -> str:
 @contextmanager
 def _directory(path: Path, *, create: bool = False) -> Iterator[int]:
     """Open canonical trusted root components without following replacements."""
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    descriptor = os.open(path.anchor, flags)
+    descriptor = local_files.open_directory(path.anchor)
     try:
         for part in path.parts[1:]:
             if create:
                 try:
-                    os.mkdir(part, mode=0o700, dir_fd=descriptor)
-                    os.fsync(descriptor)
+                    local_files.mkdir_at(part, descriptor, 0o700)
+                    local_files.sync_directory(descriptor)
                 except FileExistsError:
                     pass
-            child = os.open(part, flags, dir_fd=descriptor)
+            child = local_files.open_directory(part, dir_fd=descriptor)
             os.close(descriptor)
             descriptor = child
         metadata = os.fstat(descriptor)
-        if metadata.st_uid != os.getuid():
+        if not local_files.owned_by_user(descriptor, metadata):
             raise WorkspacePathError("workspace_unavailable")
         yield descriptor
     finally:
@@ -107,10 +108,9 @@ def _directory(path: Path, *, create: bool = False) -> Iterator[int]:
 class ProjectlessDirectoryAllocator:
     def create(self, path: Path) -> WorkspaceIdentity:
         with _directory(path.parent, create=True) as parent:
-            os.mkdir(path.name, mode=0o700, dir_fd=parent)
-            os.fsync(parent)
-            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-            descriptor = os.open(path.name, flags, dir_fd=parent)
+            local_files.mkdir_at(path.name, parent, 0o700)
+            local_files.sync_directory(parent)
+            descriptor = local_files.open_directory(path.name, dir_fd=parent)
             try:
                 metadata = os.fstat(descriptor)
                 identity = WorkspaceIdentity(
@@ -135,10 +135,10 @@ class ProjectlessDirectoryAllocator:
     def remove_empty(self, identity: WorkspaceIdentity) -> None:
         self.verify(identity)
         with _directory(identity.path.parent) as parent:
-            metadata = os.stat(identity.path.name, dir_fd=parent, follow_symlinks=False)
+            metadata = local_files.lstat_at(identity.path.name, parent)
             if (metadata.st_dev, metadata.st_ino, metadata.st_uid) != (
                 identity.device, identity.inode, identity.owner
             ):
                 raise WorkspacePathError("workspace_identity_changed")
-            os.rmdir(identity.path.name, dir_fd=parent)
-            os.fsync(parent)
+            local_files.rmdir_at(identity.path.name, parent)
+            local_files.sync_directory(parent)
