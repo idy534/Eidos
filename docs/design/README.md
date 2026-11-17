@@ -36,6 +36,10 @@
 - [MCP 工具调用展示优化](mcp-tool-display-design.md)：截图可见、MCP 工具行的标题、结果、参数与错误展示，以及浏览器结果的结构化投影；当前为设计方案。
 - [与用户共用 Chrome（标签组模式）](shared-chrome-tab-group-design.md)：基于 Playwright Extension 的标签组共用、本机代理、令牌、授权与分阶段实施；P1、P2 已实施。
 
+## 平台与沙盒
+
+- [Windows 沙盒适配调研与设计](windows-sandbox-design.md)：候选隔离机制对比、MXC 进程容器方案、权限映射、Shell/Hook/本地 MCP 接入、实机验证清单与分期；当前为设计方案，尚未实施。
+
 ## 执行流
 
 - [实时活动行](live-activity-line-design.md)：Run 末尾的一行实时状态与思考摘要，取代“正在思考”，含 [交互设计稿](live-activity-line-mockup.html)；P1、P2 已实施。
