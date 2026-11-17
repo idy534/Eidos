@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Item, Run } from "../contracts.js";
 import { ArtifactProvider } from "./ArtifactContext.js";
 import { ExecutionFeed } from "./ExecutionFeed.js";
+import { InputContextProvider } from "./InputContext.js";
 import { expandDetails } from "../../test/expand-details.js";
 
 const baseRun: Run = {
@@ -1786,7 +1787,7 @@ describe("ExecutionFeed skill and read_tool_output rendering", () => {
       },
     };
 
-    render(
+    const { container } = render(
       <ExecutionFeed
         items={[item]}
         runs={[toolStatus === "running" ? { ...baseRun, status: "running" } : baseRun]}
@@ -1795,6 +1796,10 @@ describe("ExecutionFeed skill and read_tool_output rendering", () => {
     );
 
     expect(screen.getByText(label)).toBeInTheDocument();
+    const iconSvg = container.querySelector(".tool-icon svg");
+    expect(iconSvg).not.toBeNull();
+    expect(iconSvg?.innerHTML).toContain("M5.5 6.5h5M5.5 9h3");
+    expect(iconSvg?.innerHTML).not.toContain("M8 2L14 8L8 14L2 8Z");
   });
 
   it("renders skill_read and opens skill detail dialog when skill name button is clicked", async () => {
@@ -2451,5 +2456,520 @@ describe("ExecutionFeed collapsed bodies", () => {
     );
     expect(pending.container.querySelector<HTMLDetailsElement>("details.tool-group")!.open).toBe(true);
     expect(pending.container).toHaveTextContent("需要批准");
+  });
+});
+
+describe("Targeted tool feed improvements", () => {
+  const completedRun: Run = { ...baseRun, status: "succeeded", completedAt: 2_000 };
+
+  it("renders list_files entries with clickable workspace files and non-clickable directories", async () => {
+    const onOpenFile = vi.fn();
+    const item: Item = {
+      id: "list-1",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 1,
+      kind: "tool_call",
+      status: "completed",
+      createdAt: 1000,
+      toolCall: {
+        id: "tc-list-1",
+        itemId: "list-1",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-list-1",
+        toolName: "list_files",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1100,
+        argumentsJson: JSON.stringify({ path: "src" }),
+        resultJson: JSON.stringify({
+          outcome: "success",
+          code: "ok",
+          summary: "Listed files",
+          data: {
+            paths: ["src/components/", "src/index.ts", "/external/skill/SKILL.md"],
+            truncated: true,
+          },
+        }),
+      },
+    };
+
+    const { container } = render(
+      <ArtifactProvider value={{ sessionId: baseRun.sessionId, executionRoot: "/workspace", openFile: onOpenFile, openBrowser: vi.fn() }}>
+        <ExecutionFeed items={[item]} runs={[completedRun]} approvals={[]} onOpenFile={onOpenFile} />
+      </ArtifactProvider>,
+    );
+
+    await expandDetails(container, "details.process-group");
+    expect(screen.getByText("已列出 src")).toBeInTheDocument();
+    await expandDetails(container, "details.tool-item");
+
+    const fileBtn = screen.getByRole("button", { name: "src/index.ts" });
+    fireEvent.click(fileBtn);
+    expect(onOpenFile).toHaveBeenCalledWith("src/index.ts");
+
+    expect(screen.queryByRole("button", { name: "src/components/" })).toBeNull();
+    expect(screen.getByText("src/components/")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "/external/skill/SKILL.md" })).toBeNull();
+    expect(screen.getByText("/external/skill/SKILL.md")).toBeInTheDocument();
+    expect(screen.getByText(/更多条目已截断/)).toBeInTheDocument();
+  });
+
+  it("renders search_text and search_text_wait with search icon, Chinese summary, and clickable line matches", async () => {
+    const onOpenFile = vi.fn();
+    const searchItem: Item = {
+      id: "st-1",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 1,
+      kind: "tool_call",
+      status: "completed",
+      createdAt: 1000,
+      toolCall: {
+        id: "tc-st-1",
+        itemId: "st-1",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-st-1",
+        toolName: "search_text",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1050,
+        argumentsJson: JSON.stringify({ query: "needle" }),
+        resultJson: JSON.stringify({
+          outcome: "success",
+          code: "search_running",
+          summary: "Search is still running",
+          data: { matches: [], truncationReason: "search_running", sessionId: "s-1" },
+        }),
+      },
+    };
+    const waitItem: Item = {
+      id: "stw-1",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 2,
+      kind: "tool_call",
+      status: "completed",
+      createdAt: 1100,
+      toolCall: {
+        id: "tc-stw-1",
+        itemId: "stw-1",
+        modelStepIndex: 2,
+        batchOrder: 0,
+        providerCallId: "p-stw-1",
+        toolName: "search_text_wait",
+        status: "completed",
+        startedAt: 1100,
+        completedAt: 1200,
+        argumentsJson: JSON.stringify({ sessionId: "s-1" }),
+        resultJson: JSON.stringify({
+          outcome: "success",
+          code: "ok",
+          summary: "Searched text",
+          data: {
+            matches: [{ path: "src/app.ts", line: 42, column: 7, preview: "const needle = true;" }],
+            truncated: false,
+          },
+        }),
+      },
+    };
+
+    const { container } = render(
+      <ExecutionFeed items={[searchItem, waitItem]} runs={[completedRun]} approvals={[]} onOpenFile={onOpenFile} />,
+    );
+
+    await expandDetails(container, "details.process-group");
+    const groupSummary = container.querySelector("details.tool-group > summary");
+    expect(groupSummary).toHaveTextContent("搜索 2 次");
+    await expandDetails(container, "details.tool-group");
+
+    const toolDetails = Array.from(container.querySelectorAll<HTMLDetailsElement>("details.tool-item"));
+    expect(toolDetails).toHaveLength(2);
+    expect(toolDetails[0]!.querySelector("summary")).toHaveTextContent(/^已搜索 needle$/);
+    expect(toolDetails[1]!.querySelector("summary")).toHaveTextContent("已搜索 needle · 1 处 · 1 个文件");
+    expect(toolDetails[1]!.querySelector(".tool-icon svg")?.innerHTML).toContain("M10 10l3.75 3.75");
+    expect(toolDetails[1]!.querySelector(".tool-icon svg")?.innerHTML).not.toContain("M8 2L14 8L8 14L2 8Z");
+
+    toolDetails[0]!.open = true;
+    fireEvent(toolDetails[0]!, new Event("toggle"));
+    expect(screen.getByText(/搜索仍在后台继续/)).toBeInTheDocument();
+
+    toolDetails[1]!.open = true;
+    fireEvent(toolDetails[1]!, new Event("toggle"));
+    const hit = screen.getByRole("button", { name: "第 42 行 const needle = true;" });
+    expect(hit).toHaveTextContent("42const needle = true;");
+    expect(hit.querySelector("mark")).toHaveTextContent(/^needle$/);
+    fireEvent.click(hit);
+    expect(onOpenFile).toHaveBeenCalledWith("src/app.ts", { line: 42, column: 7 });
+    fireEvent.click(screen.getByRole("button", { name: "src/app.ts，1 处" }));
+    expect(onOpenFile).toHaveBeenLastCalledWith("src/app.ts");
+  });
+
+  it("groups search_text hits by file under one shared root and caps long result lists", async () => {
+    const root = "/Users/me/Documents/AF/appforge-service";
+    const files = ["a.go", "b.go", "c.go", "d.go", "e.go", "f.go", "g.go"];
+    const matches = files.flatMap((name, fileIndex) => Array.from(
+      { length: fileIndex === 0 ? 7 : 5 },
+      (_, hitIndex) => ({
+        path: `${root}/internal/${fileIndex < 3 ? "handler" : "service"}/${name}`,
+        line: hitIndex * 10 + 1,
+        column: 5,
+        preview: `    GetWorkflowReference${hitIndex}()`,
+      }),
+    ));
+    const item: Item = {
+      id: "st-group",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 1,
+      kind: "tool_call",
+      status: "completed",
+      createdAt: 1000,
+      toolCall: {
+        id: "tc-st-group",
+        itemId: "st-group",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-st-group",
+        toolName: "search_text",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1050,
+        argumentsJson: JSON.stringify({ query: "getworkflowreference", path: root }),
+        resultJson: JSON.stringify({
+          outcome: "success",
+          code: "ok",
+          summary: "Searched text",
+          data: { matches, scannedBytes: 1, truncated: true, truncationReason: "max_results" },
+        }),
+      },
+    };
+
+    const { container } = render(
+      <ExecutionFeed items={[item]} runs={[completedRun]} approvals={[]} onOpenFile={vi.fn()} />,
+    );
+    await expandDetails(container, "details.process-group");
+    expect(container.querySelector("details.tool-item > summary"))
+      .toHaveTextContent("已搜索 getworkflowreference · 37+ 处 · 7 个文件");
+    await expandDetails(container, "details.tool-item");
+
+    expect(container.querySelector(".tool-text-search-root")).toHaveTextContent(`${root}/internal`);
+    const heads = () => Array.from(container.querySelectorAll(".tool-text-search-file-head"));
+    expect(heads().map((head) => head.textContent)).toEqual([
+      "a.gohandler7", "b.gohandler5", "c.gohandler5", "d.goservice5", "e.goservice5", "f.goservice5",
+    ]);
+    const firstFile = container.querySelector(".tool-text-search-file")!;
+    expect(firstFile.querySelectorAll(".tool-text-search-hit")).toHaveLength(5);
+    expect(firstFile.querySelector(".tool-text-search-hit mark")).toHaveTextContent(/^GetWorkflowReference$/);
+    expect(firstFile.querySelector(".tool-text-search-preview")).toHaveTextContent(/^GetWorkflowReference0\(\)$/);
+
+    fireEvent.click(screen.getByRole("button", { name: "还有 2 处" }));
+    expect(firstFile.querySelectorAll(".tool-text-search-hit")).toHaveLength(7);
+    fireEvent.click(screen.getByRole("button", { name: "收起" }));
+    expect(firstFile.querySelectorAll(".tool-text-search-hit")).toHaveLength(5);
+
+    fireEvent.click(screen.getByRole("button", { name: "显示其余 1 个文件" }));
+    expect(heads()).toHaveLength(7);
+    expect(screen.getByText("命中结果已截断")).toBeInTheDocument();
+  });
+
+  it("renders search_history matched sessions and jumps with itemId/query or falls back to navigateToSession", async () => {
+    const onOpenHistoryMatch = vi.fn();
+    const navigateToSession = vi.fn();
+    const historyItem: Item = {
+      id: "sh-proj-1",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 1,
+      kind: "tool_call",
+      status: "completed",
+      createdAt: 1000,
+      toolCall: {
+        id: "tc-sh-proj-1",
+        itemId: "sh-proj-1",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-sh-proj-1",
+        toolName: "search_history",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1100,
+        argumentsJson: JSON.stringify({ query: "deploy token", scope: "project" }),
+        resultJson: JSON.stringify({
+          outcome: "success",
+          code: "ok",
+          summary: "Found 2 saved history match(es)",
+          data: {
+            query: "deploy token",
+            complete: true,
+            matches: [
+              {
+                itemId: "msg-old-1",
+                kind: "assistant",
+                snippet: "…rotate the deploy token in vault…",
+                readCallId: "msg-old-1",
+                stream: "context",
+                sessionId: "sess-old-1",
+                sessionTitle: "发布流程梳理",
+                date: "2026-11-10",
+              },
+              {
+                itemId: "msg-old-2",
+                kind: "user",
+                snippet: "…where is the deploy token stored…",
+                readCallId: "msg-old-2",
+                stream: "context",
+                sessionId: "sess-old-1",
+                sessionTitle: "发布流程梳理",
+                date: "2026-11-10",
+              },
+            ],
+          },
+        }),
+      },
+    };
+
+    const view = render(
+      <InputContextProvider
+        sessionId={baseRun.sessionId}
+        workspaceRoot="/workspace"
+        ready
+        onAdd={vi.fn()}
+        onSettings={vi.fn()}
+        onNavigateToSession={navigateToSession}
+      >
+        <ExecutionFeed items={[historyItem]} runs={[completedRun]} approvals={[]} onOpenHistoryMatch={onOpenHistoryMatch} />
+      </InputContextProvider>,
+    );
+
+    await expandDetails(view.container, "details.process-group");
+    await expandDetails(view.container, "details.tool-item");
+
+    expect(screen.getByText("2026-11-10 · 2 条匹配")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "发布流程梳理" }));
+    expect(onOpenHistoryMatch).toHaveBeenCalledWith({
+      sessionId: "sess-old-1",
+      itemId: "msg-old-1",
+      query: "deploy token",
+    });
+
+    fireEvent.click(screen.getByText("…where is the deploy token stored…").closest("button")!);
+    expect(onOpenHistoryMatch).toHaveBeenCalledWith({
+      sessionId: "sess-old-1",
+      itemId: "msg-old-2",
+      query: "deploy token",
+    });
+
+    view.rerender(
+      <InputContextProvider
+        sessionId={baseRun.sessionId}
+        workspaceRoot="/workspace"
+        ready
+        onAdd={vi.fn()}
+        onSettings={vi.fn()}
+        onNavigateToSession={navigateToSession}
+      >
+        <ExecutionFeed items={[historyItem]} runs={[completedRun]} approvals={[]} />
+      </InputContextProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "发布流程梳理" }));
+    expect(navigateToSession).toHaveBeenCalledWith("sess-old-1");
+  });
+
+  it("renders current-session search_history matches and jumps only on message matches", async () => {
+    const onOpenHistoryMatch = vi.fn();
+    const localHistoryItem: Item = {
+      id: "sh-local-1",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 1,
+      kind: "tool_call",
+      status: "completed",
+      createdAt: 1000,
+      toolCall: {
+        id: "tc-sh-local-1",
+        itemId: "sh-local-1",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-sh-local-1",
+        toolName: "search_history",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1100,
+        argumentsJson: JSON.stringify({ query: "vault", scope: "session" }),
+        resultJson: JSON.stringify({
+          outcome: "success",
+          code: "ok",
+          summary: "Found 2 saved history match(es)",
+          data: {
+            query: "vault",
+            complete: false,
+            matches: [
+              { itemId: "msg-local-1", kind: "user", snippet: "…read from vault…", readCallId: "msg-local-1", stream: "context" },
+              { itemId: "tool-local-1", kind: "tool", toolName: "run_shell", snippet: "vault status", readCallId: "call-1", stream: "result" },
+            ],
+          },
+        }),
+      },
+    };
+
+    const { container } = render(
+      <ExecutionFeed items={[localHistoryItem]} runs={[completedRun]} approvals={[]} onOpenHistoryMatch={onOpenHistoryMatch} />,
+    );
+
+    await expandDetails(container, "details.process-group");
+    await expandDetails(container, "details.tool-item");
+
+    fireEvent.click(screen.getByText("…read from vault…").closest("button")!);
+    expect(onOpenHistoryMatch).toHaveBeenCalledWith({
+      sessionId: baseRun.sessionId,
+      itemId: "msg-local-1",
+      query: "vault",
+    });
+    expect(screen.getByText("vault status").closest("button")).toBeNull();
+    expect(screen.getByText("仅显示部分最近匹配结果")).toBeInTheDocument();
+  });
+
+  it("scrolls to searchTarget element when highlightText finds no match in prose", () => {
+    const scrollIntoView = vi.fn();
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    try {
+      const targetItem: Item = {
+        id: "msg-scroll-target",
+        sessionId: baseRun.sessionId,
+        runId: baseRun.id,
+        ordinal: 1,
+        kind: "assistant_message",
+        status: "completed",
+        createdAt: 1000,
+        content: "普通回复内容",
+      };
+      render(
+        <ExecutionFeed
+          items={[targetItem]}
+          runs={[completedRun]}
+          approvals={[]}
+          searchTarget={{ itemId: "msg-scroll-target", query: "unmatched-query", occurrence: 0, revision: 1 }}
+        />,
+      );
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "center", inline: "nearest" });
+    } finally {
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+    }
+  });
+
+  it("renders update_goal with GoalMarkIcon and declared status and summary", async () => {
+    const goalItem: Item = {
+      id: "goal-tool-1",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 1,
+      kind: "tool_call",
+      status: "completed",
+      createdAt: 1000,
+      toolCall: {
+        id: "tc-goal-1",
+        itemId: "goal-tool-1",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-goal-1",
+        toolName: "update_goal",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1100,
+        argumentsJson: JSON.stringify({
+          status: "complete",
+          summary: "所有测试与文档均已验证完成。",
+        }),
+        resultJson: JSON.stringify({
+          outcome: "success",
+          code: "goal_declaration_recorded",
+          summary: "目标声明已记录。Run 通过最终检查后，Runtime 才会确认目标状态。",
+          data: { pending: true },
+        }),
+      },
+    };
+
+    const { container } = render(
+      <ExecutionFeed items={[goalItem]} runs={[completedRun]} approvals={[]} />,
+    );
+
+    await expandDetails(container, "details.process-group");
+    expect(screen.getByText("已声明目标完成")).toBeInTheDocument();
+    const iconSvg = container.querySelector("details.tool-item .tool-icon svg");
+    expect(iconSvg).not.toBeNull();
+    expect(iconSvg?.innerHTML).toContain('r="3.1"');
+    expect(iconSvg?.innerHTML).not.toContain("M8 2L14 8L8 14L2 8Z");
+
+    await expandDetails(container, "details.tool-item");
+    expect(screen.getByText("声明状态：已完成")).toBeInTheDocument();
+    expect(screen.getByText("所有测试与文档均已验证完成。")).toBeInTheDocument();
+    expect(screen.getByText(/目标声明已记录/)).toBeInTheDocument();
+  });
+
+  it("renders read_file_range with line numbers and passes start line when opened", async () => {
+    const onOpenFile = vi.fn();
+    const rangeDone: Item = {
+      id: "rfr-1",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 1,
+      kind: "tool_call",
+      status: "completed",
+      createdAt: 1000,
+      toolCall: {
+        id: "tc-rfr-1",
+        itemId: "rfr-1",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-rfr-1",
+        toolName: "read_file_range",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1100,
+        argumentsJson: JSON.stringify({ path: "src/index.ts", startLine: 10, endLine: 80 }),
+        resultJson: JSON.stringify({
+          outcome: "success",
+          code: "ok",
+          summary: "Read file range",
+          data: { path: "src/index.ts", startLine: 10, endLine: 50, content: "code", sizeBytes: 100, sha256: "a".repeat(64) },
+        }),
+      },
+    };
+    const rangeRunning: Item = {
+      id: "rfr-2",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 2,
+      kind: "tool_call",
+      status: "in_progress",
+      createdAt: 1200,
+      toolCall: {
+        id: "tc-rfr-2",
+        itemId: "rfr-2",
+        modelStepIndex: 1,
+        batchOrder: 1,
+        providerCallId: "p-rfr-2",
+        toolName: "read_file_range",
+        status: "running",
+        startedAt: 1200,
+        argumentsJson: JSON.stringify({ path: "src/other.ts", startLine: 42, endLine: 42 }),
+      },
+    };
+
+    const { container } = render(
+      <ExecutionFeed items={[rangeDone, rangeRunning]} runs={[baseRun]} approvals={[]} onOpenFile={onOpenFile} />,
+    );
+
+    expect(screen.getByText("正在读取 src/other.ts · 第 42 行")).toBeInTheDocument();
+    await expandDetails(container, "details.tool-group");
+
+    expect(screen.getByText(/第 10–50 行/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "index.ts" }));
+    expect(onOpenFile).toHaveBeenCalledWith("src/index.ts", { line: 10 });
   });
 });

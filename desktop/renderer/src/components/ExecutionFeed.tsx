@@ -8,6 +8,7 @@ import {
   InputReferenceCards,
   isInlineReference,
   isShelfReference,
+  useInputContext,
   useReferenceActivation,
 } from "./InputContext.js";
 import { InlineRichEditor } from "./InlineRichEditor.js";
@@ -18,10 +19,17 @@ import { BrowserToolBody, McpPluginNamesContext, McpToolBody, browserPageHost, m
 import { ImageLightbox, type LightboxImage } from "./ImageLightbox.js";
 import { toolFilePaths } from "./ResultFiles.js";
 import { createContext, Fragment, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { SyntheticEvent } from "react";
+import type { CSSProperties, SyntheticEvent } from "react";
 import type { ReactNode } from "react";
 import stripAnsi from "strip-ansi";
-import { artifactPath, useArtifacts, useNearViewport, usePreviewUrl } from "./ArtifactContext.js";
+import {
+  artifactPath,
+  useArtifacts,
+  useNearViewport,
+  usePreviewUrl,
+  type ArtifactActions,
+  type WorkspaceFilePosition,
+} from "./ArtifactContext.js";
 import { isAbsoluteFilesystemPath, joinWorkspacePath } from "../platform.js";
 
 import type {
@@ -45,7 +53,7 @@ import { ConfirmDialog } from "./ConfirmDialog.js";
 import { DiffViewer, parseMultiFileDiff } from "./DiffViewer.js";
 import { AutomationToolCard } from "./automations/AutomationToolCard.js";
 import { Tooltip } from "./Tooltip.js";
-import { SkillIcon, AgentIcon as SubagentToolIcon, MemoryIcon } from "./InputPicker.js";
+import { SkillIcon, AgentIcon as SubagentToolIcon, MemoryIcon, ChatHistoryIcon } from "./InputPicker.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 import { useFeedScroll } from "./useFeedScroll.js";
 import { ContextCompactionRow } from "./ContextCompactionRow.js";
@@ -56,6 +64,14 @@ import { ConversationRunRail } from "./ConversationRunRail.js";
 import type { ContextCompactionActivity, ModelRetryActivity } from "../../../shared/context.generated.js";
 import type { GoalActivity } from "../../../shared/goals.js";
 import { GoalActivityMarkers, GoalRunMarker } from "./goals/GoalFeedMarkers.js";
+import { GoalMarkIcon } from "./goals/GoalIcons.js";
+import {
+  buildSearchTextResults,
+  initialVisibleFileCount,
+  type SearchTextFileGroup,
+  type SearchTextHitView,
+  type SearchTextMatch,
+} from "./search-text-results.js";
 export { isFeedAtBottom } from "./useFeedScroll.js";
 
 
@@ -94,7 +110,8 @@ interface Props {
   loadingOlder?: boolean;
   onRegenerate?: RegenerateHandler;
   onEditResend?: EditResendHandler;
-  onOpenFile?: ((path: string) => void) | undefined;
+  onOpenFile?: ((path: string, position?: WorkspaceFilePosition) => void) | undefined;
+  onOpenHistoryMatch?: ((target: { sessionId: string; itemId?: string | undefined; query?: string | undefined }) => void) | undefined;
   onOpenPlan?: (() => void) | undefined;
   agents?: AgentSummary[] | undefined;
   onOpenSubagent?: ((target?: { id?: string | undefined; taskName?: string | undefined }) => void) | undefined;
@@ -174,6 +191,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   onRegenerate = NOOP_REGENERATE,
   onEditResend = NOOP_EDIT_RESEND,
   onOpenFile,
+  onOpenHistoryMatch,
   onOpenPlan,
   agents,
   onOpenSubagent,
@@ -202,6 +220,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   );
   const latestVisibleRun = [...runs].reverse().find((run) => !supersededRunIds.has(run.id));
   const hasActiveRun = runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status));
+  const searchQueries = useSearchTextQueries(items);
 
   useEffect(() => {
     if (!searchTarget) { clearHighlights("eidos-chat-find"); return; }
@@ -212,7 +231,10 @@ export const ExecutionFeed = memo(function ExecutionFeed({
       if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
     }
     const body = element.querySelector<HTMLElement>(".eidos-chat-prose");
-    if (body) highlightText(body, searchTarget.query, searchTarget.occurrence);
+    const matchCount = body ? highlightText(body, searchTarget.query, searchTarget.occurrence) : 0;
+    if (matchCount === 0) {
+      element.scrollIntoView?.({ block: "center", inline: "nearest" });
+    }
     return () => clearHighlights("eidos-chat-find");
   }, [searchTarget, items]);
 
@@ -278,6 +300,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
       >
+        <SearchTextQueriesContext.Provider value={searchQueries}>
         <div className="feed-content" ref={contentRef}>
           {loadingOlder && (
             <div className="feed-loading-older" role="status" aria-live="polite">
@@ -333,6 +356,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
                     onRegenerate={onRegenerate}
                     onEditResend={onEditResend}
                     onOpenFile={onOpenFile}
+                    onOpenHistoryMatch={onOpenHistoryMatch}
                     onOpenPlan={onOpenPlan}
                     agents={agents}
                     onOpenSubagent={onOpenSubagent}
@@ -351,6 +375,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
             );
           })}
         </div>
+        </SearchTextQueriesContext.Provider>
       </section>
       <button
         className="feed-jump-to-bottom"
@@ -383,6 +408,7 @@ const RunSegment = memo(function RunSegment({
   onRegenerate,
   onEditResend,
   onOpenFile,
+  onOpenHistoryMatch,
   onOpenPlan,
   agents,
   onOpenSubagent,
@@ -409,7 +435,8 @@ const RunSegment = memo(function RunSegment({
   onFork?: ((item: Item) => void) | undefined;
   onRegenerate: RegenerateHandler;
   onEditResend: EditResendHandler;
-  onOpenFile?: ((path: string) => void) | undefined;
+  onOpenFile?: ((path: string, position?: WorkspaceFilePosition) => void) | undefined;
+  onOpenHistoryMatch?: ((target: { sessionId: string; itemId?: string | undefined; query?: string | undefined }) => void) | undefined;
   onOpenPlan?: (() => void) | undefined;
   agents?: AgentSummary[] | undefined;
   onOpenSubagent?: ((target?: { id?: string | undefined; taskName?: string | undefined }) => void) | undefined;
@@ -421,6 +448,7 @@ const RunSegment = memo(function RunSegment({
   thinking?: LiveThinking | undefined;
 }) {
   const mcpNames = useContext(McpPluginNamesContext);
+  const searchQueries = useContext(SearchTextQueriesContext);
   // Hidden observations still determine which assistant messages are progress.
   const visibleProcess = segment.process.filter((entry) => {
     if (entry.kind !== "item") return true;
@@ -456,7 +484,7 @@ const RunSegment = memo(function RunSegment({
     && entry.item.completedAt !== undefined && entry.item.completedAt > thinking.receivedAt
   )) ? thinking : undefined;
   const liveText = currentThinking?.title
-    ?? (groupedActiveTool?.toolCall ? activeToolText(groupedActiveTool.toolCall, agents, mcpNames) : undefined)
+    ?? (groupedActiveTool?.toolCall ? activeToolText(groupedActiveTool.toolCall, agents, mcpNames, false, searchQueries) : undefined)
     ?? (standaloneToolRunning ? "正在执行" : undefined)
     ?? (run.status === "finalizing" ? "正在整理回复" : "正在思考");
 
@@ -493,6 +521,7 @@ const RunSegment = memo(function RunSegment({
                 run={run}
                 approval={approvals.find((request) => request.itemId === item.id)}
                 onOpenFile={onOpenFile}
+                onOpenHistoryMatch={onOpenHistoryMatch}
                 agents={agents}
                 onOpenSubagent={onOpenSubagent}
               />
@@ -569,6 +598,42 @@ const RunSegment = memo(function RunSegment({
  */
 /** Static markup snapshots cannot open details, so they mount every body. */
 export const MountCollapsedBodiesContext = createContext(false);
+
+interface SearchTextQuery { query: string; regex: boolean }
+
+const NO_SEARCH_TEXT_QUERIES: ReadonlyMap<string, SearchTextQuery> = new Map();
+
+/** search_text_wait only carries a sessionId; this maps it back to the search_text that started it. */
+const SearchTextQueriesContext = createContext<ReadonlyMap<string, SearchTextQuery>>(NO_SEARCH_TEXT_QUERIES);
+
+function useSearchTextQueries(items: readonly Item[]): ReadonlyMap<string, SearchTextQuery> {
+  const entries: [string, SearchTextQuery][] = [];
+  for (const item of items) {
+    const toolCall = item.toolCall;
+    if (toolCall?.toolName !== "search_text" || !toolCall.resultJson?.includes("search_running")) continue;
+    const sessionId = stringField(objectField(parseObject(toolCall.resultJson), "data"), "sessionId");
+    const args = parseObject(toolCall.argumentsJson);
+    const query = stringField(args, "query");
+    if (sessionId && query) entries.push([sessionId, { query, regex: args.regex === true }]);
+  }
+  // Keep the Map identity stable so memoized tool rows only re-render when a query appears.
+  const key = JSON.stringify(entries);
+  return useMemo(
+    () => (entries.length ? new Map(entries) : NO_SEARCH_TEXT_QUERIES),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [key],
+  );
+}
+
+function searchTextQuery(
+  toolCall: ToolCall,
+  queries: ReadonlyMap<string, SearchTextQuery>,
+): SearchTextQuery | undefined {
+  const args = parseObject(toolCall.argumentsJson);
+  if (toolCall.toolName === "search_text_wait") return queries.get(stringField(args, "sessionId"));
+  const query = stringField(args, "query");
+  return query ? { query, regex: args.regex === true } : undefined;
+}
 
 function useLazyDetails(initialOpen: boolean) {
   const mountAll = useContext(MountCollapsedBodiesContext);
@@ -680,7 +745,7 @@ function toolGroupKind(toolName: string): ToolGroupKind {
   if (toolName === "run_shell") return "shell";
   if (["read_file", "read_file_range"].includes(toolName)) return "read";
   if (toolName === "view_image") return "image";
-  if (["search_text", "tool_search", "web_search"].includes(toolName)) return "search";
+  if (["search_text", "search_text_wait", "search_history", "tool_search", "web_search"].includes(toolName)) return "search";
   if (["write_file", "apply_patch", "delete_file"].includes(toolName)) return "edit";
   return "other";
 }
@@ -732,6 +797,7 @@ const ToolGroup = memo(function ToolGroup({
   const forceOpen = needsApproval || containsSearchTarget;
   const details = useLazyDetails(forceOpen);
   const mcpNames = useContext(McpPluginNamesContext);
+  const searchQueries = useContext(SearchTextQueriesContext);
   const [forcedBy, setForcedBy] = useState(forceOpen);
   // An approval prompt or a chat-search hit must be visible, and the body has
   // to mount in the same render because search locates targets by DOM id.
@@ -744,7 +810,7 @@ const ToolGroup = memo(function ToolGroup({
   const active = liveLineShown
     ? undefined
     : [...items].reverse().find((item) => !item.inherited && item.status === "in_progress");
-  const activeText = active?.toolCall ? activeToolText(active.toolCall, agents, mcpNames, needsApproval) : undefined;
+  const activeText = active?.toolCall ? activeToolText(active.toolCall, agents, mcpNames, needsApproval, searchQueries) : undefined;
   const label = activeText ?? summary.parts.map((part) => part.text).join(" · ");
   const failedLabel = !active && summary.failed > 0 ? `${summary.failed} 失败` : undefined;
 
@@ -772,6 +838,7 @@ function activeToolText(
   agents: AgentSummary[] | undefined,
   mcpNames: ReadonlyMap<string, string>,
   waitingApproval = false,
+  searchQueries: ReadonlyMap<string, SearchTextQuery> = NO_SEARCH_TEXT_QUERIES,
 ): string {
   if (toolCall.toolName === "run_shell") {
     const args = parseObject(toolCall.argumentsJson);
@@ -780,7 +847,7 @@ function activeToolText(
       ? `${waitingApproval || toolCall.approvalStatus === "pending" ? "等待批准" : "运行中"} · ${intent}`
       : shellSummary("in_progress", shellCommand(toolCall, args));
   }
-  return toolSummary(toolCall, "in_progress", agents, mcpNames);
+  return toolSummary(toolCall, "in_progress", agents, mcpNames, searchQueries);
 }
 
 function ToolGroupStackIcon() {
@@ -1395,13 +1462,15 @@ const ProcessItem = memo(function ProcessItem({
   run,
   approval,
   onOpenFile,
+  onOpenHistoryMatch,
   agents,
   onOpenSubagent,
 }: {
   item: Item;
   run: Run;
   approval: ApprovalRequest | undefined;
-  onOpenFile?: ((path: string) => void) | undefined;
+  onOpenFile?: ((path: string, position?: WorkspaceFilePosition) => void) | undefined;
+  onOpenHistoryMatch?: ((target: { sessionId: string; itemId?: string | undefined; query?: string | undefined }) => void) | undefined;
   agents?: AgentSummary[] | undefined;
   onOpenSubagent?: ((target?: { id?: string | undefined; taskName?: string | undefined }) => void) | undefined;
 }) {
@@ -1448,7 +1517,7 @@ const ProcessItem = memo(function ProcessItem({
 
   const toolItem = item.toolCall.toolName === "run_shell"
     ? <ShellItem item={item} toolCall={item.toolCall} waitingApproval={Boolean(approval)} />
-    : <ToolItem item={item} toolCall={item.toolCall} onOpenFile={onOpenFile} agents={agents} onOpenSubagent={onOpenSubagent} />;
+    : <ToolItem item={item} toolCall={item.toolCall} onOpenFile={onOpenFile} onOpenHistoryMatch={onOpenHistoryMatch} agents={agents} onOpenSubagent={onOpenSubagent} />;
 
   if (approval && run.approvalMode !== "full_access") {
     return <><p className="feed-label">需要批准 · {{ file_change: "文件变更", command_execution: "Shell 命令", network_access: "网络访问", external_tool: "MCP 工具", browser_access: "浏览器", permission_request: "权限申请" }[approval.kind]} · <span>{approval.summary}</span></p>{toolItem}</>;
@@ -2142,6 +2211,504 @@ function ToolSearchResultsViewer({
   );
 }
 
+const LIST_FILES_PREVIEW_LIMIT = 50;
+const SEARCH_TEXT_PREVIEW_LIMIT = 30;
+const SEARCH_TEXT_HITS_PER_FILE = 5;
+
+function canOpenWorkspaceFilePath(entryPath: string, actions: ArtifactActions | undefined): boolean {
+  if (!entryPath || entryPath.endsWith("/")) return false;
+  if (!actions?.executionRoot) return true;
+  if (artifactPath(entryPath, actions.executionRoot, undefined, true)) return true;
+  return Boolean(actions.roots?.some((root) => Boolean(artifactPath(entryPath, root.path, undefined, true))));
+}
+
+function formatLineRange(startLine: number | undefined, endLine: number | undefined): string {
+  if (startLine === undefined) return "";
+  if (endLine !== undefined && endLine > startLine) {
+    return `第 ${startLine}–${endLine} 行`;
+  }
+  return `第 ${startLine} 行`;
+}
+
+function ListFilesResultsViewer({
+  toolCall,
+  item,
+  onOpenFile,
+  isError,
+  errorSummary,
+}: {
+  toolCall: ToolCall;
+  item: Item;
+  onOpenFile?: ((path: string, position?: WorkspaceFilePosition) => void) | undefined;
+  isError: boolean;
+  errorSummary?: string | undefined;
+}) {
+  const actions = useArtifacts();
+  const [expanded, setExpanded] = useState(false);
+  if (isError) {
+    return <p className="tool-summary--error">{errorSummary || "列出文件失败"}</p>;
+  }
+  if (item.status === "in_progress") {
+    return <p className="tool-search-empty">正在列出文件…</p>;
+  }
+  const resultObj = parseObject(toolCall.resultJson);
+  const dataObj = objectField(resultObj, "data");
+  const paths = stringArrayField(dataObj, "paths");
+  const truncated = booleanField(dataObj, "truncated");
+
+  if (paths.length === 0) {
+    return (
+      <p className="tool-search-empty">
+        {toolCall.resultHash ? "结果内容较大，请点击下方查看完整结果" : "目录为空或未找到文件"}
+      </p>
+    );
+  }
+
+  const openFileHandler = onOpenFile ?? actions?.openFile;
+  const shown = expanded ? paths : paths.slice(0, LIST_FILES_PREVIEW_LIMIT);
+  const hasMore = paths.length > LIST_FILES_PREVIEW_LIMIT;
+
+  return (
+    <div className="tool-list-files-wrap">
+      <div className="tool-file-list" role="list">
+        {shown.map((entryPath) => {
+          const isDir = entryPath.endsWith("/");
+          const clickable = Boolean(openFileHandler && canOpenWorkspaceFilePath(entryPath, actions));
+          return (
+            <div key={entryPath} className="tool-file-entry" role="listitem">
+              {isDir ? (
+                <span className="tool-list-dir" title={entryPath}>{entryPath}</span>
+              ) : clickable && openFileHandler ? (
+                <button
+                  type="button"
+                  className="tool-file-link"
+                  title={`打开文件：${entryPath}`}
+                  onClick={() => openFileHandler(entryPath)}
+                >
+                  {entryPath}
+                </button>
+              ) : (
+                <span className="tool-file-link" title={entryPath}>{entryPath}</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {hasMore && (
+        <button
+          type="button"
+          className="mcp-inline-action"
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {expanded ? "收起" : `展开全部（共 ${paths.length} 项）`}
+        </button>
+      )}
+      {truncated && !toolCall.resultHash && (
+        <p className="tool-search-empty">已显示前 {paths.length} 项，更多条目已截断</p>
+      )}
+    </div>
+  );
+}
+
+function SearchTextResultsViewer({
+  toolCall,
+  item,
+  onOpenFile,
+  isError,
+  errorSummary,
+}: {
+  toolCall: ToolCall;
+  item: Item;
+  onOpenFile?: ((path: string, position?: WorkspaceFilePosition) => void) | undefined;
+  isError: boolean;
+  errorSummary?: string | undefined;
+}) {
+  const actions = useArtifacts();
+  const queries = useContext(SearchTextQueriesContext);
+  const [showAllFiles, setShowAllFiles] = useState(false);
+  const [expandedFiles, setExpandedFiles] = useState<ReadonlySet<string>>(() => new Set());
+  const search = searchTextQuery(toolCall, queries);
+  const resultObj = parseObject(toolCall.resultJson);
+  const dataObj = objectField(resultObj, "data");
+  const matches = searchTextMatches(dataObj);
+  const view = useMemo(
+    () => buildSearchTextResults(matches, search?.query ?? "", search?.regex ?? false),
+    // `matches` is derived from resultJson.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [toolCall.resultJson, search?.query, search?.regex],
+  );
+  if (isError) {
+    return <p className="tool-summary--error">{errorSummary || "搜索失败"}</p>;
+  }
+  if (item.status === "in_progress") {
+    return <p className="tool-search-empty">正在搜索中…</p>;
+  }
+  if (resultObj.code === "search_running" || dataObj.truncationReason === "search_running") {
+    return <p className="tool-search-empty">搜索仍在后台继续，稍后将返回命中结果</p>;
+  }
+  const truncated = booleanField(dataObj, "truncated");
+
+  if (view.files.length === 0) {
+    return (
+      <p className="tool-search-empty">
+        {toolCall.resultHash ? "结果内容较大，请点击下方查看完整结果" : "未找到匹配结果"}
+      </p>
+    );
+  }
+
+  const openFileHandler = onOpenFile ?? actions?.openFile;
+  const initialFiles = initialVisibleFileCount(view.files, SEARCH_TEXT_HITS_PER_FILE, SEARCH_TEXT_PREVIEW_LIMIT);
+  const shownFiles = showAllFiles ? view.files : view.files.slice(0, initialFiles);
+  const hiddenFiles = view.files.length - initialFiles;
+  const lineDigits = Math.max(1, ...matches.map((match) => String(match.line ?? "").length));
+  const toggleFile = (path: string) => setExpandedFiles((current) => {
+    const next = new Set(current);
+    if (!next.delete(path)) next.add(path);
+    return next;
+  });
+
+  return (
+    <div className="tool-text-search-wrap" style={{ "--tool-search-line-digits": lineDigits } as CSSProperties}>
+      {view.root && (
+        <div className="tool-text-search-root" title={view.root}><bdi>{view.root}</bdi></div>
+      )}
+      <div className="tool-text-search-files" role="list">
+        {shownFiles.map((file) => (
+          <SearchTextFile
+            key={file.path}
+            file={file}
+            expanded={expandedFiles.has(file.path)}
+            onToggle={() => toggleFile(file.path)}
+            onOpen={openFileHandler && canOpenWorkspaceFilePath(file.path, actions) ? openFileHandler : undefined}
+          />
+        ))}
+      </div>
+      {hiddenFiles > 0 && (
+        <button
+          type="button"
+          className="mcp-inline-action"
+          onClick={() => setShowAllFiles((current) => !current)}
+        >
+          {showAllFiles ? "收起" : `显示其余 ${hiddenFiles} 个文件`}
+        </button>
+      )}
+      {truncated && !toolCall.resultHash && (
+        <p className="tool-search-empty">命中结果已截断</p>
+      )}
+    </div>
+  );
+}
+
+function searchTextMatches(data: Record<string, unknown>): SearchTextMatch[] {
+  const raw = Array.isArray(data.matches) ? data.matches : [];
+  return raw
+    .filter((match): match is Record<string, unknown> => Boolean(match) && typeof match === "object")
+    .map((match) => ({
+      path: stringField(match, "path"),
+      line: numberField(match, "line"),
+      column: numberField(match, "column"),
+      preview: stringField(match, "preview"),
+    }))
+    .filter((match) => match.path);
+}
+
+function SearchTextFile({
+  file,
+  expanded,
+  onToggle,
+  onOpen,
+}: {
+  file: SearchTextFileGroup;
+  expanded: boolean;
+  onToggle: () => void;
+  onOpen?: ((path: string, position?: WorkspaceFilePosition) => void) | undefined;
+}) {
+  const shownHits = expanded ? file.hits : file.hits.slice(0, SEARCH_TEXT_HITS_PER_FILE);
+  const moreHits = file.hits.length - SEARCH_TEXT_HITS_PER_FILE;
+  const headContent = (
+    <>
+      <span className="tool-text-search-file-name">{file.name}</span>
+      {file.directory && <span className="tool-text-search-file-dir"><bdi>{file.directory}</bdi></span>}
+      <span className="tool-text-search-file-count">{file.hits.length}</span>
+    </>
+  );
+  return (
+    <div className="tool-text-search-file" role="listitem">
+      {onOpen ? (
+        <button
+          type="button"
+          className="tool-text-search-file-head"
+          title={`打开文件：${file.path}`}
+          aria-label={`${file.path}，${file.hits.length} 处`}
+          onClick={() => onOpen(file.path)}
+        >
+          {headContent}
+        </button>
+      ) : (
+        <span className="tool-text-search-file-head" title={file.path}>{headContent}</span>
+      )}
+      <div className="tool-text-search-hits" role="list">
+        {shownHits.map((hit, index) => (
+          <SearchTextHit key={`${hit.line ?? ""}:${hit.column ?? ""}:${index}`} path={file.path} hit={hit} onOpen={onOpen} />
+        ))}
+      </div>
+      {moreHits > 0 && (
+        <button type="button" className="tool-text-search-more" onClick={onToggle}>
+          {expanded ? "收起" : `还有 ${moreHits} 处`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function SearchTextHit({
+  path,
+  hit,
+  onOpen,
+}: {
+  path: string;
+  hit: SearchTextHitView;
+  onOpen?: ((path: string, position?: WorkspaceFilePosition) => void) | undefined;
+}) {
+  const location = hit.line !== undefined ? `${path}:${hit.line}` : path;
+  const content = (
+    <>
+      <span className="tool-text-search-line">{hit.line ?? ""}</span>
+      <span className="tool-text-search-preview">
+        {hit.leadingEllipsis && <span className="tool-text-search-ellipsis">…</span>}
+        {highlightedSearchText(hit)}
+      </span>
+    </>
+  );
+  const preview = hit.preview.trim();
+  const title = preview ? `${location}\n${preview}` : location;
+  const label = [hit.line !== undefined ? `第 ${hit.line} 行` : "", preview].filter(Boolean).join(" ");
+  return (
+    <div role="listitem">
+      {onOpen ? (
+        <button
+          type="button"
+          className="tool-text-search-hit"
+          title={title}
+          aria-label={label}
+          onClick={() => onOpen(path, hit.line !== undefined ? { line: hit.line, ...(hit.column !== undefined ? { column: hit.column } : {}) } : undefined)}
+        >
+          {content}
+        </button>
+      ) : (
+        <div className="tool-text-search-hit" title={title}>{content}</div>
+      )}
+    </div>
+  );
+}
+
+function highlightedSearchText(hit: SearchTextHitView): ReactNode[] {
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  for (const range of hit.highlights) {
+    if (range.start > cursor) parts.push(hit.text.slice(cursor, range.start));
+    parts.push(<mark key={range.start} className="tool-text-search-match">{hit.text.slice(range.start, range.end)}</mark>);
+    cursor = range.end;
+  }
+  if (cursor < hit.text.length) parts.push(hit.text.slice(cursor));
+  return parts;
+}
+
+function historyMatchKindLabel(kind: string, toolName?: string): string {
+  if (kind === "user") return "提问";
+  if (kind === "assistant") return "回答";
+  if (kind === "tool") return toolName || "工具";
+  return "";
+}
+
+function SearchHistoryResultsViewer({
+  toolCall,
+  item,
+  onOpenHistoryMatch,
+  isError,
+  errorSummary,
+}: {
+  toolCall: ToolCall;
+  item: Item;
+  onOpenHistoryMatch?: ((target: { sessionId: string; itemId?: string | undefined; query?: string | undefined }) => void) | undefined;
+  isError: boolean;
+  errorSummary?: string | undefined;
+}) {
+  const inputContext = useInputContext();
+  if (isError) {
+    return <p className="tool-summary--error">{errorSummary || "搜索会话历史失败"}</p>;
+  }
+  if (item.status === "in_progress") {
+    return <p className="tool-search-empty">正在搜索会话历史…</p>;
+  }
+  const args = parseObject(toolCall.argumentsJson);
+  const resultObj = parseObject(toolCall.resultJson);
+  const dataObj = objectField(resultObj, "data");
+  const query = stringField(args, "query") || stringField(dataObj, "query");
+  const rawMatches = Array.isArray(dataObj.matches) ? dataObj.matches : [];
+  const matches = rawMatches.filter((m): m is Record<string, unknown> => Boolean(m) && typeof m === "object");
+
+  if (matches.length === 0) {
+    return (
+      <p className="tool-search-empty">
+        {toolCall.resultHash ? "结果内容较大，请点击下方查看完整结果" : "未找到匹配的会话历史"}
+      </p>
+    );
+  }
+
+  const jumpToMatch = (sessionId: string, itemId?: string) => {
+    if (onOpenHistoryMatch) {
+      onOpenHistoryMatch({ sessionId, ...(itemId ? { itemId } : {}), ...(query ? { query } : {}) });
+      return;
+    }
+    inputContext?.navigateToSession?.(sessionId);
+  };
+
+  const hasCrossSessionMatches = matches.some((match) => Boolean(stringField(match, "sessionId")));
+  const canNavigateCrossSession = Boolean(onOpenHistoryMatch || inputContext?.navigateToSession);
+  const complete = dataObj.complete;
+
+  if (hasCrossSessionMatches) {
+    const groups: Array<{
+      sessionId: string;
+      sessionTitle: string;
+      date: string;
+      hits: Array<{ itemId: string; kind: string; snippet: string }>;
+    }> = [];
+    const bySession = new Map<string, (typeof groups)[number]>();
+    for (const match of matches) {
+      const sessionId = stringField(match, "sessionId");
+      if (!sessionId) continue;
+      let group = bySession.get(sessionId);
+      if (!group) {
+        group = {
+          sessionId,
+          sessionTitle: stringField(match, "sessionTitle"),
+          date: stringField(match, "date"),
+          hits: [],
+        };
+        bySession.set(sessionId, group);
+        groups.push(group);
+      }
+      group.hits.push({
+        itemId: stringField(match, "itemId"),
+        kind: stringField(match, "kind"),
+        snippet: stringField(match, "snippet"),
+      });
+    }
+
+    return (
+      <div className="tool-history-results" role="list">
+        {groups.map((group) => (
+          <div key={group.sessionId} className="tool-history-group" role="listitem">
+            <div className="tool-history-session-row">
+              {canNavigateCrossSession ? (
+                <button
+                  type="button"
+                  className="tool-file-link tool-history-session-btn"
+                  title={group.sessionTitle ? `跳转到会话：${group.sessionTitle}` : `跳转到会话 ${group.sessionId}`}
+                  onClick={() => jumpToMatch(group.sessionId, group.hits[0]?.itemId)}
+                >
+                  {group.sessionTitle || "未命名会话"}
+                </button>
+              ) : (
+                <span className="tool-history-session-title">{group.sessionTitle || "未命名会话"}</span>
+              )}
+              {(group.date || group.hits.length > 1) && (
+                <span className="tool-history-session-meta">
+                  {[group.date, group.hits.length > 1 ? `${group.hits.length} 条匹配` : ""].filter(Boolean).join(" · ")}
+                </span>
+              )}
+            </div>
+            {group.hits.map((hit, index) => {
+              const kindLabel = historyMatchKindLabel(hit.kind);
+              const clickable = Boolean(canNavigateCrossSession && hit.itemId);
+              return clickable ? (
+                <button
+                  key={hit.itemId || index}
+                  type="button"
+                  className="tool-history-hit-btn"
+                  title="跳转到该条消息"
+                  onClick={() => jumpToMatch(group.sessionId, hit.itemId)}
+                >
+                  {kindLabel && <span className="tool-history-kind">{kindLabel}</span>}
+                  <span className="tool-history-snippet">{hit.snippet}</span>
+                </button>
+              ) : (
+                <div key={hit.itemId || index} className="tool-history-hit-row">
+                  {kindLabel && <span className="tool-history-kind">{kindLabel}</span>}
+                  <span className="tool-history-snippet">{hit.snippet}</span>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+        {complete === false && <p className="tool-search-empty">仅显示部分最近匹配会话</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="tool-history-results" role="list">
+      {matches.map((match, index) => {
+        const itemId = stringField(match, "itemId");
+        const kind = stringField(match, "kind");
+        const toolName = stringField(match, "toolName");
+        const snippet = stringField(match, "snippet");
+        const kindLabel = historyMatchKindLabel(kind, toolName);
+        const clickable = Boolean(onOpenHistoryMatch && itemId && (kind === "user" || kind === "assistant"));
+        return clickable ? (
+          <button
+            key={itemId || index}
+            type="button"
+            className="tool-history-hit-btn"
+            title="定位到当前会话消息"
+            onClick={() => jumpToMatch(item.sessionId, itemId)}
+          >
+            {kindLabel && <span className="tool-history-kind">{kindLabel}</span>}
+            <span className="tool-history-snippet">{snippet}</span>
+          </button>
+        ) : (
+          <div key={itemId || index} className="tool-history-hit-row" role="listitem">
+            {kindLabel && <span className="tool-history-kind">{kindLabel}</span>}
+            <span className="tool-history-snippet">{snippet}</span>
+          </div>
+        );
+      })}
+      {complete === false && <p className="tool-search-empty">仅显示部分最近匹配结果</p>}
+    </div>
+  );
+}
+
+function GoalUpdateBody({
+  toolCall,
+  isError,
+  summary,
+}: {
+  toolCall: ToolCall;
+  isError: boolean;
+  summary: string;
+}) {
+  if (isError) {
+    return <p className="tool-summary--error">{summary}</p>;
+  }
+  const args = parseObject(toolCall.argumentsJson);
+  const declaredStatus = stringField(args, "status");
+  const declaredSummary = stringField(args, "summary").trim();
+  const statusHint = declaredStatus === "complete"
+    ? "声明状态：已完成"
+    : declaredStatus === "blocked"
+    ? "声明状态：已受阻"
+    : "";
+  return (
+    <div className="tool-goal-body">
+      {statusHint && <p className="tool-goal-status">{statusHint}</p>}
+      {declaredSummary && <p className="tool-goal-summary">{declaredSummary}</p>}
+      {summary && <p>{summary}</p>}
+    </div>
+  );
+}
+
 function SkillReadToolItem({
   item,
   toolCall,
@@ -2236,17 +2803,20 @@ const ToolItem = memo(function ToolItem({
   item,
   toolCall,
   onOpenFile,
+  onOpenHistoryMatch,
   agents,
   onOpenSubagent,
 }: {
   item: Item;
   toolCall: ToolCall;
-  onOpenFile?: ((path: string) => void) | undefined;
+  onOpenFile?: ((path: string, position?: WorkspaceFilePosition) => void) | undefined;
+  onOpenHistoryMatch?: ((target: { sessionId: string; itemId?: string | undefined; query?: string | undefined }) => void) | undefined;
   agents?: AgentSummary[] | undefined;
   onOpenSubagent?: ((target?: { id?: string | undefined; taskName?: string | undefined }) => void) | undefined;
 }) {
   const details = useLazyDetails(false);
   const mcpNames = useContext(McpPluginNamesContext);
+  const searchQueries = useContext(SearchTextQueriesContext);
 
   if (isSubagentTool(toolCall.toolName)) {
     const { id: agentId, name: agentName } = extractSubagentInfo(toolCall, agents);
@@ -2441,11 +3011,19 @@ const ToolItem = memo(function ToolItem({
   const isReadFile = ["read_file", "read_file_range"].includes(toolCall.toolName);
   const isDoneRead = isReadFile && item.status === "completed";
 
-  // Completed read_file: render as a static row — no arrow, no body, filename as clickable link
+  // Completed read_file / read_file_range: render as a static row — no arrow, no body, filename as clickable link
   if (isDoneRead) {
     const args = parseObject(toolCall.argumentsJson);
-    const filePath = stringField(args, "path") || stringField(args, "filePath");
+    const resultData = objectField(parseObject(toolCall.resultJson), "data");
+    const filePath = stringField(args, "path") || stringField(args, "filePath") || stringField(resultData, "path");
     const displayName = filePath ? pathBasename(filePath) : "文件";
+    const startLine = toolCall.toolName === "read_file_range"
+      ? (numberField(resultData, "startLine") ?? numberField(args, "startLine"))
+      : undefined;
+    const endLine = toolCall.toolName === "read_file_range"
+      ? (numberField(resultData, "endLine") ?? numberField(args, "endLine"))
+      : undefined;
+    const lineRange = toolCall.toolName === "read_file_range" ? formatLineRange(startLine, endLine) : "";
     return (
       <div className="tool-item tool-item--read-done">
         <span className="tool-icon" aria-hidden="true"><FileReadIcon /></span>
@@ -2455,14 +3033,19 @@ const ToolItem = memo(function ToolItem({
             <button
               type="button"
               className="tool-file-link"
-              title={filePath}
-              onClick={() => onOpenFile(filePath)}
+              title={lineRange ? `${filePath} · ${lineRange}` : filePath}
+              onClick={() => (
+                startLine !== undefined
+                  ? onOpenFile(filePath, { line: startLine })
+                  : onOpenFile(filePath)
+              )}
             >
               {displayName}
             </button>
           ) : (
             displayName
           )}
+          {lineRange ? ` · ${lineRange}` : ""}
         </span>
       </div>
     );
@@ -2473,6 +3056,10 @@ const ToolItem = memo(function ToolItem({
   const isViewImage = toolCall.toolName === "view_image";
   const isWebSearch = toolCall.toolName === "web_search";
   const isToolSearch = toolCall.toolName === "tool_search";
+  const isListFiles = toolCall.toolName === "list_files";
+  const isSearchText = toolCall.toolName === "search_text" || toolCall.toolName === "search_text_wait";
+  const isSearchHistory = toolCall.toolName === "search_history";
+  const isUpdateGoal = toolCall.toolName === "update_goal";
   const isError = toolCallFailed(item, toolCall, result);
 
   if (toolCall.toolName === "request_permissions" && !isError) {
@@ -2504,7 +3091,7 @@ const ToolItem = memo(function ToolItem({
     <details className="tool-item" open={details.open} onToggle={details.onToggle}>
       <summary>
         <span className="tool-icon" aria-hidden="true">{toolIcon(toolCall.toolName)}</span>
-        <span>{toolSummary(toolCall, item.status, agents, mcpNames)}</span>
+        <span>{toolSummary(toolCall, item.status, agents, mcpNames, searchQueries)}</span>
       </summary>
       {details.mounted && <div className="tool-body">
         {isViewImage ? (
@@ -2528,6 +3115,45 @@ const ToolItem = memo(function ToolItem({
             item={item}
             isError={isError}
             errorSummary={isError ? summary : undefined}
+          />
+        ) : isListFiles ? (
+          <>
+            <ListFilesResultsViewer
+              toolCall={toolCall}
+              item={item}
+              onOpenFile={onOpenFile}
+              isError={isError}
+              errorSummary={isError ? summary : undefined}
+            />
+            {toolCall.resultHash && <ToolTextView key={toolCall.resultHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="result" sha256={toolCall.resultHash} totalBytes={toolCall.resultBytes!} />}
+          </>
+        ) : isSearchText ? (
+          <>
+            <SearchTextResultsViewer
+              toolCall={toolCall}
+              item={item}
+              onOpenFile={onOpenFile}
+              isError={isError}
+              errorSummary={isError ? summary : undefined}
+            />
+            {toolCall.resultHash && <ToolTextView key={toolCall.resultHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="result" sha256={toolCall.resultHash} totalBytes={toolCall.resultBytes!} />}
+          </>
+        ) : isSearchHistory ? (
+          <>
+            <SearchHistoryResultsViewer
+              toolCall={toolCall}
+              item={item}
+              onOpenHistoryMatch={onOpenHistoryMatch}
+              isError={isError}
+              errorSummary={isError ? summary : undefined}
+            />
+            {toolCall.resultHash && <ToolTextView key={toolCall.resultHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="result" sha256={toolCall.resultHash} totalBytes={toolCall.resultBytes!} />}
+          </>
+        ) : isUpdateGoal ? (
+          <GoalUpdateBody
+            toolCall={toolCall}
+            isError={isError}
+            summary={summary}
           />
         ) : browserTool ? (
           <BrowserToolBody item={item} toolCall={toolCall} tool={browserTool} isError={isError} />
@@ -2999,8 +3625,21 @@ function isMcpTool(toolCall: ToolCall): boolean {
   return toolCall.provenance?.kind === "mcp" || toolCall.toolName.startsWith("mcp__");
 }
 
+/** " · 9 处 · 3 个文件" for a finished text search; empty while it is still running or the result is stored elsewhere. */
+function searchTextCountLabel(toolCall: ToolCall, result: Record<string, unknown>, data: Record<string, unknown>): string {
+  if (result.code === "search_running" || data.truncationReason === "search_running") return "";
+  const matches = searchTextMatches(data);
+  if (matches.length === 0) return toolCall.resultHash || result.outcome !== "success" ? "" : " · 无匹配";
+  const files = new Set(matches.map((match) => match.path)).size;
+  return ` · ${matches.length}${booleanField(data, "truncated") ? "+" : ""} 处 · ${files} 个文件`;
+}
+
 function toolSummary(
-  toolCall: ToolCall, status: Item["status"], agents?: AgentSummary[], mcpNames: ReadonlyMap<string, string> = new Map(),
+  toolCall: ToolCall,
+  status: Item["status"],
+  agents?: AgentSummary[],
+  mcpNames: ReadonlyMap<string, string> = new Map(),
+  searchQueries: ReadonlyMap<string, SearchTextQuery> = NO_SEARCH_TEXT_QUERIES,
 ): string {
   const browserTool = browserToolName(toolCall.toolName);
   if (browserTool) return browserToolSummary(toolCall, status, browserTool);
@@ -3047,6 +3686,35 @@ function toolSummary(
   const skillName = skillInfo?.name || "";
   const isPermissions = toolCall.toolName === "request_permissions";
   const permissionName = isPermissions ? formatPermissionNames(args, data) : "";
+  const listPath = toolCall.toolName === "list_files" ? stringField(args, "path").trim() : "";
+  const listPathLabel = listPath && listPath !== "." ? listPath : "";
+  const readRangeLabel = toolCall.toolName === "read_file_range"
+    ? formatLineRange(
+      numberField(data, "startLine") ?? numberField(args, "startLine"),
+      numberField(data, "endLine") ?? numberField(args, "endLine"),
+    )
+    : "";
+  const readTarget = [path || "文件", readRangeLabel].filter(Boolean).join(" · ");
+  const searchWaitStillRunning = toolCall.toolName === "search_text_wait"
+    && (result.code === "search_running" || data.truncationReason === "search_running");
+  const waitQuery = toolCall.toolName === "search_text_wait"
+    ? searchTextQuery(toolCall, searchQueries)?.query ?? ""
+    : "";
+  const searchCounts = (toolCall.toolName === "search_text" || toolCall.toolName === "search_text_wait")
+    && status === "completed"
+    ? searchTextCountLabel(toolCall, result, data)
+    : "";
+  const goalStatus = toolCall.toolName === "update_goal" ? stringField(args, "status") : "";
+  const goalDoneLabel = goalStatus === "complete"
+    ? "已声明目标完成"
+    : goalStatus === "blocked"
+    ? "已声明目标受阻"
+    : "已更新目标状态";
+  const goalBaseLabel = goalStatus === "complete"
+    ? "声明目标完成"
+    : goalStatus === "blocked"
+    ? "声明目标受阻"
+    : "更新目标状态";
 
   const applyPatchLabel = patchFileCount > 1
     ? (running ? `正在编辑 ${patchFileCount} 个文件` : `已编辑 ${patchFileCount} 个文件`)
@@ -3054,8 +3722,10 @@ function toolSummary(
 
   const baseLabels: Record<string, string> = {
     automation: "定时任务",
+    update_goal: goalBaseLabel,
     web_search: query ? `搜索 ${query}` : "网页搜索",
     tool_search: query ? `搜索工具 [${query}]` : "搜索工具",
+    search_text_wait: waitQuery ? `搜索 ${waitQuery}` : "等待搜索结果",
     request_permissions: permissionName ? `申请权限 ${permissionName}` : "申请权限",
     spawn_agent: subagentName ? `创建智能体 · ${subagentName}` : "创建智能体",
     wait_agents: subagentName ? `等待智能体 · ${subagentName}` : "等待智能体",
@@ -3069,6 +3739,8 @@ function toolSummary(
     memory_edit: args.action === "delete" ? "删除记忆" : "保存记忆",
     read_tool_output: "查看工具输出",
     search_history: query ? `搜索会话历史 "${query}"` : "搜索会话历史",
+    list_files: listPathLabel ? `列出 ${listPathLabel}` : "列出文件",
+    read_file_range: readTarget,
     skill_read: skillName ? `${skillName}技能 SKILL.md` : "技能 SKILL.md",
     skill_read_resource: skillName ? `${skillName}技能包` : "技能包",
   };
@@ -3076,13 +3748,7 @@ function toolSummary(
     ? baseLabels[toolCall.toolName]
     : isSkillRead
     ? baseLabels[toolCall.toolName]
-    : toolCall.toolName === "web_search"
-    ? baseLabels[toolCall.toolName]
-    : toolCall.toolName === "tool_search"
-    ? baseLabels[toolCall.toolName]
-    : toolCall.toolName === "request_permissions"
-    ? baseLabels[toolCall.toolName]
-    : toolCall.toolName === "search_history"
+    : ["web_search", "tool_search", "search_text_wait", "request_permissions", "search_history", "list_files", "read_file_range", "update_goal"].includes(toolCall.toolName)
     ? baseLabels[toolCall.toolName]
     : (path || query || baseLabels[toolCall.toolName] || toolCall.toolName);
   if (isReconciliationGate(result)) {
@@ -3092,13 +3758,23 @@ function toolSummary(
     return `${statusLabel(status)} ${targetLabel}`;
   }
   const labels: Record<string, string> = {
-    list_files: running ? "正在列出文件" : "已列出文件",
+    list_files: running
+      ? (listPathLabel ? `正在列出 ${listPathLabel}` : "正在列出文件")
+      : (listPathLabel ? `已列出 ${listPathLabel}` : "已列出文件"),
     read_file: running ? `正在读取 ${path || "文件"}` : `已读取 ${path || "文件"}`,
-    read_file_range: running ? `正在读取 ${path || "文件"}` : `已读取 ${path || "文件"}`,
+    read_file_range: running ? `正在读取 ${readTarget}` : `已读取 ${readTarget}`,
     view_image: running
       ? (imageFileName ? `正在查看图像 · ${imageFileName}` : "正在查看图像")
       : (imageFileName ? `已查看图像 · ${imageFileName}` : "已查看图像"),
-    search_text: running ? `正在搜索 ${query || "文本"}` : `已搜索 ${query || "文本"}`,
+    search_text: running ? `正在搜索 ${query || "文本"}` : `已搜索 ${query || "文本"}${searchCounts}`,
+    search_text_wait: running
+      ? (waitQuery ? `正在搜索 ${waitQuery}` : "正在等待搜索结果")
+      : searchWaitStillRunning
+      ? (waitQuery ? `仍在搜索 ${waitQuery}` : "搜索仍在进行")
+      : waitQuery
+      ? `已搜索 ${waitQuery}${searchCounts}`
+      : `已获取搜索结果${searchCounts}`,
+    update_goal: running ? "正在更新目标状态" : goalDoneLabel,
     web_search: running ? `正在搜索 ${query || "网页"}` : `已搜索 ${query || "网页"}`,
     tool_search: running
       ? (query ? `正在搜索工具 [${query}]` : "正在搜索工具")
@@ -3270,6 +3946,7 @@ function DefaultToolIcon() {
 
 function toolIcon(name: string): ReactNode {
   if (name === "automation") return <AutomationsIcon />;
+  if (name === "update_goal") return <GoalMarkIcon width={14} height={14} />;
   if (name === "web_search") return <WebSearchIcon />;
   if (name === "declare_outputs") return <DeclareOutputsIcon />;
   if (name === "request_permissions") return <ShieldQuestionIcon />;
@@ -3278,7 +3955,8 @@ function toolIcon(name: string): ReactNode {
   if (["read_file", "read_file_range"].includes(name)) return <FileReadIcon />;
   if (name === "view_image") return <ImageIcon />;
   if (isMemoryTool(name)) return <MemoryIcon />;
-  if (["search_text", "tool_search"].includes(name)) return <SearchIcon />;
+  if (name === "search_history") return <ChatHistoryIcon />;
+  if (["search_text", "search_text_wait", "tool_search"].includes(name)) return <SearchIcon />;
   if (["write_file", "apply_patch"].includes(name)) return <FileWriteIcon />;
   if (name === "delete_file") return <FileDeleteIcon />;
   if (["spawn_agent", "wait_agents", "list_agents", "stop_agent", "send_message", "followup_task"].includes(name)) {
@@ -3301,9 +3979,15 @@ function safeToolSummary(value: string | undefined, status: Item["status"]): str
 }
 
 function toolCallFailed(item: Item, toolCall: ToolCall, result: Record<string, unknown>): boolean {
+  const nonSuccessOutcome = typeof result.outcome === "string" && result.outcome !== "success";
+  const unrecordedCodeFailure = !result.outcome
+    && typeof result.code === "string"
+    && result.code
+    && result.code !== "ok"
+    && !(toolCall.toolName === "request_permissions" && ["permission_granted", "already_granted"].includes(result.code));
   return Boolean(
-    result.outcome === "error"
-    || (typeof result.code === "string" && result.code && result.code !== "ok" && !(toolCall.toolName === "request_permissions" && ["permission_granted", "already_granted"].includes(result.code)))
+    nonSuccessOutcome
+    || unrecordedCodeFailure
     || item.status === "failed"
     || item.status === "declined"
     || item.status === "canceled"

@@ -658,6 +658,7 @@ export function AppShell({ runtime }: AppShellProps) {
   // -----------------------------------------------------------------------
   // Session Selection & Creation with Model re-eval
   const handleNavigateToSession = useCallback((target: string) => {
+    searchSelection.current += 1;
     setAutomationsOpen(false);
     if (target === "draft") {
       sessionActions.startDraft();
@@ -710,19 +711,63 @@ export function AppShell({ runtime }: AppShellProps) {
 
   function clearSearchTarget() { searchSelection.current += 1; setSearchTarget(undefined); }
 
-  async function handleSearchSelect(hit: SearchHit, query: string): Promise<void> {
+  async function navigateAndHighlightSessionHit(target: {
+    sessionId: string;
+    itemId?: string | undefined;
+    query?: string | undefined;
+    occurrence?: number | undefined;
+    closeGlobalSearch?: boolean | undefined;
+  }): Promise<void> {
     const selection = ++searchSelection.current;
-    const session = sessionState.sessions.find((candidate) => candidate.id === hit.sessionId) ?? (await window.eidosRuntime.readSession(hit.sessionId)).session;
+    let session = sessionState.sessions.find((candidate) => candidate.id === target.sessionId);
+    if (!session) {
+      try {
+        session = (await window.eidosRuntime.readSession(target.sessionId)).session;
+      } catch {
+        if (selection === searchSelection.current) {
+          navHistoryActions.navigateTo(target.sessionId);
+          handleNavigateToSession(target.sessionId);
+        }
+        return;
+      }
+    }
     if (selection !== searchSelection.current) return;
-    setSettingsOpen(false); setAutomationsOpen(false);
+    setSettingsOpen(false);
+    setAutomationsOpen(false);
     navHistoryActions.navigateTo(session.id);
-    const loaded = await sessionActions.selectSession(session, hit.itemId ?? undefined);
+    let loaded = await sessionActions.selectSession(session, target.itemId);
     if (selection !== searchSelection.current) return;
-    if (loaded && hit.itemId) setSearchTarget({ itemId: hit.itemId, query, occurrence: hit.occurrence ?? 0, revision: Date.now() });
-    if (searchMode === "global") setSearchMode(undefined);
+    if (!loaded && target.itemId) {
+      loaded = await sessionActions.selectSession(session);
+      if (selection !== searchSelection.current) return;
+    }
+    if (loaded && target.itemId && target.query && loaded.items.some((item) => item.id === target.itemId)) {
+      setSearchTarget({ itemId: target.itemId, query: target.query, occurrence: target.occurrence ?? 0, revision: Date.now() });
+    }
+    if (target.closeGlobalSearch && searchMode === "global") setSearchMode(undefined);
   }
 
+  async function handleSearchSelect(hit: SearchHit, query: string): Promise<void> {
+    await navigateAndHighlightSessionHit({
+      sessionId: hit.sessionId,
+      itemId: hit.itemId ?? undefined,
+      query,
+      occurrence: hit.occurrence ?? 0,
+      closeGlobalSearch: true,
+    });
+  }
+
+  const handleOpenHistoryMatch = useCallback((target: {
+    sessionId: string;
+    itemId?: string | undefined;
+    query?: string | undefined;
+  }): void => {
+    void navigateAndHighlightSessionHit(target);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionState.sessions, sessionActions, navHistoryActions, handleNavigateToSession, searchMode]);
+
   async function handleSelectSession(session: Session) {
+    searchSelection.current += 1;
     setSearchTarget(undefined); setSearchMode(undefined);
     setAutomationsOpen(false);
     navHistoryActions.navigateTo(session.id);
@@ -1936,6 +1981,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   onRegenerate={handleFeedRegenerate}
                   onEditResend={handleFeedEditResend}
                   onOpenFile={handleOpenFileInDock}
+                  onOpenHistoryMatch={handleOpenHistoryMatch}
                   onOpenPlan={handleOpenPlan}
                   agents={feedAgents}
                   onOpenSubagent={handleOpenSubagent}
