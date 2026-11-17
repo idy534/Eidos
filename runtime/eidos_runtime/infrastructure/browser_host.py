@@ -39,6 +39,7 @@ CHROME_APPLICATIONS = (
 DEFAULT_IDLE_SECONDS = 30 * 60
 START_TIMEOUT_SECONDS = 20.0
 STOP_TIMEOUT_SECONDS = 10.0
+GRACEFUL_STOP_SECONDS = 5.0
 _MAX_PLIST_BYTES = 256 * 1024
 _MAX_STATE_BYTES = 4096
 
@@ -123,16 +124,21 @@ class _Closable(Protocol):
     def close(self) -> None: ...
 
 
-def _deny_downloads(port: int) -> _Closable:
-    """Chrome resets download behavior when the client that set it disconnects."""
-
-    from websockets.sync.client import connect
-
+def _browser_control_url(port: int) -> str:
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with opener.open(f"http://127.0.0.1:{port}/json/version", timeout=2) as response:
         url = json.loads(response.read(64 * 1024)).get("webSocketDebuggerUrl")
     if not isinstance(url, str) or not url.startswith(f"ws://127.0.0.1:{port}/devtools/browser/"):
         raise ValueError("browser_control_endpoint_invalid")
+    return url
+
+
+def _deny_downloads(port: int) -> _Closable:
+    """Chrome resets download behavior when the client that set it disconnects."""
+
+    from websockets.sync.client import connect
+
+    url = _browser_control_url(port)
     connection = connect(url, proxy=None, open_timeout=5, close_timeout=2, max_size=1024 * 1024, compression=None)
     try:
         connection.send(json.dumps({
@@ -147,6 +153,41 @@ def _deny_downloads(port: int) -> _Closable:
         connection.close()
         raise RuntimeError("browser_download_policy_rejected")
     return connection
+
+
+def _request_browser_close(port: int) -> bool:
+    """Ask Chrome to exit; Chrome then stops every process it started.
+
+    Return whether the request reached Chrome. The Job Object termination that
+    follows remains the bounded fallback either way.
+    """
+
+    from websockets.exceptions import WebSocketException
+    from websockets.sync.client import connect
+
+    try:
+        url = _browser_control_url(port)
+        connection = connect(url, proxy=None, open_timeout=2, close_timeout=1, max_size=1024 * 1024, compression=None)
+    except (OSError, ValueError, WebSocketException):
+        return False
+    with connection:
+        try:
+            connection.send(json.dumps({"id": 1, "method": "Browser.close"}))
+        except (OSError, WebSocketException):
+            return False
+        try:
+            connection.recv(timeout=2)
+        except (OSError, ValueError, WebSocketException):
+            pass  # Chrome may drop the connection while it closes.
+    return True
+
+
+def _accepts_connections(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
 
 
 def _free_port() -> int:
@@ -495,7 +536,17 @@ class BrowserHost:
         if pid is None:
             return
         if local_files.WINDOWS and process is not None:
+            port = self._port
+            # Only a Chrome this host still runs owns the port; never ask a
+            # process that took the port later to close.
+            running = process.poll() is None
             try:
+                # Like SIGTERM on macOS: a graceful close also ends Chrome
+                # processes that do not run inside the launcher's Job Object.
+                if running and port is not None and _request_browser_close(port):
+                    deadline = time.monotonic() + GRACEFUL_STOP_SECONDS
+                    while process.poll() is None and time.monotonic() < deadline:
+                        time.sleep(0.05)
                 host_processes.terminate_tree(process)
                 deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
                 while host_processes.has_members(process):
@@ -503,6 +554,14 @@ class BrowserHost:
                         raise BrowserUnavailable("browser_profile_in_use")
                     time.sleep(0.05)
                 process.wait(timeout=STOP_TIMEOUT_SECONDS)
+                if running and port is not None:
+                    deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
+                    while _accepts_connections(port):
+                        if time.monotonic() >= deadline:
+                            # ensure() moves later Runs to a new port when this one stays taken.
+                            logger.warning("Chrome debug port is still open after stop")
+                            break
+                        time.sleep(0.1)
             finally:
                 host_processes.close_job(process)
             return

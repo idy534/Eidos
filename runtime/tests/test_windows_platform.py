@@ -67,22 +67,28 @@ def test_ntfs_commit_keeps_the_open_file_identity_and_rejects_stale_changes(tmp_
     path = workspace / "笔记.md"
     cancel = threading.Event()
     with ToolExecutor(workspace) as tools, tools.external_write_scope((), profile, lambda: profile):
+        def commit(change: FileChange) -> dict[str, object]:
+            return tools.commit_file_change("apply_patch", change, cancel)
+
         original = b"old\r\n"
         create = FileChange(path.name, original, None, 0o644, "")
-        assert tools.commit_file_change("apply_patch", create, cancel)["outcome"] == "success"
+        assert (result := commit(create))["outcome"] == "success", result
         identity = path.stat().st_ino
-        assert tools.commit_file_change("apply_patch", create, cancel)["code"] == "file_version_conflict"
+        assert (result := commit(create))["code"] == "file_version_conflict", result
         sha = hashlib.sha256(original).hexdigest()
         update = FileChange(path.name, b"new\r\n", sha, 0o644, "")
-        assert tools.commit_file_change("apply_patch", update, cancel)["outcome"] == "success"
+        assert (result := commit(update))["outcome"] == "success", result
         assert path.stat().st_ino == identity
         assert path.read_bytes() == b"new\r\n"
-        assert tools.commit_file_change("apply_patch", update, cancel)["code"] == "file_version_conflict"
+        assert (result := commit(update))["code"] == "file_version_conflict", result
         delete = FileChange(path.name, b"", hashlib.sha256(b"new\r\n").hexdigest(), 0o644, "", delete=True)
-        assert tools.commit_file_change("apply_patch", delete, cancel)["outcome"] == "success"
+        assert (result := commit(delete))["outcome"] == "success", result
         assert not path.exists()
+        nested = FileChange("文档/新建.md", b"nested\r\n", None, 0o644, "", create_missing_parent=True)
+        assert (result := commit(nested))["outcome"] == "success", result
+        assert (workspace / "文档" / "新建.md").read_bytes() == b"nested\r\n"
         blocked = FileChange(".GIT/config", b"blocked", None, 0o600, "", create_missing_parent=True)
-        assert tools.commit_file_change("apply_patch", blocked, cancel)["code"] == "permission_not_requestable"
+        assert (result := commit(blocked))["code"] == "permission_not_requestable", result
         assert not (workspace / ".git").exists()
 
 
@@ -143,7 +149,9 @@ Start-Sleep -Seconds 60
         assert terminated["data"]["executionStatus"] == "exited"
         assert terminated["data"]["termination"] == "terminated"
     finally:
-        assert manager.cleanup()
+        # cleanup() reports whether it had to stop a process and raises
+        # ShellSessionFinalizationError when a session is not quiescent.
+        manager.cleanup()
 
 
 def test_powershell_pty_starts_after_commit_resizes_and_exchanges_utf8(tmp_path: Path) -> None:
@@ -205,7 +213,9 @@ exit 7
         assert "INPUT-中文" in output and "SIZE-110x38" in output
         assert "KEY-3" in output
     finally:
-        assert manager.cleanup()
+        # cleanup() reports whether it had to stop a process and raises
+        # ShellSessionFinalizationError when a session is not quiescent.
+        manager.cleanup()
 
 
 def test_windows_bundled_extension_helper_sends_the_connect_page(tmp_path: Path) -> None:
@@ -264,8 +274,23 @@ def test_windows_chrome_owns_its_profile_and_releases_the_debug_port(tmp_path: P
     finally:
         host.shutdown()
     assert not host.status().running
-    with pytest.raises(OSError), socket.create_connection(("127.0.0.1", urlsplit(endpoint).port), timeout=1):
-        pass
+    port = urlsplit(endpoint).port
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            pass
+    except OSError:
+        return
+    # Name the process that still listens so a failure explains itself.
+    owners = subprocess.run(
+        [
+            "powershell.exe", "-NoProfile", "-Command",
+            f"Get-NetTCPConnection -LocalPort {port} -State Listen | ForEach-Object {{ "
+            "Get-CimInstance Win32_Process -Filter \"ProcessId=$($_.OwningProcess)\" "
+            "| Format-List ProcessId,ParentProcessId,CommandLine }",
+        ],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+    )
+    pytest.fail(f"Chrome debug port {port} is still open:\n{owners.stdout}{owners.stderr}")
 
 
 def test_directory_relative_rename_and_tree_removal_keep_junction_targets(tmp_path: Path) -> None:

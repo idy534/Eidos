@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -84,7 +85,9 @@ def backup(service: MemoryService, destination: Path) -> None:
             if connection.in_transaction:
                 raise MemoryRejected("data_backup_busy")
             state = Path(scratch) / "state.sqlite"
-            with sqlite3.connect(state) as copied:
+            # The copy must be closed before the scratch directory is removed;
+            # Windows cannot delete a database file that is still open.
+            with closing(sqlite3.connect(state)) as copied:
                 connection.backup(copied)
             references = {
                 row[0]
@@ -217,7 +220,7 @@ def restore(archive_path: Path, destination: Path) -> None:
                 path.chmod(0o600)
             if "state.sqlite" not in names:
                 raise MemoryRejected("data_restore_database_missing")
-        with sqlite3.connect(staged / "state.sqlite") as connection:
+        with closing(sqlite3.connect(staged / "state.sqlite")) as connection, connection:
             if (
                 connection.execute("PRAGMA user_version").fetchone()[0]
                 != manifest.schema_version

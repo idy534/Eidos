@@ -217,9 +217,9 @@ def _require_named_directory(root: Path, descriptor: int) -> None:
 
 
 @contextmanager
-def named_directory(descriptor: int) -> Iterator[Path]:
+def named_directory(descriptor: int, *, rename_target: Path | None = None) -> Iterator[Path]:
     root = _path_for_handle(msvcrt.get_osfhandle(descriptor))
-    with _pinned_directory(root):
+    with _pinned_directory(root, rename_target=rename_target):
         _require_named_directory(root, descriptor)
         yield root
 
@@ -347,8 +347,14 @@ def mark_for_deletion(handle: int) -> None:
 
 
 @contextmanager
-def commit_handle(path: Path, *, write: bool = False, delete_access: bool = False) -> Iterator[int]:
-    """Hold an existing regular file against rename, deletion and other writers."""
+def commit_handle(
+    path: Path, *, write: bool = False, delete_access: bool = False, rename_target: Path | None = None,
+) -> Iterator[int]:
+    """Hold an existing regular file against rename, deletion and other writers.
+
+    ``rename_target`` names the directory a later ``publish_open_file`` renames
+    into; its pin shares writes so the rename can open it.
+    """
     access = _GENERIC_READ | _READ_CONTROL
     flags = os.O_RDONLY
     if write:
@@ -356,7 +362,8 @@ def commit_handle(path: Path, *, write: bool = False, delete_access: bool = Fals
         flags = os.O_RDWR
     if delete_access:
         access |= _DELETE
-    with _pinned_parent(path, None):
+    _check_local_path(path)
+    with _pinned_directory(path.parent, rename_target=rename_target):
         handle = _open_handle(path, access, directory=False, share=1)
         descriptor = _as_fd(handle, flags)
         try:
@@ -371,8 +378,11 @@ def delete_open_file(descriptor: int) -> None:
 
 def publish_open_file(descriptor: int, target: Path) -> None:
     # The source is the validated open handle. FileRenameInfo with Replace
-    # false provides an exclusive, same-volume name publication.
-    with _pinned_parent(target, None):
+    # false provides an exclusive, same-volume name publication. As with
+    # MoveFileExW in replace(), the rename opens the destination directory for
+    # writing, so every pin the caller holds on it must share writes.
+    _check_local_path(target)
+    with _pinned_directory(target.parent, rename_target=target.parent):
         name = _extended(target).encode("utf-16-le")
         size = _RenameInfo.name.offset + len(name) + 2
         buffer = ctypes.create_string_buffer(max(size, ctypes.sizeof(_RenameInfo)))

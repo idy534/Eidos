@@ -15,14 +15,19 @@ def commit(
     *, delete: bool, candidate: str | None, content: bytes | None,
 ) -> str:
     dirty = False
+    # Publishing a new file renames it into the target directory, which needs
+    # write sharing on every pin of that directory held during the rename.
+    publish_parent = target.parent if expected is None else None
     try:
-        with windows_files.named_directory(root_fd) as root:
+        with windows_files.named_directory(root_fd, rename_target=publish_parent) as root:
             if root != workspace or not windows_files.owner_matches(root_fd):
                 return "failed"
             if expected is None:
                 if delete or source == target or not candidate:
                     return "failed"
-                with windows_files.commit_handle(source, write=True, delete_access=True) as fd:
+                with windows_files.commit_handle(
+                    source, write=True, delete_access=True, rename_target=publish_parent,
+                ) as fd:
                     if _digest(fd) != candidate:
                         return "conflict"
                     windows_files.publish_open_file(fd, target)

@@ -68,6 +68,8 @@ _resume_thread = _api("ResumeThread", wintypes.DWORD, wintypes.HANDLE)
 
 _PSEUDOCONSOLE_ATTRIBUTE = 0x00020016
 _CREATION_FLAGS = 0x00000004 | 0x00000400 | 0x00080000  # Suspended, Unicode environment, extended startup.
+_USE_STD_HANDLES = 0x00000100  # STARTF_USESTDHANDLES
+_INVALID_HANDLE = ctypes.c_void_p(-1).value
 
 
 def _spawn(console: int, argv: Sequence[str], cwd: Path, env: dict[str, str]) -> _ProcessInfo:
@@ -83,6 +85,14 @@ def _spawn(console: int, argv: Sequence[str], cwd: Path, env: dict[str, str]) ->
             raise ctypes.WinError(ctypes.get_last_error())
         startup = _StartupInfoEx()
         startup.startup.size = ctypes.sizeof(startup)
+        # Without explicit standard handles, a console child of a Runtime whose
+        # stdio is redirected writes to the Runtime's own stdout (the JSON-RPC
+        # channel) instead of the pseudo console. Invalid handles make the
+        # child use the attached ConPTY for all three streams.
+        startup.startup.flags = _USE_STD_HANDLES
+        startup.startup.stdin = _INVALID_HANDLE
+        startup.startup.stdout = _INVALID_HANDLE
+        startup.startup.stderr = _INVALID_HANDLE
         startup.attributes = ctypes.addressof(attributes)
         process = _ProcessInfo()
         command = ctypes.create_unicode_buffer(subprocess.list2cmdline(argv))
