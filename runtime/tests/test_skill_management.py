@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
 from eidos_runtime.extensions.skill_management import SkillManagement  # noqa: E402
+from eidos_runtime.models.skill_settings import SkillState  # noqa: E402
 from eidos_runtime.extensions.skills import (  # noqa: E402
     SkillCatalog,
     SkillReadError,
@@ -140,6 +141,22 @@ class SkillManagementTests(unittest.TestCase):
     def test_system_remove_is_rejected(self) -> None:
         with self.assertRaisesRegex(SkillReadError, "system_skill_protected"):
             self.manager.remove("system:skill-creator")
+
+    def test_removed_skill_state_keeps_file_ids_beyond_sqlite_integer_range(self) -> None:
+        # NTFS file IDs can exceed SQLite's signed INTEGER range.
+        inode = (1 << 64) - 3
+        self.store.save_skill_state(SkillState(
+            qualified_id="user:large-id", enabled=False, removed=True, source_kind="user",
+            directory_name="large-id", directory_device=7, directory_inode=inode,
+            content_hash="0" * 64, cleanup_pending=True,
+        ))
+
+        self._manager_after_restart()
+        restored = next(
+            state for state in self.store.skill_states() if state.qualified_id == "user:large-id"
+        )
+
+        self.assertEqual((restored.directory_device, restored.directory_inode), (7, inode))
 
     def test_user_remove_deletes_directory_when_no_run_is_active(self) -> None:
         result = self.manager.remove("user:personal")

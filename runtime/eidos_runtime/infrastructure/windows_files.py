@@ -210,14 +210,64 @@ def _pinned_parent(path: Path | str, dir_fd: int | None) -> Iterator[Path]:
                 yield root / name
 
 
+def _require_named_directory(root: Path, descriptor: int) -> None:
+    named, opened = root.stat(), os.fstat(descriptor)
+    if (named.st_dev, named.st_ino) != (opened.st_dev, opened.st_ino):
+        raise PermissionError("Windows directory identity changed")
+
+
 @contextmanager
 def named_directory(descriptor: int) -> Iterator[Path]:
     root = _path_for_handle(msvcrt.get_osfhandle(descriptor))
     with _pinned_directory(root):
-        named, opened = root.stat(), os.fstat(descriptor)
-        if (named.st_dev, named.st_ino) != (opened.st_dev, opened.st_ino):
-            raise PermissionError("Windows directory identity changed")
+        _require_named_directory(root, descriptor)
         yield root
+
+
+def replace_in(descriptor: int, source: str, target: str) -> None:
+    """Rename one entry of an open directory, sharing writes only on that directory."""
+    if not valid_name(source) or not valid_name(target):
+        raise PermissionError("invalid Windows file name")
+    root = _path_for_handle(msvcrt.get_osfhandle(descriptor))
+    # As in replace(), MoveFileExW opens this parent for writing.
+    with _pinned_directory(root, rename_target=root):
+        _require_named_directory(root, descriptor)
+        if not _move(_extended(root / source), _extended(root / target), 0x9):  # REPLACE_EXISTING | WRITE_THROUGH
+            raise _error()
+
+
+def remove_tree_in(descriptor: int, name: str) -> None:
+    """Remove one local directory tree of an open directory without following reparse points."""
+    if not valid_name(name):
+        raise PermissionError("invalid Windows file name")
+    with named_directory(descriptor) as root:
+        target = root / name
+        metadata = target.lstat()
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            or not stat.S_ISDIR(metadata.st_mode)
+        ):
+            raise PermissionError("Windows tree root must be a local directory")
+        _remove_local_tree(target)
+
+
+def _remove_local_tree(path: Path) -> None:
+    # Junctions and symbolic links inside the tree are removed, never traversed.
+    with os.scandir(path) as entries:
+        children = [Path(entry.path) for entry in entries]
+    for child in children:
+        metadata = child.lstat()
+        if metadata.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            if metadata.st_file_attributes & stat.FILE_ATTRIBUTE_DIRECTORY:
+                os.rmdir(child)
+            else:
+                os.unlink(child)
+        elif stat.S_ISDIR(metadata.st_mode):
+            _remove_local_tree(child)
+        else:
+            os.unlink(child)
+    os.rmdir(path)
 
 
 def descriptor_path(descriptor: int) -> Path:

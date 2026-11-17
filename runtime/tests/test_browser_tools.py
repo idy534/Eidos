@@ -322,10 +322,10 @@ class BrowserExtensionModeTests(_BrowserToolCase):
         opened = self.opened
 
         class RecordingBroker(ConnectPageBroker):
-            def __init__(self) -> None:
+            def __init__(self, *, token: str | None = None) -> None:
                 async def record(url: str) -> None:
                     opened.append(url)
-                super().__init__(record)
+                super().__init__(record, token=token)
 
         self.broker_patch = patch.object(mcp_module, "ConnectPageBroker", RecordingBroker)
         self.broker_patch.start()

@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import errno
 import os
 from pathlib import Path
+import shutil
 import stat
 import sys
 
@@ -145,12 +146,16 @@ def unlink_at(name: str, descriptor: int) -> None:
 
 def replace_at(source: str, target: str, descriptor: int) -> None:
     if WINDOWS:
-        if not valid_relative_parts((source, target)):
-            raise PermissionError("invalid Windows file name")
-        with windows_files.named_directory(descriptor) as directory:
-            replace(directory / source, directory / target)
+        windows_files.replace_in(descriptor, source, target)
     else:
         os.replace(source, target, src_dir_fd=descriptor, dst_dir_fd=descriptor)
+
+
+def remove_tree_at(name: str, descriptor: int) -> None:
+    if WINDOWS:
+        windows_files.remove_tree_in(descriptor, name)
+    else:
+        shutil.rmtree(name, dir_fd=descriptor)
 
 
 @contextmanager

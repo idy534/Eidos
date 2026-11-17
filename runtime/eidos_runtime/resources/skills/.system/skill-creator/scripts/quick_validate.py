@@ -15,21 +15,32 @@ ALLOWED_DIRECTORIES = {"scripts", "references"}
 MAX_FILE_BYTES = 256 * 1024
 MAX_FILES = 512
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
+# Windows has no POSIX owner or mode bits. Eidos checks the NTFS owner and
+# private ACL when it loads the skill.
+WINDOWS = os.name == "nt"
+
+
+def _is_link(metadata: os.stat_result) -> bool:
+    return stat.S_ISLNK(metadata.st_mode) or bool(
+        getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+
+
+def _private(metadata: os.stat_result, mode: int) -> bool:
+    return WINDOWS or (metadata.st_uid == os.getuid() and stat.S_IMODE(metadata.st_mode) == mode)
 
 
 def validate_skill(skill_path: str) -> tuple[bool, str]:
     root = Path(skill_path)
     skill_file = root / "SKILL.md"
-    if root.is_symlink() or skill_file.is_symlink() or not skill_file.is_file():
-        return False, "SKILL.md is missing or unsafe"
     try:
         root_metadata = root.lstat()
+        skill_metadata = skill_file.lstat()
     except OSError:
-        return False, "skill directory is unreadable"
-    if (
-        root_metadata.st_uid != os.getuid()
-        or stat.S_IMODE(root_metadata.st_mode) != 0o700
-    ):
+        return False, "SKILL.md is missing or unsafe"
+    if _is_link(root_metadata) or _is_link(skill_metadata) or not stat.S_ISREG(skill_metadata.st_mode):
+        return False, "SKILL.md is missing or unsafe"
+    if not _private(root_metadata, 0o700):
         return False, "skill directory must be owned by the user with mode 0700"
     file_count = 0
     total_bytes = 0
@@ -41,19 +52,19 @@ def validate_skill(skill_path: str) -> tuple[bool, str]:
                 metadata = candidate.lstat()
             except OSError:
                 return False, "skill resource is unreadable"
-            if stat.S_ISLNK(metadata.st_mode) or metadata.st_uid != os.getuid():
+            if _is_link(metadata) or not (WINDOWS or metadata.st_uid == os.getuid()):
                 return False, "skill resources must be owned regular files without symlinks"
             if name in names:
                 if (
                     not stat.S_ISDIR(metadata.st_mode)
-                    or stat.S_IMODE(metadata.st_mode) != 0o700
+                    or not _private(metadata, 0o700)
                     or (parent == root and name not in ALLOWED_DIRECTORIES)
                 ):
                     return False, "skill resource directories are invalid"
                 continue
             if (
                 not stat.S_ISREG(metadata.st_mode)
-                or stat.S_IMODE(metadata.st_mode) != 0o600
+                or not _private(metadata, 0o600)
                 or metadata.st_size > MAX_FILE_BYTES
             ):
                 return False, "skill resources must be private files of at most 256 KiB"

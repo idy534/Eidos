@@ -11,6 +11,7 @@ import tomllib
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.hooks import HookBinding, HookSourceReview
 from eidos_runtime.extensions.codex_hooks import parse_hooks
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.persistence.hooks import HookRepository
 
 
@@ -76,12 +77,12 @@ def verify_source_paths(paths: tuple[str, ...], content_hash: str) -> Path:
 
 
 def _read(path: Path) -> bytes:
-    if path.parent.is_symlink():
+    if local_files.is_link(path.parent.lstat()):
         raise ValueError("hook_source_invalid")
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    descriptor = local_files.open_file(path)
     try:
         before = os.fstat(descriptor)
-        if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
+        if (not stat.S_ISREG(before.st_mode) or not local_files.owned_by_user(descriptor, before)
                 or before.st_nlink != 1 or before.st_size > 65536):
             raise ValueError("hook_source_invalid")
         raw = os.read(descriptor, 65537)

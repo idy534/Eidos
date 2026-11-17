@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -8,7 +8,10 @@ import { fileURLToPath } from "node:url";
 
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-electron-smoke-"));
+const createdRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-electron-smoke-"));
+// Windows CI sets TEMP to an 8.3 alias such as RUNNER~1. The Runtime refuses
+// alternate names for its private data directory, so pass the canonical path.
+const temporaryRoot = process.platform === "win32" ? await realpath(createdRoot) : createdRoot;
 const dataDirectory = path.join(temporaryRoot, "eidos-data");
 const userDataDirectory = path.join(temporaryRoot, "electron-user-data");
 const executable = createRequire(import.meta.url)("electron");

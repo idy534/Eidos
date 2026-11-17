@@ -17,6 +17,7 @@ from pydantic import Field, ValidationError
 from eidos_runtime.application.agent_catalog import AgentCatalog
 from eidos_runtime.db.layout import collect_unreferenced_blobs, iter_blob_references
 from eidos_runtime.db.json_blobs import JsonBlobStore
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.db.schema import (
     SCHEMA_VERSION,
     V40_SCHEMA_VERSION,
@@ -56,7 +57,7 @@ def backup(service: MemoryService, destination: Path) -> None:
     database = service.database
     blobs = database.json_blobs
     descriptor, name = tempfile.mkstemp(prefix=".eidos-backup-", dir=destination.parent)
-    os.fchmod(descriptor, 0o600)
+    local_files.set_file_mode(descriptor, 0o600)
     os.close(descriptor)
     staged = Path(name)
     try:
@@ -101,7 +102,7 @@ def backup(service: MemoryService, destination: Path) -> None:
                         service.repository.files.read(reference).encode(),
                     )
                 for path in blobs.root.rglob("*.json.gz"):
-                    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+                    descriptor = local_files.open_file(path)
                     with os.fdopen(descriptor, "rb") as stream:
                         metadata = os.fstat(stream.fileno())
                         if (
@@ -130,7 +131,8 @@ def backup(service: MemoryService, destination: Path) -> None:
                         }
                     ),
                 )
-        with staged.open("rb") as stream:
+        # Windows flushes file buffers only through a writable descriptor.
+        with staged.open("r+b" if local_files.WINDOWS else "rb") as stream:
             os.fsync(stream.fileno())
         os.replace(staged, destination)
     finally:

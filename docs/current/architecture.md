@@ -97,9 +97,9 @@ Eidos 是一个本地桌面 Agent Runtime。系统包含 Electron Desktop、Pyth
 
 Windows Runtime 通过受控文件句柄加载源码或打包版中的内置敏感扫描规则，统一换行符后校验 SHA-256。规则文件继承共享写权限时仍执行内容校验。规则缺失、文件类型无效或内容校验失败时，Runtime 拒绝启动。显式提供的规则文件仍校验所有者和 ACL。
 
-Windows Runtime 进程在启动时将新建文件和目录的默认所有者设为当前账户，管理员启动时也采用该账户。SQLite 和凭据继续按当前账户和私有 ACL 核验已有数据。系统 Skill 等启动资源的原子发布允许目标父目录的写共享，相关目录句柄仍禁止删除共享。
+Windows Runtime 进程在启动时将新建文件和目录的默认所有者设为当前账户，管理员启动时也采用该账户。SQLite 和凭据继续按当前账户和私有 ACL 核验已有数据。系统 Skill 等启动资源的原子发布允许目标父目录的写共享，相关目录句柄仍禁止删除共享。按目录句柄改名的文件（记忆、计划和用户 Skill 删除）也只对改名所在目录开放写共享。删除用户 Skill 时，目录树中的 junction 和符号链接只删除链接本身，不进入目标。Hook 来源、Hook transcript 和数据备份使用同一套句柄、所有者和私有 ACL 核验。
 
-存储进入 `health_only` 时，Runtime 完成诊断握手，`runtime/health` 返回原始存储错误码。此时不读取模型配置，`modelConfigured` 为 `false`，业务请求继续返回 `STORAGE_HEALTH_ONLY`。
+存储进入 `health_only` 时，Runtime 完成诊断握手，`runtime/health` 返回原始存储错误码，Main 的 `Runtime initialized` 日志同时记录 `storageCode`。此时不读取模型配置，`modelConfigured` 为 `false`，业务请求继续返回 `STORAGE_HEALTH_ONLY`。
 
 Renderer 是展示边界。Renderer 不能直接访问 Node 系统能力，也不能直接连接 Python Runtime。Electron Main 是 Desktop 和 Runtime 之间的控制边界。Python Runtime 是 Session、Run、Item、ToolCall、Approval、事件和副作用状态的业务协调边界。
 

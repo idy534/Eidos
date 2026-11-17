@@ -11,6 +11,22 @@ from eidos_runtime.runtime.state_machine import EventType
 from eidos_runtime.models.skill_settings import SkillState
 from eidos_runtime.domain.plugins import PluginVersion
 from eidos_runtime.models.plugin_installation import PluginInstallation, PluginRevision
+from eidos_runtime.db.file_identity import decode_file_identity, encode_file_identity
+
+
+_SQLITE_INTEGER_MAX = (1 << 63) - 1
+
+
+def _stored_file_identity(value: int | None) -> int | str | None:
+    # Only NTFS IDs beyond SQLite's signed range use the text form.
+    return value if value is None or value <= _SQLITE_INTEGER_MAX else encode_file_identity(value)
+
+
+def _optional_file_identity(value: object) -> int | None:
+    if value is None or type(value) is int:
+        return value
+    return decode_file_identity(value)
+
 
 class ExtensionRepository(Repository):
     def skill_states(self) -> tuple[SkillState, ...]:
@@ -22,7 +38,8 @@ class ExtensionRepository(Repository):
             qualified_id=row["qualified_id"], enabled=bool(row["enabled"]),
             removed=bool(row["removed"]), source_kind=row["source_kind"],
             directory_name=row["directory_name"], content_hash=row["content_hash"],
-            directory_device=row["directory_device"], directory_inode=row["directory_inode"],
+            directory_device=_optional_file_identity(row["directory_device"]),
+            directory_inode=_optional_file_identity(row["directory_inode"]),
             cleanup_pending=bool(row["cleanup_pending"]),
         ) for row in rows)
 
@@ -49,7 +66,10 @@ class ExtensionRepository(Repository):
                 cleanup_pending=excluded.cleanup_pending, updated_at=excluded.updated_at
             """,
             (state.qualified_id, int(state.enabled), int(state.removed),
-             state.source_kind, state.directory_name, state.directory_device, state.directory_inode, state.content_hash,
+             state.source_kind, state.directory_name,
+             _stored_file_identity(state.directory_device),
+             _stored_file_identity(state.directory_inode),
+             state.content_hash,
              int(state.cleanup_pending), _now_ms()),
         )
         append_event(connection, EventType.SKILL_STATE_CHANGED, _now_ms(), {

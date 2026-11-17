@@ -497,6 +497,7 @@ async function startRuntime(): Promise<void> {
       protocolVersion: initialized.protocolVersion,
       runtimeVersion: initialized.runtimeVersion,
       storageState: storageHealth.state,
+      ...(storageHealth.code ? { storageCode: storageHealth.code } : {}),
     });
     publishStatus({
       state: "ready",

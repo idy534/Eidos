@@ -225,8 +225,31 @@ def _metadata(content: bytes, default_name: str = "skill") -> tuple[str, str]:
     return manifest.name, manifest.description
 
 
+def _is_link(metadata: os.stat_result) -> bool:
+    return stat.S_ISLNK(metadata.st_mode) or bool(
+        getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+
+
+def _path_is_link(path: Path) -> bool:
+    try:
+        return _is_link(path.lstat())
+    except FileNotFoundError:
+        return False
+
+
+def _sync_directory(path: Path) -> None:
+    if os.name == "nt":
+        return  # Windows cannot flush a directory through a CRT descriptor.
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _read_skill(path: Path) -> tuple[str, dict[str, bytes]]:
-    if path.is_symlink() or not path.is_dir():
+    if _path_is_link(path) or not path.is_dir():
         raise InstallError("Skill source must be a directory.")
     files = _SkillFiles()
     executable_paths: set[str] = set()
@@ -236,7 +259,7 @@ def _read_skill(path: Path) -> tuple[str, dict[str, bytes]]:
         for name in [*names, *filenames]:
             candidate = parent / name
             metadata = candidate.lstat()
-            if stat.S_ISLNK(metadata.st_mode):
+            if _is_link(metadata):
                 raise InstallError("Skills cannot contain symbolic links.")
             if name in names:
                 if not stat.S_ISDIR(metadata.st_mode):
@@ -262,10 +285,11 @@ def _read_skill(path: Path) -> tuple[str, dict[str, bytes]]:
 
 
 def _private_directory(path: Path) -> None:
-    if path.is_symlink():
+    if _path_is_link(path):
         raise InstallError("Destination must not be a symbolic link.")
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if path.stat().st_uid != os.getuid():
+    # Windows has no POSIX owner id; Eidos checks the NTFS owner when it loads the skill.
+    if os.name != "nt" and path.stat().st_uid != os.getuid():
         raise InstallError("Destination owner is invalid.")
     os.chmod(path, 0o700)
 
@@ -289,7 +313,8 @@ def _install(
                 target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), mode
             )
             try:
-                os.fchmod(descriptor, mode)
+                if os.name != "nt":
+                    os.fchmod(descriptor, mode)
                 offset = 0
                 while offset < len(data):
                     offset += os.write(descriptor, data[offset:])
@@ -297,11 +322,7 @@ def _install(
             finally:
                 os.close(descriptor)
         os.replace(staging, destination)
-        descriptor = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+        _sync_directory(destination.parent)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 

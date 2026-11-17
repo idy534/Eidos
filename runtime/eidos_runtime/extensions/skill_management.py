@@ -6,9 +6,9 @@ import hashlib
 import logging
 import os
 from pathlib import Path
-import shutil
 import stat
 
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.extensions.skills import (
     MAX_SKILL_BYTES, SkillCatalog, SkillReadError, TreeHashMode, _SkillSource,
     _read_text, _read_tree, _scan, _tree_hash,
@@ -186,10 +186,10 @@ class SkillManagement:
                         f"{state.qualified_id}:{state.content_hash}:{state.directory_inode}".encode()
                     ).hexdigest()
                     staged_name = f".skill-removed-{suffix}"
-                    parent_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                    parent_fd = local_files.open_directory(root)
                     try:
                         parent = os.fstat(parent_fd)
-                        if parent.st_uid != os.getuid():
+                        if not local_files.owned_by_user(parent_fd, parent):
                             continue
                         staged = root / staged_name
                         if not os.path.lexists(staged):
@@ -197,23 +197,23 @@ class SkillManagement:
                                 self.store.save_skill_state(state.model_copy(update={"cleanup_pending": False}))
                                 continue
                             target = root / name
-                            identity = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-                            if not self._same_directory(identity, state):
+                            identity = local_files.lstat_at(name, parent_fd)
+                            if not self._same_directory(identity, state, target):
                                 continue
                             files = _read_tree(target, owned=True)
                             manifest = parse_skill_manifest(files["SKILL.md"].decode("utf-8"), name)
                             if f"user:{manifest.name}" != state.qualified_id or _tree_hash(files) != state.content_hash:
                                 continue
-                            identity = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-                            if not self._same_directory(identity, state):
+                            identity = local_files.lstat_at(name, parent_fd)
+                            if not self._same_directory(identity, state, target):
                                 continue
-                            os.rename(name, staged_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-                            os.fsync(parent_fd)
-                        identity = os.stat(staged_name, dir_fd=parent_fd, follow_symlinks=False)
-                        if not self._same_directory(identity, state):
+                            local_files.replace_at(name, staged_name, parent_fd)
+                            local_files.sync_directory(parent_fd)
+                        identity = local_files.lstat_at(staged_name, parent_fd)
+                        if not self._same_directory(identity, state, staged):
                             continue
-                        shutil.rmtree(staged_name, dir_fd=parent_fd)
-                        os.fsync(parent_fd)
+                        local_files.remove_tree_at(staged_name, parent_fd)
+                        local_files.sync_directory(parent_fd)
                     finally:
                         os.close(parent_fd)
                     self.store.save_skill_state(state.model_copy(update={"cleanup_pending": False}))
@@ -221,8 +221,9 @@ class SkillManagement:
                     logger.warning("skill_cleanup_deferred")
 
     @staticmethod
-    def _same_directory(identity: os.stat_result, state: SkillState) -> bool:
+    def _same_directory(identity: os.stat_result, state: SkillState, path: Path) -> bool:
         return (
-            stat.S_ISDIR(identity.st_mode) and identity.st_uid == os.getuid()
+            stat.S_ISDIR(identity.st_mode) and not local_files.is_link(identity)
             and (identity.st_dev, identity.st_ino) == (state.directory_device, state.directory_inode)
+            and local_files.owned_by_user(path, identity)
         )

@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import subprocess
 import sys
 import threading
 import time
+import zipfile
 
 import pytest
 
@@ -24,6 +26,15 @@ from eidos_runtime.workspace.search_driver import RipgrepFileEnumerator
 
 
 pytestmark = [pytest.mark.platform, pytest.mark.skipif(sys.platform != "win32", reason="Requires Windows and NTFS")]
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _runtime_file_owner() -> None:
+    # Runtime startup makes the current account the default owner of new
+    # files, including when an administrator account starts it.
+    from eidos_runtime.infrastructure.windows_files import configure_process_file_owner
+
+    configure_process_file_owner()
 
 
 def test_state_lock_and_credentials(tmp_path: Path) -> None:
@@ -255,3 +266,95 @@ def test_windows_chrome_owns_its_profile_and_releases_the_debug_port(tmp_path: P
     assert not host.status().running
     with pytest.raises(OSError), socket.create_connection(("127.0.0.1", urlsplit(endpoint).port), timeout=1):
         pass
+
+
+def test_directory_relative_rename_and_tree_removal_keep_junction_targets(tmp_path: Path) -> None:
+    import _winapi
+
+    from eidos_runtime.infrastructure import local_files
+
+    root = tmp_path / "目录 根"
+    (root / "tree" / "子目录").mkdir(parents=True)
+    (root / "tree" / "子目录" / "文件.txt").write_text("内容", encoding="utf-8")
+    (root / "note.tmp").write_bytes(b"new")
+    (root / "note.md").write_bytes(b"old")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("keep", encoding="utf-8")
+    _winapi.CreateJunction(str(outside), str(root / "tree" / "link"))
+    _winapi.CreateJunction(str(outside), str(root / "junction"))
+    descriptor = local_files.open_directory(root)
+    try:
+        local_files.replace_at("note.tmp", "note.md", descriptor)
+        local_files.replace_at("tree", "tree-removed", descriptor)
+        local_files.remove_tree_at("tree-removed", descriptor)
+        with pytest.raises(PermissionError):
+            local_files.remove_tree_at("junction", descriptor)
+    finally:
+        os.close(descriptor)
+    assert (root / "note.md").read_bytes() == b"new"
+    assert not os.path.lexists(root / "tree-removed")
+    assert (outside / "keep.txt").read_text(encoding="utf-8") == "keep"
+
+
+def test_memory_hooks_skill_removal_and_backup_use_ntfs_handles(tmp_path: Path) -> None:
+    from eidos_runtime.db.backup import backup
+    from eidos_runtime.db.storage import SessionStore
+    from eidos_runtime.extensions.hook_sources import verify_source_paths
+    from eidos_runtime.extensions.plugins import PluginCatalog
+    from eidos_runtime.extensions.skill_management import SkillManagement
+    from eidos_runtime.extensions.skills import SkillCatalog, deploy_system_skills
+    from eidos_runtime.memory.contracts import MemoryEditRequest
+    from eidos_runtime.runtime.hook_transcript import write_transcript
+    from eidos_runtime.sandbox.sensitive import SensitiveScanner
+
+    store = SessionStore(tmp_path / "Eidos 数据")
+    store.initialize()
+    try:
+        data = store.data_directory
+        assert data is not None
+        store.database.memory.edit(
+            MemoryEditRequest(operation_id="save", scope="global", path="note.md", content="中文笔记")
+        )
+        transcript = write_transcript(store, "session-1", SensitiveScanner())
+        assert "transcript_metadata" in transcript.read_text(encoding="utf-8")
+
+        hooks = data / "hooks.json"
+        hooks.write_text('{"hooks": {}}', encoding="utf-8")
+        digest = hashlib.sha256(b"hooks.json\0" + hooks.read_bytes() + b"\0").hexdigest()
+        assert verify_source_paths((str(hooks),), digest) == data
+
+        plugins = PluginCatalog(store)
+        deploy_system_skills(data)
+        skill = data / "skills" / "personal"
+        skill.mkdir(mode=0o700)
+        (skill / "SKILL.md").write_bytes(
+            "---\nname: personal\ndescription: Personal skill.\n---\nPersonal body.\n".encode()
+        )
+        assert not SkillManagement(SkillCatalog(plugins)).remove("user:personal").cleanup_pending
+        assert not skill.exists()
+
+        archive = tmp_path / "备份.zip"
+        backup(store.database.memory, archive)
+        with zipfile.ZipFile(archive) as contents:
+            assert {"manifest.json", "state.sqlite"} <= set(contents.namelist())
+    finally:
+        store.close()
+
+
+def test_skill_creator_scripts_run_without_posix_owner_ids(tmp_path: Path) -> None:
+    scripts = Path(__file__).resolve().parents[1] / "eidos_runtime/resources/skills/.system/skill-creator/scripts"
+    environment = {**os.environ, "PYTHONUTF8": "1"}
+    root = tmp_path / "user skills"
+    created = subprocess.run(
+        [sys.executable, "-B", str(scripts / "init_skill.py"), "demo-skill", "--path", str(root)],
+        capture_output=True, text=True, encoding="utf-8", env=environment, check=False,
+    )
+    assert created.returncode == 0, created.stderr
+    skill = root / "demo-skill" / "SKILL.md"
+    skill.write_bytes(b"---\nname: demo-skill\ndescription: Demo skill.\n---\n\n# Demo Skill\n\nUse it.\n")
+    validated = subprocess.run(
+        [sys.executable, "-B", str(scripts / "quick_validate.py"), str(skill.parent)],
+        capture_output=True, text=True, encoding="utf-8", env=environment, check=False,
+    )
+    assert validated.returncode == 0, validated.stdout + validated.stderr
