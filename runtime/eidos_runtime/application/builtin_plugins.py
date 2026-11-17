@@ -13,7 +13,7 @@ def builtin_plugins(plugins: PluginCatalog, request: BuiltinPluginRequest) -> Bu
         if name is None:
             raise ApplicationError("RESOURCE_NOT_FOUND")
         record = plugins.import_bundled(name)
-        plugins.set_enabled(str(record["id"]), True)
+        plugins.activate(str(record["id"]), str(record["contentHash"]))
     result = []
     for _name, files, manifest in entries:
         record = plugins.store.plugin_record(manifest.id)

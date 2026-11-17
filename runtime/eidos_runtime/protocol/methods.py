@@ -587,6 +587,13 @@ class PluginSetHookTrustRequestDto(_OperationRequest):
     trusted: bool
 
 
+class PluginActivateRequestDto(_OperationRequest):
+    """Enable the reviewed version and grant its Hook trust and local MCP consent."""
+
+    plugin_id: StrictStr = Field(alias="pluginId", min_length=1, max_length=64)
+    content_hash: StrictStr = Field(alias="contentHash", pattern=r"^[0-9a-f]{64}$")
+
+
 class SkillListRequestDto(MethodRequestDto):
     pass
 
@@ -1198,6 +1205,10 @@ class PluginSetEnabledResponseDto(_PluginResponseDto):
 
 
 class PluginSetHookTrustResponseDto(_PluginResponseDto):
+    pass
+
+
+class PluginActivateResponseDto(_PluginResponseDto):
     pass
 
 

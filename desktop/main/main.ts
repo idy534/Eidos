@@ -1608,6 +1608,12 @@ ipcMain.handle(IPC.PLUGIN_SET_HOOK_TRUST, (_event, pluginId: unknown, contentHas
   }
   return clientOrThrow().setPluginHookTrust(pluginId, contentHash, trusted);
 });
+ipcMain.handle(IPC.PLUGIN_ACTIVATE, (_event, pluginId: unknown, contentHash: unknown) => {
+  if (typeof pluginId !== "string" || typeof contentHash !== "string" || !/^[0-9a-f]{64}$/.test(contentHash)) {
+    throw new Error("Plugin 参数无效。");
+  }
+  return clientOrThrow().activatePlugin(pluginId, contentHash);
+});
 
 ipcMain.handle(IPC.SKILL_LIST, () => clientOrThrow().listSkills());
 ipcMain.handle(IPC.RESOURCE_STATUS, () => clientOrThrow().getResourceStatus());

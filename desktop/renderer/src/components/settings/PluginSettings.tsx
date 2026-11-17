@@ -19,6 +19,7 @@ import { compatibilityIssue } from "./plugin-compatibility.js";
 import { PluginMarketplaceDialog } from "./PluginMarketplaceDialog.js";
 import { PluginsSettingsIcon, githubIcon } from "./SettingsIcons.js";
 import { ChevronDownIcon } from "./MemoryIcons.js";
+import { mcpCommandLabel } from "./mcpCommand.js";
 
 interface PluginSettingsProps {
   sessionId?: string | undefined;
@@ -36,8 +37,13 @@ interface PluginSettingsProps {
   onExtensionsChanged?: (() => Promise<void>) | undefined;
   onTogglePlugin: (pluginId: string, enabled: boolean) => Promise<void>;
   onTrustPluginHooks?: ((pluginId: string, contentHash: string, trusted: boolean) => Promise<void>) | undefined;
+  onActivatePlugin: (pluginId: string, contentHash: string) => Promise<void>;
   onRemovePlugin: (pluginId: string) => Promise<void>;
   onShowToast: (message: string, type: "success" | "info" | "error") => void;
+}
+
+function needsHookTrust(plugin: PluginRecord): boolean {
+  return Boolean(plugin.hookReview && (plugin.hookReview.executableCount ?? 0) > 0 && !plugin.hookReview.trusted);
 }
 
 export function PluginSettings({
@@ -56,6 +62,7 @@ export function PluginSettings({
   onExtensionsChanged,
   onTogglePlugin,
   onTrustPluginHooks,
+  onActivatePlugin,
   onRemovePlugin,
   onShowToast,
 }: PluginSettingsProps) {
@@ -67,6 +74,13 @@ export function PluginSettings({
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   const importRef = useRef<HTMLButtonElement>(null);
   const selected = plugins.find((plugin) => plugin.id === selectedId);
+  const pendingServers = (plugin: PluginRecord): McpServerRecord[] => mcpServers.filter((server) =>
+    server.pluginId === plugin.id && server.pluginHash === plugin.contentHash
+    && !server.remote && server.declaredEnabled && !server.consented);
+  const reviewServers = review?.enable ? pendingServers(review.plugin) : [];
+  const reviewHooks = Boolean(review && (!review.enable || needsHookTrust(review.plugin)));
+  // Opening the Hook review on its own only grants trust when it is still needed.
+  const hookReviewOnly = Boolean(review && !review.enable && !needsHookTrust(review.plugin));
 
   const isImporting = pendingAction?.type === "import_plugin";
   const enabledCount = plugins.filter((p) => p.enabled).length;
@@ -95,34 +109,48 @@ export function PluginSettings({
     }
   }
 
+  async function enablePlugin(plugin: PluginRecord) {
+    // Activation is bound to the displayed version and grants its Hook trust and local MCP consent together.
+    await onActivatePlugin(plugin.id, plugin.contentHash);
+    const remote = mcpServers.filter((server) => server.pluginId === plugin.id && server.remote && !server.available);
+    onShowToast(remote.length > 0
+      ? `Plugin “${plugin.name}” 已启用，${remote.map((server) => server.serverId).join("、")} 需要在插件详情中连接账号。`
+      : `Plugin “${plugin.name}” 已启用`, "info");
+  }
+
   async function handleToggle(plugin: PluginRecord, nextState: boolean) {
-    if (nextState && plugin.hookReview && (plugin.hookReview.executableCount ?? 0) > 0 && !plugin.hookReview.trusted) {
+    if (nextState && (needsHookTrust(plugin) || pendingServers(plugin).length > 0)) {
       setReview({ plugin, enable: true });
       return;
     }
     try {
-      await onTogglePlugin(plugin.id, nextState);
-      onShowToast(
-        `Plugin “${plugin.name}” 已${nextState ? "启用" : "停用"}`,
-        "info"
-      );
+      if (nextState) {
+        await enablePlugin(plugin);
+      } else {
+        await onTogglePlugin(plugin.id, false);
+        onShowToast(`Plugin “${plugin.name}” 已停用`, "info");
+      }
     } catch (cause) {
       const msg = cause instanceof Error ? cause.message : "更新 Plugin 状态失败";
       onShowToast(msg, "error");
     }
   }
 
-  async function trustHooks() {
-    if (!review || !onTrustPluginHooks || !review.plugin.hookReview) return;
+  async function confirmReview() {
+    if (!review) return;
     setReviewBusy(true);
     setReviewError(undefined);
     try {
-      await onTrustPluginHooks(review.plugin.id, review.plugin.hookReview.contentHash, true);
-      if (review.enable) await onTogglePlugin(review.plugin.id, true);
+      if (review.enable) {
+        await enablePlugin(review.plugin);
+      } else {
+        if (!onTrustPluginHooks || !review.plugin.hookReview) return;
+        await onTrustPluginHooks(review.plugin.id, review.plugin.hookReview.contentHash, true);
+        onShowToast("Hook 已信任，将在后续任务中自动运行。", "success");
+      }
       setReview(null);
-      onShowToast("Hook 已信任，将在后续任务中自动运行。", "success");
     } catch (cause) {
-      const msg = cause instanceof Error ? cause.message : "保存 Hook 信任失败";
+      const msg = cause instanceof Error ? cause.message : review.enable ? "启用 Plugin 失败" : "保存 Hook 信任失败";
       setReviewError(msg);
       onShowToast(msg, "error");
     } finally {
@@ -320,22 +348,30 @@ export function PluginSettings({
       />
 
       <ConfirmDialog
-        open={Boolean(review)} title={`审阅 ${review?.plugin.name ?? ""} 的 Hook`}
-        description={<div className="plugin-hook-review">
-          <p>您信任后，插件会在匹配的任务阶段自动执行以下命令。</p>
-          <p>脚本使用当前任务的工作区和网络权限。脚本还可以读取本插件的安装目录，并写入本插件的私有数据目录。完全访问任务使用{currentOsUserLabel()}的权限。</p>
-          <p>安装目录：<code>{review?.plugin.hookReview?.installedRoot}</code><br />可写数据目录：<code>{review?.plugin.hookReview?.dataDirectory}</code></p>
-          {review?.plugin.hookReview?.definitions?.map((hook) => <div key={hook.key}>
-            <strong>{hook.event}{hook.matcher ? ` · ${hook.matcher}` : ""}</strong>
-            <pre className="plugin-hook-command">{hook.handlerType === "mcp_tool" ? JSON.stringify({ server: hook.mcpServer, tool: hook.mcpTool, input: hook.mcpInput }, null, 2) : hook.command || `处理器：${hook.handlerType}`}</pre>
+        className="plugin-review-dialog"
+        open={Boolean(review)} title={review?.enable ? `启用 ${review.plugin.name}` : `审阅 ${review?.plugin.name ?? ""} 的 Hook`}
+        description={review && <div className="plugin-hook-review">
+          {review.enable && reviewServers.map((server) => <div key={server.serverId}>
+            <strong>MCP · {server.serverId}</strong>
+            <pre className="plugin-hook-command">{mcpCommandLabel(server)}</pre>
+            <p>权限：{server.permissionProfile}{server.envNames.length > 0 ? `；环境变量：${server.envNames.join(", ")}` : ""}</p>
           </div>)}
-          {Boolean(review?.plugin.compatibility?.issues?.length) && <div><p>以下能力暂不支持：</p><ul>{review?.plugin.compatibility?.issues?.map((issue) => <li key={issue}>{compatibilityIssue(issue)}</li>)}</ul></div>}
-          {review?.plugin.hookReview?.latest && <p>最近结果：{review.plugin.hookReview.latest.systemMessage || review.plugin.hookReview.latest.message || review.plugin.hookReview.latest.errorCode || "脚本已完成。"}</p>}
+          {reviewHooks && <>
+            <p>{review.enable ? "启用后，插件会在匹配的任务阶段自动执行以下 Hook 命令。" : "您信任后，插件会在匹配的任务阶段自动执行以下命令。"}</p>
+            <p>脚本使用当前任务的工作区和网络权限。脚本还可以读取本插件的安装目录，并写入本插件的私有数据目录。完全访问任务使用{currentOsUserLabel()}的权限。</p>
+            <p>安装目录：<code>{review.plugin.hookReview?.installedRoot}</code><br />可写数据目录：<code>{review.plugin.hookReview?.dataDirectory}</code></p>
+            {review.plugin.hookReview?.definitions?.map((hook) => <div key={hook.key}>
+              <strong>{hook.event}{hook.matcher ? ` · ${hook.matcher}` : ""}</strong>
+              <pre className="plugin-hook-command">{hook.handlerType === "mcp_tool" ? JSON.stringify({ server: hook.mcpServer, tool: hook.mcpTool, input: hook.mcpInput }, null, 2) : hook.command || `处理器：${hook.handlerType}`}</pre>
+            </div>)}
+            {!review.enable && review.plugin.hookReview?.latest && <p>最近结果：{review.plugin.hookReview.latest.systemMessage || review.plugin.hookReview.latest.message || review.plugin.hookReview.latest.errorCode || "脚本已完成。"}</p>}
+          </>}
+          {Boolean(review.plugin.compatibility?.issues?.length) && <div><p>以下能力暂不支持：</p><ul>{review.plugin.compatibility?.issues?.map((issue) => <li key={issue}>{compatibilityIssue(issue)}</li>)}</ul></div>}
         </div>}
-        confirmLabel={review?.plugin.hookReview?.trusted || !(review?.plugin.hookReview?.executableCount) ? "关闭" : "信任此版本的 Hook"}
-        cancelLabel="取消" isDestructive={Boolean(review && !review.plugin.hookReview?.trusted && review.plugin.hookReview?.executableCount)} busy={reviewBusy}
+        confirmLabel={review?.enable ? "启用" : hookReviewOnly ? "关闭" : "信任此版本的 Hook"}
+        cancelLabel="取消" isDestructive={Boolean(review && !hookReviewOnly)} busy={reviewBusy}
         error={reviewError}
-        onConfirm={() => review?.plugin.hookReview?.trusted || !(review?.plugin.hookReview?.executableCount) ? setReview(null) : void trustHooks()}
+        onConfirm={() => hookReviewOnly ? setReview(null) : void confirmReview()}
         onCancel={() => { if (!reviewBusy) { setReview(null); setReviewError(undefined); } }}
       />
 

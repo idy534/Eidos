@@ -1456,6 +1456,15 @@ class RuntimeServer:
                 ),
             ),
             (
+                "plugin/activate",
+                method_dtos.PluginActivateRequestDto,
+                method_dtos.PluginActivateResponseDto,
+                lambda _id, request: self._applications_or_error().extensions.activate_plugin(
+                    plugin_id=request.plugin_id, content_hash=request.content_hash,
+                    operation_id=request.operation_id,
+                ),
+            ),
+            (
                 "skill/list",
                 method_dtos.SkillListRequestDto,
                 method_dtos.SkillListResponseDto,
@@ -1599,6 +1608,7 @@ class RuntimeServer:
             "plugin/import",
             "plugin/setEnabled",
             "plugin/setHookTrust",
+            "plugin/activate",
             "plugin/remove",
             "mcp/setEnabled",
             "mcp/tools",

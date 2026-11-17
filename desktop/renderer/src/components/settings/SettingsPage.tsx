@@ -50,6 +50,7 @@ interface SettingsPageProps {
   onExtensionsChanged?: (() => Promise<void>) | undefined;
   onTogglePlugin: (pluginId: string, enabled: boolean) => Promise<void>;
   onTrustPluginHooks?: ((pluginId: string, contentHash: string, trusted: boolean) => Promise<void>) | undefined;
+  onActivatePlugin: (pluginId: string, contentHash: string) => Promise<void>;
   onRemovePlugin: (pluginId: string) => Promise<void>;
   onToggleSkill: (qualifiedId: string, enabled: boolean) => Promise<void>;
   onRemoveSkill: (qualifiedId: string) => Promise<SkillRemoval>;
@@ -83,6 +84,7 @@ export function SettingsPage({
   onExtensionsChanged,
   onTogglePlugin,
   onTrustPluginHooks,
+  onActivatePlugin,
   onRemovePlugin,
   onToggleSkill,
   onRemoveSkill,
@@ -267,6 +269,7 @@ export function SettingsPage({
                 onExtensionsChanged={onExtensionsChanged}
                 onTogglePlugin={onTogglePlugin}
                 onTrustPluginHooks={onTrustPluginHooks}
+                onActivatePlugin={onActivatePlugin}
                 onRemovePlugin={onRemovePlugin}
                 onToggleSkill={onToggleSkill}
                 onToggleMcp={onToggleMcp}

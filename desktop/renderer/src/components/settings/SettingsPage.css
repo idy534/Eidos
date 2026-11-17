@@ -5,6 +5,10 @@
 .plugin-hook-status { margin-top: 0.25rem; color: var(--text-secondary); font-size: 0.8125rem; }
 .plugin-hook-review { min-width: 0; overflow-wrap: anywhere; }
 .plugin-hook-review code { overflow-wrap: anywhere; }
+/* The enable review can list several MCP commands and Hooks; keep actions in view. */
+.plugin-review-dialog { display: flex; flex-direction: column; max-height: calc(100dvh - 3rem); }
+.plugin-review-dialog > :not(.modal-body) { flex: none; }
+.plugin-review-dialog .modal-body { min-height: 0; overflow-y: auto; }
 .plugin-settings .header-title-with-stats > div { min-width: 0; }
 @media (max-width: 480px) {
   .plugin-settings .header-title-with-stats,

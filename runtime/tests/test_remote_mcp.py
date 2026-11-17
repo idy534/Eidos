@@ -266,6 +266,10 @@ def test_bundled_plugins_are_available_and_installation_is_idempotent(tmp_path, 
         browser_record = plugins.store.plugin_record("eidos-browser")
         assert browser_record is not None and browser_record["enabled"]
         assert is_bundled_browser_server("eidos-browser", browser_record["contentHash"], "browser")
+        # Installing a bundled plugin authorizes its local MCP; remote GitHub still needs an account.
+        states = {server["serverId"]: server for server in plugins.list_mcp_servers()}
+        assert states["browser"]["consented"]
+        assert not states["github"]["consented"]
     finally:
         store.close()
 

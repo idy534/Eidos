@@ -294,6 +294,7 @@ INTEGRATION_FILES = frozenset(
         "test_project_lifecycle.py",
         "test_projectless_workspaces.py",
         "test_plugins.py",
+        "test_plugin_activation.py",
         "test_plugin_upgrades.py",
         "test_repository_application_persistence.py",
         "test_repository_persistence.py",

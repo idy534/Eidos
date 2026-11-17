@@ -174,6 +174,31 @@ class PluginCatalog:
             self.package(plugin_id)
         return self._describe(self.store.set_plugin_enabled(plugin_id, enabled))
 
+    def activate(self, plugin_id: str, content_hash: str) -> dict[str, object]:
+        """Enable the reviewed version together with the resources it bundles.
+
+        Hook trust and local MCP consent are granted for this content hash only.
+        Remote services still need the user to connect an account.
+        """
+        record = self.store.plugin_record(plugin_id)
+        # A stale review fails the same way whether or not the old files still exist.
+        # The repository repeats this check inside the transaction.
+        if record is None or record["status"] != "installed" or record["contentHash"] != content_hash:
+            raise ResourceNotFoundError("plugin version changed or is unavailable")
+        package = self.package(plugin_id, expected_hash=content_hash)
+        servers = tuple(
+            self._server_projection(record, config) for config in package.manifest.mcp_servers
+            if config.enabled and config.transport != "streamable-http"
+        )
+        ExtensionRepository(self.store.database).activate_plugin(
+            plugin_id, content_hash,
+            trust_hooks=any(hook.supported for hook in package.hooks),
+            servers=servers,
+        )
+        current = self.store.plugin_record(plugin_id)
+        assert current is not None
+        return self._describe(current, package)
+
     def set_hook_trust(self, plugin_id: str, content_hash: str, trusted: bool) -> dict[str, object]:
         if trusted:
             self.package(plugin_id, expected_hash=content_hash)
@@ -312,36 +337,7 @@ class PluginCatalog:
         result: list[dict[str, object]] = []
         for record in self.list_plugins():
             manifest = self.manifest(str(record["id"]))
-            for config in manifest.mcp_servers:
-                state = self.store.mcp_server_state(str(record["id"]), config.id)
-                projection = {
-                    "schemaVersion": 1,
-                    "pluginId": record["id"],
-                    "pluginVersion": record["version"],
-                    "pluginHash": record["contentHash"],
-                    "serverId": config.id,
-                    "executable": config.executable,
-                    "argv": list(config.argv),
-                    "envNames": list(config.env_names),
-                    "permissionProfile": config.permission_profile,
-                    "startupTimeoutSeconds": config.startup_timeout_seconds,
-                    "toolTimeoutSeconds": config.tool_timeout_seconds,
-                    "declaredEnabled": config.enabled,
-                    "consented": state["consented"],
-                    "available": bool(
-                        record["enabled"] and config.enabled and state["consented"]
-                        and state["errorCode"] is None
-                    ),
-                    "errorCode": state["errorCode"],
-                    "updatedAt": state["updatedAt"],
-                }
-                if projection["errorCode"] is None:
-                    projection.pop("errorCode")
-                if config.transport == "streamable-http":
-                    connection = self.connections.read(str(record["id"]), config.id)
-                    projection["remote"] = {"url": config.url, "authType": connection.auth_type}
-                    projection["available"] = bool(projection["available"] and connection.status == "connected")
-                result.append(projection)
+            result.extend(self._server_projection(record, config) for config in manifest.mcp_servers)
         for record in self.store.list_manual_mcp_servers():
             state = self.store.mcp_server_state(
                 MANUAL_MCP_PLUGIN_ID, str(record["serverId"])
@@ -372,6 +368,37 @@ class PluginCatalog:
             str(value["pluginId"]).encode("utf-8"),
             str(value["serverId"]).encode("utf-8"),
         ))
+
+    def _server_projection(self, record: dict[str, object], config: McpServerConfigV1) -> dict[str, object]:
+        state = self.store.mcp_server_state(str(record["id"]), config.id)
+        projection = {
+            "schemaVersion": 1,
+            "pluginId": record["id"],
+            "pluginVersion": record["version"],
+            "pluginHash": record["contentHash"],
+            "serverId": config.id,
+            "executable": config.executable,
+            "argv": list(config.argv),
+            "envNames": list(config.env_names),
+            "permissionProfile": config.permission_profile,
+            "startupTimeoutSeconds": config.startup_timeout_seconds,
+            "toolTimeoutSeconds": config.tool_timeout_seconds,
+            "declaredEnabled": config.enabled,
+            "consented": state["consented"],
+            "available": bool(
+                record["enabled"] and config.enabled and state["consented"]
+                and state["errorCode"] is None
+            ),
+            "errorCode": state["errorCode"],
+            "updatedAt": state["updatedAt"],
+        }
+        if projection["errorCode"] is None:
+            projection.pop("errorCode")
+        if config.transport == "streamable-http":
+            connection = self.connections.read(str(record["id"]), config.id)
+            projection["remote"] = {"url": config.url, "authType": connection.auth_type}
+            projection["available"] = bool(projection["available"] and connection.status == "connected")
+        return projection
 
     def set_mcp_enabled(
         self, plugin_id: str, server_id: str, enabled: bool

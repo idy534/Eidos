@@ -366,6 +366,21 @@ class ExtensionApplication:
             operation_id, "plugin/setEnabled", request, plugin
         )
 
+    def activate_plugin(
+        self, *, plugin_id: str, content_hash: str, operation_id: str | None = None,
+    ) -> PluginRecord:
+        request = {"pluginId": plugin_id, "contentHash": content_hash}
+        replay = self._extension_replay(operation_id, "plugin/activate", request, PluginRecord)
+        if replay is not None:
+            return replay
+        try:
+            plugin = PluginRecord.from_wire(self._plugins_or_error().activate(plugin_id, content_hash))
+        except ResourceNotFoundError as error:
+            raise ApplicationError("RESOURCE_NOT_FOUND") from error
+        except PluginImportError as error:
+            raise ApplicationError("PLUGIN_UNAVAILABLE") from error
+        return self._record_extension_operation(operation_id, "plugin/activate", request, plugin)
+
     def set_plugin_hook_trust(
         self, *, plugin_id: str, content_hash: str, trusted: bool, operation_id: str | None = None,
     ) -> PluginRecord:

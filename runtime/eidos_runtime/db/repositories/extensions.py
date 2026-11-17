@@ -285,6 +285,54 @@ class ExtensionRepository(Repository):
         assert result is not None
         return result
 
+    def activate_plugin(
+        self, plugin_id: str, content_hash: str, *, trust_hooks: bool,
+        servers: tuple[dict[str, object], ...],
+    ) -> dict[str, object]:
+        """Enable a reviewed version and grant its bundled resources in one transaction.
+
+        Servers the user already authorized keep their state, including errors.
+        """
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            updated = connection.execute(
+                """UPDATE plugins SET enabled = 1, updated_at = ?
+                WHERE id = ? AND status = 'installed' AND content_hash = ?""",
+                (now, plugin_id, content_hash),
+            )
+            if updated.rowcount != 1:
+                raise ResourceNotFoundError("plugin version changed or is unavailable")
+            if trust_hooks:
+                connection.execute(
+                    """INSERT INTO plugin_hook_trust VALUES (?, ?, ?)
+                    ON CONFLICT(plugin_id) DO UPDATE SET
+                        content_hash = excluded.content_hash, trusted_at = excluded.trusted_at
+                    WHERE plugin_hook_trust.content_hash <> excluded.content_hash""",
+                    (plugin_id, content_hash, now),
+                )
+            for server in servers:
+                granted = connection.execute(
+                    """INSERT INTO mcp_server_states (
+                        plugin_id, server_id, consented, error_code, updated_at
+                    ) VALUES (?, ?, 1, NULL, ?)
+                    ON CONFLICT(plugin_id, server_id) DO UPDATE SET
+                        consented = 1, error_code = NULL, updated_at = excluded.updated_at
+                    WHERE mcp_server_states.consented = 0""",
+                    (plugin_id, server["serverId"], now),
+                )
+                if granted.rowcount == 1:
+                    projection = {**server, "consented": True,
+                                  "available": bool(server["declaredEnabled"]), "updatedAt": now}
+                    projection.pop("errorCode", None)
+                    append_event(connection, EventType.MCP_SERVER_STATE_CHANGED, now,
+                                 {"server": projection})
+            row = connection.execute("SELECT * FROM plugins WHERE id = ?", (plugin_id,)).fetchone()
+            append_event(connection, EventType.PLUGIN_STATE_CHANGED, now,
+                         {"plugin": _plugin_from_row(row)})
+        result = self.plugin_record(plugin_id)
+        assert result is not None
+        return result
+
     def remove_plugin_record(self, plugin_id: str) -> dict[str, object]:
         current = self.plugin_record(plugin_id)
         if current is None:

@@ -65,6 +65,10 @@ void test("Codex plugins and version-bound Hook trust cross the real Runtime bou
     assert.equal(updated.enabled, false);
     assert.equal(updated.hookReview?.trusted ?? false, false);
     assert.equal(updated.hookReview?.executableCount, 1);
+    await assert.rejects(client.activatePlugin(plugin.id, plugin.contentHash), (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "RESOURCE_NOT_FOUND");
+    const activated = await client.activatePlugin(updated.id, updated.contentHash);
+    assert.equal(activated.enabled, true);
+    assert.equal(activated.hookReview?.trusted, true);
     await client.shutdown();
     assert.equal(await client.waitForExit(), 0);
   } finally {

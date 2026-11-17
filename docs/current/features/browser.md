@@ -4,7 +4,7 @@
 
 ## 入口与准备
 
-浏览器能力由内置插件 `eidos-browser`（`runtime/eidos_runtime/resources/plugins/browser/`）提供。用户在 设置 → 插件 → 插件市场 中安装浏览器插件，启用后在插件详情中授权其 MCP 服务。插件详情（`PluginDetailDialog.tsx`）顶部的“浏览器”一节（`BrowserSettingsSection.tsx`）用于选择 Agent 使用的浏览器，并在未找到 Google Chrome 或资源包未就绪时提示。
+浏览器能力由内置插件 `eidos-browser`（`runtime/eidos_runtime/resources/plugins/browser/`）提供。用户在 设置 → 插件 → 插件市场 中安装浏览器插件。安装会启用插件并授权随包的浏览器 MCP 服务；页面操作仍需要下文的 Session 浏览器授权。插件详情（`PluginDetailDialog.tsx`）顶部的“浏览器”一节（`BrowserSettingsSection.tsx`）用于选择 Agent 使用的浏览器，并在未找到 Google Chrome 或资源包未就绪时提示。
 
 - 浏览器工具由固定版本的 `@playwright/mcp@0.0.84` 执行。它和依赖位于 `browser` 资源包，并依赖已有的托管 Node（`node` 资源包）。安装或启用插件时，以及 Runtime 启动时插件已启用的情况下，资源包都在后台准备。Run 启动不会下载资源；未就绪时，该 Run 不提供浏览器工具；“浏览器”一节在资源未就绪时显示状态，下载失败或缺失时提供“重试”或“下载”按钮。插件资源中的工具列表与 Run 使用同一套启动参数，资源未就绪时显示具体原因（如 `browser_runtime_not_ready`），不会显示笼统的 `mcp_protocol_error`。启动命令显示为“Eidos 托管 Node · Playwright MCP”，不显示内部占位变量。
 - Eidos 使用已安装的 Google Chrome。macOS 检查 `/Applications` 和 `~/Applications`。Windows 检查 `Program Files`、`Program Files (x86)` 和 `%LOCALAPPDATA%` 下的 Chrome 安装目录。未安装时，浏览器工具在审批前返回 `browser_unavailable`，Run 仍可继续。

@@ -1811,6 +1811,7 @@ export function AppShell({ runtime }: AppShellProps) {
             onExtensionsChanged={() => extensionActions.load()}
             onTogglePlugin={(id, enabled) => extensionActions.setPluginEnabled(id, enabled)}
             onTrustPluginHooks={(id, hash, trusted) => extensionActions.setPluginHookTrust(id, hash, trusted)}
+            onActivatePlugin={(id, hash) => extensionActions.activatePlugin(id, hash)}
             onRemovePlugin={(id) => extensionActions.removePlugin(id)}
             onToggleSkill={(id, enabled) => extensionActions.setSkillEnabled(id, enabled)}
             onRemoveSkill={(id) => extensionActions.removeSkill(id)}

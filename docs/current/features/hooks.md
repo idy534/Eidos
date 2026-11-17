@@ -24,7 +24,7 @@ Runtime 在导入和读取已安装包时忽略各层目录中的普通 `.DS_Sto
 
 外部格式没有声明版本时，Runtime 使用内部版本 `0.0.0`，Desktop 显示“未声明版本”。这些包仍受现有版本冲突规则限制。用户不能用同名同版本的不同内容静默替换已安装包。
 
-导入、启用和信任是三件事。导入不会执行脚本。Desktop 在首次启用可执行 Hook 前，展示事件、匹配器、命令、安装目录和私有数据目录。用户确认后，Runtime 才为该内容 Hash 保存信任。已经启用但未信任的插件仍可提供原有 Skills，Runtime 不执行它的 Hooks。用户可以撤销信任。
+导入、启用和信任是三件事。导入不会执行脚本。Desktop 在首次启用可执行 Hook 前，展示事件、匹配器、命令、安装目录和私有数据目录；同一确认框也列出待授权的本地 MCP。用户确认后，Runtime 通过 `plugin/activate` 在同一事务中启用插件并为该内容 Hash 保存信任。已经启用但未信任的插件仍可提供原有 Skills，Runtime 不执行它的 Hooks。用户可以撤销信任。
 
 用户可以点击插件名称打开资源详情。详情展示该插件的 Skill、已接入的 MCP 服务、Hook 定义和兼容信息。用户可以查看 Skill 正文和调整开关，也可以查看 MCP 工具并单独审阅授权。独立技能页和 MCP 页不再重复列出插件资源。聊天引用、Skill Catalog、Run 快照和运行权限继续使用原有完整资源集合。只打开插件详情不会授予 Hook 信任或 MCP 授权。
 
@@ -109,7 +109,7 @@ SQLite schema v36 增加三张表：
 
 SQLite schema v39 增加 `hook_sources`，保存个人、项目配置与内容信任。`hook_invocations` 增加绑定定义、后台标记、上下文接收 Run 和丢弃时间。现有迁移链保留旧记录，并覆盖迁移失败的事务回滚。
 
-Desktop 继续通过 preload typed IPC、Main 和 stdio JSON-RPC 调用 Runtime。Hook 使用 `plugin/setHookTrust`、`hook/configuration` 和 `hook/history`。共享 Hook 类型与验证 Schema 由 Python 模型生成。命令定义留在私有 Run 扩展快照，普通 Desktop Run 投影不发送这些定义。
+Desktop 继续通过 preload typed IPC、Main 和 stdio JSON-RPC 调用 Runtime。Hook 使用 `plugin/activate`、`plugin/setHookTrust`、`hook/configuration` 和 `hook/history`。共享 Hook 类型与验证 Schema 由 Python 模型生成。命令定义留在私有 Run 扩展快照，普通 Desktop Run 投影不发送这些定义。
 
 插件详情和配置来源提供分页执行记录。每页最多 20 条，每路输出预览最多 4,096 字符。聊天 Feed 显示当前 Run 最近 8 条活动的状态与 `systemMessage`。后台任务在 Run 结束后完成时，Runtime 可以更新诊断信息，但不会改变 Run 的终态。
 

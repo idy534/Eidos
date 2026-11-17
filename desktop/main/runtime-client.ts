@@ -1227,6 +1227,10 @@ export class RuntimeClient {
     return this.validatedRequest("plugin/setHookTrust", { pluginId, contentHash, trusted, operationId }, isPluginRecord);
   }
 
+  activatePlugin(pluginId: string, contentHash: string, operationId = randomUUID()): Promise<PluginRecord> {
+    return this.validatedRequest("plugin/activate", { pluginId, contentHash, operationId }, isPluginRecord);
+  }
+
   removePlugin(pluginId: string, operationId = randomUUID()): Promise<PluginRecord> {
     return this.validatedRequest(
       "plugin/remove", { pluginId, operationId }, isPluginRecord,
