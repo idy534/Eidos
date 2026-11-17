@@ -794,3 +794,7 @@
   .project-editor-primary, .project-editor-make-primary { padding: 0.25rem 0.35rem; font-size: 0.72rem; }
   .project-editor-make-primary { opacity: 1; }
 }
+
+:root[data-platform="windows"] .handoff-branch-select-wrap select:hover:not(:disabled) {
+  border-color: rgba(0, 0, 0, 0.18);
+}

@@ -638,3 +638,7 @@
     max-width: 100%;
   }
 }
+
+:root[data-platform="windows"] .web-search-field-item select:hover:not(:disabled) {
+  border-color: rgba(0, 0, 0, 0.18);
+}

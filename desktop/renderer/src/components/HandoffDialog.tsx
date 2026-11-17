@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "./Button.js";
 import { LocalIcon, WorktreeIcon } from "./ExecutionModeIcons.js";
 import { ToastContainer } from "./ToastContainer.js";
+import { Select } from "./Select.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
 
 interface HandoffDialogProps {
@@ -68,9 +69,9 @@ export function HandoffDialog({
       if (event.key !== "Tab" || !dialogRef.current) return;
       const focusable = Array.from(
         dialogRef.current.querySelectorAll<HTMLElement>(
-          "button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex='-1'])",
+          "button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])",
         ),
-      );
+      ).filter((element) => element.parentElement?.tagName !== "SELECT");
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       if (!first || !last) return;
@@ -223,7 +224,7 @@ export function HandoffDialog({
                   本地分支
                 </label>
                 <div className="handoff-branch-select-wrap">
-                  <select
+                  <Select
                     id="handoff-local-branch"
                     aria-label="本地分支"
                     value={selectedBranch}
@@ -231,7 +232,7 @@ export function HandoffDialog({
                     onChange={(event) => setSelectedBranch(event.target.value)}
                   >
                     {branches.map((branch) => <option value={branch} key={branch}>{branch}</option>)}
-                  </select>
+                  </Select>
                   <span className="handoff-select-chevron" aria-hidden="true">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="6 9 12 15 18 9" />

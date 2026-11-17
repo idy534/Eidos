@@ -5,6 +5,7 @@ import { ConfirmDialog } from "../ConfirmDialog.js";
 import { MarkdownContent } from "../MarkdownContent.js";
 import { MarkdownEditor } from "../MarkdownEditor.js";
 import { StatusBadge } from "../StatusBadge.js";
+import { Select } from "../Select.js";
 import type { MemoryScopeChoice } from "./useMemoryDocuments.js";
 
 export function MemoryNoteEditor({
@@ -269,7 +270,7 @@ export function MemoryNoteEditor({
                       <label className="memory-meta-version-select">
                         <span>版本</span>
                         <div className="memory-select-wrapper">
-                          <select
+                          <Select
                             aria-label="记忆版本"
                             value={read.revision}
                             onChange={(event) => {
@@ -283,7 +284,7 @@ export function MemoryNoteEditor({
                                 {value === read.currentRevision ? "（当前）" : ""}
                               </option>
                             ))}
-                          </select>
+                          </Select>
                         </div>
                       </label>
                     </div>

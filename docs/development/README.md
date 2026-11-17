@@ -504,7 +504,7 @@ pnpm build:runtime:win
 pnpm start
 ```
 
-`pnpm build:runtime:win` 的输出在 `build/windows-runtime/`。构建器校验上游资产，从锁文件安装 CPython 3.12 wheel 和 Windows Node 模块，然后生成 `runtime.json`、`resource-index.json` 和 `resource-packs/`。源码运行和安装后的 App 都使用这套资源。启动烟测通过临时数据目录检查初始化、健康、资源状态和退出。
+`pnpm build:runtime:win` 的输出在 `build/windows-runtime/`。构建器校验上游资产，从锁文件安装 CPython 3.12 wheel 和 Windows Node 模块，然后生成 `runtime.json`、`resource-index.json` 和 `resource-packs/`。源码运行和安装后的 App 都使用这套资源。Windows 初始化握手限时 60 秒。Electron 启动烟测使用临时数据目录，给启动、健康检查和退出共留出 90 秒。
 
 ```powershell
 pnpm package:win
@@ -718,6 +718,8 @@ API Key 会经过本地模型配置写入链路：Renderer typed IPC → Electro
 ### 常见诊断
 
 Runtime 初始化失败时，先检查启动终端中的 stderr 日志和 `runtime/health` 状态。Runtime 会把协议错误映射为稳定 code，不会把第三方 Provider exception 直接发送到 Renderer。
+
+若 `initialize` 超时且最后记录为 `phase=storage … outcome=completed`，下一阶段是 `runtime_dependencies`。Windows 源码启动会读取已有的 `build/windows-runtime/runtime.json`，安装版会读取随包清单。可在保留构建产物的情况下运行 `pnpm test:electron-smoke`，用临时数据目录复查握手与关闭。依赖清单的定向回归入口为 `uv run --locked pytest runtime/tests/test_runtime_dependency_catalog.py -k python_metadata_is_read_once`。
 
 Windows 上若 `runtime/health` 返回 `state_security_invalid`，检查 `EIDOS_DATA_DIR`（默认 `%USERPROFILE%\.eidos`）及已有 SQLite 文件的所有者和 ACL。旧版管理员启动可能留下所有者为 `Administrators` 的目录。确认目录为空时，可以退出 Eidos、将目录改名备份并重新启动。目录已有数据时，先完整备份，再检查所有者和私有 ACL。
 

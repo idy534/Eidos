@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { DeepSeekSearchOptions, DoubaoSearchOptions, LangSearchOptions, Provider } from "../../../../shared/web-search.generated.js";
+import { Select } from "../Select.js";
 
 export const searchOptionDefaults = {
   defaultCount: 5,
@@ -197,7 +198,7 @@ export function WebSearchProviderFields({
           <div className="web-search-langsearch-fields">
             <div className="web-search-field-item">
               <span className="web-search-field-label">时间范围</span>
-              <select
+              <Select
                 aria-label="时间范围"
                 value={freshnessPreset}
                 onChange={(event) => handlePresetChange(event.target.value as FreshnessPreset)}
@@ -207,7 +208,7 @@ export function WebSearchProviderFields({
                     {preset.label}
                   </option>
                 ))}
-              </select>
+              </Select>
               {freshnessPreset === "custom" && (
                 <div className="web-search-custom-date-container">
                   <div className="web-search-custom-date-row">

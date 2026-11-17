@@ -970,3 +970,8 @@ button.composer-context-project--empty:hover:not(:disabled) {
 .composer-add:hover { background: rgba(128,128,128,.12); }
 
 .composer-add:disabled { opacity: .4; cursor: default; } .approval-mode-selector__trigger:hover:not(:disabled) { background: var(--surface-hover); box-shadow: none; }
+
+:root[data-platform="windows"] .composer-context-mode select,
+:root[data-platform="windows"] .composer-context-branch select {
+  width: auto;
+}

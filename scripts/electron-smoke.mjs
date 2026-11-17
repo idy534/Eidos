@@ -25,6 +25,7 @@ delete environment.EIDOS_FAKE_MODEL;
 delete environment.ELECTRON_RUN_AS_NODE;
 
 let output = "";
+const smokeTimeoutMs = process.platform === "win32" ? 90_000 : 60_000;
 try {
   const code = await new Promise((resolve, reject) => {
     const child = spawn(
@@ -35,7 +36,7 @@ try {
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       reject(new Error(`Electron smoke timed out.\n${output}`));
-    }, 60_000);
+    }, smokeTimeoutMs);
     const capture = (chunk) => {
       output = (output + chunk.toString("utf8")).slice(-1024 * 1024);
     };

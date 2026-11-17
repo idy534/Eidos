@@ -6,6 +6,7 @@ import { Tooltip } from "../Tooltip.js";
 import { StatusBadge, type StatusTone } from "../StatusBadge.js";
 import { Toggle } from "../Toggle.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
+import { Select } from "../Select.js";
 import { currentOsUserLabel } from "../../platform.js";
 import { BackArrowIcon, DingTalkLogo, FeishuLogo, WeChatWorkLogo, EyeIcon, EyeOffIcon, RefreshIcon } from "./ChannelIcons.js";
 
@@ -493,7 +494,7 @@ export function ChannelForm({
               <div className="channel-field">
                 <label htmlFor="field-project-id">所属项目</label>
                 <div className="channel-select-wrapper">
-                  <select
+                  <Select
                     id="field-project-id"
                     value={config.projectId ?? ""}
                     onChange={(event) => handleProjectChange(event.target.value || null)}
@@ -505,14 +506,14 @@ export function ChannelForm({
                         {project.name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               </div>
 
               <div className="channel-field">
                 <label htmlFor="field-approval-mode">审批模式</label>
                 <div className="channel-select-wrapper">
-                  <select
+                  <Select
                     id="field-approval-mode"
                     value={config.approvalMode ?? "manual"}
                     onChange={(event) => handleApprovalModeChange(event.target.value as ChannelConfig["approvalMode"])}
@@ -520,7 +521,7 @@ export function ChannelForm({
                     <option value="manual">请求审批</option>
                     <option value="auto_review">替我审批</option>
                     <option value="full_access">完全访问</option>
-                  </select>
+                  </Select>
                 </div>
               </div>
             </div>

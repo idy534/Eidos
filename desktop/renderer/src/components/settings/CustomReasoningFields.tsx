@@ -1,5 +1,6 @@
 import type { CustomModelSettings } from "../../../../shared/custom-models.js";
 import type { ModelReasoningSelection } from "../../contracts.js";
+import { Select } from "../Select.js";
 
 const efforts = ["low", "medium", "high", "xhigh", "max"] as const;
 const labels: Record<ModelReasoningSelection, string> = { none: "无", thinking: "开启", low: "低", medium: "中", high: "高", xhigh: "超高", max: "最高" };
@@ -15,7 +16,7 @@ export function CustomReasoningFields({ custom, busy, onChange }: Props) {
   });
   return <div className="custom-model-reasoning">
     <div className="custom-model-section-heading"><strong>思考设置</strong></div>
-    <label><span>默认思考强度</span><select aria-label="默认思考强度" value={defaultSelection} disabled={busy}
+    <label><span>默认思考强度</span><Select aria-label="默认思考强度" value={defaultSelection} disabled={busy}
       onChange={event => {
         const value = event.target.value;
         if (value === "auto") {
@@ -30,7 +31,7 @@ export function CustomReasoningFields({ custom, busy, onChange }: Props) {
       <option value="none">无</option>
       {efforts.map(value => <option key={value} value={value}>{labels[value]}</option>)}
       {defaultSelection === "thinking" && <option value="thinking">开启</option>}
-    </select></label>
+    </Select></label>
     <fieldset disabled={busy}><legend>支持的思考强度</legend><div className="custom-model-efforts">
       {efforts.map(selection => <label className="custom-model-check" key={selection}><input type="checkbox"
         checked={selected.includes(selection)} onChange={event => {

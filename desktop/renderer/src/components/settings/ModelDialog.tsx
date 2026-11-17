@@ -7,6 +7,7 @@ import { Button } from "../Button.js";
 import { ToastContainer } from "../ToastContainer.js";
 import { Tooltip } from "../Tooltip.js";
 import { ProviderLogo } from "../ProviderLogo.js";
+import { Select } from "../Select.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 import { CustomModelFields } from "./CustomModelFields.js";
 import { EyeIcon, EyeOffIcon } from "./ChannelIcons.js";
@@ -57,8 +58,8 @@ export function ModelDialog({ draft, presets, busy, error, onChange, onCancel, o
     const handler = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !busy) onCancel();
       if (event.key === "Tab") {
-        const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), summary, [tabindex="0"]') ?? [])
-          .filter(element => element.getClientRects().length > 0);
+        const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), summary, [tabindex="0"]') ?? [])
+          .filter(element => element.getClientRects().length > 0 && element.parentElement?.tagName !== "SELECT");
         const first = controls[0];
         const last = controls.at(-1);
         if (event.shiftKey && document.activeElement === first && last) { event.preventDefault(); last.focus(); }
@@ -91,7 +92,7 @@ export function ModelDialog({ draft, presets, busy, error, onChange, onCancel, o
               <span className="model-select-control__prefix" aria-hidden="true">
                 <ProviderLogo provider={draft.provider} className="model-provider-control__logo" />
               </span>
-              <select
+              <Select
                 ref={providerSelectRef}
                 aria-label="提供商"
                 value={draft.provider}
@@ -112,7 +113,7 @@ export function ModelDialog({ draft, presets, busy, error, onChange, onCancel, o
                 {presets.providers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
                 <option value="qoder">Qoder</option>
                 <option value="custom">自定义（OpenAI 兼容）</option>
-              </select>
+              </Select>
               <span className="model-select-control__chevron" aria-hidden="true">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="m6 9 6 6 6-6" />
@@ -155,14 +156,14 @@ export function ModelDialog({ draft, presets, busy, error, onChange, onCancel, o
           <label>
             <span>模型名称</span>
             <div className="model-select-control">
-              <select
+              <Select
                 aria-label="模型名称"
                 value={draft.modelId}
                 disabled={busy}
                 onChange={(event) => onChange({ ...draft, modelId: event.target.value })}
               >
                 {provider?.models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
-              </select>
+              </Select>
               <span className="model-select-control__chevron" aria-hidden="true">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="m6 9 6 6 6-6" />

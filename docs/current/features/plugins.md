@@ -91,6 +91,8 @@ v37、v38 不改变已有 v36 的短目录布局。更早的 `<id>/<version>/<ha
 
 设置页提供“插件市场”弹窗，用于搜索、安装和更新随应用提供的内置插件。弹窗不下载 Git/npm 包，也不包含第三方远程插件目录。Eidos 当前没有 Git/npm 下载器、Codex `.app.json` 连接映射或 MCP Apps 界面。手动 MCP 编辑器仍仅支持本地 stdio，远程配置当前由插件包声明。当前通用 OAuth 覆盖公开客户端、DCR 和 CIMD，不提供让用户录入机密客户端 Secret 的流程。Figma 未内置。真实 GitHub 账号、组织策略和发行方 Client ID 仍需独立验收，模拟服务通过不能替代真实账号验收。
 
+Windows 上，Runtime 对随应用提供的 GitHub 和浏览器插件核对预置的内容指纹，支持由管理员持有的源码目录或安装目录。文件读取继续拒绝链接、重解析点和多硬链接，检查打开的文件身份和大小。指纹核对兼容 Git 对 JSON 和 Markdown 文件的 CRLF 转换，安装和版本身份仍使用原始字节。修改内置包内容时，需同时更新包版本和 `extensions/plugins.py` 中按 LF 计算的预置指纹。本地导入和已安装目录的所有权要求继续适用。
+
 [GitHub 官方 Host 集成指南](https://github.com/github/github-mcp-server/blob/main/docs/host-integration.md) 要求客户端取得有效访问 token，可使用 OAuth 或 PAT。Eidos 不能复用 Codex 账号里的连接。[Figma 官方安装指南](https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/) 要求 HTTP 连接和账号登录，并说明当前只有目录列出的客户端可以连接，新客户端需要申请。Eidos 还需要确认这个接入条件，不能仅凭 OAuth 实现宣称 Figma 可用。
 
 ## 本次远程连接验证（2026-10-23）

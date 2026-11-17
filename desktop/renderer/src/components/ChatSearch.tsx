@@ -8,6 +8,7 @@ import { ToastContainer } from "./ToastContainer.js";
 import { CloseIcon } from "./MenuIcons.js";
 import { FolderIcon } from "./InputPicker.js";
 import { formatSessionTime } from "./SidebarTooltip.js";
+import { Select } from "./Select.js";
 import { pathBasename } from "../platform.js";
 
 function SearchSnippet({ text, query }: { text: string; query: string }) {
@@ -134,9 +135,9 @@ export function ChatSearch({ mode, sessionId, projects, sessions = [], onClose, 
         if (event.key === "ArrowDown") { event.preventDefault(); setSelected((index) => Math.min(index + 1, Math.max(0, displayedHits.length - 1))); }
         if (event.key === "ArrowUp") { event.preventDefault(); setSelected((index) => Math.max(0, index - 1)); }
         if (event.key === "Enter") { event.preventDefault(); select(selected); }
-      }} /><select className="chat-search-scope" aria-label="搜索范围" value={scope} onChange={(event) => { setScope(event.target.value); setCursor(undefined); setPrevious([]); }}>
+      }} /><Select className="chat-search-scope" aria-label="搜索范围" value={scope} onChange={(event) => { setScope(event.target.value); setCursor(undefined); setPrevious([]); }}>
       <option value="">所有项目</option><option value="projectless">无项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name || pathBasename(project.workspaceRoot)}</option>)}
-    </select><button className="chat-search-close-btn" aria-label="关闭搜索" onClick={onClose}><CloseIcon /></button></div>
+    </Select><button className="chat-search-close-btn" aria-label="关闭搜索" onClick={onClose}><CloseIcon /></button></div>
     <div ref={results} className={`chat-search-results${recent ? " chat-search-results--recent" : ""}`} aria-busy={busy}>
       {error && (
         <ToastContainer

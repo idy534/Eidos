@@ -33,6 +33,13 @@ MAX_PLUGIN_FILES = 512
 MAX_PLUGIN_FILE_BYTES = 1024 * 1024
 MAX_PLUGIN_TOTAL_BYTES = 8 * 1024 * 1024
 MANUAL_MCP_PLUGIN_ID = "manual"
+BUNDLED_PLUGIN_ROOT = Path(__file__).resolve().parents[1] / "resources" / "plugins"
+# Windows source checkouts and machine-wide installs can be administrator-owned.
+# Pin the shipped paths and bytes before using those packages as trusted input.
+_BUNDLED_PLUGIN_HASHES = {
+    "github": "853045bd13744d9ad858ba1411febb5d5139bba38743b4955eb51e2d0c2f8458",
+    "browser": "40d3747448015eaecdc121a5d10bf49880bc6cf88fa61cad72ed96c72a3a0837",
+}
 
 
 class PluginImportError(ValueError):
@@ -52,6 +59,17 @@ class PluginCatalog:
     def import_directory(self, source: Path) -> dict[str, object]:
         try:
             files = _read_source(source)
+        except PluginImportError:
+            raise
+        except (KeyError, UnicodeDecodeError, ValueError, RecursionError):
+            raise PluginImportError("plugin_manifest_invalid") from None
+        return self._import_files(files)
+
+    def import_bundled(self, name: str) -> dict[str, object]:
+        return self._import_files(read_bundled_plugin(name))
+
+    def _import_files(self, files: dict[str, bytes]) -> dict[str, object]:
+        try:
             package = read_package(files)
             manifest = package.manifest
             _validate_declared_files(manifest, files)
@@ -574,13 +592,25 @@ class PluginCatalog:
         return self.root / plugin_id / version
 
 
-def _read_source(source: Path) -> dict[str, bytes]:
+def read_bundled_plugin(name: str) -> dict[str, bytes]:
+    expected_hash = _BUNDLED_PLUGIN_HASHES.get(name)
+    if expected_hash is None:
+        raise PluginImportError("plugin_source_invalid")
+    return _read_source(
+        BUNDLED_PLUGIN_ROOT / name, expected_hash=expected_hash if local_files.WINDOWS else None,
+    )
+
+
+def _read_source(source: Path, *, expected_hash: str | None = None) -> dict[str, bytes]:
     try:
         root = source.resolve(strict=True)
         metadata = source.lstat()
     except OSError:
         raise PluginImportError("plugin_source_invalid") from None
-    if local_files.is_link(metadata) or not stat.S_ISDIR(metadata.st_mode) or not local_files.owned_by_user(source, metadata):
+    if (
+        local_files.is_link(metadata) or not stat.S_ISDIR(metadata.st_mode)
+        or (expected_hash is None and not local_files.owned_by_user(source, metadata))
+    ):
         raise PluginImportError("plugin_source_invalid")
     files: dict[str, bytes] = {}
     total = 0
@@ -592,7 +622,9 @@ def _read_source(source: Path) -> dict[str, bytes]:
                 entry = candidate.lstat()
             except OSError:
                 raise PluginImportError("plugin_source_invalid") from None
-            if local_files.is_link(entry) or not local_files.owned_by_user(candidate, entry):
+            if local_files.is_link(entry) or (
+                expected_hash is None and not local_files.owned_by_user(candidate, entry)
+            ):
                 raise PluginImportError("plugin_source_invalid")
             if name in names:
                 if not stat.S_ISDIR(entry.st_mode):
@@ -613,7 +645,7 @@ def _read_source(source: Path) -> dict[str, bytes]:
                     if (
                         not stat.S_ISREG(opened.st_mode)
                         or opened.st_nlink != 1
-                        or not local_files.owned_by_user(descriptor, opened)
+                        or (expected_hash is None and not local_files.owned_by_user(descriptor, opened))
                         or (opened.st_dev, opened.st_ino) != (entry.st_dev, entry.st_ino)
                     ):
                         raise PluginImportError("plugin_source_invalid")
@@ -630,6 +662,15 @@ def _read_source(source: Path) -> dict[str, bytes]:
                 or total > MAX_PLUGIN_TOTAL_BYTES
             ):
                 raise PluginImportError("plugin_source_invalid")
+    if expected_hash is not None:
+        # Git may check out shipped text with CRLF. Keep the original bytes
+        # for installation and version identity, as for a local import.
+        canonical = {
+            relative: data.replace(b"\r\n", b"\n") if relative.endswith((".json", ".md")) else data
+            for relative, data in files.items()
+        }
+        if _content_hash(canonical) != expected_hash:
+            raise PluginImportError("plugin_source_invalid")
     return files
 
 

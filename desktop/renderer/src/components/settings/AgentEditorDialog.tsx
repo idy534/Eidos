@@ -10,6 +10,7 @@ import { ModelSelector } from "../ModelSelector.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 import { userFacingError } from "../../session-state.js";
 import { MarkdownEditor } from "../MarkdownEditor.js";
+import { Select } from "../Select.js";
 
 export const agentRoleLabels: Record<string, string> = { default: "通用", explorer: "调查", worker: "工作" };
 const emptyDefinition: AgentDefinition = { schemaVersion: 1, name: "", description: "", instructions: "", baseRole: "default", enabled: true };
@@ -132,7 +133,8 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
               if (!busy) onClose();
             }
           if (event.key !== "Tab") return;
-          const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex='0']") ?? []);
+          const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex='0']") ?? [])
+            .filter((element) => element.parentElement?.tagName !== "SELECT");
           const panel = (event.target as HTMLElement).closest?.(".model-selector__panel");
           if (panel) {
             const items = Array.from(panel.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled])"));
@@ -200,7 +202,7 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
                     <span className="model-select-control__prefix" aria-hidden="true">
                       <AgentRoleIcon role={draft.baseRole ?? "default"} size={16} />
                     </span>
-                    <select
+                    <Select
                       aria-label="基础角色"
                       value={draft.baseRole ?? "default"}
                       onChange={(event) => setDraft({ ...draft, baseRole: event.target.value as NonNullable<AgentDefinition["baseRole"]> })}
@@ -208,7 +210,7 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
                       {Object.entries(agentRoleLabels).map(([value, label]) => (
                         <option value={value} key={value}>{label}（{value}）</option>
                       ))}
-                    </select>
+                    </Select>
                     <span className="model-select-control__chevron" aria-hidden="true">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="m6 9 6 6 6-6" />

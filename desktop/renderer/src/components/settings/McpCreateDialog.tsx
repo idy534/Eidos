@@ -4,6 +4,7 @@ import { Button } from "../Button.js";
 import { ToastContainer } from "../ToastContainer.js";
 import { Tooltip } from "../Tooltip.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
+import { Select } from "../Select.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 import { EyeIcon, EyeOffIcon } from "./ChannelIcons.js";
 
@@ -350,7 +351,7 @@ export function McpCreateDialog({
           </label>
           <label>
             <span>权限配置</span>
-            <select
+            <Select
               aria-label="权限配置"
               value={draft.permissionProfile}
               disabled={busy}
@@ -361,7 +362,7 @@ export function McpCreateDialog({
             >
               <option value="workspace_read">workspace_read：只读工作区</option>
               <option value="connector">connector：允许联网连接器</option>
-            </select>
+            </Select>
           </label>
         </div>
         <div className="modal-footer mcp-create-footer">

@@ -84,3 +84,7 @@
     width: 100%;
   }
 }
+
+:root[data-platform="windows"] .personalization-settings select:hover:not(:disabled) {
+  border-color: rgba(0, 0, 0, 0.18);
+}

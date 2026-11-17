@@ -318,6 +318,9 @@ class RuntimeDependencyCatalog:
         python_paths: tuple[Path, ...],
         inventory: dict[Path, RuntimeDependencyInventoryFile],
     ) -> tuple[RuntimeDependencyPackageRoot, ...]:
+        if not self._manifest.python_packages:
+            return ()
+        versions_by_name = _index_python_distribution_metadata(python_paths, inventory)
         roots: list[RuntimeDependencyPackageRoot] = []
         for package in self._manifest.python_packages:
             relative_import = package.import_name.replace(".", "/")
@@ -356,12 +359,7 @@ class RuntimeDependencyCatalog:
                     ),
                     f"pythonPackage:{package.name}",
                     )
-            _verify_python_distribution_metadata(
-                self._bundle_root,
-                python_paths,
-                package,
-                inventory,
-            )
+            _verify_python_distribution_metadata(package, versions_by_name)
             roots.append(
                 RuntimeDependencyPackageRoot(
                     type="python-package",
@@ -485,43 +483,33 @@ class RuntimeDependencyCatalog:
         )
 
 
-def _verify_python_distribution_metadata(
-    bundle_root: Path,
+def _index_python_distribution_metadata(
     python_paths: tuple[Path, ...],
-    package: RuntimeDependencyPythonPackage,
     inventory: dict[Path, RuntimeDependencyInventoryFile],
-) -> None:
-    candidates: list[tuple[Path, RuntimeDependencyInventoryFile]] = []
+) -> dict[str, list[Version]]:
+    versions_by_name: dict[str, list[Version]] = {}
     for path, entry in inventory.items():
-        if path.name != "METADATA" or not path.parent.name.endswith(".dist-info"):
-            continue
-        for python_path in python_paths:
-            try:
-                relative = path.relative_to(python_path)
-            except ValueError:
-                continue
-            if (
-                len(relative.parts) == 2
-                and relative.parts[0].endswith(".dist-info")
-                and relative.parts[1] == "METADATA"
-            ):
-                _verify_expected_file(
-                    path, entry, f"pythonMetadata:{entry.path}",
-                )
-                candidates.append((path, entry))
-                break
+        if (
+            path.name == "METADATA"
+            and path.parent.name.endswith(".dist-info")
+            and path.parent.parent in python_paths
+        ):
+            name, version = _read_python_metadata(path, f"pythonMetadata:{entry.path}")
+            versions_by_name.setdefault(name, []).append(version)
+    return versions_by_name
 
-    if not candidates:
+
+def _verify_python_distribution_metadata(
+    package: RuntimeDependencyPythonPackage,
+    versions_by_name: dict[str, list[Version]],
+) -> None:
+    if not versions_by_name:
         raise RuntimeDependencyCatalogError(
             "python_metadata_missing",
             f"Python package {package.name!r} has no dist-info METADATA",
         )
 
-    matching: list[tuple[Path, str, str]] = []
-    for path, _entry in candidates:
-        metadata_name, metadata_version = _read_python_metadata(path)
-        if canonicalize_name(metadata_name) == canonicalize_name(package.name):
-            matching.append((path, metadata_name, metadata_version))
+    matching = versions_by_name.get(canonicalize_name(package.name), [])
     if not matching:
         raise RuntimeDependencyCatalogError(
             "python_metadata_mismatch",
@@ -533,27 +521,18 @@ def _verify_python_distribution_metadata(
             f"Python package {package.name!r} has multiple matching METADATA files",
         )
 
-    _metadata_path, _metadata_name, metadata_version = matching[0]
-    try:
-        expected_version = Version(package.version)
-        actual_version = Version(metadata_version)
-    except InvalidVersion as error:
-        raise RuntimeDependencyCatalogError(
-            "python_metadata_invalid",
-            f"Python package {package.name!r} has an invalid version: {error}",
-        ) from None
-    if actual_version != expected_version:
+    if matching[0] != Version(package.version):
         raise RuntimeDependencyCatalogError(
             "python_metadata_mismatch",
             f"Python package {package.name!r} METADATA version disagrees with manifest",
         )
 
 
-def _read_python_metadata(path: Path) -> tuple[str, str]:
+def _read_python_metadata(path: Path, label: str) -> tuple[str, Version]:
     content = _read_bounded_file(
         path,
         MAX_PACKAGE_METADATA_BYTES,
-        f"pythonMetadata:{path}",
+        label,
     )
     try:
         message = BytesParser(policy=policy.default).parsebytes(
@@ -583,14 +562,12 @@ def _read_python_metadata(path: Path) -> tuple[str, str]:
             "Python METADATA must contain one non-empty Version header",
         )
     try:
-        canonicalize_name(names[0])
-        Version(versions[0])
+        return canonicalize_name(names[0]), Version(versions[0])
     except (InvalidVersion, ValueError) as error:
         raise RuntimeDependencyCatalogError(
             "python_metadata_invalid",
             f"Python METADATA has invalid package identity: {error}",
         ) from None
-    return names[0], versions[0]
 
 
 def _verify_node_package_json(

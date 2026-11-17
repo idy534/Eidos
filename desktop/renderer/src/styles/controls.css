@@ -100,4 +100,67 @@ input[type="search"]:focus-visible {
   letter-spacing: normal;
 }
 
+/* Windows customizable <select> trigger foundation (macOS retains native select UI). */
+:where(:root[data-platform="windows"]) select {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+
+:where(:root[data-platform="windows"]) select:disabled {
+  cursor: not-allowed;
+}
+
+:root[data-platform="windows"] select,
+:root[data-platform="windows"] select::picker(select) {
+  appearance: base-select;
+  -webkit-appearance: base-select;
+}
+
+:root[data-platform="windows"] select::picker-icon {
+  display: none;
+}
+
+:root[data-platform="windows"] select > button,
+:root[data-platform="windows"] select > button:hover:not(:disabled),
+:root[data-platform="windows"] select > button:active:not(:disabled),
+:root[data-platform="windows"] select > button:focus-visible,
+:root[data-platform="windows"] select > button:disabled {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  line-height: 1.3;
+  letter-spacing: inherit;
+  text-align: left;
+  box-shadow: none;
+  outline: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: inherit;
+  opacity: 1;
+}
+
+:root[data-platform="windows"] select selectedcontent {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
 

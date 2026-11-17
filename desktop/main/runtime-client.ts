@@ -44,6 +44,8 @@ import {
 import { isBuiltinPluginsResponse, isMcpConnectionState, isRemoteMcpInfo, type BuiltinPluginRequest, type BuiltinPluginsResponse, type McpConnectionRequest, type McpConnectionState } from "../shared/mcp-connections.js";
 
 const MAX_MESSAGE_BYTES = 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 30_000;
+const WINDOWS_INITIALIZE_TIMEOUT_MS = 60_000;
 const RUNTIME_BUSINESS_CODES = new Set([
   "GOAL_NOT_FOUND", "GOAL_REVISION_CONFLICT", "GOAL_INVALID_STATE",
   "GOAL_SOURCE_NOT_ALLOWED", "GOAL_SESSION_BUSY",
@@ -1381,6 +1383,10 @@ export class RuntimeClient {
     }
 
     return new Promise<T>((resolve, reject) => {
+      // Windows startup also covers NTFS validation and first-launch Skill deployment.
+      const timeoutMs = method === "initialize" && process.platform === "win32"
+        ? WINDOWS_INITIALIZE_TIMEOUT_MS
+        : REQUEST_TIMEOUT_MS;
       const timeout = setTimeout(() => {
         const pending = this.pending.get(id);
         if (!pending) return;
@@ -1389,7 +1395,7 @@ export class RuntimeClient {
         // frame for ordinary requests.
         pending.timedOut = true;
         reject(new Error(`Runtime request timed out: ${method}`));
-      }, 30_000);
+      }, timeoutMs);
       this.pending.set(id, {
         resolve: (value) => resolve(value as T),
         reject,

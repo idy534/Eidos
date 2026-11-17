@@ -19,7 +19,7 @@ from unittest.mock import patch
 import pytest
 
 from eidos_runtime.db.storage import SessionStore
-from eidos_runtime.extensions.browser_plugin import BUNDLED_BROWSER_PLUGIN_ROOT, BrowserLaunch
+from eidos_runtime.extensions.browser_plugin import BrowserLaunch
 from eidos_runtime.extensions.plugins import PluginCatalog
 from eidos_runtime.extensions.skills import SkillCatalog
 from eidos_runtime.infrastructure.browser_host import BrowserHost, find_chrome
@@ -50,7 +50,7 @@ class BrowserEndToEndTests(unittest.TestCase):
         self.store = SessionStore(root / "data")
         self.store.initialize()
         self.plugins = PluginCatalog(self.store)
-        self.plugins.import_directory(BUNDLED_BROWSER_PLUGIN_ROOT)
+        self.plugins.import_bundled("browser")
         self.plugins.set_enabled("eidos-browser", True)
         self.plugins.set_mcp_enabled("eidos-browser", "browser", True)
         self.resources = ResourceRegistry()

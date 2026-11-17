@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MemoryScope } from "../../../../shared/memory.generated.js";
 import { Button } from "../Button.js";
 import { SearchInput } from "../SearchInput.js";
+import { Select } from "../Select.js";
 import { ToastContainer, type ToastItem } from "../ToastContainer.js";
 import { MemoryNoteEditor } from "./MemoryNoteEditor.js";
 import {
@@ -159,7 +160,7 @@ function MemorySettingsContent({
           <label className="memory-control-group">
             <span className="memory-control-label">位置</span>
             <div className="memory-select-wrapper memory-location-select">
-              <select aria-label="位置" value={projectId ?? ""}
+              <Select aria-label="位置" value={projectId ?? ""}
                 title={activeProjectName}
                 disabled={dirty || busy}
                 onChange={(event) => location.selectProject(event.target.value || null)}>
@@ -173,7 +174,7 @@ function MemorySettingsContent({
                     </option>
                   );
                 })}
-              </select>
+              </Select>
             </div>
           </label>
 
@@ -181,11 +182,11 @@ function MemorySettingsContent({
             <label className="memory-control-group">
               <span className="memory-control-label">范围</span>
               <div className="memory-select-wrapper">
-                <select aria-label="范围" value={scope} disabled={dirty || busy}
+                <Select aria-label="范围" value={scope} disabled={dirty || busy}
                   onChange={(event) => location.selectScope(event.target.value as MemoryScopeChoice)}>
                   <option value="current">所选项目</option>
                   <option value="global">全局</option>
-                </select>
+                </Select>
               </div>
             </label>
           ) : (
@@ -194,7 +195,7 @@ function MemorySettingsContent({
           <label className="memory-control-group">
             <span className="memory-control-label">模式</span>
             <div className="memory-select-wrapper">
-              <select
+              <Select
                 aria-label="模式"
                 value={currentMode}
                 disabled={!valid || !selected || busy || dirty}
@@ -205,7 +206,7 @@ function MemorySettingsContent({
                     {label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           </label>
 

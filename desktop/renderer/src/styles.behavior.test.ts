@@ -310,4 +310,21 @@ describe("windows platform styles", () => {
     expect(styles).toMatch(/:root\[data-platform="windows"\] \.sidebar-top-bar \.window-traffic-spacer\s*\{[^}]*width:\s*0\.5rem;/s);
     expect(dockStyles).toMatch(/:root\[data-platform="windows"\] \.workspace-dock__header\s*\{[^}]*-webkit-app-region:\s*no-drag;/s);
   });
+
+  it("styles customizable select triggers and popups exclusively under data-platform=windows", () => {
+    expect(styles).toMatch(/:root\[data-platform="windows"\] select,\s*:root\[data-platform="windows"\] select::picker\(select\)\s*\{[^}]*appearance:\s*base-select;/s);
+    expect(styles).toMatch(/:root\[data-platform="windows"\] select::picker-icon\s*\{[^}]*display:\s*none;/s);
+    expect(styles).toMatch(/:root\[data-platform="windows"\] select::picker\(select\)\s*\{[^}]*border-radius:\s*var\(--radius-menu\);[^}]*box-shadow:\s*var\(--shadow-menu\);/s);
+    expect(styles).toMatch(/:root\[data-platform="windows"\] select option::checkmark\s*\{[^}]*background-color:\s*var\(--accent\);/s);
+    expect(styles).toMatch(/:root\[data-platform="windows"\] \.composer-context-mode select,\s*:root\[data-platform="windows"\] \.composer-context-branch select\s*\{[^}]*width:\s*auto;/s);
+    expect(styles).toMatch(/:root\[data-platform="windows"\] \.automation-form select\s*\{[^}]*background-image:\s*url\(/s);
+    expect(styles).toMatch(/:root\[data-platform="windows"\] \.git-local-branch-control select,\s*:root\[data-platform="windows"\] \.git-advanced-controls select\s*\{[^}]*background-image:\s*url\(/s);
+    expect(styles).toMatch(/:root\[data-platform="windows"\] \.mcp-create-body select\s*\{[^}]*background-image:\s*url\(/s);
+    const controlsStyles = readFileSync(
+      path.resolve(process.cwd(), "desktop/renderer/src/styles/controls.css"),
+      "utf8",
+    );
+    expect(controlsStyles).toMatch(/^\s*:root\[data-platform="windows"\] select,\s*\n:root\[data-platform="windows"\] select::picker\(select\)/m);
+    expect(controlsStyles.split("/* Windows customizable <select>")[0]).not.toContain("base-select");
+  });
 });

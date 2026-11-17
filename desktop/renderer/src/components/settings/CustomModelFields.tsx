@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CustomModelSettings, CustomProviderResult, DiscoveredModel } from "../../../../shared/custom-models.js";
 import type { ModelDraft } from "./ModelDialog.js";
 import { Button } from "../Button.js";
+import { Select } from "../Select.js";
 import { Tooltip } from "../Tooltip.js";
 import { ModelIdCombobox } from "./ModelIdCombobox.js";
 import { CustomReasoningFields } from "./CustomReasoningFields.js";
@@ -93,10 +94,10 @@ export function CustomModelFields({ draft, busy, onChange }: Props) {
         else if (raw.endsWith("/responses")) onChange({ ...draft, custom: { ...custom, baseUrl: raw.slice(0, -10), wireApi: "openai_responses", reasoningFormat: "openai" } });
         else if (raw !== custom.baseUrl) onChange({ ...draft, custom: { ...custom, baseUrl: raw } });
       }} /></label>
-    <label><span>接口协议</span><select aria-label="接口协议" value={custom.wireApi ?? "chat_completions"} disabled={busy}
+    <label><span>接口协议</span><Select aria-label="接口协议" value={custom.wireApi ?? "chat_completions"} disabled={busy}
       onChange={event => onChange({ ...draft, custom: { ...custom, wireApi: event.target.value as NonNullable<CustomModelSettings["wireApi"]>, reasoningFormat: "openai", reasoning: null, reasoningControl: "provider_default" } })}>
       <option value="chat_completions">Chat Completions</option><option value="openai_responses">Responses</option>
-    </select></label>
+    </Select></label>
     </div>
     <div className="custom-model-key-row">
     <label><span>API Key</span><div className="custom-model-secret">

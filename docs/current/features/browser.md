@@ -8,7 +8,7 @@
 
 - 浏览器工具由固定版本的 `@playwright/mcp@0.0.84` 执行。它和依赖位于 `browser` 资源包，并依赖已有的托管 Node（`node` 资源包）。安装或启用插件时，以及 Runtime 启动时插件已启用的情况下，资源包都在后台准备。Run 启动不会下载资源；未就绪时，该 Run 不提供浏览器工具；“浏览器”一节在资源未就绪时显示状态，下载失败或缺失时提供“重试”或“下载”按钮。插件资源中的工具列表与 Run 使用同一套启动参数，资源未就绪时显示具体原因（如 `browser_runtime_not_ready`），不会显示笼统的 `mcp_protocol_error`。启动命令显示为“Eidos 托管 Node · Playwright MCP”，不显示内部占位变量。
 - Eidos 使用已安装的 Google Chrome。macOS 检查 `/Applications` 和 `~/Applications`。Windows 检查 `Program Files`、`Program Files (x86)` 和 `%LOCALAPPDATA%` 下的 Chrome 安装目录。未安装时，浏览器工具在审批前返回 `browser_unavailable`，Run 仍可继续。
-- Windows 安装包包含 `browser` 和 `node` 资源。用户确认完全访问后，Run 可以使用 Eidos 专用 Chrome、用户 Chrome 远程调试或 Playwright Extension 标签组。Windows 读取用户 Chrome 的 `%LOCALAPPDATA%/Google/Chrome/User Data`。缺少 Windows 隔离后端时，受限 Run 和需要沙盒的设置页 MCP 工具发现仍返回 `mcp_sandbox_unavailable`。
+- Windows 安装包包含 `browser` 和 `node` 资源。用户确认完全访问后，Run 可以使用 Eidos 专用 Chrome、用户 Chrome 远程调试或 Playwright Extension 标签组。Windows 读取用户 Chrome 的 `%LOCALAPPDATA%/Google/Chrome/User Data`。当前 Windows 版本缺少本地 MCP 隔离后端，受限 Run 和需要沙盒的设置页 MCP 工具发现返回 `mcp_sandbox_unavailable`。浏览器 MCP 详情会显示该平台限制和聊天中的「完全访问」入口说明。设置页工具发现不受聊天中的审批模式影响。
 - “浏览器”一节用于选择 Agent 使用的浏览器（见[目标浏览器](#目标浏览器)）。设置页不再提供单独打开、关闭或清除 Eidos 浏览器的按钮；用户可以在 Agent 打开的 Eidos 浏览器窗口中登录网站。Main 与 Runtime 中对应的 IPC 和 RPC 仍保留，当前没有界面调用。
 
 ## 调用链

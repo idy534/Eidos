@@ -168,6 +168,10 @@ Electron Main → Renderer
 
 Python Runtime 的 stdout 只输出有界的 JSON-RPC 行。Runtime 日志写入 stderr 或受控本地日志。RuntimeServer 的 `initialize`、`runtime/health` 和 `runtime/shutdown` 负责握手、健康状态和有序关闭。
 
+启动时，Runtime 读取当前平台的依赖清单。每次构建依赖快照时，只读取一次清单中位于 Python 根目录下的各份 `.dist-info/METADATA`，并按规范化包名检查声明的版本和唯一性。启动受管依赖进程前会重新构建快照并读取当前元数据，保留路径、文件类型和所有者校验。
+
+Windows 的 `initialize` 请求限时 60 秒，覆盖 Runtime 进程启动、NTFS 文件校验和首次部署内置 Skill。macOS 初始化及其他 RPC 请求继续使用 30 秒限时。
+
 `RunSupervisor.start_managed_task()` 在 AnyIO worker 中完成登记等待、目标执行、错误记录和资源清理。任务清理不再在 AnyIO 事件循环中获取 Supervisor 的同步锁。提交线程仍在锁内通过 BlockingPortal 登记任务；worker 中的清理等待不会挡住 portal 的调度。受保护的等待保留已接纳任务的资源所有权，取消继续通过 `threading.Event` 协作传播，系统不会丢弃仍在执行的线程来冒充资源静止。这项死锁修订尚未进入测试阶段。
 
 `runtime/eidos_runtime/runtime/loop.py` 只导出 `RuntimeEngine` 的兼容名称。它不是当前 Runtime Loop 的第二套实现。
@@ -184,7 +188,7 @@ Renderer 的本地 CSS 由 `desktop/renderer/src/styles.css` 统一导入。该�
 
 Workspace Dock 独立维护 Session 内容列和环境浮层。居中 Session 沿用原构建实际生效的单列布局，并由 `--session-content-width` 限制回答与 Composer 宽度。规划样式不再重复定义环境浮层，技能样式不再修改整个设置窗口。样式测试按统一入口读取模块；原生 Electron 定向检查验证最终计算样式和响应式布局。
 
-macOS 窗口使用 `transparent`、`vibrancy: "under-window"` 与 `titleBarStyle: "hidden"`；Windows 窗口使用不透明底色、原生 `default` 标题栏按钮并隐藏传统应用菜单栏，Renderer 通过 `:root[data-platform="windows"]` 与 `platform.ts` 适配实色侧栏、顶栏留白、Windows 盘符路径解析和快捷键文案。
+macOS 窗口使用 `transparent`、`vibrancy: "under-window"` 与 `titleBarStyle: "hidden"`；Windows 窗口使用不透明底色、原生 `default` 标题栏按钮并隐藏传统应用菜单栏，Renderer 通过 `:root[data-platform="windows"]` 与 `platform.ts` 适配实色侧栏、顶栏留白、Windows 盘符路径解析、快捷键文案，并通过共享 `Select` 组件与 `base-select` / `::picker(select)` 统一下拉选浮层与表单控件外观（macOS 保留原生 `<select>` DOM 与弹出行为）。
 
 Electron Main 负责以下职责：
 

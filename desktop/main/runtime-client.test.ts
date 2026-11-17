@@ -23,7 +23,9 @@ const protocolV1Fixture = path.join(projectRoot, "protocol", "fixtures", "v1.jso
 const toolResultsV1Fixture = path.join(projectRoot, "protocol", "fixtures", "tool-results-v1.json");
 const extensionsV1Fixture = path.join(projectRoot, "protocol", "fixtures", "extensions-v1.json");
 const pythonExecutable = process.env.EIDOS_PYTHON
-  ?? path.join(projectRoot, ".venv", "bin", "python");
+  ?? (process.platform === "win32"
+    ? path.join(projectRoot, ".venv", "Scripts", "python.exe")
+    : path.join(projectRoot, ".venv", "bin", "python"));
 const execFileAsync = promisify(execFile);
 
 
@@ -1540,7 +1542,13 @@ test("keeps the Runtime alive when a timed-out response arrives late", async (co
       runtimeRoot,
     });
     const initialize = client.initialize();
-    context.mock.timers.tick(30_000);
+    let timedOut = false;
+    void initialize.catch(() => { timedOut = true; });
+    const initializeTimeoutMs = process.platform === "win32" ? 60_000 : 30_000;
+    context.mock.timers.tick(initializeTimeoutMs - 1);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(timedOut, false);
+    context.mock.timers.tick(1);
     await assert.rejects(initialize, /Runtime request timed out: initialize/);
 
     assert.deepEqual(await client.health(), { state: "ready" });

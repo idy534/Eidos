@@ -19,6 +19,7 @@ import { RefreshIcon } from "./settings/ChannelIcons.js";
 import { DropdownMenu } from "./DropdownMenu.js";
 import { MoreHorizontalIcon } from "./MenuIcons.js";
 import { LocalIcon, WorktreeIcon } from "./ExecutionModeIcons.js";
+import { Select } from "./Select.js";
 import type { DraftGitView } from "../app/useDraftGit.js";
 import { pathBasename } from "../platform.js";
 
@@ -384,7 +385,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
                   <label className="composer-context-mode">
                     {executionMode === "worktree" ? <WorktreeIcon /> : <LocalIcon />}
                     <span className="sr-only">执行方式</span>
-                    <select
+                    <Select
                       aria-label="执行方式"
                       value={executionMode ?? "local"}
                       disabled={isSubmitting || composerMode !== "idle" || !onExecutionModeChange}
@@ -392,7 +393,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
                     >
                       <option value="local">本地</option>
                       <option value="worktree" disabled={Boolean(draftGit && !draftGit.context?.head)}>新建本地工作树</option>
-                    </select>
+                    </Select>
                   </label>
                   {draftGit ? (
                     <DraftBranchControl view={draftGit} worktree={executionMode === "worktree"} disabled={isSubmitting || !isIdle} />
@@ -400,7 +401,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
                     <label className="composer-context-branch">
                       <BranchIcon />
                       <span className="sr-only">本地分支</span>
-                      <select
+                      <Select
                         aria-label="本地分支"
                         value={branch ?? ""}
                         disabled={isSubmitting || Boolean(activeRun) || branchChanging || !isIdle}
@@ -408,7 +409,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
                       >
                         {branch === null && <option value="">Detached HEAD</option>}
                         {branches.map((name) => <option key={name} value={name}>{name}</option>)}
-                      </select>
+                      </Select>
                     </label>
                   ) : (
                     <span className="composer-context-branch" title={branch ?? undefined}>
@@ -822,7 +823,7 @@ function DraftBranchControl({ view, worktree, disabled }: { view: DraftGitView; 
           >
             <BranchIcon />
             <span className="sr-only">{branchLabel}</span>
-            <select
+            <Select
               aria-label={branchLabel}
               aria-describedby={status ? statusId : undefined}
               value={displayValue}
@@ -835,7 +836,7 @@ function DraftBranchControl({ view, worktree, disabled }: { view: DraftGitView; 
                 const occupied = !worktree && name !== context.currentBranch && context.occupiedBranches?.includes(name);
                 return <option key={name} value={name} disabled={occupied}>{name}{occupied ? "（其他工作树使用中）" : ""}</option>;
               })}
-            </select>
+            </Select>
             {status && <BranchStatusDot />}
             {statusText}
           </label>

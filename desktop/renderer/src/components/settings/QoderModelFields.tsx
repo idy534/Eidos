@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { QoderConnectionState, QoderCatalogEntry } from "../../../../shared/qoder.js";
 import { Button } from "../Button.js";
+import { Select } from "../Select.js";
 import { Tooltip } from "../Tooltip.js";
 import { ToastContainer, type ToastItem } from "../ToastContainer.js";
 import { StatusBadge, type StatusTone } from "./StatusBadge.js";
@@ -271,7 +272,7 @@ export function QoderModelFields({ draft, busy, onChange, onCatalogUpdated }: {
       <label>
         <span>模型名称</span>
         <div className="model-select-control">
-          <select
+          <Select
             aria-label="模型名称"
             value={draft.modelId}
             disabled={busy || waiting || !options.length}
@@ -283,7 +284,7 @@ export function QoderModelFields({ draft, busy, onChange, onCatalogUpdated }: {
             {options.map(model => (
               <option key={model.id} value={model.id}>{model.name}</option>
             ))}
-          </select>
+          </Select>
           <span className="model-select-control__chevron" aria-hidden="true">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="m6 9 6 6 6-6" />
@@ -292,12 +293,12 @@ export function QoderModelFields({ draft, busy, onChange, onCatalogUpdated }: {
         </div>
       </label>
 
-      <label><span>思考强度</span><div className="model-select-control"><select aria-label="思考强度" disabled={busy || !draft.qoder?.reasoning?.selections.length}
+      <label><span>思考强度</span><div className="model-select-control"><Select aria-label="思考强度" disabled={busy || !draft.qoder?.reasoning?.selections.length}
         value={draft.qoder?.reasoning?.defaultSelection ?? ""}
         onChange={event => { if (draft.qoder?.reasoning) onChange({ ...draft, qoder: { ...draft.qoder, reasoning: { ...draft.qoder.reasoning, defaultSelection: event.target.value ? event.target.value as NonNullable<typeof draft.qoder.reasoning.defaultSelection> : null } } }); }}>
         <option value="">模型默认</option>
         {draft.qoder?.reasoning?.selections.map(effort => <option key={effort} value={effort}>{{ none: "关闭", thinking: "开启", low: "低", medium: "中", high: "高", xhigh: "超高", max: "最高" }[effort]}</option>)}
-      </select></div></label>
+      </Select></div></label>
       <ModelInputTypes supportsImages={draft.qoder?.supportsImages ?? false} supportsToolCall={draft.qoder?.supportsToolCall ?? true} disabled={busy}
         onImagesChange={value => { if (draft.qoder) onChange({ ...draft, qoder: { ...draft.qoder, supportsImages: value } }); }}
         onToolCallChange={value => { if (draft.qoder) onChange({ ...draft, qoder: { ...draft.qoder, supportsToolCall: value } }); }} />

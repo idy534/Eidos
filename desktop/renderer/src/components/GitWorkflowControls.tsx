@@ -17,6 +17,7 @@ import { Button } from "./Button.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
 import { DropdownMenu } from "./DropdownMenu.js";
 import { ToastContainer } from "./ToastContainer.js";
+import { Select } from "./Select.js";
 import { GitBranchIcon, PlusIcon } from "./MenuIcons.js";
 
 
@@ -175,7 +176,7 @@ export function GitWorkflowControls({
         dialogRef.current.querySelectorAll<HTMLElement>(
           "button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])",
         ),
-      );
+      ).filter((element) => element.parentElement?.tagName !== "SELECT");
       if (focusable.length === 0) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
@@ -422,14 +423,14 @@ export function GitWorkflowControls({
           <details className="git-advanced-controls">
             <summary>高级 Git</summary>
             <div>
-              <select
+              <Select
                 aria-label="Git target"
                 value={target}
                 disabled={treeChangesDisabled || status.branch === null || targets.length === 0}
                 onChange={(event) => setTarget(event.target.value)}
               >
                 {targets.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
-              </select>
+              </Select>
               <Button size="small" disabled={treeChangesDisabled || !target || status.branch === null}
                 loading={busy === "merge"}
                 onClick={() => void runOperation(
@@ -563,7 +564,7 @@ export function GitWorkflowControls({
         {localSession && branches.length > 0 ? (
           <label className="git-local-branch-control">
             <span className="sr-only">当前本地分支</span>
-            <select
+            <Select
               aria-label="当前本地分支"
               value={status.branch ?? ""}
               disabled={treeChangesDisabled || status.dirty}
@@ -580,7 +581,7 @@ export function GitWorkflowControls({
             >
               {status.branch === null && <option value="">Detached HEAD</option>}
               {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
-            </select>
+            </Select>
           </label>
         ) : (
           <strong>{status.branch ?? "Detached HEAD"}</strong>
