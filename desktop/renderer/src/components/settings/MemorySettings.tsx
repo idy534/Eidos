@@ -15,6 +15,7 @@ import {
 } from "./MemoryIcons.js";
 import { useMemoryDocuments, type MemoryScopeChoice } from "./useMemoryDocuments.js";
 import { useMemoryLocation } from "./useMemoryLocation.js";
+import { pathBasename } from "../../platform.js";
 
 const modes = { off: "关闭", read: "只读", auto: "自动" } as const;
 type MemoryMode = MemoryScope["mode"];
@@ -110,7 +111,7 @@ function MemorySettingsContent({
   const currentMode = selected?.mode ?? "auto";
 
   const activeProject = location.projects.find((project) => project.id === projectId);
-  const activeProjectName = activeProject ? (activeProject.name ?? activeProject.workspaceRoot.split("/").filter(Boolean).at(-1)) : undefined;
+  const activeProjectName = activeProject ? (activeProject.name ?? pathBasename(activeProject.workspaceRoot)) : undefined;
 
   const statusMessages: React.ReactNode[] = [];
   if (dirty) {
@@ -165,7 +166,7 @@ function MemorySettingsContent({
                 <option value="">无项目</option>
                 {projectId && !valid && <option value={projectId}>{location.loaded ? "项目已不存在" : "正在读取项目…"}</option>}
                 {location.projects.map((project) => {
-                  const projectName = project.name ?? project.workspaceRoot.split("/").filter(Boolean).at(-1);
+                  const projectName = project.name ?? pathBasename(project.workspaceRoot);
                   return (
                     <option key={project.id} value={project.id}>
                       {projectName}

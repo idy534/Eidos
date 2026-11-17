@@ -243,8 +243,8 @@ class RunSupervisor:
     def prepare_next(self) -> WorkerStart | None:
         if (
             self.lifecycle is not RuntimeLifecycle.RUNNING
-            or not self.can_run()
             or self.store.health_state != "ready"
+            or not self.can_run()
         ):
             return None
         with self.lock:

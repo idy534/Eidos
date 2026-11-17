@@ -848,3 +848,12 @@
     grid-template-columns: 1fr;
   }
 }
+
+:root[data-platform="windows"] .automation-page-header {
+  -webkit-app-region: no-drag;
+}
+
+:root[data-platform="windows"] .workbench.workbench--settings .automation-page-header,
+:root[data-platform="windows"] .workbench.workbench--automations .automation-page-header {
+  padding-left: 1.5rem;
+}

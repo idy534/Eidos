@@ -519,7 +519,7 @@ uv run --locked --python 3.12 pytest -q runtime/tests/test_windows_platform.py
 1. 验收人从未预装 Python、Git 或 ripgrep 的机器安装 App，启动并发起对话，再关闭和重开。验收人核对历史和模型配置仍可读取。
 2. 验收人在包含中文和空格的仓库中检查预览、搜索、创建、更新、删除、Diff、Worktree、快照恢复和取消。验收人检查已有文件身份、写前冲突、受保护路径、硬链接和目录 junction。
 3. 验收人检查默认方式拒绝启动没有隔离后端的 Shell 和本地 MCP。验收人在临时仓库内确认完全访问，检查 PowerShell PIPE 和 Agent PTY。验收人用 `run_shell` 的 `tty=true` 启动交互程序，检查中文输入输出、`control_shell` 尺寸调整、Ctrl-C 和取消后的子进程清理。验收人另外检查桌面终端的输入、尺寸调整和关闭。
-4. 验收人检查文件定位、拖放、中文输入、窗口缩放、覆盖安装和卸载后的数据保留。
+4. 验收人检查文件定位、拖放、中文输入、窗口缩放、覆盖安装和卸载后的数据保留。输入引用覆盖带中文和空格的图片文件、文件夹摘要，分别验证从资源管理器复制图片文件和从截图工具粘贴位图。
 5. 验收人在 Chrome 中检查三种浏览器目标。验收人检查专用 Chrome 的下载拦截与退出清理、用户 Chrome 的远程调试确认，以及 Playwright Extension 的令牌、标签组和重新连接。
 6. 验收人在新装环境打开完全访问 Run，使用 DOCX、PPTX、XLSX 和 PDF Skill。验收人断网检查首次解包、Office 转换、公式重算、缩略图、PDF 渲染和中英文 OCR，再重启检查资源复用。Windows CI 同时执行 `scripts/bundled-document-skills-smoke.py`。
 
@@ -643,7 +643,7 @@ uv run --locked pytest runtime/tests -k "schema or migration or instruction or c
 pnpm test:packaging
 ```
 
-`pnpm test:electron-smoke` 会使用临时 `EIDOS_DATA_DIR` 和临时 Electron user-data 目录。该测试不需要真实 Model API Key。
+`pnpm test:electron-smoke` 会使用临时 `EIDOS_DATA_DIR` 和临时 Electron user-data 目录，并要求 Runtime 启动后报告 `storageState=ready`。该测试不需要真实 Model API Key。
 
 ## 运行配置与诊断
 
@@ -718,6 +718,8 @@ API Key 会经过本地模型配置写入链路：Renderer typed IPC → Electro
 ### 常见诊断
 
 Runtime 初始化失败时，先检查启动终端中的 stderr 日志和 `runtime/health` 状态。Runtime 会把协议错误映射为稳定 code，不会把第三方 Provider exception 直接发送到 Renderer。
+
+Windows 上若 `runtime/health` 返回 `state_security_invalid`，检查 `EIDOS_DATA_DIR`（默认 `%USERPROFILE%\.eidos`）及已有 SQLite 文件的所有者和 ACL。旧版管理员启动可能留下所有者为 `Administrators` 的目录。确认目录为空时，可以退出 Eidos、将目录改名备份并重新启动。目录已有数据时，先完整备份，再检查所有者和私有 ACL。
 
 常见检查如下：
 

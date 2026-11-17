@@ -20,6 +20,7 @@ import { DropdownMenu } from "./DropdownMenu.js";
 import { MoreHorizontalIcon } from "./MenuIcons.js";
 import { LocalIcon, WorktreeIcon } from "./ExecutionModeIcons.js";
 import type { DraftGitView } from "../app/useDraftGit.js";
+import { pathBasename } from "../platform.js";
 
 export type ComposerWorkMode = "execute" | "plan" | "goal";
 
@@ -718,7 +719,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
 });
 
 function basename(path: string): string {
-  return path.split("/").filter(Boolean).at(-1) ?? path;
+  return pathBasename(path);
 }
 
 function FolderIcon() {

@@ -3,6 +3,7 @@ import { DataSettings } from "./DataSettings.js";
 import { ManagedResourceSettings } from "./ManagedResourceSettings.js";
 import type { RuntimeStatus } from "../../contracts";
 import { deriveRuntimePresentation } from "../../session-state";
+import { isWindowsPlatform } from "../../platform.js";
 import { SettingSection } from "../SettingSection.js";
 import { SettingRow } from "../SettingRow.js";
 import { StatusBadge } from "../StatusBadge.js";
@@ -67,7 +68,7 @@ export function RuntimeSettings({ runtime, onShowToast }: RuntimeSettingsProps) 
           }
         />
         <SettingRow
-          title="Seatbelt Shell 沙箱"
+          title={isWindowsPlatform() ? "命令执行沙箱" : "Seatbelt Shell 沙箱"}
           description="系统命令安全执行隔离机制"
           action={
             runtime.runShell ? (

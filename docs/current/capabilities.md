@@ -521,7 +521,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 用户可以从 Finder 向对话区域拖入文件或文件夹，也可以粘贴剪贴板图片。输入框使用 macOS 原生剪切、复制、粘贴、撤销、重做和全选菜单。拖入内容只进入草稿，不自动发送。正在运行的 Run 不会因新草稿而改变。
 
-粘贴时，剪贴板如果带文件路径，先按普通文件引用处理。图片文件（png、jpg、gif、webp、tiff、bmp）被文件检查以 `INVALID_PARAMS` 拒绝时，Renderer 改用 `input:pasteImage` 携带该路径重试。Main 只读取剪贴板（`NSFilenamesPboardType` 或 `public.file-url`）确实列出的文件，按解析后的真实路径比对，拒绝 Eidos 数据目录内的文件，用 `O_NOFOLLOW` 打开后核对 dev/inode，限制 10 MiB，再把副本写进私有临时目录，以 `origin: clipboard` 交给 Runtime。这样，属主不同、多硬链接、源应用已删除的临时文件，以及扩展名与内容不符的图片也能粘贴。Runtime 只对剪贴板来源把 WebP、GIF、TIFF、BMP 重新编码为 PNG；用户选择的文件仍保留原始字节和 Hash，格式不符时继续拒绝。HEIC 不在转换范围内。拖入文件、非图片文件和其他错误码不重试，重试失败时显示原始错误。Runtime 拒绝引用时在 `eidos.input` 日志写入原因码（如 `invalid_image`、`unsafe_path`、`ENOENT`），不写路径和内容。
+粘贴时，剪贴板如果带文件路径，先按普通文件引用处理。图片文件（png、jpg、gif、webp、tiff、bmp）被文件检查以 `INVALID_PARAMS` 拒绝时，Renderer 改用 `input:pasteImage` 携带该路径重试。Main 在 macOS 从 `NSFilenamesPboardType` 或 `public.file-url` 读取文件路径，在 Windows 通过系统剪贴板读取 `CF_HDROP`，也兼容单文件格式 `FileNameW`。Main 只读取剪贴板确实列出的文件，按解析后的真实路径比对，拒绝 Eidos 数据目录内的文件，打开后核对文件身份，限制 10 MiB，再把副本写进临时目录，以 `origin: clipboard` 交给 Runtime。macOS 打开文件时继续使用 `O_NOFOLLOW`。Windows Runtime 从经 NTFS 句柄核验的附件字节解码图片，并在已核验的目录上生成文件夹摘要。Runtime 只对剪贴板来源把 WebP、GIF、TIFF、BMP 重新编码为 PNG；用户选择的文件仍保留原始字节和 Hash，格式不符时继续拒绝。HEIC 不在转换范围内。拖入文件、非图片文件和其他错误码不重试，重试失败时显示原始错误。Runtime 拒绝引用时在 `eidos.input` 日志写入原因码（如 `invalid_image`、`unsafe_path`、`ENOENT`），不写路径和内容。
 
 引用采用双区域分层展示：
 - **顶部附件架（Attachment Shelf，位于输入框上方与已发送消息气泡上方）**：承载 `image`（正方形缩略图卡片，点击打开全屏预览）、`file`（近正方形文档微缩预览卡片，顶部展示真实文本微缩页或类型扩展名角标，底部展示分类色彩图标与文件名，点击在 Finder 中定位）、`directory`（双行文件夹卡片，展示文件夹名称与“文件夹”副标题，点击在 Finder 中定位）和 `excerpt`（引用文本微缩卡片，点击弹出只读全文预览弹窗）。

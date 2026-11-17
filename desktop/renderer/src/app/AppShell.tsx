@@ -81,6 +81,7 @@ import {
 } from "../components/TurnResults.js";
 import { ToastContainer, type ToastItem, type ToastType } from "../components/ToastContainer.js";
 import { memoryTidyPrompt } from "../memory-tidy.js";
+import { isPathWithinRoot, joinWorkspacePath, pathBasename } from "../platform.js";
 
 interface AppShellProps {
   runtime: RuntimeLifecycleState;
@@ -1457,7 +1458,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
   async function handleOpenExternal(path: string): Promise<void> {
     if (!currentSnapshot) return;
-    const selected = currentSnapshot.session.roots?.find((root) => path.startsWith(root.path.replace(/\/$/, "") + "/"));
+    const selected = currentSnapshot.session.roots?.find((root) => isPathWithinRoot(path, root.path));
     const root = selected?.path ?? currentSnapshot.session.roots?.[0]?.path ?? currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
     const resolved = artifactPath(path, root, undefined, true);
     if (!resolved) throw new Error("文件不在当前工作区内。");
@@ -1466,17 +1467,17 @@ export function AppShell({ runtime }: AppShellProps) {
 
   async function handleShowInFinder(path: string): Promise<void> {
     if (!currentSnapshot) return;
-    const selected = currentSnapshot.session.roots?.find((root) => path.startsWith(root.path.replace(/\/$/, "") + "/"));
+    const selected = currentSnapshot.session.roots?.find((root) => isPathWithinRoot(path, root.path));
     const root = selected?.path ?? currentSnapshot.session.roots?.[0]?.path ?? currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
     const resolved = artifactPath(path, root, undefined, true);
     if (!resolved) throw new Error("文件不在当前工作区内。");
-    await window.eidosRuntime.showItemInFolder(`${root.replace(/\/$/, "")}/${resolved}`);
+    await window.eidosRuntime.showItemInFolder(joinWorkspacePath(root, resolved));
   }
 
   const handleOpenFileInDock = useCallback((path: string, position?: WorkspaceFilePosition): void => {
     if (!currentSnapshot) return;
     const selected = currentSnapshot.session.roots?.find((root) => root.id === position?.rootId)
-      ?? currentSnapshot.session.roots?.find((root) => path.startsWith(root.path.replace(/\/$/, "") + "/"));
+      ?? currentSnapshot.session.roots?.find((root) => isPathWithinRoot(path, root.path));
     const root = selected?.path ?? currentSnapshot.session.roots?.[0]?.path ?? currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
     const resolved = artifactPath(path, root, undefined, true);
     if (!resolved) return;
@@ -2356,7 +2357,7 @@ export function AppShell({ runtime }: AppShellProps) {
       />
       <ConfirmDialog
         open={Boolean(projectToDelete)}
-        title={`删除项目"${projectToDelete?.name ?? projectToDelete?.workspaceRoot.split("/").filter(Boolean).at(-1) ?? projectToDelete?.workspaceRoot ?? "项目"}"？`}
+        title={`删除项目"${projectToDelete?.name ?? (projectToDelete?.workspaceRoot ? pathBasename(projectToDelete.workspaceRoot) : undefined) ?? "项目"}"？`}
         description="只会删除 Eidos 中的项目记录，不会删除项目文件或 Git 仓库。"
         confirmLabel="删除"
         cancelLabel="取消"

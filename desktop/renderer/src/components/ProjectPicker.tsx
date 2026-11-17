@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useState, type CSSProperties, type RefObject } from "react";
 
 import type { Project } from "../contracts.js";
+import { pathBasename } from "../platform.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
 
 interface ProjectPickerProps {
@@ -152,7 +153,7 @@ export function ProjectPicker({
 }
 
 function basename(path: string): string {
-  return path.split("/").filter(Boolean).at(-1) ?? path;
+  return pathBasename(path);
 }
 
 function SearchIcon() {

@@ -112,6 +112,9 @@ class ResponseActionRuntimeServer(RuntimeServer):
 
 def run() -> int:
     if sys.platform == "win32":
+        from eidos_runtime.infrastructure.windows_files import configure_process_file_owner
+
+        configure_process_file_owner()
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")
     configure_stderr_logging()
     telemetry = initialize_telemetry()

@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 
 import type { Project, Session } from "../contracts.js";
+import { pathBasename } from "../platform.js";
 
 export interface SessionTooltipData {
   kind: "session";
@@ -59,7 +60,7 @@ export function buildProjectTooltipRoots(project: {
       const isPrimary = primaryId
         ? root.id === primaryId
         : root.path === project.workspaceRoot || index === 0;
-      const name = root.path.split("/").filter(Boolean).at(-1) || root.path;
+      const name = pathBasename(root.path) || root.path;
       return {
         id: root.id,
         path: root.path,
@@ -71,7 +72,7 @@ export function buildProjectTooltipRoots(project: {
     return items.sort((a, b) => (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0));
   }
   if (project.workspaceRoot) {
-    const name = project.workspaceRoot.split("/").filter(Boolean).at(-1) || project.workspaceRoot;
+    const name = pathBasename(project.workspaceRoot) || project.workspaceRoot;
     return [
       {
         id: project.project?.primaryRootId ?? "primary",

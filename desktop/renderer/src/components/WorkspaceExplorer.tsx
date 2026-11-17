@@ -1,4 +1,4 @@
-import { revealFileLabel } from "../platform.js";
+import { joinWorkspacePath, pathBasename, revealFileLabel } from "../platform.js";
 import type { ProjectRootDto } from "../../../shared/project-workspaces.js";
 import { ArtifactProvider } from "./ArtifactContext.js";
 import { FileFind } from "./FileFind.js";
@@ -170,8 +170,8 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
     roots={roots} selectedRootId={root.id} onSelectRoot={(id) => { setSelected(id); setLocalRequest(undefined); }} />;
   return <ArtifactProvider value={actions ? { ...actions, executionRoot: root.path, rootId: root.id,
     openFile: (path, position) => setLocalRequest({ path, ...position, rootId: root.id, requestId: ++sequence.current }),
-    openExternal: actions.openExternal ? (path) => actions.openExternal?.(`${root.path}/${path}`) : undefined,
-    showInFinder: actions.showInFinder ? (path) => actions.showInFinder?.(`${root.path}/${path}`) : undefined,
+    openExternal: actions.openExternal ? (path) => actions.openExternal?.(joinWorkspacePath(root.path, path)) : undefined,
+    showInFinder: actions.showInFinder ? (path) => actions.showInFinder?.(joinWorkspacePath(root.path, path)) : undefined,
   } : undefined}>{content}</ArtifactProvider>;
 }
 
@@ -527,11 +527,11 @@ function WorkspaceExplorerContent({
   const activePreview = activePreviewPath ? previews[activePreviewPath] : undefined;
 
   const currentRoot = roots?.find((entry) => entry.id === selectedRootId) ?? roots?.[0];
-  const currentRootName = currentRoot?.path.split("/").filter(Boolean).at(-1) ?? currentRoot?.id ?? "";
+  const currentRootName = (currentRoot?.path ? pathBasename(currentRoot.path) : undefined) ?? currentRoot?.id ?? "";
 
   const rootMenuItems: DropdownMenuItem[] = useMemo(() => (
     (roots ?? []).map((entry, index) => {
-      const name = entry.path.split("/").filter(Boolean).at(-1) ?? entry.id;
+      const name = pathBasename(entry.path) || entry.id;
       const label = `${name}${index === 0 ? " · 主要" : entry.shared ? " · 共享" : ""}`;
       return {
         key: entry.id,
@@ -628,7 +628,7 @@ function WorkspaceExplorerContent({
           <div className="workspace-preview-bar">
             <div className="workspace-preview-tabs" role="tablist" aria-label="打开的文件">
               {openPreviewPaths.map((path) => {
-                const fileName = path.split("/").pop() ?? path;
+                const fileName = pathBasename(path);
                 return (
                   <div className="workspace-preview-tab" key={path}>
                     <button
@@ -716,7 +716,7 @@ function WorkspaceExplorerContent({
               onClick: () => {
                 setTreeContextMenu(undefined);
                 const fullPath = actions?.executionRoot
-                  ? `${actions.executionRoot.replace(/\/$/, "")}/${treeContextMenu.path}`
+                  ? joinWorkspacePath(actions.executionRoot, treeContextMenu.path)
                   : treeContextMenu.path;
                 void navigator?.clipboard?.writeText(fullPath);
               },
@@ -742,7 +742,7 @@ function WorkspaceExplorerContent({
         <ContextMenu
           x={previewTabMenu.x}
           y={previewTabMenu.y}
-          label={`标签操作：${previewTabMenu.path.split("/").pop() ?? previewTabMenu.path}`}
+          label={`标签操作：${pathBasename(previewTabMenu.path)}`}
           restoreFocusElement={previewTabMenu.element}
           onClose={() => setPreviewTabMenu(undefined)}
           items={[

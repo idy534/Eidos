@@ -432,6 +432,10 @@ test("closed runtime business errors map to safe user-facing guidance", () => {
     "项目下还有任务，请先删除任务后再删除项目。",
   );
   assert.equal(
+    userFacingError(new Error("Error invoking remote method 'project:create-folders': Error: EIDOS_RUNTIME_ERROR:PROJECT_WORKSPACE_INVALID")),
+    "项目文件夹不可用。请检查所选文件夹后重试。",
+  );
+  assert.equal(
     userFacingError(new Error("EIDOS_RUNTIME_ERROR:HANDOFF_LOCAL_CONFLICT")),
     "当前工作树的修改无法安全同步到本地。请先处理本地冲突。",
   );

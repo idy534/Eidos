@@ -110,6 +110,56 @@ def test_project_read_returns_the_persisted_primary_root_and_revision(
         server.close()
 
 
+def test_create_folders_derives_name_and_preserves_native_paths_on_replay(tmp_path: Path) -> None:
+    secondary = tmp_path / "secondary"
+    primary = tmp_path / "Project with spaces"
+    secondary.mkdir()
+    primary.mkdir()
+    request = {
+        "operationId": str(uuid4()),
+        "roots": [
+            {"id": "secondary", "path": str(secondary)},
+            {"id": "primary", "path": str(primary)},
+        ],
+        "primaryRootId": "primary",
+    }
+    server, output = _server(tmp_path)
+    try:
+        created = _request(server, output, "create-folders", "project/createFolders", request)
+        assert "result" in created, created
+        project = created["result"]
+        assert project["name"] == primary.name
+        assert project["workspaceRoot"] == str(primary.resolve())
+        assert project["primaryRootId"] == "primary"
+        assert [root["path"] for root in project["roots"]] == [str(primary.resolve()), str(secondary.resolve())]
+        assert _project_read(server, output, project["id"], "read-folders") == project
+
+        replay = _request(server, output, "replay-create-folders", "project/createFolders", request)
+        assert replay["result"] == project
+        assert server.store.connection.execute("SELECT count(*) FROM projects").fetchone()[0] == 1
+    finally:
+        server.close()
+
+
+def test_create_folders_rejects_a_missing_root_without_saving_project(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    server, output = _server(tmp_path)
+    try:
+        response = _request(server, output, "invalid-folders", "project/createFolders", {
+            "operationId": str(uuid4()),
+            "roots": [
+                {"id": "primary", "path": str(primary)},
+                {"id": "missing", "path": str(tmp_path / "missing")},
+            ],
+            "primaryRootId": "primary",
+        })
+        assert response["error"]["data"]["code"] == "PROJECT_WORKSPACE_INVALID"
+        assert server.store.connection.execute("SELECT count(*) FROM projects").fetchone()[0] == 0
+    finally:
+        server.close()
+
+
 def test_session_create_rejects_project_root_with_replaced_symlink_parent(
     tmp_path: Path,
 ) -> None:

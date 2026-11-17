@@ -13,10 +13,13 @@ import pytest
 
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.application.sessions import SessionApplication
+from eidos_runtime.db.database import WorkspaceIdentity
 from eidos_runtime.db.projectless_migration import migrate_projectless_workspaces
+from eidos_runtime.db.repositories.sessions import SessionRepository
 from eidos_runtime.db.schema import V22_SCHEMA_SQL
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.collaboration import SpawnAgent
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.persistence.collaboration import CollaborationRepository
 from eidos_runtime.persistence.projectless_reset import discard_legacy_projectless_sessions
 from eidos_runtime.protocol.methods import (
@@ -97,9 +100,42 @@ def test_default_root_uses_real_home(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert projectless_root() == tmp_path / "Eidos"
 
 
+def test_large_filesystem_ids_round_trip_through_reservation_and_session(
+    store: SessionStore, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operation = operation_id("large-filesystem-ids")
+    reservations = store.typed_runtime_repository().projectless_workspaces()
+    prepared = reservations.prepare(operation, "large-ids", projectless_root())
+    root = Path(prepared.workspace_root)
+    root.mkdir(parents=True)
+    actual = root.stat()
+    identity = WorkspaceIdentity(root, (1 << 64) - 1, (1 << 127) + 1, actual.st_uid)
+    assert reservations.mark_created(prepared, identity).identity() == identity
+
+    original_stat = Path.stat
+    metadata = list(actual)
+    metadata[1:3] = [identity.inode, identity.device]
+    large_stat = os.stat_result(metadata)
+
+    def stat_workspace(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        if path == root:
+            return large_stat
+        return original_stat(path, follow_symlinks=follow_symlinks)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "stat", stat_workspace)
+        SessionRepository(store.database).create_session_committed(
+            str(root), session_id=prepared.session_id, operation_id=operation,
+            projectless=True, projectless_creation_id=operation,
+        )
+
+    assert store.workspace_for_session(prepared.session_id) == identity
+    assert reservations.prepare(operation, "large-ids", projectless_root()).status == "completed"
+
+
 def test_shared_projectless_protocol_fixture() -> None:
     fixture = json.loads((Path(__file__).resolve().parents[2]
-        / "protocol/fixtures/projectless-v1.json").read_text())
+        / "protocol/fixtures/projectless-v1.json").read_text(encoding="utf-8"))
     create = SessionCreateRequestDto.model_validate(fixture["request"]["params"])
     result = SessionCreateResponseDto.model_validate(fixture["response"]["result"])
     assert create.workspace_name_hint == "整理销售数据"
@@ -112,7 +148,7 @@ def test_create_replay_and_rename_keep_one_directory(store: SessionStore, tmp_pa
     created = app.create(request(operation="readable-create")).root
     root = Path(created["workspaceRoot"])
     assert root == tmp_path / "Eidos" / date.today().isoformat() / "整理销售数据"
-    assert root.stat().st_mode & 0o777 == 0o700
+    assert local_files.has_private_access(root, root.stat(), 0o700)
     assert app.create(request(operation="readable-create")).root == created
     app.rename(SessionRenameRequestDto(sessionId=created["id"], title="新的标题"))
     assert app.create(request(operation="readable-create")).root["workspaceRoot"] == str(root)

@@ -6,6 +6,7 @@ import { ModelSelector } from "../ModelSelector.js";
 import { Button } from "../Button.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { userFacingError } from "../../session-state.js";
+import { currentOsUserLabel } from "../../platform.js";
 import { AutomationTimeError, COMMON_TIMEZONE_GROUPS, isCommonTimezone, automationDateInput, formatPreviewTime, initialOneTimeChoice, oneTimeOptions } from "./automation-time.js";
 
 export interface InitialAutomationValues {
@@ -343,7 +344,7 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
       confirmLabel="开启完全访问" cancelLabel="取消"
       description={<div className="automation-full-access-warning">
         <p>Eidos 将不再逐项请求批准</p>
-        <p>此计划今后的每次执行都将以当前 macOS 用户的权限读写文件、运行命令和访问网络。操作可能造成数据丢失、凭据泄露或系统设置变化，也可能修改 Eidos 自身的数据。请仅在信任该定时任务时开启。</p>
+        <p>此计划今后的每次执行都将以{currentOsUserLabel()}的权限读写文件、运行命令和访问网络。操作可能造成数据丢失、凭据泄露或系统设置变化，也可能修改 Eidos 自身的数据。请仅在信任该定时任务时开启。</p>
       </div>}
       onConfirm={() => { setApprovalMode("full_access"); setFullAccessConfirmed(true); setShowFullAccessDialog(false); }}
       onCancel={() => setShowFullAccessDialog(false)} />

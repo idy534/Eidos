@@ -43,6 +43,7 @@ _volume = _api(
 _get_process = _api(_kernel, "GetCurrentProcess", _HANDLE)
 _open_token = _api(_security, "OpenProcessToken", wintypes.BOOL, _HANDLE, _DWORD, ctypes.POINTER(_HANDLE))
 _token_info = _api(_security, "GetTokenInformation", wintypes.BOOL, _HANDLE, wintypes.INT, _PTR, _DWORD, _DWORD_PTR)
+_set_token_info = _api(_security, "SetTokenInformation", wintypes.BOOL, _HANDLE, wintypes.INT, _PTR, _DWORD)
 _local_free = _api(_kernel, "LocalFree", _PTR, _PTR)
 _sid_string = _api(_security, "ConvertSidToStringSidW", wintypes.BOOL, _PTR, _PTR_PTR)
 _security_info = _api(
@@ -68,6 +69,10 @@ _FILE_REPARSE = 0x400
 _OPEN_EXISTING = 3
 _OPEN_ALWAYS = 4
 _CREATE_NEW = 1
+_TOKEN_QUERY = 0x0008
+_TOKEN_ADJUST_DEFAULT = 0x0080
+_TOKEN_USER = 1
+_TOKEN_OWNER = 4
 _DIRECTORY_AND_REPARSE_FLAGS = 0x02200000
 _EXTENDED_PREFIX = "\\\\?\\"
 
@@ -168,15 +173,16 @@ def _open_handle(
 
 
 @contextmanager
-def _pinned_directory(path: Path) -> Iterator[int]:
+def _pinned_directory(path: Path, *, rename_target: Path | None = None) -> Iterator[int]:
     _check_local_path(path)
     with ExitStack() as stack:
         anchor = Path(path.anchor)
         for depth in range(1, len(path.parts) + 1):
             current = anchor.joinpath(*path.parts[1:depth])
-            # Attribute-only opens do not enforce the same sharing checks as
-            # data access. Hold list access and deny write/delete sharing.
-            handle = _open_handle(current, _LIST_DIRECTORY | _READ_ATTRIBUTES, directory=True, share=1)
+            # MoveFileExW needs write sharing on the destination parent. Keep
+            # every pinned directory protected against deletion or replacement.
+            share = _SHARE_READ_WRITE if current == rename_target else 1
+            handle = _open_handle(current, _LIST_DIRECTORY | _READ_ATTRIBUTES, directory=True, share=share)
             stack.callback(_close, handle)
         yield handle
 
@@ -329,7 +335,12 @@ def publish_open_file(descriptor: int, target: Path) -> None:
 
 
 def replace(source: Path, target: Path) -> None:
-    with _pinned_parent(source, None), _pinned_parent(target, None):
+    _check_local_path(source)
+    _check_local_path(target)
+    with (
+        _pinned_directory(source.parent, rename_target=target.parent),
+        _pinned_directory(target.parent, rename_target=target.parent),
+    ):
         if not _move(_extended(source), _extended(target), 0x9):  # REPLACE_EXISTING | WRITE_THROUGH
             raise _error()
 
@@ -344,20 +355,41 @@ def _sid_text(sid: int) -> str:
         _local_free(result)
 
 
+def _token_sid_info(token: _HANDLE, information_class: int) -> ctypes.Array:
+    size = _DWORD()
+    _token_info(token, information_class, None, 0, ctypes.byref(size))
+    if not 0 < size.value <= 65536:
+        raise _error()
+    buffer = ctypes.create_string_buffer(size.value)
+    if not _token_info(token, information_class, buffer, size, ctypes.byref(size)):
+        raise _error()
+    return buffer
+
+
 @lru_cache(maxsize=1)
 def _current_sid() -> str:
     token = _HANDLE()
-    if not _open_token(_get_process(), 0x0008, ctypes.byref(token)):  # TOKEN_QUERY
+    if not _open_token(_get_process(), _TOKEN_QUERY, ctypes.byref(token)):
         raise _error()
     try:
-        size = _DWORD()
-        _token_info(token, 1, None, 0, ctypes.byref(size))  # TokenUser
-        if not 0 < size.value <= 65536:
-            raise _error()
-        buffer = ctypes.create_string_buffer(size.value)
-        if not _token_info(token, 1, buffer, size, ctypes.byref(size)):
-            raise _error()
+        buffer = _token_sid_info(token, _TOKEN_USER)
         return _sid_text(ctypes.cast(buffer, _PTR_PTR).contents.value)
+    finally:
+        _close(token)
+
+
+def configure_process_file_owner() -> None:
+    """Use the current user as the default owner, including in elevated Runtime processes."""
+    token = _HANDLE()
+    if not _open_token(_get_process(), _TOKEN_QUERY | _TOKEN_ADJUST_DEFAULT, ctypes.byref(token)):
+        raise _error()
+    try:
+        user = _token_sid_info(token, _TOKEN_USER)
+        owner = _token_sid_info(token, _TOKEN_OWNER)
+        user_sid = ctypes.cast(user, _PTR_PTR).contents
+        if _sid_text(user_sid.value) != _sid_text(ctypes.cast(owner, _PTR_PTR).contents.value):
+            if not _set_token_info(token, _TOKEN_OWNER, ctypes.byref(user_sid), ctypes.sizeof(user_sid)):
+                raise _error()
     finally:
         _close(token)
 

@@ -5,6 +5,7 @@ import { Button } from "../Button.js";
 import { DropdownMenu, type DropdownMenuItem } from "../DropdownMenu.js";
 import { FinderIcon, TrashIcon } from "../MenuIcons.js";
 import { SettingSection } from "../SettingSection.js";
+import { currentOsUserLabel } from "../../platform.js";
 import { SettingRow } from "../SettingRow.js";
 import { Toggle } from "../Toggle.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
@@ -322,7 +323,7 @@ export function PluginSettings({
         open={Boolean(review)} title={`审阅 ${review?.plugin.name ?? ""} 的 Hook`}
         description={<div className="plugin-hook-review">
           <p>您信任后，插件会在匹配的任务阶段自动执行以下命令。</p>
-          <p>脚本使用当前任务的工作区和网络权限。脚本还可以读取本插件的安装目录，并写入本插件的私有数据目录。完全访问任务使用当前 macOS 用户的权限。</p>
+          <p>脚本使用当前任务的工作区和网络权限。脚本还可以读取本插件的安装目录，并写入本插件的私有数据目录。完全访问任务使用{currentOsUserLabel()}的权限。</p>
           <p>安装目录：<code>{review?.plugin.hookReview?.installedRoot}</code><br />可写数据目录：<code>{review?.plugin.hookReview?.dataDirectory}</code></p>
           {review?.plugin.hookReview?.definitions?.map((hook) => <div key={hook.key}>
             <strong>{hook.event}{hook.matcher ? ` · ${hook.matcher}` : ""}</strong>

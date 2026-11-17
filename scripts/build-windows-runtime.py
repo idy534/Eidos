@@ -140,7 +140,7 @@ def _install_node_resources(dependencies: Path, scratch: Path, system_root: Path
     # Use the app-local x64 release DLLs only. This keeps the NSIS install
     # per-user and leaves machine-wide redistributable installations alone.
     crt_archive = scratch / "msvc.vsix"
-    _download(CRT_URL, crt_archive, 3236248, CRT_SHA256)
+    _download(CRT_URL, crt_archive, 3224191, CRT_SHA256)
     crt = "Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT/"
     with ZipFile(crt_archive) as bundle:
         for entry in bundle.infolist():
@@ -236,7 +236,10 @@ def main() -> None:
         stage.mkdir(mode=0o700)
         python_root = scratch / "python"
         _run("uv", "python", "install", PYTHON_VERSION, "--install-dir", python_root, "--no-bin")
-        installations = [path for path in python_root.glob("cpython-*") if (path / "python.exe").is_file()]
+        installations = [
+            path for path in python_root.glob(f"cpython-{PYTHON_VERSION}-*")
+            if (path / "python.exe").is_file()
+        ]
         if len(installations) != 1:
             raise RuntimeError("uv did not install the expected Windows CPython layout")
         shutil.move(installations[0], stage / "python")

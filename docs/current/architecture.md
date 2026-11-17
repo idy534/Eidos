@@ -95,6 +95,12 @@ Schema v33 增加 `search_documents`、`search_fts`、`search_pending` 和 `sear
 
 Eidos 是一个本地桌面 Agent Runtime。系统包含 Electron Desktop、Python Runtime、SQLite、本地 Workspace 和远端 Model Provider。正式产品面向 macOS arm64。Windows x64 预览沿用相同的 typed IPC、stdio JSON-RPC 和业务状态机。
 
+Windows Runtime 通过受控文件句柄加载源码或打包版中的内置敏感扫描规则，统一换行符后校验 SHA-256。规则文件继承共享写权限时仍执行内容校验。规则缺失、文件类型无效或内容校验失败时，Runtime 拒绝启动。显式提供的规则文件仍校验所有者和 ACL。
+
+Windows Runtime 进程在启动时将新建文件和目录的默认所有者设为当前账户，管理员启动时也采用该账户。SQLite 和凭据继续按当前账户和私有 ACL 核验已有数据。系统 Skill 等启动资源的原子发布允许目标父目录的写共享，相关目录句柄仍禁止删除共享。
+
+存储进入 `health_only` 时，Runtime 完成诊断握手，`runtime/health` 返回原始存储错误码。此时不读取模型配置，`modelConfigured` 为 `false`，业务请求继续返回 `STORAGE_HEALTH_ONLY`。
+
 Renderer 是展示边界。Renderer 不能直接访问 Node 系统能力，也不能直接连接 Python Runtime。Electron Main 是 Desktop 和 Runtime 之间的控制边界。Python Runtime 是 Session、Run、Item、ToolCall、Approval、事件和副作用状态的业务协调边界。
 
 聊天排版沿用 `ExecutionFeed → MarkdownContent → react-markdown / CodeBlock`。ExecutionFeed 只给用户正文、过程文字和最终回答添加 `.eidos-chat-prose`；MarkdownContent 的可选 `className` 让其他复用方保持原样式。正文字体定义为 `--font-prose` token 并与侧栏项目名、Session 名共享；CSS 只覆盖正文字体、行距、字重和 Markdown 间距，字号、主题颜色、背景和容器布局继续沿用原规则。用户正文仍按原始换行显示；代码块仍保留空白和横向滚动。Renderer 没有增加字体文件、依赖、协议字段或持久化数据。
@@ -177,6 +183,8 @@ Renderer 的本地 CSS 由 `desktop/renderer/src/styles.css` 统一导入。该�
 公共控件负责 Button 的颜色、交互状态、焦点和禁用样式。产品不绘制焦点环：`--focus-ring` 统一为 `none`，键盘与鼠标聚焦都不出现绿色轮廓。Chromium 会把弹窗还原的焦点判成 `:focus-visible`，所以这个 token 是移除残留绿圈的唯一入口，各模块只引用它，不再各自定义轮廓。焦点位置改由悬停、选中和边框颜色表达。审批和计划模块只补充按钮排列与尺寸。Composer 的模型与审批模式选择器共用触发按钮和浮层基础规则。列表与选择卡使用 `--surface-selected`，普通悬停使用 `--surface-hover`；危险操作继续使用危险颜色。代码与 Mermaid 共用标题标签和复制控件。聊天专用 `.eidos-chat-prose` 保留独立范围，文件预览与其他 Markdown 不启用该范围。
 
 Workspace Dock 独立维护 Session 内容列和环境浮层。居中 Session 沿用原构建实际生效的单列布局，并由 `--session-content-width` 限制回答与 Composer 宽度。规划样式不再重复定义环境浮层，技能样式不再修改整个设置窗口。样式测试按统一入口读取模块；原生 Electron 定向检查验证最终计算样式和响应式布局。
+
+macOS 窗口使用 `transparent`、`vibrancy: "under-window"` 与 `titleBarStyle: "hidden"`；Windows 窗口使用不透明底色、原生 `default` 标题栏按钮并隐藏传统应用菜单栏，Renderer 通过 `:root[data-platform="windows"]` 与 `platform.ts` 适配实色侧栏、顶栏留白、Windows 盘符路径解析和快捷键文案。
 
 Electron Main 负责以下职责：
 
@@ -647,6 +655,8 @@ Project
 `workspaceRoot` 省略或为 null 时，Runtime 创建 projectless Session。默认工作空间是 `~/Eidos/YYYY-MM-DD/可读名称`，与 `EIDOS_DATA_DIR` 分离。Desktop 首次提交通过 `workspaceNameHint` 传递首行短文本；Runtime 统一清理名称并限制 UTF-8 字节长度：Composer 引用标记只保留标签，名称只保留各语言的字母、数字、`_` 和附着其上的组合符号，其余标点、符号、空白和控制字符统一替换为单个 `-`，因此名称在 Shell 中无需引号。早期规则生成的已有目录和创建记录保持原名，重放同一操作仍返回原目录。名称缺省时使用“新会话”，重名时使用 `-2`、`-3`，目录创建采用排他 mkdir。日期使用首次创建请求的本地日期，后续标题变化不移动目录。开发和测试可以通过 `EIDOS_PROJECTLESS_ROOT` 指定独立根目录。该 Session 不创建 Project、Worktree 或 Repository workspace，固定为 Local execution。Run 使用普通 Workspace permission profile，写权限只作用于当前工作空间。RunResources 仍创建文件工具、Shell、Skill、MCP 和 Plugin 资源。projectless Run 不注入 Project Rules 或 Repository Context，但仍提供自身工作目录和环境信息。Desktop 保留输出内容和文件预览，但 Workspace Dock 不展示 Files、Terminal 或 Review；Browser 仍可用。
 
 Schema v23 的 `projectless_workspace_creations` 保存新工作空间的操作 ID、目录分配和身份。重复请求复用首次路径；已保存身份的创建可以在重启后继续。目录已经存在但没有已提交身份时，Runtime 不接管该目录，而是分配下一个后缀。Session、创建完成状态和 `session.created` Event/Outbox 在同一事务提交。失败清理只删除已核验且仍为空的本次目录。子 Agent 继续借用父 Session 的工作空间。
+
+会话和目录创建预留记录保留完整的设备号与文件 ID。超出 SQLite 有符号整数范围的值写入带前缀的十六进制文本，原有整数记录继续可读，读取后用原始数值核验目录身份。
 
 本次 Alpha 更新不兼容或迁移旧无项目 Session。Runtime 在持有 state lock、恢复持久事实后，废弃旧 Projectless 根目录下的无项目 Session 和父子关联记录，并清理对应历史投影。该过程不启动旧 Run、不移动或删除旧工作空间文件，也不触碰 Project/Worktree Session。新版不保留旧路径回退或历史文件映射。
 

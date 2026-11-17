@@ -11,6 +11,7 @@ from pydantic import Field
 
 from eidos_runtime.db.database import Repository, WorkspaceIdentity, canonical_hash, now_ms
 from eidos_runtime.db.errors import OperationConflictError, StorageError, WorkspaceBoundaryError
+from eidos_runtime.db.file_identity import decode_file_identity, encode_file_identity
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 from eidos_runtime.workspace.projectless import (
     MAX_NEW_NAME_BYTES, creation_date, is_readable_workspace_name, readable_workspace_name,
@@ -25,8 +26,8 @@ class ProjectlessWorkspaceCreation(EidosFrozenStrictModel):
     suffix: JsonSafeInt = Field(ge=1)
     workspace_root: str = Field(min_length=1, max_length=4096)
     status: Literal["prepared", "created", "completed"]
-    workspace_dev: JsonSafeInt | None
-    workspace_inode: JsonSafeInt | None
+    workspace_dev: int | None = Field(ge=0)
+    workspace_inode: int | None = Field(ge=0)
     workspace_uid: JsonSafeInt | None
     created_at: JsonSafeInt = Field(ge=0)
 
@@ -113,7 +114,8 @@ class ProjectlessWorkspaceRepository(Repository):
                 """UPDATE projectless_workspace_creations
                    SET status = 'created', workspace_dev = ?, workspace_inode = ?, workspace_uid = ?
                    WHERE operation_id = ? AND status = 'prepared'""",
-                (identity.device, identity.inode, identity.owner, current.operation_id),
+                (encode_file_identity(identity.device), encode_file_identity(identity.inode),
+                 identity.owner, current.operation_id),
             )
             return self._read(connection, current.operation_id)
 
@@ -149,7 +151,11 @@ class ProjectlessWorkspaceRepository(Repository):
 
 def _creation(row: sqlite3.Row) -> ProjectlessWorkspaceCreation:
     try:
-        creation = ProjectlessWorkspaceCreation.model_validate(dict(row))
+        values = dict(row)
+        for field in ("workspace_dev", "workspace_inode"):
+            if values[field] is not None:
+                values[field] = decode_file_identity(values[field])
+        creation = ProjectlessWorkspaceCreation.model_validate(values)
         path = Path(creation.workspace_root)
         day = date.fromisoformat(path.parent.name)
         name = creation.base_name if creation.suffix == 1 else f"{creation.base_name}-{creation.suffix}"

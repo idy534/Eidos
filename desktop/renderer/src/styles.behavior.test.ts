@@ -299,3 +299,15 @@ describe("interactive color tokens", () => {
     );
   });
 });
+
+describe("windows platform styles", () => {
+  it("provides Windows font fallbacks and opaque, traffic-light-free overrides under data-platform=windows", () => {
+    expect(styles).toMatch(/--font-ui:[^;]*"Segoe UI Variable Text"[^;]*"Microsoft YaHei UI"[^;]*sans-serif;/);
+    expect(styles).toMatch(/--font-code:[^;]*"Cascadia Mono"[^;]*"Microsoft YaHei UI"[^;]*monospace;/);
+    expect(styles).toMatch(/:root\[data-platform="windows"\]\s*\{[^}]*--sidebar:\s*#eef0f4;/s);
+    expect(styles).toMatch(/:root\[data-platform="windows"\],\s*:root\[data-platform="windows"\] body,\s*:root\[data-platform="windows"\] #root\s*\{[^}]*background:\s*var\(--surface\)\s*!important;/s);
+    expect(styles).toMatch(/:root\[data-platform="windows"\] \.sidebar\s*\{[^}]*background:\s*var\(--sidebar\);[^}]*backdrop-filter:\s*none;/s);
+    expect(styles).toMatch(/:root\[data-platform="windows"\] \.sidebar-top-bar \.window-traffic-spacer\s*\{[^}]*width:\s*0\.5rem;/s);
+    expect(dockStyles).toMatch(/:root\[data-platform="windows"\] \.workspace-dock__header\s*\{[^}]*-webkit-app-region:\s*no-drag;/s);
+  });
+});

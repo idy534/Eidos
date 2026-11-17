@@ -191,7 +191,7 @@ export function AgentSettings({ ready, onCountChange, onShowToast }: {
                       })()}
                       {agent.definitionVersion && (
                         <span className="agent-meta-source" title={agent.source}>
-                          ~/{agent.source.split("/").slice(-2).join("/")}
+                          ~/{agent.source.split(/[\\/]/).filter(Boolean).slice(-2).join("/")}
                         </span>
                       )}
                     </div>

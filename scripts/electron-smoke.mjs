@@ -52,9 +52,9 @@ try {
   });
 
   assert.equal(code, 0, output);
-  assert.match(output, /Runtime initialized/);
+  assert.match(output, /"msg":"Runtime initialized"[^\r\n]*"storageState":"ready"/, output);
   assert.match(output, /Runtime shutdown complete/);
-  console.log("Electron smoke initialized Runtime and exited cleanly.");
+  console.log("Electron smoke initialized Runtime with storage ready and exited cleanly.");
 } finally {
-  await rm(temporaryRoot, { recursive: true, force: true });
+  await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }

@@ -36,13 +36,14 @@ def _application(
     return store, application, str(session["id"]), workspace
 
 
+@pytest.mark.parametrize('newline', ['\n', '\r\n'])
 def test_text_file_selection_is_persisted_and_read_with_line_bounds(
-    tmp_path: Path,
+    tmp_path: Path, newline: str,
 ) -> None:
     store, application, session_id, workspace = _application(tmp_path)
     try:
         source = workspace / "notes.txt"
-        source.write_text("one\ntwo\nthree\n", encoding="utf-8")
+        source.write_bytes(newline.join(('one', 'two', 'three', '')).encode('utf-8'))
 
         prepared = application.prepare(InputPrepareRequest(
             sessionId=session_id,
@@ -56,7 +57,7 @@ def test_text_file_selection_is_persisted_and_read_with_line_bounds(
         assert prepared.reference.kind == "file"
         assert prepared.reference.status == "content"
         assert prepared.reference.label == "notes.txt:2-3"
-        assert preview.text == "two\nthree\n"
+        assert preview.text == newline.join(('two', 'three', ''))
         assert preview.reference == prepared.reference
     finally:
         store.close()
@@ -69,7 +70,7 @@ def test_same_named_files_remain_distinct_after_a_run_and_restart(tmp_path: Path
         # The contents deliberately match: the source path must distinguish them.
         for source in sources:
             source.parent.mkdir()
-            source.write_text("Shared instructions\n", encoding="utf-8")
+            source.write_bytes(b"Shared instructions\n")
         first = application.prepare(InputPrepareRequest(
             sessionId=session_id, kind="file", source=str(sources[0]),
         )).reference
@@ -134,20 +135,23 @@ def test_directory_selection_is_location_only_and_bounded(tmp_path: Path) -> Non
         store.close()
 
 
-def test_image_selection_returns_a_bounded_thumbnail(tmp_path: Path) -> None:
+@pytest.mark.parametrize(('kind', 'origin'), [('file', 'selected'), ('image', 'clipboard')])
+def test_image_selection_returns_a_bounded_thumbnail(tmp_path: Path, kind: str, origin: str) -> None:
     store, application, session_id, workspace = _application(tmp_path)
     try:
-        source = workspace / "diagram.png"
+        source = workspace / "项目 截图.png"
         Image.new("RGB", (2, 3), "red").save(source, format="PNG")
 
         prepared = application.prepare(InputPrepareRequest(
             sessionId=session_id,
-            kind="image",
+            kind=kind,
             source=str(source),
+            origin=origin,
         ))
         preview = application.read(InputReadRequest(id=prepared.reference.id))
 
         assert prepared.reference.kind == "image"
+        assert prepared.reference.source == ("clipboard:image" if origin == "clipboard" else str(source.resolve()))
         assert prepared.reference.status == "content"
         assert prepared.reference.size > 0
         assert preview.thumbnail is not None

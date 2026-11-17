@@ -14,6 +14,7 @@ from eidos_runtime.db.errors import (
     StorageError,
     WorkspaceIdentityChangedError,
 )
+from eidos_runtime.db.file_identity import decode_file_identity
 
 
 _SESSION_WORKSPACE_SELECT = """
@@ -69,8 +70,8 @@ def _identity_from_session_row(row: sqlite3.Row) -> WorkspaceIdentity:
             raise StorageError("workspace identity is unavailable")
         return WorkspaceIdentity(
             path=Path(row["workspace_root"]),
-            device=row["workspace_dev"],
-            inode=row["workspace_inode"],
+            device=decode_file_identity(row["workspace_dev"]),
+            inode=decode_file_identity(row["workspace_inode"]),
             owner=row["workspace_uid"],
         )
 

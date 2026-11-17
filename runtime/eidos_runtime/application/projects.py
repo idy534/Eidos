@@ -17,6 +17,7 @@ from eidos_runtime.db.errors import (
 )
 from eidos_runtime.domain.project import Project
 from eidos_runtime.git.errors import WorktreeError
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.persistence.worktrees import ProjectWorktreeRepository
 from eidos_runtime.protocol.methods import (
     ProjectCreateRequestDto,
@@ -106,11 +107,13 @@ class ProjectApplication:
     def _validated_roots(self, entries: list[ProjectRootInput]) -> tuple[ProjectRoot, ...]:
         from eidos_runtime.git.discovery import GitRepositoryDiscoveryService
         from eidos_runtime.git.backend import DulwichGitBackend
-        from eidos_runtime.workspace.reader import capture_workspace_identity
+        from eidos_runtime.workspace.reader import capture_directory_identity, capture_workspace_identity
         roots = []
         discovery_service = GitRepositoryDiscoveryService(DulwichGitBackend())
         for entry in entries:
             identity = capture_workspace_identity(entry.path)
+            if local_files.WINDOWS:
+                capture_directory_identity(identity.path)
             if self._repository.database.workspace_overlaps_data(identity.path):
                 raise ValueError("project folder overlaps Eidos data")
             git = discovery_service.resolve(identity.path)

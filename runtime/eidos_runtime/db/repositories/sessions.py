@@ -21,6 +21,7 @@ from eidos_runtime.db.errors import (
     WorkspaceBoundaryError,
 )
 from eidos_runtime.db.events import append_event, event_from_row
+from eidos_runtime.db.file_identity import encode_file_identity
 from eidos_runtime.db.mappers import (
     _json_bytes,
     _run_from_row,
@@ -170,6 +171,8 @@ class SessionRepository(Repository):
         ):
             raise WorkspaceBoundaryError("workspace overlaps runtime data")
         metadata = workspace.stat()
+        workspace_dev = encode_file_identity(metadata.st_dev)
+        workspace_inode = encode_file_identity(metadata.st_ino)
         session_id = session_id or str(uuid.uuid4())
         now = _now_ms()
         if title is not None and (not title or len(title) > 60 or len(title.encode("utf-8")) > 120):
@@ -207,7 +210,7 @@ class SessionRepository(Repository):
                 if reservation is None or reservation["status"] != "created" or (
                     reservation["session_id"], reservation["workspace_root"],
                     reservation["workspace_dev"], reservation["workspace_inode"], reservation["workspace_uid"],
-                ) != (session_id, str(workspace), metadata.st_dev, metadata.st_ino, metadata.st_uid):
+                ) != (session_id, str(workspace), workspace_dev, workspace_inode, metadata.st_uid):
                     raise WorkspaceBoundaryError("projectless workspace identity changed")
             if worktree_id is not None:
                 worktree = connection.execute(
@@ -266,8 +269,8 @@ class SessionRepository(Repository):
                 (
                     session_id,
                     str(workspace),
-                    metadata.st_dev,
-                    metadata.st_ino,
+                    workspace_dev,
+                    workspace_inode,
                     metadata.st_uid,
                     worktree_id,
                     execution_mode.value,

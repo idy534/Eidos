@@ -22,6 +22,7 @@ import type { SyntheticEvent } from "react";
 import type { ReactNode } from "react";
 import stripAnsi from "strip-ansi";
 import { artifactPath, useArtifacts, useNearViewport, usePreviewUrl } from "./ArtifactContext.js";
+import { isAbsoluteFilesystemPath, joinWorkspacePath } from "../platform.js";
 
 import type {
   ApprovalRequest,
@@ -1777,8 +1778,8 @@ function viewImageFacts(toolCall: ToolCall, executionRoot: string | undefined) {
   const displayName = rawPath ? pathBasename(rawPath) : "图像";
   const meta = [formatMime(stringField(data, "mime")), formatFileSize(numberField(data, "size"))].filter(Boolean).join(" · ");
   const absolutePath = stringField(data, "path")
-    || (executionRoot && rawPath && !rawPath.startsWith("/")
-      ? `${executionRoot.replace(/\/+$/, "")}/${rawPath.replace(/^\.?\/+/, "")}`
+    || (executionRoot && rawPath && !isAbsoluteFilesystemPath(rawPath)
+      ? joinWorkspacePath(executionRoot, rawPath)
       : rawPath);
   return {
     rawPath,

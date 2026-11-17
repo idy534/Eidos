@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import mermaid from "mermaid";
 import { DropdownMenu } from "./DropdownMenu.js";
+import { formatPlatformShortcut } from "../platform.js";
 import { Tooltip } from "./Tooltip.js";
 import {
   CopyIcon,
@@ -196,37 +197,37 @@ export function MermaidModal({
         <div className="mermaid-modal-header">
           <span className="mermaid-badge">Mermaid 预览</span>
           <div className="mermaid-modal-zoom-bar" role="toolbar" aria-label="缩放控制">
-            <Tooltip content="缩小" shortcut="Cmd -">
+            <Tooltip content="缩小" shortcut={formatPlatformShortcut("Cmd -")}>
               <button
                 type="button"
                 className="code-copy-btn mermaid-zoom-btn"
                 onClick={handleZoomOut}
                 disabled={zoom <= ZOOM_MIN}
                 aria-label="缩小"
-                title="缩小 (- / Cmd -)"
+                title={`缩小 (- / ${formatPlatformShortcut("Cmd -")})`}
               >
                 <ZoomOutIcon className="copy-icon-svg" />
               </button>
             </Tooltip>
-            <Tooltip content="重置缩放为 100%" shortcut="Cmd 0">
+            <Tooltip content="重置缩放为 100%" shortcut={formatPlatformShortcut("Cmd 0")}>
               <button
                 type="button"
                 className="mermaid-zoom-indicator"
                 onClick={handleResetZoom}
                 aria-label={`当前缩放 ${Math.round(zoom * 100)}%，点击重置为 100%`}
-                title="重置缩放为 100% (0 / Cmd 0)"
+                title={`重置缩放为 100% (0 / ${formatPlatformShortcut("Cmd 0")})`}
               >
                 {Math.round(zoom * 100)}%
               </button>
             </Tooltip>
-            <Tooltip content="放大" shortcut="Cmd +">
+            <Tooltip content="放大" shortcut={formatPlatformShortcut("Cmd +")}>
               <button
                 type="button"
                 className="code-copy-btn mermaid-zoom-btn"
                 onClick={handleZoomIn}
                 disabled={zoom >= ZOOM_MAX}
                 aria-label="放大"
-                title="放大 (+ / Cmd +)"
+                title={`放大 (+ / ${formatPlatformShortcut("Cmd +")})`}
               >
                 <ZoomInIcon className="copy-icon-svg" />
               </button>
@@ -238,7 +239,7 @@ export function MermaidModal({
                 onClick={handleResetZoom}
                 disabled={zoom === ZOOM_DEFAULT}
                 aria-label="重置缩放"
-                title="重置为 100% (0 / Cmd 0)"
+                title={`重置为 100% (0 / ${formatPlatformShortcut("Cmd 0")})`}
               >
                 <ResetZoomIcon className="copy-icon-svg" />
               </button>

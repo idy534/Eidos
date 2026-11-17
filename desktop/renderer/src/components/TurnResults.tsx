@@ -1,4 +1,4 @@
-import { revealFileLabel } from "../platform.js";
+import { pathBasename, revealFileLabel } from "../platform.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseDiff } from "react-diff-view";
 import type { Item, Run } from "../contracts.js";
@@ -94,7 +94,7 @@ function stringArray(value: unknown): string[] {
 }
 
 function fileName(path: string): string {
-  return path.split("/").at(-1) || path;
+  return pathBasename(path) || path;
 }
 
 function fileExtension(path: string): string {

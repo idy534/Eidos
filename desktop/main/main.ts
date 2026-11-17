@@ -275,20 +275,29 @@ function isReviewCommentCreateInput(value: unknown): value is ReviewCommentCreat
 // ---------------------------------------------------------------------------
 
 function createWindow(): BrowserWindow {
+  const isMac = process.platform === "darwin";
   const window = new BrowserWindow({
     width: 1180,
     height: 800,
     minWidth: 800,
     minHeight: 600,
     show: false,
-    transparent: true,
-    backgroundColor: "#00000000",
-    vibrancy: "under-window",
-    visualEffectState: "active",
     title: "Eidos",
-    ...(process.platform === "darwin"
-      ? { titleBarStyle: "hidden", trafficLightPosition: { x: 16, y: 16 } }
-      : { titleBarStyle: "default" }),
+    ...(isMac
+      ? {
+          transparent: true,
+          backgroundColor: "#00000000",
+          vibrancy: "under-window" as const,
+          visualEffectState: "active" as const,
+          titleBarStyle: "hidden" as const,
+          trafficLightPosition: { x: 16, y: 16 },
+        }
+      : {
+          transparent: false,
+          backgroundColor: "#f8f9fb",
+          titleBarStyle: "default" as const,
+          autoHideMenuBar: true,
+        }),
     webPreferences: {
       preload: path.join(currentDirectory, "preload.cjs"),
       contextIsolation: true,
@@ -297,6 +306,9 @@ function createWindow(): BrowserWindow {
       plugins: true,
     },
   });
+  if (!isMac) {
+    window.setMenuBarVisibility(false);
+  }
 
   window.webContents.on("context-menu", (_event, params) => {
     if (!params.isEditable && !params.selectionText) return;
@@ -1317,7 +1329,7 @@ ipcMain.handle(IPC.INPUT_PASTE_IMAGE, async (event, source: unknown) => {
   } else {
     ({ bytes, extension } = await readPastedImageFile(source, {
       clipboardPaths: process.platform === "win32"
-        ? windowsClipboardFilePaths((format) => clipboard.readBuffer(format))
+        ? await windowsClipboardFilePaths((format) => clipboard.readBuffer(format))
         : clipboardFilePaths((format) => clipboard.read(format)),
       dataDirectory: runtimeDataDirectory(),
     }));

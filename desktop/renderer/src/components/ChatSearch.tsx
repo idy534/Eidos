@@ -8,6 +8,7 @@ import { ToastContainer } from "./ToastContainer.js";
 import { CloseIcon } from "./MenuIcons.js";
 import { FolderIcon } from "./InputPicker.js";
 import { formatSessionTime } from "./SidebarTooltip.js";
+import { pathBasename } from "../platform.js";
 
 function SearchSnippet({ text, query }: { text: string; query: string }) {
   const matches = findText(text, query, DEFAULT_FIND_OPTIONS).matches;
@@ -44,7 +45,7 @@ export function ChatSearch({ mode, sessionId, projects, sessions = [], onClose, 
   const recentTimes = useMemo(() => recentSessions.map((session) => formatSessionTime(session.updatedAt || session.createdAt)), [recentSessions, now]);
   const displayedHits: SearchHit[] = recent ? recentSessions.map((session) => ({
     sessionId: session.id, title: session.title?.trim() || "新会话", itemId: null, snippet: "", matchKind: "title", occurrence: 0,
-    projectName: session.project ? projects.find((project) => project.id === session.project?.id)?.name?.trim() || session.project.name?.trim() || session.project.workspaceRoot.split("/").filter(Boolean).at(-1) || "项目" : "",
+    projectName: session.project ? projects.find((project) => project.id === session.project?.id)?.name?.trim() || session.project.name?.trim() || pathBasename(session.project.workspaceRoot) || "项目" : "",
   })) : response?.items ?? [];
   const dialog = useRef<HTMLDialogElement>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -134,7 +135,7 @@ export function ChatSearch({ mode, sessionId, projects, sessions = [], onClose, 
         if (event.key === "ArrowUp") { event.preventDefault(); setSelected((index) => Math.max(0, index - 1)); }
         if (event.key === "Enter") { event.preventDefault(); select(selected); }
       }} /><select className="chat-search-scope" aria-label="搜索范围" value={scope} onChange={(event) => { setScope(event.target.value); setCursor(undefined); setPrevious([]); }}>
-      <option value="">所有项目</option><option value="projectless">无项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name || project.workspaceRoot.split("/").at(-1)}</option>)}
+      <option value="">所有项目</option><option value="projectless">无项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name || pathBasename(project.workspaceRoot)}</option>)}
     </select><button className="chat-search-close-btn" aria-label="关闭搜索" onClick={onClose}><CloseIcon /></button></div>
     <div ref={results} className={`chat-search-results${recent ? " chat-search-results--recent" : ""}`} aria-busy={busy}>
       {error && (

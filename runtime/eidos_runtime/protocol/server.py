@@ -2100,6 +2100,7 @@ class RuntimeServer:
             return
 
         startup_started = time.perf_counter()
+        model_configured = False
         try:
             with startup_phase("storage"):
                 self.store.initialize()
@@ -2138,6 +2139,7 @@ class RuntimeServer:
                     skill_management.cleanup()
                 with startup_phase("model_config"):
                     self.model_config.initialize()
+                    model_configured = self.model is not None or bool(self.model_config.list())
                 self.async_kernel = RuntimeAsyncKernel(
                     resource_registry=self.supervisor.resources,
                 )
@@ -2224,10 +2226,7 @@ class RuntimeServer:
                     "runtimeVersion": __version__,
                     "capabilities": {
                         "runShell": self.shell_available,
-                        "modelConfigured": (
-                            self.model is not None
-                            or bool(self.model_config.list())
-                        ),
+                        "modelConfigured": model_configured,
                     },
                 },
             )

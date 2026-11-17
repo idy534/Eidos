@@ -3,6 +3,8 @@ from __future__ import annotations
 from eidos_runtime.infrastructure import local_files
 
 from functools import lru_cache
+from hashlib import sha256
+import os
 from pathlib import Path
 import re
 import stat
@@ -18,6 +20,9 @@ from eidos_runtime.protocol.schemas import ClosedModel
 
 MAX_SCAN_BYTES = 512 * 1024
 SCAN_TIMEOUT_SECONDS = 1.0
+# SHA-256 of the built-in resource with LF line endings. Update with the rules.
+_BUILTIN_RULES_SHA256 = "20b9eb6a33a39abb28520fbe0e223290d3b221ea75af425064111ee847e5ef70"
+_MAX_BUILTIN_RULES_BYTES = 64 * 1024
 _INCOMPLETE_SECRET_ASSIGNMENT = re.compile(
     r"(?is)\b(?:password|passwd|token|secret)\s*[:=]\s*$"
 )
@@ -61,16 +66,28 @@ class ScanResult(ClosedModel):
 
 class SensitiveScanner:
     def __init__(self, rules_path: Path | None = None) -> None:
-        path = rules_path or Path(__file__).with_name("sensitive_rules.json")
+        path = rules_path if rules_path is not None else Path(__file__).with_name("sensitive_rules.json")
         try:
             metadata = path.lstat()
-            if (
-                path.is_symlink()
-                or not stat.S_ISREG(metadata.st_mode)
-                or not local_files.trusted_asset(path, metadata)
-            ):
-                raise ValueError("rules resource is not read-only")
-            rules = SensitiveRuleSet.model_validate_json(path.read_text(encoding="utf-8"))
+            if local_files.is_link(metadata) or not stat.S_ISREG(metadata.st_mode):
+                raise ValueError("rules resource is not a regular file")
+            if local_files.WINDOWS and rules_path is None:
+                # A checkout or bundle can inherit shared NTFS write permissions.
+                # Verify the exact bytes passed to the parser against the built-in digest.
+                with os.fdopen(local_files.open_file(path), "rb") as resource:
+                    raw = resource.read(_MAX_BUILTIN_RULES_BYTES + 1)
+                normalized = raw.replace(b"\r\n", b"\n")
+                if (
+                    len(raw) > _MAX_BUILTIN_RULES_BYTES
+                    or sha256(normalized).hexdigest() != _BUILTIN_RULES_SHA256
+                ):
+                    raise ValueError("built-in rules resource failed integrity verification")
+                contents = normalized.decode("utf-8")
+            else:
+                if not local_files.trusted_asset(path, metadata):
+                    raise ValueError("rules resource has an untrusted owner or permissions")
+                contents = path.read_text(encoding="utf-8")
+            rules = SensitiveRuleSet.model_validate_json(contents)
             ordered = sorted(rules.rules, key=lambda rule: (rule.priority, rule.id))
             if (
                 len({rule.id for rule in ordered}) != len(ordered)

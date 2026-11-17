@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 export const MAX_PASTED_IMAGE_BYTES = 10 * 1024 * 1024;
 
@@ -14,12 +16,12 @@ export function clipboardFilePaths(read: (format: string) => string): string[] {
   const filenames = readFormat(read, "NSFilenamesPboardType");
   for (const match of filenames.matchAll(/<string>([^<]*)<\/string>/g)) {
     const value = decodeXmlText(match[1] ?? "");
-    if (path.isAbsolute(value)) found.add(path.normalize(value));
+    if (path.posix.isAbsolute(value)) found.add(path.posix.normalize(value));
   }
   const url = readFormat(read, "public.file-url").trim();
   if (url.startsWith("file://")) {
     try {
-      found.add(path.normalize(fileURLToPath(url)));
+      found.add(path.posix.normalize(fileURLToPath(url, { windows: false })));
     } catch {
       // A malformed URL adds nothing.
     }
@@ -27,13 +29,49 @@ export function clipboardFilePaths(read: (format: string) => string): string[] {
   return [...found];
 }
 
-export function windowsClipboardFilePaths(read: (format: string) => Buffer): string[] {
-  // FileNameW is a registered Windows format for one Unicode file name.
+const MAX_CLIPBOARD_FILES = 20;
+const MAX_CLIPBOARD_PATH = 4096;
+
+function windowsLocalClipboardPath(value: unknown): value is string {
+  return typeof value === "string" && value.length <= MAX_CLIPBOARD_PATH
+    && /^[A-Za-z]:[\\/][^:\x00-\x1f]+$/.test(value);
+}
+
+async function readWindowsClipboardFileDropList(): Promise<unknown[]> {
+  const systemRoot = process.env.SystemRoot;
+  if (!windowsLocalClipboardPath(systemRoot)) return [];
+  const powerShellHome = path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0");
+  const script = `
+    $ErrorActionPreference = 'Stop'
+    [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+    Add-Type -AssemblyName System.Windows.Forms
+    $files = @([System.Windows.Forms.Clipboard]::GetFileDropList() | Select-Object -First ${MAX_CLIPBOARD_FILES})
+    [Console]::Out.Write((ConvertTo-Json -InputObject $files -Compress))
+  `;
+  const { stdout } = await promisify(execFile)(path.win32.join(powerShellHome, "powershell.exe"),
+    ["-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+      encoding: "utf8", windowsHide: true, timeout: 5_000, maxBuffer: 512 * 1024,
+      env: { SystemRoot: systemRoot, PSModulePath: path.win32.join(powerShellHome, "Modules") },
+    });
+  const files: unknown = JSON.parse(stdout);
+  return Array.isArray(files) ? files : [];
+}
+
+export async function windowsClipboardFilePaths(
+  read: (format: string) => Buffer,
+  readFileDropList: () => Promise<unknown[]> = readWindowsClipboardFileDropList,
+): Promise<string[]> {
+  const dropList = await readFileDropList().catch(() => []);
+  if (dropList.length > 0) {
+    return dropList.slice(0, MAX_CLIPBOARD_FILES).filter(windowsLocalClipboardPath)
+      .map((filename) => path.win32.normalize(filename));
+  }
+  // Some applications only publish the legacy single-file format.
   try {
     const value = read("FileNameW");
-    if (value.length > 8194 || value.length % 2 !== 0) return [];
+    if (value.length > 2 * (MAX_CLIPBOARD_PATH + 1) || value.length % 2 !== 0) return [];
     const filename = value.toString("utf16le").split("\0", 1)[0] ?? "";
-    return /^[A-Za-z]:[\\/][^:\x00-\x1f]*$/.test(filename) ? [path.win32.normalize(filename)] : [];
+    return windowsLocalClipboardPath(filename) ? [path.win32.normalize(filename)] : [];
   } catch {
     return [];
   }

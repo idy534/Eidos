@@ -5,6 +5,7 @@ import { Button } from "./Button.js";
 import { FieldError } from "./FieldError.js";
 import { WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
+import { pathBasename } from "../platform.js";
 
 export interface ProjectEditorDialogProps {
   open: boolean;
@@ -20,7 +21,7 @@ export interface ProjectEditorDialogProps {
   getFallbackFocus?: (() => HTMLElement | null) | undefined;
 }
 
-const folderName = (path: string) => path.split("/").filter(Boolean).at(-1) || path;
+const folderName = (path: string) => pathBasename(path) || path;
 
 export function ProjectEditorDialog({ open, project, sourceFolder, busy = false, error,
   onSave, onSelectFolder, onCancel, onRemove, canRemove = false, getFallbackFocus,

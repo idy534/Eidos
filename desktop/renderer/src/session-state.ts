@@ -10,6 +10,7 @@ import type {
 export { terminalRunPresentation, type RunStatusPresentation } from "./run-presentation.js";
 import { mergeContextCompactions } from "./context-compaction.js";
 import { mergeModelRetries } from "./model-retry.js";
+import { pathBasename } from "./platform.js";
 
 
 export interface ProjectSessionGroup {
@@ -182,7 +183,7 @@ export function groupSessionsByProject(
 }
 
 function basename(path: string): string {
-  return path.split("/").filter(Boolean).at(-1) ?? path;
+  return pathBasename(path);
 }
 
 
@@ -486,6 +487,7 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   SIDEBAR_PERSISTENCE_FAILED: "置顶保存失败，请重试。",
   PROJECT_WORKTREE_RECOVERY_REQUIRED: "项目的 Managed Worktree 仍需恢复，暂时不能删除项目。",
   PROJECT_PERSISTENCE_FAILED: "项目状态写入失败，请查看 Runtime 日志。",
+  PROJECT_WORKSPACE_INVALID: "项目文件夹不可用。请检查所选文件夹后重试。",
   MODEL_NOT_AVAILABLE: "所选模型当前不可用，请重新选择。",
   INTERNAL_ERROR: "Runtime 遇到内部错误，请查看诊断日志。",
 };

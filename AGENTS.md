@@ -9,7 +9,8 @@
 当前代码和测试是实现事实；历史 Phase、PRD 和 TDD 只提供背景。
 修改已实现行为时必须同步测试和 `docs/current/`。
 ## 2. Product boundary
-Eidos 是可独立安装的 macOS 桌面 Agent Runtime。
+Eidos 是可独立安装的桌面 Agent Runtime，正式支持 macOS（当前发布目标为 Apple Silicon arm64），兼容 Windows（当前为 Windows 11 x64、本地 NTFS 预览）。
+Windows 适配必须保留既有 macOS 构建、打包、启动、执行和退出流程，并维持原生 Seatbelt、审批和文件身份核验等执行边界。平台差异应收敛在构建配置与对应的平台实现中。修改共享路径时，按第 26 节在受影响的平台验证对应行为，并说明实际验证范围。
 目标能力：多项目、多 Session、多编码线程、独立 Git Worktree、多 Provider、多 Model Profile、代码理解、搜索、修改、测试、完整 Diff、Checkpoint、Rewind、Fork、Sandbox、权限审查、长任务恢复、Skill、Plugin、MCP、有限并行 Agent、日志、诊断、备份、迁移和升级。
 优先完成可靠的产品闭环，不为假想需求提前构建复杂抽象。
 不要以理论上的绝对安全阻断主要流程；已建立的安全边界必须 fail closed。

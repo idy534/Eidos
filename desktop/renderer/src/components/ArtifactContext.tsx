@@ -1,5 +1,6 @@
 import type { ProjectRootDto } from "../../../shared/project-workspaces.js";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { isAbsoluteFilesystemPath, isWindowsDrivePath, joinWorkspacePath } from "../platform.js";
 import { getOfficialFileIcon } from "./FileIcons.js";
 import type { ToastType } from "./ToastContainer.js";
 import { Tooltip } from "./Tooltip.js";
@@ -31,22 +32,39 @@ const Context = createContext<ArtifactActions | undefined>(undefined);
 export const ArtifactProvider = Context.Provider;
 export const useArtifacts = () => useContext(Context);
 
+function normalizeWindowsFileUrlPath(pathname: string): string {
+  return /^\/[a-zA-Z]:[/\\]/.test(pathname) ? pathname.slice(1) : pathname;
+}
+
 /** Resolve links against the displayed document; Runtime performs the authoritative read. */
 export function artifactPath(href: string, root: string, documentPath?: string, literal = false): string | undefined {
   try {
     if (!href || (!literal && href.startsWith("#"))) return undefined;
     let value = literal || href.startsWith("file://") ? href : decodeURIComponent(href);
-    if (!literal && /^[a-z][a-z\d+.-]*:/i.test(value) && !value.startsWith("file://")) return undefined;
+    if (!literal && /^[a-z][a-z\d+.-]*:/i.test(value) && !value.startsWith("file://") && !isWindowsDrivePath(value)) return undefined;
     if (!literal && value.startsWith("file://")) {
       const url = new URL(value);
       if (url.hostname) return undefined;
       value = decodeURIComponent(url.pathname);
+      if (isWindowsDrivePath(root)) value = normalizeWindowsFileUrlPath(value);
     }
     if (!literal) value = value.replace(/#.*$/, "").replace(/:\d+(?::\d+)?$/, "");
-    if (value.startsWith("/")) {
+    if (isWindowsDrivePath(value)) {
+      if (!isWindowsDrivePath(root)) return undefined;
+      const normValue = value.replaceAll("\\", "/");
+      const normRoot = root.replaceAll("\\", "/").replace(/\/+$/, "");
+      if (!normValue.toLowerCase().startsWith(`${normRoot.toLowerCase()}/`)) return undefined;
+      value = normValue.slice(normRoot.length + 1);
+    } else if (value.startsWith("/")) {
       if (!value.startsWith(root.replace(/\/$/, "") + "/")) return undefined;
       value = value.slice(root.replace(/\/$/, "").length + 1);
-    } else if (documentPath) value = documentPath.split("/").slice(0, -1).concat(value).join("/");
+    } else {
+      if (isWindowsDrivePath(root)) {
+        value = value.replaceAll("\\", "/");
+        documentPath = documentPath?.replaceAll("\\", "/");
+      }
+      if (documentPath) value = documentPath.split("/").slice(0, -1).concat(value).join("/");
+    }
     const parts: string[] = [];
     for (const part of value.split("/")) {
       if (part === "..") { if (!parts.length) return undefined; parts.pop(); }
@@ -65,7 +83,8 @@ export function workspaceFileLink(href: string, root: string, documentPath?: str
       if (!documentPath) return undefined;
       const url = new URL(value);
       if (url.hostname) return undefined;
-      value = url.pathname + url.hash;
+      const pathname = isWindowsDrivePath(root) ? normalizeWindowsFileUrlPath(url.pathname) : url.pathname;
+      value = pathname + url.hash;
     }
     const hashIndex = value.indexOf("#");
     const fragment = hashIndex < 0 ? undefined : value.slice(hashIndex + 1);
@@ -81,8 +100,9 @@ export function workspaceFileLink(href: string, root: string, documentPath?: str
     if (line !== undefined && (!Number.isSafeInteger(line) || line < 1)) return undefined;
     if (column !== undefined && (!Number.isSafeInteger(column) || column < 1)) return undefined;
     value = decodeURIComponent(value);
-    if (/^[a-z][a-z\d+.-]*:/i.test(value) || value.startsWith("//")) return undefined;
-    if (!documentPath && !value.startsWith("/")) return undefined;
+    if ((/^[a-z][a-z\d+.-]*:/i.test(value) && !isWindowsDrivePath(value)) || value.startsWith("//")) return undefined;
+    if (isWindowsDrivePath(root) && value.startsWith("\\\\")) return undefined;
+    if (!documentPath && !(value.startsWith("/") || isWindowsDrivePath(value))) return undefined;
     const path = artifactPath(value, root, documentPath, true);
     return path && path.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(path) ? {
       path,
@@ -102,14 +122,12 @@ export function displayFilePath(
     ? `:${position.line}${position.column ? `:${position.column}` : ""}`
     : "";
 
-  if (path.startsWith("/") || /^[a-zA-Z]:[/\\]/.test(path)) {
+  if (isAbsoluteFilesystemPath(path)) {
     return `${path}${lineSuffix}`;
   }
 
-  if (root && (root.startsWith("/") || /^[a-zA-Z]:[/\\]/.test(root))) {
-    const cleanRoot = root.replace(/\/+$/, "");
-    const cleanPath = path.replace(/^\.?\/+/, "");
-    return `${cleanRoot}/${cleanPath}${lineSuffix}`;
+  if (root && isAbsoluteFilesystemPath(root)) {
+    return `${joinWorkspacePath(root, path)}${lineSuffix}`;
   }
 
   return `${path}${lineSuffix}`;
@@ -168,7 +186,7 @@ export interface ImageTarget {
 export function resolveImageTarget(src: string, actions: ArtifactActions, documentPath?: string): ImageTarget | undefined {
   const primary = artifactPath(src, actions.executionRoot, documentPath);
   if (primary) return { path: primary, root: actions.executionRoot, ...(actions.rootId ? { rootId: actions.rootId } : {}) };
-  if (documentPath || !(src.startsWith("/") || src.startsWith("file://"))) return undefined;
+  if (documentPath || !(src.startsWith("/") || isWindowsDrivePath(src) || src.startsWith("file://"))) return undefined;
   for (const root of actions.roots ?? []) {
     if (root.path === actions.executionRoot) continue;
     const path = artifactPath(src, root.path);
@@ -276,7 +294,10 @@ export function ArtifactLink({ href, documentPath, children }: { href?: string; 
     if (fallbackPath.startsWith("file://")) {
       try {
         const url = new URL(fallbackPath);
-        if (!url.hostname) fallbackPath = decodeURIComponent(url.pathname);
+        if (!url.hostname) {
+          fallbackPath = decodeURIComponent(url.pathname);
+          if (isWindowsDrivePath(actions.executionRoot)) fallbackPath = normalizeWindowsFileUrlPath(fallbackPath);
+        }
       } catch { /* keep href */ }
     }
     return (

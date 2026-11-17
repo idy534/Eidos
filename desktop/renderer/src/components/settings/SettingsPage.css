@@ -1014,3 +1014,11 @@
     white-space: normal;
   }
 }
+
+:root[data-platform="windows"] .settings-page-header {
+  -webkit-app-region: no-drag;
+}
+
+:root[data-platform="windows"] .workbench.workbench--settings .settings-page-header {
+  padding-left: 1.5rem;
+}

@@ -83,3 +83,46 @@ test("displayFilePath prioritizes absolute path when execution root is absolute 
     "夏威夷旅行见闻.pptx",
   );
 });
+
+test("preserves literal backslashes in POSIX workspace paths", () => {
+  assert.deepEqual(
+    workspaceFileLink("a%5Cb.md", "/workspace", "docs\\notes/README.md"),
+    { path: "docs\\notes/a\\b.md" },
+  );
+  assert.equal(displayFilePath("a\\b.md", "/work\\space"), "/work\\space/a\\b.md");
+});
+
+test("resolves Windows drive paths and file URLs in workspaceFileLink and displayFilePath", () => {
+  assert.deepEqual(
+    workspaceFileLink("D:\\Agent Framework\\Eidos\\src\\app.ts:42:5", "D:\\Agent Framework\\Eidos"),
+    { path: "src/app.ts", line: 42, column: 5 },
+  );
+  assert.deepEqual(
+    workspaceFileLink("d:/AGENT%20FRAMEWORK/Eidos/src/app.ts#L19C3", "D:\\Agent Framework\\Eidos"),
+    { path: "src/app.ts", line: 19, column: 3 },
+  );
+  assert.deepEqual(
+    workspaceFileLink("file:///D:/workspace/docs/My%20Guide.md:3:2", "D:\\workspace", "docs/README.md"),
+    { path: "docs/My Guide.md", line: 3, column: 2 },
+  );
+  assert.equal(
+    workspaceFileLink("D:\\outside\\app.ts:42", "D:\\workspace"),
+    undefined,
+  );
+  assert.equal(
+    workspaceFileLink("C:\\workspace\\app.ts:42", "D:\\workspace"),
+    undefined,
+  );
+  assert.equal(
+    workspaceFileLink("\\\\server\\share\\app.ts", "D:\\workspace"),
+    undefined,
+  );
+  assert.equal(
+    displayFilePath("src/app.ts", "D:\\workspace", { line: 42, column: 5 }),
+    "D:\\workspace\\src\\app.ts:42:5",
+  );
+  assert.equal(
+    displayFilePath("D:\\already\\absolute\\path.txt", "D:\\workspace"),
+    "D:\\already\\absolute\\path.txt",
+  );
+});

@@ -88,6 +88,26 @@ class PhaseTwoStorageTests(unittest.TestCase):
         server.close()
         first.close()
 
+    def test_unsafe_storage_exposes_health_without_loading_model_credentials(self) -> None:
+        (self.data_directory / "models.json").write_text("[]", encoding="utf-8")
+        output = io.StringIO()
+        server = RuntimeServer(output, self.data_directory)
+        try:
+            with patch("eidos_runtime.infrastructure.local_files.has_private_access", return_value=False):
+                server.handle({
+                    "jsonrpc": "2.0", "id": "client-init", "method": "initialize",
+                    "params": {"client": {"name": "test", "version": "1"}, "protocolVersion": 1},
+                })
+            server.handle({
+                "jsonrpc": "2.0", "id": "client-health", "method": "runtime/health", "params": {},
+            })
+            initialized, health = (json.loads(line) for line in output.getvalue().splitlines())
+            self.assertFalse(initialized["result"]["capabilities"]["modelConfigured"])
+            self.assertEqual(health["result"], {"state": "health_only", "code": "state_security_invalid"})
+            self.assertIsNone(server.model_config.path)
+        finally:
+            server.close()
+
     def test_unknown_revision_does_not_create_business_tables(self) -> None:
         database = self.data_directory / DATABASE_NAME
         connection = sqlite3.connect(database)

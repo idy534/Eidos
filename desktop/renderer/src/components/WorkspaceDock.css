@@ -796,3 +796,17 @@ button.environment-popover__row:hover:not(:disabled) {
 
 /* Each pane owns its header; the drawer remains flush with the session top. */
 .workspace-main-column > .session-header { flex: 0 0 2.75rem; }
+
+:root[data-platform="windows"] .workspace-dock__header {
+  -webkit-app-region: no-drag;
+}
+
+:root[data-platform="windows"] .workbench--sidebar-collapsed .workspace-dock--expanded .workspace-dock__header,
+:root[data-platform="windows"] .workbench--sidebar-collapsed .workspace-body--expanded .workspace-dock__header {
+  padding-left: 8.5rem;
+}
+
+:root[data-platform="windows"] .workbench--sidebar-collapsed .workspace-dock--expanded .workspace-dock__header::before,
+:root[data-platform="windows"] .workbench--sidebar-collapsed .workspace-body--expanded .workspace-dock__header::before {
+  width: 8.5rem;
+}

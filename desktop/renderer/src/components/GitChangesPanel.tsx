@@ -19,6 +19,7 @@ import type {
   ReviewCommentCreateInput,
 } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
+import { pathBasename } from "../platform.js";
 import { useArtifacts } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
 import { WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
@@ -496,11 +497,11 @@ function GitChangesContent(props: GitChangesPanelProps) {
   const hasMultipleRepositories = Boolean(repositories && repositories.length > 1);
   const currentRepo = repositories?.find((entry) => entry.id === selectedRepositoryId);
   const currentRepoName = currentRepo
-    ? `${currentRepo.path.split("/").filter(Boolean).at(-1) ?? currentRepo.id}${currentRepo.shared ? " · 共享" : ""}`
+    ? `${pathBasename(currentRepo.path) || currentRepo.id}${currentRepo.shared ? " · 共享" : ""}`
     : "";
   const repoMenuItems: DropdownMenuItem[] = useMemo(() => (
     (repositories ?? []).map((entry) => {
-      const name = entry.path.split("/").filter(Boolean).at(-1) ?? entry.id;
+      const name = pathBasename(entry.path) || entry.id;
       const label = `${name}${entry.shared ? " · 共享" : ""}`;
       return {
         key: entry.id,

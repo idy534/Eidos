@@ -22,6 +22,7 @@ from pydantic import Field, ValidationError, model_validator
 
 from eidos_runtime.db.database import Database, Repository
 from eidos_runtime.db.errors import StorageError
+from eidos_runtime.db.file_identity import decode_file_identity, encode_file_identity
 from eidos_runtime.db.layout import prune_repository_generations
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 from eidos_runtime.persistence.conversion import RowReader, RowValues
@@ -276,13 +277,7 @@ class RepositoryIntelligenceRepository(Repository):
                 ORDER BY creation_seq DESC
                 LIMIT 1
                 """,
-                (
-                    repository_id,
-                    workspace_identity.root,
-                    workspace_identity.device,
-                    workspace_identity.inode,
-                    workspace_identity.owner,
-                ),
+                _identity_parameters(workspace_identity),
             ).fetchone()
             return (
                 _snapshot_from_row(connection, row)
@@ -640,11 +635,7 @@ class RepositoryIntelligenceRepository(Repository):
             """,
             (
                 snapshot.snapshot_id,
-                snapshot.repository_id,
-                snapshot.workspace_identity.root,
-                snapshot.workspace_identity.device,
-                snapshot.workspace_identity.inode,
-                snapshot.workspace_identity.owner,
+                *_identity_parameters(snapshot.workspace_identity),
                 snapshot.inventory_generation,
                 snapshot.index_generation,
                 snapshot.inventory_snapshot_id,
@@ -751,8 +742,8 @@ def _identity_parameters(
     return (
         identity.repository_id,
         identity.root,
-        identity.device,
-        identity.inode,
+        encode_file_identity(identity.device),
+        encode_file_identity(identity.inode),
         identity.owner,
     )
 
@@ -794,8 +785,8 @@ def _insert_inventory(
                 record.size_bytes,
                 record.mtime_ns,
                 record.ctime_ns,
-                record.device,
-                record.inode,
+                encode_file_identity(record.device) if record.device is not None else None,
+                encode_file_identity(record.inode) if record.inode is not None else None,
                 record.content_hash,
                 record.encoding,
                 int(record.generated),
@@ -818,8 +809,8 @@ def _insert_inventory(
             (
                 snapshot_id,
                 record.path,
-                record.device,
-                record.inode,
+                encode_file_identity(record.device) if record.device is not None else None,
+                encode_file_identity(record.inode) if record.inode is not None else None,
                 int(record.ignored),
                 record.generation,
             )
@@ -1183,8 +1174,8 @@ def _header_from_row(row: RowValues) -> _SnapshotHeader:
         "repository_id": values.text("repository_id"),
         "workspace_identity": RepositoryWorkspaceIdentity(
             root=values.text("workspace_root"),
-            device=values.integer("workspace_dev"),
-            inode=values.integer("workspace_inode"),
+            device=_file_identity_from_row(values, "workspace_dev"),
+            inode=_file_identity_from_row(values, "workspace_inode"),
             owner=values.integer("workspace_uid"),
         ),
         "inventory_generation": values.integer("inventory_generation"),
@@ -1338,6 +1329,18 @@ def _index_from_rows(
     })
 
 
+def _file_identity_from_row(values: RowReader, field: str, *, optional: bool = False) -> int | None:
+    value = values.value(field)
+    if optional and value is None:
+        return None
+    try:
+        return decode_file_identity(value)
+    except StorageError as error:
+        raise PersistenceCorruptionError(
+            "persistence_value_invalid", record=values.record, field=field,
+        ) from error
+
+
 def _file_from_row(row: RowValues) -> FileRecord:
     values = RowReader(row, record="repository_file")
     return _build_model("repository_file", FileRecord, {
@@ -1347,8 +1350,8 @@ def _file_from_row(row: RowValues) -> FileRecord:
         "size_bytes": values.integer("size_bytes"),
         "mtime_ns": values.integer("mtime_ns"),
         "ctime_ns": values.optional_integer("ctime_ns"),
-        "device": values.optional_integer("device"),
-        "inode": values.optional_integer("inode"),
+        "device": _file_identity_from_row(values, "device", optional=True),
+        "inode": _file_identity_from_row(values, "inode", optional=True),
         "content_hash": values.optional_text("content_hash"),
         "encoding": values.text("encoding"),
         "generated": values.boolean("generated"),
@@ -1364,8 +1367,8 @@ def _directory_from_row(row: RowValues) -> DirectoryRecord:
     values = RowReader(row, record="repository_directory")
     return _build_model("repository_directory", DirectoryRecord, {
         "path": values.text("path"),
-        "device": values.optional_integer("device"),
-        "inode": values.optional_integer("inode"),
+        "device": _file_identity_from_row(values, "device", optional=True),
+        "inode": _file_identity_from_row(values, "inode", optional=True),
         "ignored": values.boolean("ignored"),
         "generation": values.integer("generation"),
     })

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import PurePosixPath
+from pathlib import Path
 
 from pydantic import Field, field_validator
 
@@ -17,11 +17,10 @@ class ProjectRoot(EidosFrozenStrictModel):
     @field_validator("path", "repository_root", "git_dir", "git_common_dir")
     @classmethod
     def absolute_path(cls, value: str | None) -> str | None:
-        if value is not None and (
-            not value.startswith("/") or "\x00" in value
-            or ".." in PurePosixPath(value).parts
-        ):
-            raise ValueError("workspace paths must be absolute")
+        if value is not None:
+            path = Path(value)
+            if "\x00" in value or not path.is_absolute() or ".." in path.parts:
+                raise ValueError("workspace paths must be absolute")
         return value
 
 
