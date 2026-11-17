@@ -264,3 +264,33 @@ def test_permission_snapshot_omits_invalid_arguments_instead_of_copying_raw_perm
             "toolName": "request_permissions",
             "argumentsJson": json.dumps(arguments),
         }) is None
+
+
+def test_snapshot_preserves_search_history_and_update_goal_arguments() -> None:
+    history_projected = json.loads(_snapshot_display_arguments({
+        "toolName": "search_history",
+        "argumentsJson": json.dumps({
+            "query": "deploy token",
+            "scope": "project",
+            "limit": 8,
+            "ignored": "not projected",
+        }),
+    }) or "null")
+    goal_projected = json.loads(_snapshot_display_arguments({
+        "toolName": "update_goal",
+        "argumentsJson": json.dumps({
+            "status": "complete",
+            "summary": "All verification steps passed.",
+            "evidence": [{"requirement": "tests", "proof": "pytest ok"}],
+        }),
+    }) or "null")
+
+    assert history_projected == {
+        "limit": 8,
+        "query": "deploy token",
+        "scope": "project",
+    }
+    assert goal_projected == {
+        "status": "complete",
+        "summary": "All verification steps passed.",
+    }

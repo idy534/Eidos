@@ -88,6 +88,7 @@ def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
         ),
         "web_search": ("query",),
         "tool_search": ("query", "limit"),
+        "search_history": ("query", "scope", "limit"),
         "write_file": ("path",),
         "apply_patch": (),
         "delete_file": ("path",),
@@ -95,6 +96,7 @@ def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
         "write_stdin": ("sessionId", "chars", "yieldTimeMs"),
         "control_shell": ("sessionId", "action", "columns", "rows", "yieldTimeMs"),
         "write_plan": ("title", "planId", "expectedRevision", "readyForReview"),
+        "update_goal": ("status", "summary"),
     }
     fields = fields_by_tool.get(tool_call.get("toolName"))
     arguments = _load_json_object(tool_call.get("argumentsJson"))
