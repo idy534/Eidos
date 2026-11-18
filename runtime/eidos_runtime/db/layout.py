@@ -175,12 +175,16 @@ T = TypeVar("T")
 
 class StateDatabase(Protocol):
     data_directory: Path | None
-    lock: threading.RLock
+    lock: AbstractContextManager[object]
     json_blobs: JsonBlobStore
 
     def connection(self) -> sqlite3.Connection: ...
 
     def transaction(self) -> AbstractContextManager[sqlite3.Connection]: ...
+
+    def read_snapshot_after_writers(
+        self,
+    ) -> AbstractContextManager[sqlite3.Connection]: ...
 
 
 class AuxiliaryDatabase:
@@ -1143,12 +1147,24 @@ __all__ = [
 def collect_unreferenced_blobs(
     state: StateDatabase, blobs: JsonBlobStore, *, cancel: threading.Event | None = None,
 ) -> int:
-    with state.lock, blobs.lock:
-        references = iter_blob_references(state.connection())
-        try:
-            return blobs.garbage_collect(references, cancel=cancel)
-        finally:
-            references.close()
+    """Delete Blobs no committed State row references.
+
+    The State lock is held only while the reference snapshot is opened. Reading
+    tens of thousands of references and manifests happens on a read-only WAL
+    snapshot, so Session reads and Run writes continue during collection. Blobs
+    written after the collection starts are pinned by the store.
+    """
+
+    with blobs.collection() as collection:
+        with state.read_snapshot_after_writers() as connection:
+            references = iter_blob_references(connection)
+            try:
+                retained = collection.mark(references, cancel=cancel)
+            finally:
+                references.close()
+        if retained is None:
+            return 0
+        return collection.sweep(retained, cancel=cancel)
 
 
 def iter_blob_references(connection: sqlite3.Connection) -> Iterator[str]:

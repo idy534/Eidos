@@ -378,7 +378,7 @@ class SessionRepository(Repository):
     ) -> tuple[list[sqlite3.Row], str | None]:
         cursor_state = _decode_cursor(cursor) if cursor is not None else None
         sql = SESSION_SELECT
-        with self.lock:
+        with self.database.read_scope(), self.lock:
             connection = self._connection()
             if cursor_state is None:
                 high_water = connection.execute(
@@ -472,7 +472,7 @@ class SessionRepository(Repository):
         return session_from_row(row) if row is not None else None
 
     def read_session_projection(self, session_id: str) -> SessionProjection | None:
-        with self.lock:
+        with self.database.read_scope(), self.lock:
             row = self._connection().execute(
                 SESSION_SELECT + " WHERE s.id = ?",
                 (session_id,),
@@ -1096,6 +1096,20 @@ class SessionRepository(Repository):
         item_limit: int = 200,
         before_item_id: str | None = None,
     ) -> dict[str, object]:
+        # One read-only snapshot: a Session switch never waits for the writer
+        # lock, and every section of the response comes from the same commit.
+        with self.database.read_scope():
+            return self._read_session_snapshot(
+                session_id, item_limit=item_limit, before_item_id=before_item_id
+            )
+
+    def _read_session_snapshot(
+        self,
+        session_id: str,
+        *,
+        item_limit: int,
+        before_item_id: str | None,
+    ) -> dict[str, object]:
         with self.lock:
             connection = self._connection()
             session_row = connection.execute(
@@ -1264,7 +1278,7 @@ class SessionRepository(Repository):
     ) -> dict[str, object]:
         if after_event_id < 0 or not 1 <= limit <= 500:
             raise ValueError("invalid event cursor")
-        with self.lock:
+        with self.database.read_scope(), self.lock:
             rows = self._connection().execute(
                 """
                 SELECT * FROM events

@@ -176,6 +176,9 @@ class SessionStore:
         self._context = ContextRepository(self._database)
         self._async_operations = AsyncOperationRepository(self._database)
         self._runtime_dependencies = RuntimeDependencyRepository(self._database)
+        # Startup migrations, recovery and integrity checks are expected to hold
+        # the State lock; report long holds only once normal operation begins.
+        self._database.lock.reporting = True
 
     @property
     def data_directory(self) -> Path | None:

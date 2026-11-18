@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from eidos_runtime.infrastructure import local_files
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 import hashlib
 import json
@@ -86,6 +86,7 @@ from eidos_runtime.db.schema import (
     V9_TO_V10_MIGRATION_SQL,
 )
 from eidos_runtime.runtime.fault_injection import hit_fault
+from eidos_runtime.db.connection_access import MonitoredRLock, ReadConnectionPool
 from eidos_runtime.db.json_blobs import JsonBlobStore
 
 
@@ -142,7 +143,10 @@ class Database:
     def __init__(self, data_directory: Path | None = None) -> None:
         self.data_directory = data_directory
         self._connection: sqlite3.Connection | None = None
-        self.lock = threading.RLock()
+        self._read_scope = threading.local()
+        self.lock = MonitoredRLock(name="state", bypass=self._in_read_scope)
+        self.lock.reporting = False
+        self._read_pool: ReadConnectionPool | None = None
         self._lock_descriptor: int | None = None
         self.health_state = "starting"
         self.health_code: str | None = None
@@ -592,6 +596,7 @@ class Database:
                 force_full=revision != SCHEMA_VERSION,
             )
             self._connection = connection
+            self._read_pool = ReadConnectionPool(database_path)
             self.health_state = "ready"
             self.health_code = None
         except Exception:
@@ -617,9 +622,52 @@ class Database:
         _write_integrity_stamp(stamp)
 
     def connection(self) -> sqlite3.Connection:
+        scoped = getattr(self._read_scope, "connection", None)
+        if scoped is not None:
+            return scoped
         if self._connection is None:
             raise StorageError("storage is not initialized")
         return self._connection
+
+    def _in_read_scope(self) -> bool:
+        return getattr(self._read_scope, "connection", None) is not None
+
+    @contextmanager
+    def read_scope(self) -> Iterator[None]:
+        """Serve every State read in this block from one read-only snapshot.
+
+        Inside the block ``connection()`` returns the snapshot connection and
+        ``lock`` regions do not wait for the writer, so nested repositories need
+        no changes. ``transaction()`` still writes through the shared connection.
+        A thread that already holds the writer lock keeps using it, so it still
+        reads its own uncommitted changes.
+        """
+
+        pool = self._read_pool
+        if pool is None or self._in_read_scope() or self.lock.held_by_current_thread():
+            yield
+            return
+        with pool.try_transaction() as connection:
+            if connection is None:
+                yield
+                return
+            self._read_scope.connection = connection
+            try:
+                yield
+            finally:
+                self._read_scope.connection = None
+
+    @contextmanager
+    def _writer_scope(self) -> Iterator[None]:
+        scoped = getattr(self._read_scope, "connection", None)
+        if scoped is None:
+            yield
+            return
+        self._read_scope.connection = None
+        try:
+            yield
+        finally:
+            self._read_scope.connection = scoped
 
     @property
     def raw_connection(self) -> sqlite3.Connection | None:
@@ -643,9 +691,57 @@ class Database:
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        with self.lock, self.connection() as connection:
+        with self._writer_scope(), self.lock, self.connection() as connection:
             yield connection
             hit_fault("sqlite_commit_failure")
+
+    @contextmanager
+    def read_transaction(self) -> Iterator[sqlite3.Connection]:
+        """Read committed state without waiting for the State writer lock.
+
+        Each call is one read-only WAL transaction, so all statements inside it
+        observe one snapshot. Use it only for side-effect-free reads; writes and
+        reads that must see their own uncommitted changes keep ``transaction``.
+        """
+
+        pool = self._read_pool
+        if pool is None:
+            with self.lock:
+                yield self.connection()
+            return
+        with pool.try_transaction() as connection:
+            if connection is None:
+                with self.lock:
+                    yield self.connection()
+                return
+            yield connection
+
+    @contextmanager
+    def read_snapshot_after_writers(self) -> Iterator[sqlite3.Connection]:
+        """Open a read snapshot at a point where no writer is mid-transaction.
+
+        Writers hold ``lock`` from Blob creation through commit, so taking the
+        snapshot inside the lock means every Blob written before this point is
+        either referenced by committed state or by none at all. The lock is held
+        only while the snapshot is established, not while it is read.
+        """
+
+        pool = self._read_pool
+        if pool is None:
+            with self.lock:
+                yield self.connection()
+            return
+        with ExitStack() as stack:
+            with self._writer_scope(), self.lock:
+                connection = stack.enter_context(pool.try_transaction())
+                if connection is not None:
+                    connection.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
+            if connection is None:
+                # Without a snapshot connection, collect under the lock as before.
+                with self._writer_scope(), self.lock:
+                    yield self.connection()
+                return
+            yield connection
 
     def close(self) -> None:
         with self.lock:
@@ -658,6 +754,9 @@ class Database:
 
     def _close_resources(self) -> None:
         self._memory = None
+        if self._read_pool is not None:
+            self._read_pool.close()
+            self._read_pool = None
         if self._connection is not None:
             self._connection.close()
             self._connection = None
@@ -877,7 +976,7 @@ class Repository:
         self.database = database
 
     @property
-    def lock(self) -> threading.RLock:
+    def lock(self) -> MonitoredRLock:
         return self.database.lock
 
     def _connection(self) -> sqlite3.Connection:
