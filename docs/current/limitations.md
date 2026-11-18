@@ -1,5 +1,11 @@
 # Eidos 当前限制
 
+## CI 依赖与测试稳定性修复（2026-11-18）
+
+- OpenTelemetry 升级到 1.45.2（semantic conventions 0.66b2），修复 `opentelemetry-api` 1.45.1 的 CVE-2026-126360。`bash scripts/audit-python.sh` 对主依赖和隔离 Runtime 依赖均未报告已知漏洞；`test_telemetry.py` 通过 18 项。
+- ModelSelector 的松手速度来自 `performance.now()` 的事件间隔。所有经过拖拽和松手的滑块测试都改用冻结时钟，较慢的 CI 机器不会再把 1.4 投射到其他档位。
+- 文档 Skill 冒烟脚本在 Windows 上与 Runtime 入口一样先设置进程默认属主。以管理员身份运行时，新建目录不再归属 Administrators 组，因此能通过私有 Skill 目录的属主校验。本机为 macOS，这项修复的 Windows 结果以 Windows CI 为准。
+
 ## 请求调度、主库读取与仓库索引重建（2026-11-18）
 
 - 请求不再按到达顺序逐个执行。未收到响应前，一个读请求只能看到同一作用域内之前写请求的结果（同一 Session、会话索引、配置、草稿）。不等响应就流水线发送跨作用域的"先写后读"，可能读到写入之前的状态。Desktop 的依赖调用都会等待响应。

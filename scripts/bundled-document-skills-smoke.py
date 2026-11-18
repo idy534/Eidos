@@ -35,6 +35,12 @@ from eidos_runtime.workspace.reader import capture_directory_identity
 
 
 def main() -> None:
+    if local_files.WINDOWS:
+        # Match the Runtime entry. Elevated runners otherwise give new files an
+        # Administrators owner, which the private Skill directory check rejects.
+        from eidos_runtime.infrastructure.windows_files import configure_process_file_owner
+
+        configure_process_file_owner()
     bundle = Path(sys.executable).resolve().parents[1 if local_files.WINDOWS else 2]
     manifest = bundle / "runtime.json"
     base_catalog = RuntimeDependencyCatalog.from_manifest(manifest)

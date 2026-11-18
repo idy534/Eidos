@@ -6,6 +6,13 @@ import qoderLogo from "../assets/providers/qoder.svg";
 import type { ModelOption } from "../contracts.js";
 import { ModelSelector } from "./ModelSelector.js";
 
+// Release velocity comes from performance.now() gaps between pointer events.
+// A frozen clock keeps it at zero, so slow runners cannot shift the snap target.
+function freezeClock(now = 1_000): number {
+  vi.spyOn(performance, "now").mockReturnValue(now);
+  return now;
+}
+
 const models: ModelOption[] = [
   {
     id: "deepseek-flash",
@@ -121,6 +128,7 @@ describe("ModelSelector", () => {
   });
 
   it("keeps the slider continuous while dragging and snaps on release", () => {
+    freezeClock();
     const onChange = vi.fn();
     render(
       <ModelSelector
@@ -147,6 +155,7 @@ describe("ModelSelector", () => {
 
   it("smoothly transitions slider position to the target when released between steps", () => {
     let rafCallback: FrameRequestCallback | undefined;
+    const now = freezeClock();
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
       rafCallback = cb;
       return 101;
@@ -176,7 +185,7 @@ describe("ModelSelector", () => {
     // Advance animation partially
     const stepCb1 = rafCallback;
     act(() => {
-      stepCb1!(performance.now() + 100);
+      stepCb1!(now + 100);
     });
     const midVal = Number((slider as HTMLInputElement).value);
     expect(midVal).toBeLessThan(1.4);
@@ -185,16 +194,14 @@ describe("ModelSelector", () => {
     // Complete animation on next frame
     const stepCb2 = rafCallback;
     act(() => {
-      stepCb2!(performance.now() + 400);
+      stepCb2!(now + 400);
     });
     expect(slider).toHaveValue("1");
   });
 
   it("cancels transition animation immediately when interrupted by pointerDown", () => {
     let rafCallback: FrameRequestCallback | undefined;
-    // A frozen clock keeps release velocity at zero, so slow runners cannot shift the target.
-    const now = 1_000;
-    vi.spyOn(performance, "now").mockReturnValue(now);
+    const now = freezeClock();
     const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
       rafCallback = cb;
@@ -245,6 +252,7 @@ describe("ModelSelector", () => {
       dispatchEvent: vi.fn(),
     }));
 
+    freezeClock();
     const rafSpy = vi.spyOn(window, "requestAnimationFrame");
     render(
       <ModelSelector
