@@ -959,3 +959,138 @@ def test_repeated_session_reopen_reuses_one_active_state_and_watcher(
     finally:
         repository_runtime.shutdown_all()
         store.close()
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _scheduled(
+    repository: RepositoryIntelligenceRepository, clock: _Clock,
+) -> RepositoryWorkspaceRuntime:
+    return RepositoryWorkspaceRuntime(
+        RepositoryApplicationFactory(lambda: repository),
+        watcher_factory=_BlockingWatchController,
+        rebuild_settle_seconds=15.0,
+        rebuild_interval_seconds=120.0,
+        clock=clock,
+    )
+
+
+def _count_builds(
+    monkeypatch: pytest.MonkeyPatch, application: RepositoryApplication, clock: _Clock,
+    *, fail: bool = False,
+) -> list[float]:
+    builds: list[float] = []
+    original = application.build
+
+    def counted(*, cancel=None):
+        builds.append(clock.now)
+        if fail:
+            raise OSError("build failed")
+        return original(cancel=cancel)
+
+    monkeypatch.setattr(application, "build", counted)
+    return builds
+
+
+def test_watcher_changes_rebuild_once_after_edits_settle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "main.py").write_text("value = 1\n", encoding="utf-8")
+    database = _database(tmp_path)
+    repository = RepositoryIntelligenceRepository(database)
+    RepositoryApplication(root, repository=repository).build()
+    clock = _Clock()
+    runtime = _scheduled(repository, clock)
+    try:
+        active = runtime.activate_workspace(root)
+        builds = _count_builds(monkeypatch, active.application, clock)
+        watcher = _BlockingWatchController.instances[0]
+
+        watcher.emit()
+        assert active.snapshot is not None
+        assert builds == []
+
+        (root / "main.py").write_text("value = 2\n", encoding="utf-8")
+        for _ in range(5):
+            watcher.emit(RepositoryChange(path="main.py", change="modified"))
+            clock.now += 5
+            watcher.emit()
+        assert builds == []
+        assert active.dirty_paths == frozenset({"main.py"})
+
+        clock.now += 15
+        watcher.emit()
+        assert builds == [clock.now]
+        assert not active.reconciliation_required
+
+        watcher.emit(RepositoryChange(path="main.py", change="modified"))
+        clock.now += 30
+        watcher.emit()
+        assert len(builds) == 1
+        clock.now += 100
+        watcher.emit()
+        assert len(builds) == 2
+    finally:
+        runtime.shutdown_all()
+        database.close()
+
+
+def test_failed_reconciliation_retries_only_after_new_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "main.py").write_text("value = 1\n", encoding="utf-8")
+    database = _database(tmp_path)
+    repository = RepositoryIntelligenceRepository(database)
+    RepositoryApplication(root, repository=repository).build()
+    clock = _Clock()
+    runtime = _scheduled(repository, clock)
+    try:
+        active = runtime.activate_workspace(root)
+        builds = _count_builds(monkeypatch, active.application, clock, fail=True)
+        watcher = _BlockingWatchController.instances[0]
+        watcher.emit()
+        clock.now += 200
+        watcher.emit()
+        assert len(builds) == 1
+        assert active.snapshot is not None
+
+        clock.now += 1000
+        watcher.emit()
+        assert len(builds) == 1
+
+        watcher.emit(RepositoryChange(path="main.py", change="modified"))
+        clock.now += 200
+        watcher.emit()
+        assert len(builds) == 2
+    finally:
+        runtime.shutdown_all()
+        database.close()
+
+
+def test_first_callback_builds_when_no_generation_is_persisted(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "main.py").write_text("value = 1\n", encoding="utf-8")
+    database = _database(tmp_path)
+    clock = _Clock()
+    runtime = _scheduled(RepositoryIntelligenceRepository(database), clock)
+    try:
+        active = runtime.activate_workspace(root)
+        _BlockingWatchController.instances[0].emit()
+        assert active.snapshot is not None
+        assert not active.reconciliation_required
+    finally:
+        runtime.shutdown_all()
+        database.close()

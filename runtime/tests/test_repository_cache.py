@@ -187,7 +187,9 @@ def test_missing_cache_tables_rebuild_without_blocking_runtime(tmp_path: Path) -
     data.mkdir(mode=0o700)
     path = data / "repository.sqlite"
     with sqlite3.connect(path) as connection:
-        connection.executescript("CREATE TABLE unrelated_cache(id); PRAGMA user_version=1;")
+        connection.executescript(
+            f"CREATE TABLE unrelated_cache(id); PRAGMA user_version={layout.REPOSITORY_CACHE_VERSION};"
+        )
     path.chmod(0o600)
     store = SessionStore(data)
     try:
@@ -195,6 +197,49 @@ def test_missing_cache_tables_rebuild_without_blocking_runtime(tmp_path: Path) -
         assert store.health_state == "ready"
         assert store.repository_database.connection().execute("SELECT COUNT(*) FROM repository_snapshots").fetchone()[0] == 0
         assert len(tuple(data.glob("repository.sqlite.invalid-*"))) == 1
+    finally:
+        store.close()
+
+
+def test_outdated_cache_layout_is_replaced_by_an_empty_current_cache(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    data.mkdir(mode=0o700)
+    path = data / "repository.sqlite"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(REPOSITORY_SCHEMA_SQL + "\nPRAGMA user_version=1;")
+        connection.execute(
+            "INSERT INTO repository_fts (index_snapshot_id, record_id, path, symbol, body, kind,"
+            " start_line, end_line, file_hash) VALUES ('old', 'r', 'a.py', '', 'body', 'file', 1, 1, '')"
+        )
+    path.chmod(0o600)
+    store = SessionStore(data)
+    try:
+        store.initialize()
+        connection = store.repository_database.connection()
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == layout.REPOSITORY_CACHE_VERSION
+        assert connection.execute("SELECT COUNT(*) FROM repository_fts").fetchone()[0] == 0
+        # A derived cache in an old layout is not kept beside the new one.
+        assert not tuple(data.glob("repository.sqlite.invalid-*"))
+    finally:
+        store.close()
+
+
+def test_outdated_cache_with_a_hardlink_is_not_deleted(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    data.mkdir(mode=0o700)
+    path = data / "repository.sqlite"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(REPOSITORY_SCHEMA_SQL + "\nPRAGMA user_version=1;")
+    path.chmod(0o600)
+    alias = tmp_path / "alias.sqlite"
+    alias.hardlink_to(path)
+    store = SessionStore(data)
+    try:
+        store.initialize()
+        assert store.health_state == "ready"
+        with pytest.raises(layout.StorageError, match="repository_cache_unavailable"):
+            store.repository_database.connection()
+        assert path.exists() and alias.exists()
     finally:
         store.close()
 

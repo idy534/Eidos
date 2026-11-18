@@ -23,7 +23,10 @@ from pydantic import Field, ValidationError, model_validator
 from eidos_runtime.db.database import Database, Repository
 from eidos_runtime.db.errors import StorageError
 from eidos_runtime.db.file_identity import decode_file_identity, encode_file_identity
-from eidos_runtime.db.layout import prune_repository_generations
+from eidos_runtime.db.layout import (
+    prune_repository_generations,
+    repository_fts_rowid_range,
+)
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 from eidos_runtime.persistence.conversion import RowReader, RowValues
 from eidos_runtime.persistence.errors import PersistenceCorruptionError
@@ -623,7 +626,7 @@ class RepositoryIntelligenceRepository(Repository):
         ).fetchone()
         if existing is not None:
             return _snapshot_from_row(connection, existing)
-        connection.execute(
+        inserted = connection.execute(
             """
             INSERT INTO repository_snapshots (
                 id, repository_id, workspace_root, workspace_dev, workspace_inode,
@@ -663,8 +666,15 @@ class RepositoryIntelligenceRepository(Repository):
         if snapshot.index is not None:
             _insert_index_generation(connection, snapshot)
             if snapshot.complete:
+                creation_seq = inserted.lastrowid
+                if creation_seq is None:
+                    raise PersistenceCorruptionError(
+                        "persistence_record_invalid", record="repository_snapshot"
+                    )
                 _insert_fts_documents(
-                    connection, _fts_documents(snapshot.index, snapshot.inventory)
+                    connection,
+                    _fts_documents(snapshot.index, snapshot.inventory),
+                    rowid_range=repository_fts_rowid_range(creation_seq),
                 )
             _insert_index_facts(connection, snapshot.snapshot_id, snapshot.index)
         return snapshot
@@ -1073,16 +1083,24 @@ def _fts_documents(
 def _insert_fts_documents(
     connection: sqlite3.Connection,
     documents: tuple[RepositoryFtsDocument, ...],
+    *,
+    rowid_range: tuple[int, int],
 ) -> None:
+    start, end = rowid_range
+    if start + len(documents) >= end:
+        raise PersistenceCorruptionError(
+            "persistence_record_invalid", record="repository_fts"
+        )
     connection.executemany(
         """
         INSERT INTO repository_fts (
-            index_snapshot_id, record_id, path, symbol, body, kind, start_line,
-            end_line, file_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            rowid, index_snapshot_id, record_id, path, symbol, body, kind,
+            start_line, end_line, file_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             (
+                start + offset,
                 document.index_snapshot_id,
                 document.record_id,
                 document.path,
@@ -1093,7 +1111,7 @@ def _insert_fts_documents(
                 document.end_line,
                 document.file_hash or "",
             )
-            for document in documents
+            for offset, document in enumerate(documents, start=1)
         ],
     )
 
