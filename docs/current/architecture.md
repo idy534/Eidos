@@ -211,6 +211,10 @@ Terminal 不经过 Python Runtime，也不是 Agent Shell Tool。Renderer 只通
 
 `RuntimeServer` 维护 SQLite Store、ModelConfigStore、RunSupervisor、RuntimeAsyncKernel 和 Method Registry。Method Registry 负责方法注册、typed request/response 校验、重复注册检查和稳定错误映射。慢 remote（fetch/pull/push）与慢只读 Git 观察（`project/gitContext`、`session/gitStatus`、`session/gitDiff`）使用 `DeferredMethodResult` 与 supervisor managed task offload，后台经线程安全 `send` 回包，输入循环不等待；draining/重配调度失败时只读观察同步回退。
 
+stdio 输入循环只解析消息。`initialize`、`runtime/shutdown`、`runtime/health` 和格式错误的消息在循环内处理，其余请求由 `RequestDispatcher` 在 RuntimeAsyncKernel 上执行。调度器是 Kernel 的一个常驻服务，使用 TaskGroup 和两个 CapacityLimiter（读 8、写 4），工作线程数有上限。准入按到达顺序和读写键判断。写请求声明 `locks` 和 `touches`：`locks` 相同的写请求按到达顺序执行；`locks` 为空时独占，等待之前所有写请求，之后的写请求也等它，这与此前写请求之间的全序一致。读请求声明 `observes`，只等待之前 `locks` 或 `touches` 与它相交的写请求。写请求不等待读请求。
+
+当前划分如下。Session 读取（`session/read`、`event/list`、Git 状态等）只观察本 Session。会话索引读取（`session/list`、`search/sessions`、置顶）观察会话索引。设置和目录读取观察配置。工具内容、工作区文件和上下文统计读取不等待任何请求。Git 变更共用 `git` 写锁。Session 生命周期操作同时持有 `git` 和本 Session 的写锁。Run 启动等 Session 写入按 Session 加锁。Run 取消、恢复和压缩按 Run 加锁，Stop 不会排在无关写入之后。草稿读写按草稿键排序，审批答复共用审批键。未列出的写请求和缺少作用域参数的请求按独占处理。同一 Session 先写后读的流水线仍能读到自己的写入；其他 Session 的读取不等慢 Git 或设置写入。响应按完成顺序写回，Main 按 `id` 匹配。单个请求排队加执行超过 1 秒时，Runtime 记录 `rpc_slow method=… lane=… queue_ms=… exec_ms=…`。Shutdown 和 Supervisor 关闭先排空调度器：已接受的请求执行完毕后才检查资源静止，超时返回 `RUNTIME_SHUTDOWN_TIMEOUT`。Kernel 不可用时（初始化前或关闭后），请求仍在输入循环内执行。
+
 应用层为 Session、Run、Response Action、Model、Extension、Repository、Context 和 Long Task 提供边界。RuntimeServer 仍保留少量兼容入口，但它不会建立第二套状态权威。
 
 `ResponseActionRuntimeServer` 在默认 `__main__` 入口上扩展 Response Action 方法。它与基础 RuntimeServer 共用初始化、健康检查、关闭、Supervisor 和 SQLite。
@@ -603,6 +607,8 @@ Runtime 使用标准库计时和现有 OpenTelemetry Span，记录各存储阶�
 Session 展示快照与执行快照使用不同的读取入口。`session/read` 的首屏和历史分页不查询 Step/Rule Resolution 表，也不读取或校验 Step Resolution Blob。响应保留 `stepResolutions: []`，以兼容现有 DTO 和 Main 校验。Runtime 执行与审批恢复仍通过完整快照入口读取数据，并保留原有完整性校验。这项读取路径调整已修订代码，测试与性能验收待执行。
 
 `state.sqlite` 是可变业务状态的唯一权威。它保存 Session、Run、Item、ToolCall、Approval、Tool Attempt、Execution Segment、Step、Model Attempt、Durable Intent、Event、Outbox、Async Operation、Extension Snapshot、Context lineage、Compaction 和 Checkpoint。业务状态变化与 Event/Outbox 仍在同一个 `state.sqlite` transaction 中提交。
+
+主库只有一个共享写连接，所有线程通过 `Database.lock` 使用它。该锁记录最外层的等待和持有时间，超过 1 秒时写 `storage_lock_wait` 或 `storage_lock_held` 日志，并附上线程名。无副作用的读取可以使用 `Database.read_transaction()` 或 `read_scope()`：它们从最多 4 个只读 WAL 连接中取一个，开启一次读事务，所以同一作用域内的所有查询看到同一个已提交快照，且不等待写锁。`read_scope()` 内的 `connection()` 返回快照连接，`lock` 区域直接放行，嵌套 Repository 无需修改；`transaction()` 仍退出作用域，经共享写连接提交。已持有写锁的线程继续使用写连接，以读到自己未提交的修改。只读连接在打开前核对文件的 device/inode，与初始化时不一致则拒绝打开。当前 `session/read` 快照、`event/list`、`session/list` 和 Session projection 使用读作用域。
 
 主库只有一个共享写连接，所有线程通过 `Database.lock` 使用它。该锁记录最外层的等待和持有时间，超过 1 秒时写 `storage_lock_wait` 或 `storage_lock_held` 日志，并附上线程名。无副作用的读取可以使用 `Database.read_transaction()` 或 `read_scope()`：它们从最多 4 个只读 WAL 连接中取一个，开启一次读事务，所以同一作用域内的所有查询看到同一个已提交快照，且不等待写锁。`read_scope()` 内的 `connection()` 返回快照连接，`lock` 区域直接放行，嵌套 Repository 无需修改；`transaction()` 仍退出作用域，经共享写连接提交。已持有写锁的线程继续使用写连接，以读到自己未提交的修改。只读连接在打开前核对文件的 device/inode，与初始化时不一致则拒绝打开。当前 `session/read` 快照、`event/list`、`session/list` 和 Session projection 使用读作用域。
 

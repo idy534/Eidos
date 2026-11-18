@@ -155,6 +155,7 @@ class RunSupervisor:
         self._handles: dict[str, RunHandle] = {}
         self._run_trace_contexts: dict[str, Context] = {}
         self._managed_tasks: dict[str, ManagedTask] = {}
+        self._request_drain: Callable[[], bool] | None = None
         self.approval_lock = threading.RLock()
         self.pending_approvals: dict[str, PendingApproval] = {}
         self.lifecycle = RuntimeLifecycle.RUNNING
@@ -227,6 +228,15 @@ class RunSupervisor:
     def runtime_dependency_catalog(self) -> RuntimeDependencyCatalog | None:
         with self.lock:
             return self._runtime_dependency_catalog
+
+    def bind_request_drain(self, drain: Callable[[], bool]) -> None:
+        """Bind the protocol request drain that shutdown must finish first.
+
+        Requests run on the async kernel; quiescence requires that none is still
+        executing when Runs, managed tasks and resources are checked.
+        """
+        with self.lock:
+            self._request_drain = drain
 
     def bind_browser_host(self, host: BrowserHost) -> None:
         """Bind the process-owned Chrome host; its managed task owns shutdown."""
@@ -580,6 +590,8 @@ class RunSupervisor:
                 return
             self.lifecycle = RuntimeLifecycle.DRAINING
             self.control_state = RuntimeControlState.DRAINING
+            request_drain, self._request_drain = self._request_drain, None
+        requests_quiescent = request_drain() if request_drain is not None else True
         try:
             run_ids = self.store.nonterminal_run_ids()
         except StorageError:
@@ -634,7 +646,8 @@ class RunSupervisor:
             if resource.kind is not RuntimeResourceKind.ASYNC_KERNEL
         )
         if (
-            self.has_active_workers()
+            not requests_quiescent
+            or self.has_active_workers()
             or self.has_active_model_leases()
             or self.has_active_managed_tasks(include_services=True)
             or registered

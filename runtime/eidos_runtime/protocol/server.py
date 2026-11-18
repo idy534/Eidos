@@ -138,7 +138,7 @@ from eidos_runtime.application.memory import MEMORY_METHODS, MemoryApplication
 from eidos_runtime.db.maintenance import StorageMaintenance
 from eidos_runtime.infrastructure.browser_host import BrowserHost
 from eidos_runtime.runtime.browser_launch import resolve_browser_launch
-from eidos_runtime.telemetry.tracing import startup_phase
+from eidos_runtime.telemetry.tracing import record_current_exception, start_span, startup_phase
 from eidos_runtime.telemetry.logging import configure_stderr_logging
 from eidos_runtime.model.gateway import ModelGateway
 from eidos_runtime.domain.long_task import LongTaskProgress
@@ -146,6 +146,12 @@ from eidos_runtime.git.manager import WorktreeManager
 from eidos_runtime.persistence.review_comments import ReviewCommentRepository
 from eidos_runtime.protocol import methods as method_dtos
 from eidos_runtime.protocol import review as review_dtos
+from eidos_runtime.protocol.dispatch import (
+    APPROVAL_RESPONSE,
+    RequestDispatcher,
+    SLOW_REQUEST_SECONDS,
+    classify_request,
+)
 from eidos_runtime.protocol.registry import (
     DeferredMethodResult,
     MethodApplicationError,
@@ -835,6 +841,7 @@ class RuntimeServer:
         self._frozen_model_configs: dict[str, ModelConfig] = {}
         self._frozen_model_configs_lock = threading.RLock()
         self.async_kernel: RuntimeAsyncKernel | None = None
+        self.request_dispatcher: RequestDispatcher | None = None
         self.runtime_dependency_catalog: RuntimeDependencyCatalog | None = None
         self.output_lock = threading.RLock()
         self._storage_log_handler: logging.Handler | None = None
@@ -866,6 +873,92 @@ class RuntimeServer:
             lambda: self.store.data_directory, self.supervisor.start_managed_task,
             on_catalog=self.model_config.refresh_qoder_names)
         self.method_registry = self._build_method_registry()
+
+    def dispatch(self, message: object) -> None:
+        """Accept one decoded message from the stdio input loop.
+
+        Control methods and malformed messages run inline. Everything else is
+        admitted to the request dispatcher so one slow handler cannot block the
+        input loop or unrelated requests. Without a running dispatcher (before
+        ``initialize`` or after shutdown) requests run inline as before.
+        """
+
+        dispatcher = self.request_dispatcher
+        request = None
+        method = "server-response"
+        if dispatcher is not None and isinstance(message, dict):
+            if self._is_server_response(message):
+                request = APPROVAL_RESPONSE
+            elif isinstance(message.get("method"), str) and valid_request_id(message.get("id")):
+                method = str(message["method"])
+                request = classify_request(method, message.get("params", {}))
+        if dispatcher is None or request is None:
+            self._process_inline(message)
+            return
+
+        def reject() -> None:
+            if self._is_server_response(message):
+                # An approval decision is the user's answer; apply it rather
+                # than drop it when the dispatcher stops before running it.
+                self.process_message(message)
+                return
+            request_id = message.get("id")
+            if valid_request_id(request_id):
+                self.send(business_error(request_id, "RUNTIME_DRAINING"))
+
+        if not dispatcher.submit(method, request, lambda: self.process_message(message), reject):
+            self._process_inline(message)
+
+    def _process_inline(self, message: object) -> None:
+        started = time.monotonic()
+        self.process_message(message)
+        elapsed = time.monotonic() - started
+        if elapsed >= SLOW_REQUEST_SECONDS:
+            method = message.get("method") if isinstance(message, dict) else None
+            logger.warning(
+                "rpc_slow method=%s lane=inline queue_ms=0 exec_ms=%.0f",
+                method if isinstance(method, str) else "invalid",
+                elapsed * 1000,
+            )
+
+    def process_message(self, message: object) -> None:
+        """Handle one message and turn unexpected failures into INTERNAL_ERROR."""
+
+        method = message.get("method") if isinstance(message, dict) else None
+        known_method = isinstance(method, str) and (
+            method in {"initialize", "runtime/shutdown", "runtime/health"}
+            or self.method_registry.get(method) is not None
+        )
+        attributes = {"rpc.method": method} if known_method else None
+        with start_span("eidos.rpc", attributes=attributes):
+            try:
+                self.handle(message)
+            except Exception as error:
+                record_current_exception(error)
+                logger.exception("Runtime request failed")
+                request_id = message.get("id") if isinstance(message, dict) else None
+                if valid_request_id(request_id):
+                    self.send(business_error(request_id, "INTERNAL_ERROR"))
+
+    def _start_request_dispatcher(self) -> None:
+        kernel = self.async_kernel
+        if kernel is None or self.request_dispatcher is not None:
+            return
+        dispatcher = RequestDispatcher(kernel)
+        try:
+            dispatcher.start()
+        except Exception:
+            logger.exception("Request dispatcher unavailable; requests run inline")
+            return
+        self.request_dispatcher = dispatcher
+        self.supervisor.bind_request_drain(self._drain_request_dispatcher)
+
+    def _drain_request_dispatcher(self) -> bool:
+        dispatcher = self.request_dispatcher
+        if dispatcher is None:
+            return True
+        self.request_dispatcher = None
+        return dispatcher.drain()
 
     def handle(self, message: object) -> None:
         if not isinstance(message, dict):
@@ -2226,6 +2319,7 @@ class RuntimeServer:
                 )
 
         self.initialized = True
+        self._start_request_dispatcher()
         if self.automation_scheduler is not None:
             self.automation_scheduler.wake()
         self.send(
@@ -2301,6 +2395,8 @@ class RuntimeServer:
             self.shutting_down = True
             return
         try:
+            if not self._drain_request_dispatcher():
+                raise RuntimeShutdownTimeout("requests did not finish before shutdown")
             if self.plugins is not None:
                 self.plugins.connections.close()
             self.supervisor.shutdown()
@@ -2363,6 +2459,8 @@ class RuntimeServer:
     def close(self) -> None:
         if self.supervisor.lifecycle is RuntimeLifecycle.CLOSED:
             return
+        if not self._drain_request_dispatcher():
+            logger.warning("Requests were still running when the Runtime closed")
         if not self.initialized or self.store.health_state != "ready":
             self.repository_runtime.shutdown_all()
             self._close_async_kernel()
@@ -2690,13 +2788,7 @@ def run() -> int:
                 server.send(protocol_error(None, -32700, "Parse error"))
                 continue
 
-            try:
-                server.handle(message)
-            except Exception:
-                logger.exception("Runtime request failed")
-                request_id = message.get("id") if isinstance(message, dict) else None
-                if valid_request_id(request_id):
-                    server.send(business_error(request_id, "INTERNAL_ERROR"))
+            server.dispatch(message)
     finally:
         server.close()
 

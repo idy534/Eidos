@@ -331,6 +331,7 @@ PLATFORM_FILES = frozenset(
         "test_phase3a_thread_execution.py",
         "test_worktree_retention_restore.py",
         "test_phase5c_process_recovery.py",
+        "test_request_dispatch.py",
         "test_runtime_distribution.py",
         "test_sandbox_permissions.py",
         "test_seatbelt.py",
