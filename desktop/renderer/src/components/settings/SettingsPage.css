@@ -417,8 +417,6 @@
   font: inherit;
   font-size: 13.5px;
   padding: 0 2.2rem 0 0.85rem;
-  appearance: none;
-  -webkit-appearance: none;
   cursor: pointer;
   box-sizing: border-box;
 }
@@ -503,6 +501,19 @@
   color: var(--text);
   box-sizing: border-box;
   transition: border-color 140ms ease;
+}
+
+.mcp-create-body select {
+  padding-right: 2rem;
+  background-color: var(--surface-raised);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23707572' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+}
+
+.model-dialog-fields select:not(.model-select-control select):hover:not(:disabled),
+.mcp-create-body select:hover:not(:disabled) {
+  border-color: rgba(0, 0, 0, 0.18);
 }
 
 .mcp-create-body input:focus,
@@ -1025,23 +1036,4 @@
 
 :root[data-platform="windows"] .workbench.workbench--settings .settings-page-header {
   padding-left: 1.5rem;
-}
-
-:root[data-platform="windows"] .mcp-create-body select {
-  padding-right: 2rem;
-  background-color: var(--surface-raised);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23707572' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 0.75rem center;
-}
-
-:root[data-platform="windows"] .model-select-control:not(:has(.model-select-control__chevron)) select {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23707572' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 0.75rem center;
-}
-
-:root[data-platform="windows"] .model-dialog-fields select:not(.model-select-control select):hover:not(:disabled),
-:root[data-platform="windows"] .mcp-create-body select:hover:not(:disabled) {
-  border-color: rgba(0, 0, 0, 0.18);
 }

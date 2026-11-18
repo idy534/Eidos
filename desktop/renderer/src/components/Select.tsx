@@ -8,14 +8,8 @@ import {
   type Ref,
   type SelectHTMLAttributes,
 } from "react";
-import { isWindowsPlatform } from "../platform.js";
 
 export type SelectProps = SelectHTMLAttributes<HTMLSelectElement>;
-
-function isWindowsSelectEnabled(): boolean {
-  if (isWindowsPlatform()) return true;
-  return typeof document !== "undefined" && document.documentElement?.dataset.platform === "windows";
-}
 
 function hasOpenSelect(): boolean {
   if (typeof document === "undefined") return false;
@@ -26,9 +20,9 @@ function hasOpenSelect(): boolean {
   }
 }
 
-let activeWindowsSelectCount = 0;
+let activeSelectCount = 0;
 
-function handleWindowsSelectEscape(event: KeyboardEvent): void {
+function handleOpenSelectEscape(event: KeyboardEvent): void {
   if (event.key !== "Escape" || !hasOpenSelect()) return;
   // Let Chromium dismiss the top-layer select picker without propagating Escape to parent modals.
   event.stopPropagation();
@@ -36,14 +30,14 @@ function handleWindowsSelectEscape(event: KeyboardEvent): void {
 
 function retainEscapeGuard(): () => void {
   if (typeof window === "undefined") return () => {};
-  if (activeWindowsSelectCount === 0) {
-    window.addEventListener("keydown", handleWindowsSelectEscape, true);
+  if (activeSelectCount === 0) {
+    window.addEventListener("keydown", handleOpenSelectEscape, true);
   }
-  activeWindowsSelectCount += 1;
+  activeSelectCount += 1;
   return () => {
-    activeWindowsSelectCount = Math.max(0, activeWindowsSelectCount - 1);
-    if (activeWindowsSelectCount === 0) {
-      window.removeEventListener("keydown", handleWindowsSelectEscape, true);
+    activeSelectCount = Math.max(0, activeSelectCount - 1);
+    if (activeSelectCount === 0) {
+      window.removeEventListener("keydown", handleOpenSelectEscape, true);
     }
   };
 }
@@ -60,9 +54,8 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T | null): void {
 /**
  * Shared Select primitive.
  *
- * Preserves native `<select>` DOM and popup behavior on macOS while enabling
- * Chromium's customizable `base-select` trigger slot (`<button><selectedcontent />`)
- * and modal-safe `Escape` handling on Windows.
+ * Uses Chromium's customizable `base-select` trigger slot (`<button><selectedcontent />`)
+ * and modal-safe `Escape` handling across macOS and Windows.
  */
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select(
   { children, ...props },
@@ -70,7 +63,6 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
 ) {
   const selectRef = useRef<HTMLSelectElement | null>(null);
   const slotRef = useRef<HTMLButtonElement | null>(null);
-  const windows = isWindowsSelectEnabled();
 
   const setRef = useCallback(
     (node: HTMLSelectElement | null) => {
@@ -80,23 +72,13 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
     [forwardedRef],
   );
 
-  useEffect(() => {
-    if (!windows) return;
-    return retainEscapeGuard();
-  }, [windows]);
+  useEffect(() => retainEscapeGuard(), []);
 
   // Attach the customizable select slot imperatively so React 19's DOM nesting
   // validator does not emit dev-mode warnings for <button>/<selectedcontent> inside <select>.
   useLayoutEffect(() => {
     const select = selectRef.current;
     if (!select) return;
-    if (!windows) {
-      if (slotRef.current?.parentNode === select) {
-        slotRef.current.remove();
-      }
-      slotRef.current = null;
-      return;
-    }
 
     let slot = slotRef.current;
     if (!slot) {

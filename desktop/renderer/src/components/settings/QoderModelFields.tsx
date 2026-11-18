@@ -298,7 +298,11 @@ export function QoderModelFields({ draft, busy, onChange, onCatalogUpdated }: {
         onChange={event => { if (draft.qoder?.reasoning) onChange({ ...draft, qoder: { ...draft.qoder, reasoning: { ...draft.qoder.reasoning, defaultSelection: event.target.value ? event.target.value as NonNullable<typeof draft.qoder.reasoning.defaultSelection> : null } } }); }}>
         <option value="">模型默认</option>
         {draft.qoder?.reasoning?.selections.map(effort => <option key={effort} value={effort}>{{ none: "关闭", thinking: "开启", low: "低", medium: "中", high: "高", xhigh: "超高", max: "最高" }[effort]}</option>)}
-      </Select></div></label>
+      </Select><span className="model-select-control__chevron" aria-hidden="true">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </span></div></label>
       <ModelInputTypes supportsImages={draft.qoder?.supportsImages ?? false} supportsToolCall={draft.qoder?.supportsToolCall ?? true} disabled={busy}
         onImagesChange={value => { if (draft.qoder) onChange({ ...draft, qoder: { ...draft.qoder, supportsImages: value } }); }}
         onToolCallChange={value => { if (draft.qoder) onChange({ ...draft, qoder: { ...draft.qoder, supportsToolCall: value } }); }} />

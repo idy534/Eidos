@@ -188,7 +188,7 @@ Renderer 的本地 CSS 由 `desktop/renderer/src/styles.css` 统一导入。该�
 
 Workspace Dock 独立维护 Session 内容列和环境浮层。居中 Session 沿用原构建实际生效的单列布局，并由 `--session-content-width` 限制回答与 Composer 宽度。规划样式不再重复定义环境浮层，技能样式不再修改整个设置窗口。样式测试按统一入口读取模块；原生 Electron 定向检查验证最终计算样式和响应式布局。
 
-macOS 窗口使用 `transparent`、`vibrancy: "under-window"` 与 `titleBarStyle: "hidden"`；Windows 窗口使用不透明底色、原生 `default` 标题栏按钮并隐藏传统应用菜单栏，Renderer 通过 `:root[data-platform="windows"]` 与 `platform.ts` 适配实色侧栏、顶栏留白、Windows 盘符路径解析、快捷键文案，并通过共享 `Select` 组件与 `base-select` / `::picker(select)` 统一下拉选浮层与表单控件外观（macOS 保留原生 `<select>` DOM 与弹出行为）。
+macOS 窗口使用 `transparent`、`vibrancy: "under-window"` 与 `titleBarStyle: "hidden"`；Windows 窗口使用不透明底色、原生 `default` 标题栏按钮并隐藏传统应用菜单栏，Renderer 通过 `:root[data-platform="windows"]` 与 `platform.ts` 适配实色侧栏、顶栏留白、Windows 盘符路径解析与快捷键文案。macOS 与 Windows 统一通过共享 `Select` 组件与 `base-select` / `::picker(select)` 统一下拉选浮层与表单控件外观，其中 macOS 保持 `0.75` 毛玻璃质感（与 `.dropdown-menu` 一致），Windows 保留 `0.94` 高对比度半透明表面。
 
 Electron Main 负责以下职责：
 

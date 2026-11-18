@@ -244,8 +244,8 @@
 }
 .session-menu { position: relative; }
 
-/* Windows customizable <select> popup surface matching .dropdown-menu */
-:root[data-platform="windows"] select::picker(select) {
+/* Customizable <select> popup surface matching .dropdown-menu */
+select::picker(select) {
   width: max-content;
   min-width: max(anchor-size(width), 7.5rem);
   max-width: min(calc(100vw - 16px), max(anchor-size(width), 28rem));
@@ -254,9 +254,9 @@
   padding: 4px;
   border: 1px solid rgba(0, 0, 0, 0.1);
   border-radius: var(--radius-menu);
-  background: rgba(255, 255, 255, 0.94);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  backdrop-filter: blur(24px) saturate(180%);
+  background: rgba(255, 255, 255, 0.75);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  backdrop-filter: blur(28px) saturate(190%);
   box-shadow: var(--shadow-menu);
   color: var(--text);
   font-family: var(--font-ui);
@@ -291,28 +291,34 @@
   }
 }
 
-:root[data-platform="windows"] select:open::picker(select) {
+:root[data-platform="windows"] select::picker(select) {
+  background: rgba(255, 255, 255, 0.94);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+}
+
+select:open::picker(select) {
   animation: apple-popover-in 140ms var(--apple-spring);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :root[data-platform="windows"] select:open::picker(select) {
+  select:open::picker(select) {
     animation: none;
   }
 }
 
-:root[data-platform="windows"] select optgroup {
+select optgroup {
   padding: 6px 0 2px;
   color: var(--text-tertiary);
   font-size: var(--font-size-xs);
   font-weight: 600;
 }
 
-:root[data-platform="windows"] select optgroup:first-child {
+select optgroup:first-child {
   padding-top: 2px;
 }
 
-:root[data-platform="windows"] select option {
+select option {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -330,28 +336,28 @@
   transition: background-color 80ms ease, color 80ms ease;
 }
 
-:root[data-platform="windows"] select option:not(:checked):hover:not(:disabled),
-:root[data-platform="windows"] select option:focus-visible:not(:disabled) {
+select option:not(:checked):hover:not(:disabled),
+select option:focus-visible:not(:disabled) {
   background: rgba(0, 0, 0, 0.055);
   outline: none;
 }
 
-:root[data-platform="windows"] select option:active:not(:disabled) {
+select option:active:not(:disabled) {
   background: rgba(0, 0, 0, 0.09);
 }
 
-:root[data-platform="windows"] select option:checked {
+select option:checked {
   background: var(--surface-selected);
   font-weight: 500;
 }
 
-:root[data-platform="windows"] select option:disabled {
+select option:disabled {
   color: var(--text-tertiary);
   opacity: 0.6;
   cursor: not-allowed;
 }
 
-:root[data-platform="windows"] select option::checkmark {
+select option::checkmark {
   order: 2;
   flex: none;
   margin-left: auto;
@@ -368,6 +374,6 @@
   mask-size: contain;
 }
 
-:root[data-platform="windows"] select option:checked::checkmark {
+select option:checked::checkmark {
   opacity: 1;
 }

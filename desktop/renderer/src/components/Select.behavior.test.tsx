@@ -13,41 +13,17 @@ afterEach(() => {
 });
 
 describe("Select", () => {
-  it("renders a plain native select on macOS without injecting a customizable button slot", async () => {
+  it.each([
+    { platform: "macOS", windows: false },
+    { platform: "Windows", windows: true },
+  ])("renders the customizable selectedcontent slot on $platform without exposing extra button roles", async ({ windows }) => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     const selectRef = createRef<HTMLSelectElement>();
-    applyPlatformDataset(document.documentElement, false);
+    applyPlatformDataset(document.documentElement, windows);
 
     render(
-      <Select
-        ref={selectRef}
-        aria-label="执行方式"
-        value="local"
-        onChange={(event) => onChange(event.target.value)}
-      >
-        <option value="local">本地</option>
-        <option value="worktree">新建本地工作树</option>
-      </Select>,
-    );
-
-    const combobox = screen.getByRole("combobox", { name: "执行方式" });
-    expect(selectRef.current).toBe(combobox);
-    expect(combobox.querySelector("button")).toBeNull();
-    expect(combobox.querySelector("selectedcontent")).toBeNull();
-    expect(screen.queryAllByRole("button")).toHaveLength(0);
-
-    await user.selectOptions(combobox, "worktree");
-    expect(onChange).toHaveBeenCalledWith("worktree");
-  });
-
-  it("renders the customizable selectedcontent slot on Windows without exposing extra button roles", async () => {
-    const user = userEvent.setup();
-    const onChange = vi.fn();
-    applyPlatformDataset(document.documentElement, true);
-
-    render(
-      <Select aria-label="时区" value="Asia/Shanghai" onChange={(event) => onChange(event.target.value)}>
+      <Select ref={selectRef} aria-label="时区" value="Asia/Shanghai" onChange={(event) => onChange(event.target.value)}>
         <optgroup label="亚洲">
           <option value="Asia/Shanghai">Asia/Shanghai</option>
           <option value="Asia/Tokyo">Asia/Tokyo</option>
@@ -56,6 +32,7 @@ describe("Select", () => {
     );
 
     const combobox = screen.getByRole("combobox", { name: "时区" });
+    expect(selectRef.current).toBe(combobox);
     const slotButton = combobox.querySelector("button");
     expect(slotButton).not.toBeNull();
     expect(slotButton).toHaveAttribute("tabindex", "-1");
@@ -67,8 +44,8 @@ describe("Select", () => {
     expect(onChange).toHaveBeenCalledWith("Asia/Tokyo");
   });
 
-  it("stops Escape propagation while an open Windows select picker is open, and lets Escape bubble once closed", () => {
-    applyPlatformDataset(document.documentElement, true);
+  it("stops Escape propagation while a select picker is open, and lets Escape bubble once closed", () => {
+    applyPlatformDataset(document.documentElement, false);
     const onWindowEscape = vi.fn();
     const listener = (event: KeyboardEvent) => {
       if (event.key === "Escape") onWindowEscape();
@@ -101,8 +78,8 @@ describe("Select", () => {
     }
   });
 
-  it("keeps ModelDialog and HandoffDialog Tab focus traps skipping the hidden select slot button on Windows", async () => {
-    applyPlatformDataset(document.documentElement, true);
+  it("keeps ModelDialog and HandoffDialog Tab focus traps skipping the hidden select slot button", async () => {
+    applyPlatformDataset(document.documentElement, false);
 
     const { unmount } = render(
       <ModelDialog

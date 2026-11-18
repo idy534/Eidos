@@ -370,10 +370,12 @@
   font-family: var(--font-code);
   box-sizing: border-box;
   cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
   transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.handoff-branch-select-wrap select:hover:not(:disabled) {
+  border-color: rgba(0, 0, 0, 0.18);
 }
 
 .handoff-branch-select-wrap select:focus {
@@ -793,8 +795,4 @@
   .project-editor-folder-row { gap: 0.4rem; padding-inline: 0.6rem; }
   .project-editor-primary, .project-editor-make-primary { padding: 0.25rem 0.35rem; font-size: 0.72rem; }
   .project-editor-make-primary { opacity: 1; }
-}
-
-:root[data-platform="windows"] .handoff-branch-select-wrap select:hover:not(:disabled) {
-  border-color: rgba(0, 0, 0, 0.18);
 }

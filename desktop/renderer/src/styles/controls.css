@@ -63,8 +63,6 @@ select {
 
 select {
   cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23707572' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 0.75rem center;
@@ -100,8 +98,8 @@ input[type="search"]:focus-visible {
   letter-spacing: normal;
 }
 
-/* Windows customizable <select> trigger foundation (macOS retains native select UI). */
-:where(:root[data-platform="windows"]) select {
+/* Customizable <select> trigger foundation */
+select {
   display: inline-flex;
   align-items: center;
   min-width: 0;
@@ -111,25 +109,25 @@ input[type="search"]:focus-visible {
   user-select: none;
 }
 
-:where(:root[data-platform="windows"]) select:disabled {
+select:disabled {
   cursor: not-allowed;
 }
 
-:root[data-platform="windows"] select,
-:root[data-platform="windows"] select::picker(select) {
+select,
+select::picker(select) {
   appearance: base-select;
   -webkit-appearance: base-select;
 }
 
-:root[data-platform="windows"] select::picker-icon {
+select::picker-icon {
   display: none;
 }
 
-:root[data-platform="windows"] select > button,
-:root[data-platform="windows"] select > button:hover:not(:disabled),
-:root[data-platform="windows"] select > button:active:not(:disabled),
-:root[data-platform="windows"] select > button:focus-visible,
-:root[data-platform="windows"] select > button:disabled {
+select > button,
+select > button:hover:not(:disabled),
+select > button:active:not(:disabled),
+select > button:focus-visible,
+select > button:disabled {
   display: block;
   flex: 1 1 auto;
   min-width: 0;
@@ -154,7 +152,7 @@ input[type="search"]:focus-visible {
   opacity: 1;
 }
 
-:root[data-platform="windows"] select selectedcontent {
+select selectedcontent {
   display: block;
   min-width: 0;
   overflow: hidden;

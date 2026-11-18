@@ -32,8 +32,6 @@
 
 /* Select Dropdown Styling */
 .shell-environment-select {
-  appearance: none;
-  -webkit-appearance: none;
   min-width: 9.5rem;
   max-width: 100%;
   box-sizing: border-box;
