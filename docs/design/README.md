@@ -8,6 +8,8 @@
 
 - [自定义子 Agent](custom-subagents-design.md)：TOML 定义、模型选择、引用、权限与分阶段实施记录。
 - [Session 聊天分叉](session-conversation-fork-design.md)：产品规则、继承历史、文件环境、持久化与界面方案。
+- [Agent Team 调研与设计](agent-team-research-and-design.md)：业界团队模式调研、与现有子 Agent 的差距、Session 级团队协作层方案与分期；当前为设计方案，尚未实施。
+- [Agent Team P0 与 P1 详细设计](agent-team-p0-p1-design.md)：子 Agent Worktree、交付与整合、Team MVP 的数据模型、看板与私聊、唤醒调度、工具、协议、界面与验收；当前为设计方案，尚未实施。
 
 ## 记忆
 

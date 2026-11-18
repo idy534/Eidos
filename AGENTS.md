@@ -202,7 +202,7 @@ AnyIO 是目标异步运行内核。
 优先使用 `TaskGroup`、`CancelScope`、`fail_after`、Memory Object Stream 和 Async Process。
 不得新增每请求一个 Event Loop、每 MCP 连接一个专属线程、无上限 ThreadPool、无所有者后台线程、无 Cancel Scope 长任务或仅靠 `thread.join()` 的关闭协议。
 RunSupervisor、ResourceRegistry、Session FIFO 和 Shutdown Quiescence 语义必须保留。
-用户明确的并发策略：不设置跨 Session 的 Run/驻留 Worker 总量上限，不添加跨 Run 的共享工作区副作用门或长操作等待队列。每个父 Run 最多同时执行 8 个子 Agent Run，计数只作用于该父 Run；不得将其变成 Runtime 全局线程配额。保留现有受所有者管理的 Run Worker，不新增无所有者后台线程。不同 Run 的审批或 Shell 等待不能占用其他 Run 的执行名额。SQLite 短事务同步、同 Session FIFO、单 Run 内提交/启动窗口的顺序、明确的父子任务依赖以及现有权限与版本校验仍然保留。
+用户明确的并发策略：不设置跨 Session 的 Run/驻留 Worker 总量上限，不添加跨 Run 的共享工作区副作用门或长操作等待队列。每个父 Run 最多同时执行 8 个子 Agent Run，计数只作用于该父 Run；Agent Team 中每个 Team 最多同时执行 8 个成员 Run，计数只作用于该 Team，成员 Run 派生的子 Agent 仍按其父 Run 计数；两者都不得变成 Runtime 全局线程配额。保留现有受所有者管理的 Run Worker，不新增无所有者后台线程。不同 Run 的审批或 Shell 等待不能占用其他 Run 的执行名额。SQLite 短事务同步、同 Session FIFO、单 Run 内提交/启动窗口的顺序、明确的父子任务依赖以及现有权限与版本校验仍然保留。
 迁移必须证明：
 - Cancel 不会被迟到结果覆盖
 - Approval 等待不阻塞其他 Session 的 Run
