@@ -18,11 +18,11 @@ Eidos 在现有 Run 之上持久保存计划、用户输入请求和子任务依
 
 ## 角色、输入与权限
 
-内置角色包括 `default`、`explorer` 和 `worker`。角色描述任务侧重，`explorer` 不是只读权限模式。自定义 Agent 从固定目录与定义快照解析说明和模型。
+内置角色包括 `default`、`explorer`、`worker` 和 `verifier`。角色描述任务侧重，`explorer` 和 `verifier` 都不是只读权限模式。自定义 Agent 从固定目录与定义快照解析说明和模型。
 
-父模型通过 `spawn_agent` 提供自足任务。Child 接收任务正文，不复制父对话的全部历史。Child 继承 Workspace、固定权限和普通工具，也可以只读访问 Root 范围的记忆。Child 不能再次委派、直接请求用户输入或扩大权限；需要的审批由父链处理。
+父模型通过 `spawn_agent` 提供自足任务。Child 接收任务正文，不复制父对话的全部历史。Child 继承 Workspace、固定权限和普通工具，也可以只读访问 Root 范围的记忆。Child 不能再次委派、直接请求用户输入或扩大权限；需要的审批由父链处理。用户可以在 Desktop 子任务详情中直接给 Child 发消息，消息只对该任务构成用户指示，不增加权限。
 
-当前内置委派共享父 Workspace，系统不会为每个 Child 自动创建独立 Worktree。用户任务中的文件所有权和提交方式仍需要明确。多个 Child 写同一文件时，最终冲突检查仍由工具的版本核验承担。
+委派默认共享父 Workspace。Git 项目中，`spawn_agent(workspace="worktree")` 为 Child 创建以父工作区快照为基准的受管 Worktree；父任务用 `review_agent_changes` 查看变化，用 `integrate_agent_changes` 通过与 `apply_patch` 相同的受控写入整合，冲突时不写入。共享模式下多个 Child 写同一文件时，冲突检查仍由文件工具的版本核验承担，Shell 写入不受此保护。实现见 [agent_workspaces.py](../../runtime/eidos_runtime/application/agent_workspaces.py) 与 [agent_integration.py](../../runtime/eidos_runtime/tools/agent_integration.py)。
 
 ## 调度与持久等待
 

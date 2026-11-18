@@ -211,7 +211,8 @@ from eidos_runtime.protocol.collaboration import (AgentDefinitionReadRequest, Ag
 from eidos_runtime.domain.agents import AgentCatalogResponse
 from eidos_runtime.application.planning import PlanningApplication
 from eidos_runtime.protocol import planning as planning_dtos
-from eidos_runtime.protocol.collaboration import AgentCatalogRequest, AgentReadRequest, AgentStopRequest
+from eidos_runtime.protocol.collaboration import AgentCatalogRequest, AgentChangesRequest, AgentMessageFromUserRequest, AgentReadRequest, AgentStopRequest
+from eidos_runtime.domain.collaboration import AgentChanges, ReviewAgentChanges
 from eidos_runtime.domain.collaboration import CollaborationState
 from eidos_runtime.protocol import input_context as input_dtos
 from eidos_runtime.extensions.plugins import PluginCatalog
@@ -1422,6 +1423,15 @@ class RuntimeServer:
              lambda _id, request: self.supervisor.collaboration.read_session(request.session_id)),
             ("agent/stop", AgentStopRequest, CollaborationState,
              lambda _id, request: self.supervisor.collaboration.stop_from_desktop(request.parent_run_id, request.agent_id)),
+            ("agent/changes", AgentChangesRequest, AgentChanges,
+             lambda _id, request: self.supervisor.collaboration.changes_from_desktop(ReviewAgentChanges(
+                 agent_id=request.agent_id, path=request.path, offset_bytes=request.offset_bytes,
+                 max_bytes=request.max_bytes), request.parent_run_id)),
+            ("agent/discardWorkspace", AgentStopRequest, CollaborationState,
+             lambda _id, request: self.supervisor.collaboration.discard_from_desktop(request.parent_run_id, request.agent_id)),
+            ("agent/message", AgentMessageFromUserRequest, CollaborationState,
+             lambda _id, request: self.supervisor.collaboration.message_from_desktop(
+                 request.parent_run_id, request.agent_id, request.operation_id, request.text)),
             ("planning/read", planning_dtos.PlanningReadRequest, planning_dtos.PlanningReadResponse,
              lambda _id, request: self._planning_application().read(request)),
             ("planning/answer", planning_dtos.AnswerInputRequest, planning_dtos.AnswerInputResponse,
@@ -1691,6 +1701,8 @@ class RuntimeServer:
             "input/draftWrite",
             "planning/answer",
             "agent/stop",
+            "agent/message",
+            "agent/discardWorkspace",
             "agent/definitionSave",
             "agent/definitionRemove",
             "plan/edit",
@@ -2100,6 +2112,16 @@ class RuntimeServer:
             self._applications = self._build_applications()
         return self._applications
 
+    def _before_session_delete(self, session_id: str) -> None:
+        self.supervisor.hooks.end_session(session_id)
+        workspaces = self.supervisor.collaboration.workspaces
+        if workspaces is not None:
+            try:
+                workspaces.release_for_session(session_id)
+            except Exception:
+                # Startup Recovery removes child Worktrees whose Session is gone.
+                logger.exception("Child Worktree cleanup before Session delete failed session_id=%s", session_id)
+
     def _build_applications(self) -> _RuntimeApplications:
         if self.worktree_manager is None:
             self.worktree_manager = WorktreeManager(self.store.database)
@@ -2114,7 +2136,7 @@ class RuntimeServer:
             lifecycle=session_lifecycle,
             retention=self.worktree_retention,
             repository_runtime=self.repository_runtime,
-            before_delete=self.supervisor.hooks.end_session,
+            before_delete=self._before_session_delete,
         )
         return _RuntimeApplications(
             search=SearchApplication(SearchRepository(self.store.database), SessionRepository(self.store.database)),
@@ -2221,6 +2243,16 @@ class RuntimeServer:
                 self.worktree_retention = WorktreeRetentionService(
                     self.store.database, self.worktree_manager
                 )
+                from eidos_runtime.application.agent_workspaces import AgentWorkspaceService
+                agent_workspaces = AgentWorkspaceService(
+                    self.store.database, self.worktree_manager, self.worktree_retention.snapshot_service,
+                )
+                self.supervisor.collaboration.bind_workspaces(agent_workspaces)
+                try:
+                    with startup_phase("agent_workspaces"):
+                        agent_workspaces.reconcile()
+                except Exception:
+                    logger.exception("Agent Worktree recovery is incomplete")
                 try:
                     with startup_phase("worktree_retention"):
                         self.worktree_retention.reconcile()

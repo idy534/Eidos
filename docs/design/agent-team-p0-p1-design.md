@@ -4,7 +4,7 @@
 
 日期：2026-11-18。
 
-状态：详细设计，尚未实施。2026-11-18 完成一轮设计评审，结论与处理见第 7 节。文中的源码位置已在 `feat/windows-support` 分支核对；第 6 节列出仍需在实施时确认的项目。
+状态：P0 已在 `feat/windows-support` 分支实施，与本文的差异见第 8 节；P1 尚未实施。2026-11-18 完成一轮设计评审，结论与处理见第 7 节。文中的源码位置已在 `feat/windows-support` 分支核对；第 6 节列出仍需在实施时确认的项目。
 
 ## 1. 已确认的决策
 
@@ -633,5 +633,22 @@ P0 和 P1 各作为一个 PR，每个 PR 内按问题分成独立 Commit。
 
 1. Lead 可以按需读取成员之间的私聊，私聊不推送进 Lead 的上下文（4.5）。
 2. 模型通过 `spawn_agent` 创建受管 Worktree 时不逐次审批（3.1）。
+
+## 8. P0 实施记录
+
+日期：2026-11-18。以下是实施与第 3 节设计不同的地方及原因。
+
+| 设计 | 实施 | 原因 |
+| --- | --- | --- |
+| 新增生命周期范围 `agent/workspace-create`，并重建 CHECK 约束 | 复用 `session/create` 范围，操作 ID 以 `agent-workspace-` 开头 | 子任务创建本来就是“建 Worktree 并绑定新 Session”，复用现有状态迁移即可，不需要重建表 |
+| 基准提交 | 基准树，固定在 `refs/eidos/agent-workspaces/<agentId>/base`；最新交付树固定在同目录的 `delivery` | 比较只需要树，不需要提交身份和作者配置 |
+| `workspace_integrations` 表与 Desktop 直接整合 | 未建表；整合只通过父任务的 `integrate_agent_changes`，Desktop 只提供查看和放弃 | Desktop 发起的写入没有 Run 的权限快照和 Durable Intent，需要单独设计；工具路径完整复用 `apply_patch` 的受控写入 |
+| 冲突文件逐个标记，其余文件照常写入 | 任一请求的文件冲突时整个调用不写入，并列出路径；父任务可用 `paths` 整合其余文件 | 避免一次调用留下部分写入；父任务能明确选择 |
+| 二进制文件按整文件替换整合 | 二进制文件不由工具整合，结果中列出 | 现有受控写入的 Diff 生成只支持 UTF-8 文本 |
+| `agent/discardWorkspace` 带 `operationId` | 不带 | 放弃是幂等操作，重复执行没有额外副作用 |
+| 用量放在子任务摘要中 | 只在 Desktop 读取的摘要中计算 | 用量在运行中持续变化，若进入引擎比较的协作状态，会让完成判断反复重建上下文 |
+| — | 新增 `agent/changes` | Desktop 变更视图需要读取文件列表和分页 Diff |
+
+验证见本轮交付说明。真实 Seatbelt 下 Worktree 子任务的 Shell 执行和 Windows NTFS 尚未单独验证。
 
 返回 [设计目录](README.md)。

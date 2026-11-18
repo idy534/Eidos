@@ -12,6 +12,21 @@ class AgentStopRequest(EidosFrozenStrictModel):
     agent_id: str = Field(min_length=1, max_length=128)
 
 
+class AgentMessageFromUserRequest(EidosFrozenStrictModel):
+    operation_id: str = Field(min_length=1, max_length=128)
+    parent_run_id: str = Field(min_length=1, max_length=128)
+    agent_id: str = Field(min_length=1, max_length=128)
+    text: str = Field(min_length=1, max_length=64 * 1024)
+
+
+class AgentChangesRequest(EidosFrozenStrictModel):
+    parent_run_id: str = Field(min_length=1, max_length=128)
+    agent_id: str = Field(min_length=1, max_length=128)
+    path: str | None = Field(default=None, min_length=1, max_length=4096)
+    offset_bytes: int = Field(default=0, ge=0, le=2**53 - 1)
+    max_bytes: int = Field(default=64 * 1024, ge=4, le=64 * 1024)
+
+
 class AgentCatalogRequest(EidosFrozenStrictModel):
     pass
 

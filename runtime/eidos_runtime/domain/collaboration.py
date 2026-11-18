@@ -31,8 +31,9 @@ ACTIVE_STATUSES = ("queued", "running", "waiting_approval", "waiting_input", "wa
 class SpawnAgent(EidosFrozenStrictModel):
     task_name: str = Field(min_length=1, max_length=60, pattern=r"^[a-z][a-z0-9_-]*$")
     message: str = Field(min_length=1, max_length=MAX_AGENT_MESSAGE_BYTES, description="A self-contained assignment, up to 64 KiB UTF-8, with scope and acceptance criteria. The child receives this task, not the whole parent conversation.")
-    role: AgentTypeName = Field(default="default", description="Agent type from the frozen catalog: default for general work, explorer for focused investigation, worker for implementation and verification. All roles inherit the parent Run's permissions and ordinary tools; explorer is not a read-only permission mode. Custom types use their configured instructions and model.")
+    role: AgentTypeName = Field(default="default", description="Agent type from the frozen catalog: default for general work, explorer for focused investigation, worker for implementation and verification, verifier for checking claims and changes against evidence. All roles inherit the parent Run's permissions and ordinary tools; explorer and verifier are not read-only permission modes. Custom types use their configured instructions and model.")
     required_for_completion: bool = Field(default=True, description="Set false only for supplementary work whose result is not needed to finish the task. Runtime cancels optional tasks and awaits their resource cleanup at parent completion.")
+    workspace: Literal['shared', 'worktree'] = Field(default='shared', description="shared works in the live parent workspace. worktree gives the child its own Git Worktree started from the current parent state, including uncommitted changes; use it when several children edit or build at once. Review its changes with review_agent_changes and bring them into your workspace with integrate_agent_changes. Ignored dependency folders such as node_modules are not copied, and Shell has no network by default.")
 
     _bounded = field_validator('message')(_bounded_message)
 
@@ -52,6 +53,35 @@ class ReadAgentResult(AgentTarget):
     offset_bytes: JsonSafeInt = Field(default=0, ge=0)
     max_bytes: int = Field(default=16 * 1024, ge=4, le=MAX_AGENT_RESULT_PAGE_BYTES)
     from_end: bool = False
+
+
+class ReviewAgentChanges(AgentTarget):
+    path: str | None = Field(default=None, min_length=1, max_length=4096, description="Limit the diff page to one changed path.")
+    offset_bytes: JsonSafeInt = Field(default=0, ge=0, description="Continue the diff from diffNextOffset.")
+    max_bytes: int = Field(default=16 * 1024, ge=4, le=MAX_AGENT_RESULT_PAGE_BYTES)
+
+
+class IntegrateAgentChanges(AgentTarget):
+    paths: list[str] | None = Field(default=None, min_length=1, max_length=2000, description="Changed paths to integrate. Omit to integrate every change.")
+
+
+class AgentChangedFile(EidosFrozenStrictModel):
+    path: str
+    kind: Literal['added', 'modified', 'deleted']
+    additions: JsonSafeInt = Field(default=0, ge=0)
+    deletions: JsonSafeInt = Field(default=0, ge=0)
+    binary: bool = False
+
+
+class AgentChanges(EidosFrozenStrictModel):
+    """A child's Worktree changes from its starting state, without Git object ids."""
+
+    agent_id: str
+    status: Literal['ready', 'stale', 'integrated', 'partially_integrated', 'discarded']
+    files: list[AgentChangedFile] = Field(default_factory=list, max_length=2000)
+    diff: str = ''
+    diff_next_offset: JsonSafeInt = Field(default=0, ge=0)
+    diff_has_more: bool = False
 
 
 class ReadAgentMessage(EidosFrozenStrictModel):
@@ -93,6 +123,18 @@ class AgentWaitOutcome(EidosFrozenStrictModel):
     pending_agent_ids: list[str] = Field(default_factory=list, max_length=MAX_AGENTS)
 
 
+class AgentUsage(EidosFrozenStrictModel):
+    """Token and time totals across every Run of one child Session."""
+
+    input_tokens: JsonSafeInt = Field(default=0, ge=0)
+    output_tokens: JsonSafeInt = Field(default=0, ge=0)
+    cache_read_tokens: JsonSafeInt = Field(default=0, ge=0)
+    cache_write_tokens: JsonSafeInt = Field(default=0, ge=0)
+    # A model attempt without reported usage makes the totals a lower bound.
+    incomplete: bool = False
+    effective_ms: JsonSafeInt = Field(default=0, ge=0)
+
+
 class AgentSummary(EidosFrozenStrictModel):
     id: str
     task_name: str
@@ -113,11 +155,15 @@ class AgentSummary(EidosFrozenStrictModel):
     stop_reason: str | None = None
     termination: RunTermination | None = None
     reconciliation_required: bool = False
+    user_instruction: str | None = Field(default=None, max_length=500)
+    workspace_mode: Literal['shared', 'worktree'] = 'shared'
+    usage: AgentUsage | None = None
     created_at: JsonSafeInt
 
 
 class AgentMessage(EidosFrozenStrictModel):
     id: str
+    sender_kind: Literal['agent', 'user'] = 'agent'
     sender_session_id: str
     recipient_session_id: str
     content: str

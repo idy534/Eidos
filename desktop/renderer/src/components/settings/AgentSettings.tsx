@@ -21,6 +21,7 @@ const builtinDescriptions: Record<string, string> = {
   default: "继承父任务的模型与执行上下文，承担通用型任务调度与执行。",
   explorer: "专注于只读探索、源码搜索与证据收集",
   worker: "负责范围明确的实现、修复与验证。",
+  verifier: "依据证据核对结论与改动，给出接受或退回的理由。",
 };
 
 export function AgentSettings({ ready, onCountChange, onShowToast }: {

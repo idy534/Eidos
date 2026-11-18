@@ -88,12 +88,16 @@ class WorktreeRetentionService:
         settings = self.settings.read()
         if not settings.automatic_cleanup:
             return RetentionReport()
+        # Child agent Worktrees belong to their delegation. They are removed
+        # with it, never by retention, and do not count toward the user limit.
+        agent_owned = self._agent_worktree_ids()
         worktrees = [
             worktree
             for project in self.manager.repository.list_projects()
             for worktree in self.manager.repository.list_worktrees(project.id)
             if worktree.ownership is WorktreeOwnership.MANAGED
             and worktree.state is WorktreeState.ACTIVE
+            and worktree.id not in agent_owned
         ]
         by_id = {worktree.id: worktree for worktree in worktrees}
         candidates = tuple(
@@ -291,7 +295,14 @@ class WorktreeRetentionService:
             )
         return worktree
 
+    def _agent_worktree_ids(self) -> frozenset[str]:
+        with self.database.lock:
+            return frozenset(row[0] for row in self.database.connection().execute(
+                "SELECT worktree_id FROM agent_delegations WHERE worktree_id IS NOT NULL"))
+
     def _protected_reason(self, worktree: Worktree) -> str | None:
+        if worktree.id in self._agent_worktree_ids():
+            return "agent_workspace"
         if worktree.state is WorktreeState.INVALID:
             return "worktree_recovery_required"
         if worktree.branch_ownership is BranchOwnership.LEGACY_MANAGED:

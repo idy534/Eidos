@@ -13,9 +13,9 @@ import { isChannelResponse, isChannelOrigin, type ChannelResponse, type ChannelS
 import { isSessionForkResponse, isInheritedHistoryEntry, isSessionForkSource } from "../shared/session-fork.js";
 import type { SessionForkRequest } from "../shared/session-fork.generated.js";
 import { isMemoryRequest, isMemoryResponse, isMemoryChangedNotice, type MemoryMethods } from "../shared/memory.js";
-import { isAgentCatalog, isCollaborationState } from "../shared/collaboration.js";
+import { isAgentCatalog, isAgentChanges, isCollaborationState } from "../shared/collaboration.js";
 import { isRunTermination } from "../shared/run-termination.js";
-import type { AgentCatalogResponse, CollaborationState } from "../shared/collaboration.generated.js";
+import type { AgentCatalogResponse, AgentChanges, AgentChangesRequest, AgentMessageFromUserRequest, CollaborationState } from "../shared/collaboration.generated.js";
 import type { AgentDefinitionDocument, AgentDefinitionSaveRequest, AgentDefinitionRemoveRequest } from "../shared/collaboration.generated.js";
 import { isAgentDefinitionDocument } from "../shared/agent-definitions.js";
 import { isPlanningReadResponse, isUserInputRequest, isPlanResponse } from "../shared/planning.js";
@@ -1058,6 +1058,15 @@ export class RuntimeClient {
   }
   stopAgent(parentRunId: string, agentId: string): Promise<CollaborationState> {
     return this.validatedRequest("agent/stop", { parentRunId, agentId }, isCollaborationState);
+  }
+  messageAgent(request: AgentMessageFromUserRequest): Promise<CollaborationState> {
+    return this.validatedRequest("agent/message", { ...request }, isCollaborationState);
+  }
+  readAgentChanges(request: AgentChangesRequest): Promise<AgentChanges> {
+    return this.validatedRequest("agent/changes", { ...request }, isAgentChanges);
+  }
+  discardAgentWorkspace(parentRunId: string, agentId: string): Promise<CollaborationState> {
+    return this.validatedRequest("agent/discardWorkspace", { parentRunId, agentId }, isCollaborationState);
   }
   readPlanning(sessionId: string): Promise<PlanningReadResponse> {
     return this.validatedRequest("planning/read", { sessionId }, isPlanningReadResponse);

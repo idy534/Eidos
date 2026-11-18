@@ -10,6 +10,7 @@ import { mergeContextCompactions } from "../context-compaction.js";
 import { mergeModelRetries } from "../model-retry.js";
 import { EmptyState } from "./EmptyState.js";
 import { AlertBanner } from "./AlertBanner.js";
+import { AgentChangesView, AgentMessageComposer, formatAgentUsage } from "./AgentWorkspaceTools.js";
 
 const active = new Set([
   "queued",
@@ -408,7 +409,7 @@ function AgentTranscript({
     const items: Item[] = hasUserMsg
       ? rawItems.map((item) => {
           if (item.kind === "user_message" && item.content) {
-            const cleaned = item.content.replace(/^Delegated task from the parent agent\.[^\n]*\n\n/, "");
+            const cleaned = item.content.replace(/^(?:Delegated task from the parent agent|User instruction to this agent)[^\n]*\n\n/, "");
             return cleaned !== item.content ? { ...item, content: cleaned } : item;
           }
           return item;
@@ -677,6 +678,7 @@ export function AgentWorkspacePanel({
             </div>
 
             <div className="agent-heading__actions">
+              {formatAgentUsage(agent) && <span className="agent-usage">{formatAgentUsage(agent)}</span>}
               <span className={`agent-status-pill agent-status-pill--${statusBadgeTone(agent.status)}`}>
                 {labels[agent.status]}
               </span>
@@ -727,6 +729,8 @@ export function AgentWorkspacePanel({
             workspaceRoot={workspaceRoot}
             models={effectiveModels}
           />
+          <AgentChangesView agent={agent} />
+          <AgentMessageComposer key={agent.id} agent={agent} />
         </article>
       )}
     </section>

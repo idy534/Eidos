@@ -769,6 +769,9 @@ class SessionRepository(Repository):
                 'SELECT child_session_id FROM agent_delegations WHERE parent_run_id IN (SELECT id FROM runs WHERE session_id=?)',
                 (session_id,),
             ).fetchall()
+            # Delivery entries name files of child Worktrees; they go with the delegation.
+            connection.execute("DELETE FROM workspace_deliveries WHERE owner_kind='agent' AND owner_id IN "
+                               '(SELECT id FROM agent_delegations WHERE parent_run_id IN (SELECT id FROM runs WHERE session_id=?))', (session_id,))
             connection.execute('DELETE FROM agent_messages WHERE parent_run_id IN (SELECT id FROM runs WHERE session_id=?)', (session_id,))
             connection.execute('DELETE FROM agent_delegations WHERE parent_run_id IN (SELECT id FROM runs WHERE session_id=?)', (session_id,))
             for child in children:

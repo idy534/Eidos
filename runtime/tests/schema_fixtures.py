@@ -4,8 +4,24 @@ from __future__ import annotations
 import sqlite3
 
 
+def remove_agent_workspace_schema(connection: sqlite3.Connection) -> None:
+    """Drop the v55 child workspace objects when constructing an older database."""
+    connection.execute("DROP TABLE IF EXISTS workspace_integrations")
+    connection.execute("DROP TABLE IF EXISTS workspace_deliveries")
+    connection.execute("DROP INDEX IF EXISTS agent_messages_operation")
+    for table, names in {
+        "agent_messages": ("sender_kind", "operation_id"),
+        "agent_delegations": ("workspace_mode", "worktree_id", "base_tree", "last_user_instruction"),
+    }.items():
+        columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+        for name in names:
+            if name in columns:
+                connection.execute(f"ALTER TABLE {table} DROP COLUMN {name}")
+
+
 def remove_memory_usage_schema(connection: sqlite3.Connection) -> None:
-    """Drop the v54 memory read columns when constructing an older database."""
+    """Drop the v54 memory read columns, and later ones, when constructing an older database."""
+    remove_agent_workspace_schema(connection)
     columns = {row[1] for row in connection.execute("PRAGMA table_info(memory_documents)")}
     for name in ("last_read_at", "read_count"):
         if name in columns:

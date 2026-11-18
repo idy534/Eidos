@@ -8,13 +8,16 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const schema = JSON.parse(execFileSync(path.join(root, '.venv/bin/python'), ['-c', `
 import json
 from eidos_runtime.models import EidosFrozenStrictModel
-from eidos_runtime.domain.collaboration import CollaborationState
+from eidos_runtime.domain.collaboration import AgentChanges, CollaborationState
 from eidos_runtime.domain.agents import AgentCatalogResponse
-from eidos_runtime.protocol.collaboration import (AgentStopRequest, AgentDefinitionDocument, AgentDefinitionReadRequest, AgentDefinitionSaveRequest, AgentDefinitionRemoveRequest)
+from eidos_runtime.protocol.collaboration import (AgentStopRequest, AgentChangesRequest, AgentMessageFromUserRequest, AgentDefinitionDocument, AgentDefinitionReadRequest, AgentDefinitionSaveRequest, AgentDefinitionRemoveRequest)
 class CollaborationContract(EidosFrozenStrictModel):
     catalog: AgentCatalogResponse
     state: CollaborationState
     stop: AgentStopRequest
+    changes: AgentChanges
+    changesRequest: AgentChangesRequest
+    message: AgentMessageFromUserRequest
     definition: AgentDefinitionDocument
     definitionRead: AgentDefinitionReadRequest
     definitionSave: AgentDefinitionSaveRequest

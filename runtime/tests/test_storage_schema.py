@@ -118,6 +118,8 @@ EXPECTED_TABLES = {
     "browser_settings",
     "runtime_settings",
     "worktree_snapshots",
+    "workspace_deliveries",
+    "workspace_integrations",
     "run_dependency_snapshots",
     "run_dependency_bindings",
     "skill_states",
@@ -535,6 +537,10 @@ class StorageSchemaTests(unittest.TestCase):
                 "one_pending_user_input",
                 "agent_delegations_parent",
                 "agent_messages_recipient",
+                "agent_messages_operation",
+                "workspace_deliveries_owner",
+                "workspace_integrations_delivery",
+                "workspace_integrations_unfinished",
                 "run_skill_leases_skill",
                 "events_session_id",
                 "events_session_type_id",
@@ -592,10 +598,10 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 54)
+        self.assertEqual(SCHEMA_VERSION, 55)
         self.assertEqual(V47_SCHEMA_VERSION, 47)
         self.assertEqual(V46_SCHEMA_VERSION, 46)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 53)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 54)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")

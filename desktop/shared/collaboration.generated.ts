@@ -3,7 +3,7 @@
 export type Name = string;
 export type Description = string;
 export type Source = string;
-export type Baserole = "default" | "explorer" | "worker";
+export type Baserole = "default" | "explorer" | "worker" | "verifier";
 export type Providerid = string | null;
 export type Modelid = string | null;
 export type Enabled = boolean;
@@ -19,7 +19,7 @@ export type Parentrunid = string | null;
 export type Id = string;
 export type Taskname = string;
 export type Role = string;
-export type Baserole1 = ("default" | "explorer" | "worker") | null;
+export type Baserole1 = ("default" | "explorer" | "worker" | "verifier") | null;
 export type Modelid1 = string | null;
 export type Providerid1 = string | null;
 export type Definitionversion1 = string | null;
@@ -52,12 +52,21 @@ export type Toolname = string | null;
 export type Validationpath = string | null;
 export type Httpstatus = number | null;
 export type Reconciliationrequired = boolean;
+export type Userinstruction = string | null;
+export type Workspacemode = "shared" | "worktree";
+export type Inputtokens = number;
+export type Outputtokens = number;
+export type Cachereadtokens = number;
+export type Cachewritetokens = number;
+export type Incomplete = boolean;
+export type Effectivems = number;
 export type Createdat = number;
 /**
  * @maxItems 16
  */
 export type Agents1 = AgentSummary[];
 export type Id1 = string;
+export type Senderkind = "agent" | "user";
 export type Sendersessionid = string;
 export type Recipientsessionid = string;
 export type Content = string;
@@ -68,18 +77,41 @@ export type Createdat1 = number;
 export type Messages = AgentMessage[];
 export type Parentrunid2 = string;
 export type Agentid = string;
+export type Agentid1 = string;
+export type Status = "ready" | "stale" | "integrated" | "partially_integrated" | "discarded";
+export type Path = string;
+export type Kind = "added" | "modified" | "deleted";
+export type Additions = number;
+export type Deletions = number;
+export type Binary = boolean;
+/**
+ * @maxItems 2000
+ */
+export type Files = AgentChangedFile[];
+export type Diff = string;
+export type Diffnextoffset = number;
+export type Diffhasmore = boolean;
+export type Parentrunid3 = string;
+export type Agentid2 = string;
+export type Path1 = string | null;
+export type Offsetbytes = number;
+export type Maxbytes = number;
+export type Operationid = string;
+export type Parentrunid4 = string;
+export type Agentid3 = string;
+export type Text = string;
 export type Source1 = string;
 export type Version = string;
 export type Schemaversion = 1;
 export type Name1 = string;
 export type Description1 = string;
 export type Enabled1 = boolean;
-export type Baserole2 = "default" | "explorer" | "worker";
+export type Baserole2 = "default" | "explorer" | "worker" | "verifier";
 export type Instructions = string;
 export type Providerid2 = string | null;
 export type Configid = string | null;
 export type Reasoningselection = ("none" | "thinking" | "low" | "medium" | "high" | "xhigh" | "max") | null;
-export type Text = string;
+export type Text1 = string;
 export type Source2 = string;
 export type Source3 = string | null;
 export type Expectedversion = string | null;
@@ -90,6 +122,9 @@ export interface CollaborationContract {
   catalog: AgentCatalogResponse;
   state: CollaborationState;
   stop: AgentStopRequest;
+  changes: AgentChanges;
+  changesRequest: AgentChangesRequest;
+  message: AgentMessageFromUserRequest;
   definition: AgentDefinitionDocument;
   definitionRead: AgentDefinitionReadRequest;
   definitionSave: AgentDefinitionSaveRequest;
@@ -136,6 +171,9 @@ export interface AgentSummary {
   stopReason?: Stopreason;
   termination?: RunTermination | null;
   reconciliationRequired?: Reconciliationrequired;
+  userInstruction?: Userinstruction;
+  workspaceMode?: Workspacemode;
+  usage?: AgentUsage | null;
   createdAt: Createdat;
 }
 /**
@@ -150,8 +188,20 @@ export interface RunTermination {
   validationPath?: Validationpath;
   httpStatus?: Httpstatus;
 }
+/**
+ * Token and time totals across every Run of one child Session.
+ */
+export interface AgentUsage {
+  inputTokens?: Inputtokens;
+  outputTokens?: Outputtokens;
+  cacheReadTokens?: Cachereadtokens;
+  cacheWriteTokens?: Cachewritetokens;
+  incomplete?: Incomplete;
+  effectiveMs?: Effectivems;
+}
 export interface AgentMessage {
   id: Id1;
+  senderKind?: Senderkind;
   senderSessionId: Sendersessionid;
   recipientSessionId: Recipientsessionid;
   content: Content;
@@ -161,11 +211,42 @@ export interface AgentStopRequest {
   parentRunId: Parentrunid2;
   agentId: Agentid;
 }
+/**
+ * A child's Worktree changes from its starting state, without Git object ids.
+ */
+export interface AgentChanges {
+  agentId: Agentid1;
+  status: Status;
+  files?: Files;
+  diff?: Diff;
+  diffNextOffset?: Diffnextoffset;
+  diffHasMore?: Diffhasmore;
+}
+export interface AgentChangedFile {
+  path: Path;
+  kind: Kind;
+  additions?: Additions;
+  deletions?: Deletions;
+  binary?: Binary;
+}
+export interface AgentChangesRequest {
+  parentRunId: Parentrunid3;
+  agentId: Agentid2;
+  path?: Path1;
+  offsetBytes?: Offsetbytes;
+  maxBytes?: Maxbytes;
+}
+export interface AgentMessageFromUserRequest {
+  operationId: Operationid;
+  parentRunId: Parentrunid4;
+  agentId: Agentid3;
+  text: Text;
+}
 export interface AgentDefinitionDocument {
   source: Source1;
   version: Version;
   definition: AgentDefinition;
-  text: Text;
+  text: Text1;
 }
 export interface AgentDefinition {
   schemaVersion: Schemaversion;

@@ -558,7 +558,7 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 
 ## 子 Agent 委派
 
-- 父任务可以创建 `default` 通用任务、`explorer` 代码调查或 `worker` 实现与验证任务、发送消息、继续已结束的子任务、等待和停止子任务。省略角色时使用 `default`。用户可以通过数据目录下的 `agents/*.toml` 增加自定义类型，并用 `role` 指定该名称。
+- 父任务可以创建 `default` 通用任务、`explorer` 代码调查、`worker` 实现与验证任务或 `verifier` 核查任务、发送消息、继续已结束的子任务、等待和停止子任务。`verifier` 与 `explorer` 一样只是任务侧重，不是只读权限；它成为保留名称后，同名的自定义定义会显示为不可用。省略角色时使用 `default`。用户可以通过数据目录下的 `agents/*.toml` 增加自定义类型，并用 `role` 指定该名称。
 - Runtime 复用现有 Session、Run、模型调用和 SQLite/Event/Outbox。子任务有独立上下文。父任务负责核对证据和最终汇总。
 - 每个父 Run 最多有 16 个子 Session，其中最多 8 个子 Run 同时执行。三个角色使用普通文件、Shell、Skill、图片、产物声明和已启用扩展工具，角色通过持久记录生成的独立指令表达分工。`explorer` 不提供强制只读保证。内置类型继承父模型；自定义类型可以通过 `model.provider_id`、`model.config_id` 和 `reasoning_selection` 选择已有模型配置。子 Run 暂不获得记忆工具或自动索引。所有子 Run 继承父 Run 的审批模式、权限和扩展快照；父 Run 有效时可使用其已批准的 Run 范围 Grant，但不能派生后代、直接向用户提问或直接申请新 Grant。
 - 父任务等待在没有活动 Shell 且没有剩余批次时使用持久 `waiting_agents` 状态。混合批次或活动 Shell 下保留 Worker，满足条件后顺序继续。等待默认在所选子任务全部结束后返回，`mode=any` 在第一个结束后返回；子任务发来的新消息、用户插话或超时也会结束等待，结果说明原因和仍在运行的子任务。工具描述引导父任务在子任务运行时继续推进不依赖其结果的工作。忙碌子任务的 `followup_task` 作为消息送达；空闲子任务才创建新 Run。任务和消息正文支持 64 KiB UTF-8。模型优先读取最早 32 条未读消息，只有完整正文进入成功请求后才保存投递回执；失败、取消和截断预览不消费消息，已读消息不重复注入。可选子任务通过 `required_for_completion=false` 声明，收尾时停止并清理；必需任务仍需完成。
@@ -566,6 +566,19 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 - Desktop 在环境信息中展示子 Agent 列表和待审批数量；右侧工作区关闭时，环境信息入口仍提示待审批数。点击可在右侧工作区查看状态、记录、审批和停止操作。父任务取消会同时发起子任务取消；父任务异常结束后，正常调度也会取消其孤立子任务。
 - 子 Agent 详情已移除“加载更早记录”按钮。详情页会通过现有分页接口自动读取全部执行记录，并保留各页记录对应的真实 Run 信息。后台刷新保留已显示的历史，只响应当前子 Session 的通知，并按顺序执行读取。全量自动化测试和 AgentPanel 定向测试已通过。真实产品窗口中的长历史展示和性能仍待人工验收。
 - 本阶段没有新增依赖。生产 DTO 从 Python Schema 生成。完整验证结果以当前 PR 记录为准。
+
+### 独立 Worktree、交付与整合
+
+- `spawn_agent` 的 `workspace` 默认为 `shared`，子任务继续共用父工作区。Git 项目中可以传入 `worktree`：Runtime 以父工作区的快照（包含未提交修改和未跟踪文件）创建受管 Worktree，并按 `.worktreeinclude` 复制声明的被忽略文件。非 Git 项目返回 `agent_worktree_requires_git`。模型请求创建时不逐次审批，与用户创建 Worktree Session 一致；子任务的 Seatbelt 工作区就是它自己的 Worktree。
+- 创建复用 `session/create` 生命周期。基准树固定在 `refs/eidos/agent-workspaces/<agentId>/base`。启动时 Recovery 删除没有提交委派的 spawn Worktree，以及父 Session 已不存在的子任务 Worktree。子任务 Worktree 不参与自动保留清理，也不计入受管 Worktree 上限；删除父 Session 时先删除它们。
+- 子任务空闲后，父任务用 `review_agent_changes` 查看相对基准的文件列表和分页 Diff，结果不含 Git 对象 ID 或指纹。`integrate_agent_changes` 是父 Run 的工作区写入工具，复用 `apply_patch` 的权限、Durable Intent、版本核验和未知结果记录：父工作区未改动的文件直接取子任务版本，双方都改过的文本文件用 `git merge-file` 合并；任一请求的文件冲突、是二进制或不在当前工作区内时，整个调用不写入并列出这些路径，父任务可以用 `paths` 整合其余文件。
+- 放弃子任务 Worktree 后，该子任务不能再被续派或接收会启动新 Run 的用户消息。
+- Desktop 子任务详情页显示变更列表、Diff 分页和二次确认的放弃操作；整合由父任务通过工具完成，Desktop 暂不提供直接整合。
+
+### 用户消息与用量
+
+- 子任务详情页可以直接给子任务发消息（`agent/message`，必须带 `operationId`）。子任务运行中时，消息以 `senderKind=user` 送达，作为该任务内的用户指示，不增加权限；子任务空闲而父 Run 仍活动时，消息以 `User instruction to this agent` 开头启动一次新 Run；父 Run 已结束时返回 `agent_parent_inactive`。父任务的证据段显示最近一条用户指示的预览。
+- Desktop 读取的子任务摘要包含累计用量（输入、输出、缓存读写 token 与有效时长），缺少用量的模型尝试会把汇总标为不完整。用量不进入模型上下文，也不参与引擎判断协作状态是否变化。
 
 ### 自定义智能体
 

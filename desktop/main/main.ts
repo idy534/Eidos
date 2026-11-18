@@ -61,6 +61,7 @@ import type {
   ReviewCommentCreateInput,
 } from "../shared/index.js";
 import { IPC, MAX_APPROVAL_FEEDBACK_BYTES } from "../shared/index.js";
+import { isAgentChangesRequest, isAgentMessageFromUserRequest } from "../shared/collaboration.js";
 
 // ---------------------------------------------------------------------------
 // Logging helpers — never log API keys, full prompts, or sensitive env vars
@@ -1375,6 +1376,20 @@ ipcMain.handle(IPC.AGENT_READ, (event, sessionId: unknown) => {
 ipcMain.handle(IPC.AGENT_STOP, (event, parentRunId: unknown, agentId: unknown) => {
   inputOwner(event);
   return clientOrThrow().stopAgent(inputKey(parentRunId), inputKey(agentId));
+});
+ipcMain.handle(IPC.AGENT_MESSAGE, (event, request: unknown) => {
+  inputOwner(event);
+  if (!isAgentMessageFromUserRequest(request)) throw new Error("Invalid agent message request.");
+  return clientOrThrow().messageAgent(request);
+});
+ipcMain.handle(IPC.AGENT_CHANGES, (event, request: unknown) => {
+  inputOwner(event);
+  if (!isAgentChangesRequest(request)) throw new Error("Invalid agent changes request.");
+  return clientOrThrow().readAgentChanges(request);
+});
+ipcMain.handle(IPC.AGENT_DISCARD_WORKSPACE, (event, parentRunId: unknown, agentId: unknown) => {
+  inputOwner(event);
+  return clientOrThrow().discardAgentWorkspace(inputKey(parentRunId), inputKey(agentId));
 });
 ipcMain.handle(IPC.DATA_BACKUP, async (event) => {
   inputOwner(event);

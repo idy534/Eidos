@@ -943,3 +943,110 @@
   font-size: var(--font-size-caption);
   color: var(--muted);
 }
+
+.agent-usage {
+  color: var(--text-tertiary, var(--muted-foreground));
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.agent-changes {
+  border-top: 1px solid var(--border-subtle, var(--border));
+  padding: 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agent-changes__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-changes__header h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.agent-changes__confirm {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.agent-changes__danger {
+  color: var(--danger, #c0392b);
+}
+
+.agent-changes__files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.agent-changes__file {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.agent-changes__path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.agent-changes__file--deleted .agent-changes__path {
+  text-decoration: line-through;
+}
+
+.agent-changes__stat {
+  flex: none;
+  color: var(--text-tertiary, var(--muted-foreground));
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-changes__diff {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  white-space: pre;
+}
+
+.agent-changes__more {
+  align-self: flex-start;
+}
+
+.agent-message-composer {
+  border-top: 1px solid var(--border-subtle, var(--border));
+  padding: 10px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-message-composer__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.agent-message-composer textarea {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  font: inherit;
+}

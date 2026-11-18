@@ -12,7 +12,7 @@ import { userFacingError } from "../../session-state.js";
 import { MarkdownEditor } from "../MarkdownEditor.js";
 import { Select } from "../Select.js";
 
-export const agentRoleLabels: Record<string, string> = { default: "通用", explorer: "调查", worker: "工作" };
+export const agentRoleLabels: Record<string, string> = { default: "通用", explorer: "调查", worker: "工作", verifier: "核查" };
 const emptyDefinition: AgentDefinition = { schemaVersion: 1, name: "", description: "", instructions: "", baseRole: "default", enabled: true };
 const reasoningLabels = { none: "关闭思考", thinking: "开启思考", low: "低", medium: "中", high: "高", xhigh: "超高", max: "最高" };
 
@@ -23,6 +23,14 @@ export function AgentRoleIcon({ role, size = 18 }: { role: string; size?: number
         <path d="m6 7-4 3 4 3" />
         <path d="m14 7 4 3-4 3" />
         <path d="m11 5-2 10" />
+      </svg>
+    );
+  }
+  if (role === "verifier") {
+    return (
+      <svg viewBox="0 0 20 20" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M10 2.5 16 5v4.5c0 3.8-2.6 6.6-6 8-3.4-1.4-6-4.2-6-8V5l6-2.5Z" />
+        <path d="m7.2 10.2 2 2 3.8-4" />
       </svg>
     );
   }
@@ -79,7 +87,7 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
   const selectableModels = models.filter((model) => model.supportsToolCall);
   const model = selectableModels.find((model) => model.id === selection?.configId && model.provider === selection?.providerId);
   const nameError = !/^[a-z][a-z0-9_-]{0,63}$/.test(draft.name) ? "名称需要以小写字母开头，并且只包含小写字母、数字、下划线或连字符。"
-    : ["default", "worker", "explorer"].includes(draft.name) ? "名称不能与内置智能体重复。"
+    : Object.hasOwn(agentRoleLabels, draft.name) ? "名称不能与内置智能体重复。"
     : undefined;
   const descriptionError = !draft.description.trim() ? "请填写用途说明。" : undefined;
   const instructionsError = !draft.instructions.trim() ? "请填写智能体指令。"

@@ -289,6 +289,7 @@ class RunResources:
                 task = self.store.automations.repository.read(automation_origin.automation_id)
                 if task.status == "ACTIVE" and task.kind == "cron":
                     automation_tools = (automation_entry(self.store.automations, self_pause_only=True),)
+        from eidos_runtime.tools.agent_integration import agent_integration_entry
         from eidos_runtime.infrastructure.secret_files import SecretFiles
         from eidos_runtime.persistence.web_search import WebSearchRepository
         from eidos_runtime.tools.web_search import web_search_entry
@@ -319,6 +320,8 @@ class RunResources:
                     write_enabled=memory_access.writable and automation_origin is None and channel_origin is None and not automatic_goal,
                 ),
                 *(collaboration_entries(self.collaboration, child=self.is_child) if self.collaboration else ()),
+                *((agent_integration_entry(self.tool_executor, self.collaboration.workspaces, self.run_id),)
+                  if self.collaboration and self.collaboration.workspaces is not None and not self.is_child else ()),
                 *planning_entries(include_plan=self.store.read_run(self.run_id).get("workMode") == "plan"),
                 *self.skills.tool_entries(
                     self.skill_catalog_snapshot,
