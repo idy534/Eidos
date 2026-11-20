@@ -298,7 +298,8 @@ class WorktreeRetentionService:
     def _agent_worktree_ids(self) -> frozenset[str]:
         with self.database.lock:
             return frozenset(row[0] for row in self.database.connection().execute(
-                "SELECT worktree_id FROM agent_delegations WHERE worktree_id IS NOT NULL"))
+                "SELECT worktree_id FROM agent_delegations WHERE worktree_id IS NOT NULL "
+                "UNION SELECT worktree_id FROM team_members WHERE worktree_id IS NOT NULL"))
 
     def _protected_reason(self, worktree: Worktree) -> str | None:
         if worktree.id in self._agent_worktree_ids():

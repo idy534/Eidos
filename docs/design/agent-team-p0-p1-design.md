@@ -642,7 +642,7 @@ P0 和 P1 各作为一个 PR，每个 PR 内按问题分成独立 Commit。
 | --- | --- | --- |
 | 新增生命周期范围 `agent/workspace-create`，并重建 CHECK 约束 | 复用 `session/create` 范围，操作 ID 以 `agent-workspace-` 开头 | 子任务创建本来就是“建 Worktree 并绑定新 Session”，复用现有状态迁移即可，不需要重建表 |
 | 基准提交 | 基准树，固定在 `refs/eidos/agent-workspaces/<agentId>/base`；最新交付树固定在同目录的 `delivery` | 比较只需要树，不需要提交身份和作者配置 |
-| `workspace_integrations` 表与 Desktop 直接整合 | 未建表；整合只通过父任务的 `integrate_agent_changes`，Desktop 只提供查看和放弃 | Desktop 发起的写入没有 Run 的权限快照和 Durable Intent，需要单独设计；工具路径完整复用 `apply_patch` 的受控写入 |
+| `workspace_integrations` 表与 Desktop 直接整合 | v55 建了该表但没有使用，v56 将其删除；整合只通过父任务的 `integrate_agent_changes`，Desktop 只提供查看和放弃 | Desktop 发起的写入没有 Run 的权限快照和 Durable Intent，需要单独设计；工具路径完整复用 `apply_patch` 的受控写入 |
 | 冲突文件逐个标记，其余文件照常写入 | 任一请求的文件冲突时整个调用不写入，并列出路径；父任务可用 `paths` 整合其余文件 | 避免一次调用留下部分写入；父任务能明确选择 |
 | 二进制文件按整文件替换整合 | 二进制文件不由工具整合，结果中列出 | 现有受控写入的 Diff 生成只支持 UTF-8 文本 |
 | `agent/discardWorkspace` 带 `operationId` | 不带 | 放弃是幂等操作，重复执行没有额外副作用 |
@@ -650,5 +650,40 @@ P0 和 P1 各作为一个 PR，每个 PR 内按问题分成独立 Commit。
 | — | 新增 `agent/changes` | Desktop 变更视图需要读取文件列表和分页 Diff |
 
 验证见本轮交付说明。真实 Seatbelt 下 Worktree 子任务的 Shell 执行和 Windows NTFS 尚未单独验证。
+
+## 9. P1 与 P2 实施记录
+
+日期：2026-11-20。当前行为见 [Agent 团队](../current/features/teams.md)。以下列出实施与第 4 节及[总体方案](agent-team-research-and-design.md)第 9 节 P2 不同的地方。
+
+### P1
+
+| 设计 | 实施 | 原因 |
+| --- | --- | --- |
+| Schema 版本未定 | v56：`sessions.internal_kind`（回填 `agent_child`）与团队各表；删除未使用的 `workspace_integrations` | 一次迁移完成内部 Session 与团队数据；见第 8 节 |
+| `team/integrate` 由用户在 Desktop 整合 | 不提供；整合只走 Lead 的 `team_integrate` | 与 P0 相同：Desktop 写入没有 Run 的权限快照和 Durable Intent |
+| `team/setAutoWake`、`team/setRunSettings`、`team/pause`、`team/resume`、`team/dissolve` | 合并为 `team/updateSettings` 与 `team/setStatus`；新增 `team/memberChanges` 只读查看成员变更 | 方法更少，含义不变；成员面板需要读取 Diff |
+| 各方法分别声明 | `protocol/teams.py` 的 `TEAM_METHODS` 是唯一方法表，Runtime 按它注册，Desktop 的类型、方法映射与校验器由它生成 | 避免两端维护两份方法与 DTO 对应关系 |
+| `team.changed` 携带快照版本，另有 `team.message`、`team.task` 增量通知 | 只有 `team.changed` → `team/updated { sessionId }`；Renderer 重新读取，看板按游标增量拉取；成员 Session 的 Run 通知也会刷新 Lead 的团队视图 | 一种通知足够驱动界面，避免两套增量语义 |
+| Feed 列出本次 Run 收到的团队事件 | Feed 只用一行标注“团队续跑 · 成员”，消息在团队面板查看 | 先保证 Feed 不被消息淹没；逐条事件行留待后续 |
+| 成员详情复用子任务详情 | 复用执行记录组件，审批、停止、变更与发消息由团队面板提供 | 成员没有委派记录，不能直接复用整个子任务面板 |
+| 团队拒绝统一映射 | 新增 `TEAM_*` 稳定错误码，操作 ID 冲突沿用 `OPERATION_ID_REUSED` | Desktop 需要区分“有未整合变更”“任务已变化”等情况 |
+| — | 事件投递对团队唤醒的 Run 不再查找用户消息 | 这类 Run 没有用户消息；原逻辑会让投影失败并阻塞其后全部通知（stdio 往返测试发现） |
+
+P1 未实施：实验开关、Lead 输入框中的 `@成员` 消息、发给 `user` 的消息与成员审批的系统通知、诊断导出中的团队快照，以及日志中的 `team_id`、`member_id`、`wake_id` 字段。
+
+### P2
+
+| 设计 | 实施 | 原因 |
+| --- | --- | --- |
+| `teams/*.toml` 模板（编制、角色、Verifier 比例、工作区策略） | 内置 `feature`、`research`、`milestones` 写在 `infrastructure/team_templates.py`；用户模板读取数据目录 `teams/*.toml`，不能覆盖内置名称。模板在确认编制时冻结，提供 Lead 指引、普通任务默认审查、工作区策略提示和关口审查者 | 内置模板随代码发布，不依赖打包资源；冻结保证运行中的团队不受文件修改影响。Verifier 比例由成员组成表达，不另设字段 |
+| 里程碑计划产物、Critic 与 Challenger 关口 | 任务增加 `kind = gate`。关口按里程碑隐式等待全部普通任务，不占依赖上限；负责人提交即通过，或用新操作 `reopen` 退回已完成任务，同里程碑关口回到阻塞。模板的 `gate_reviewers` 为每个里程碑自动创建关口 | 关口拒绝能退回具体任务，并持续阻挡下一里程碑；Critic 与 Challenger 用 `verifier` 类型加不同职责表达，不新增内置类型 |
+| 团队与目标模式结合 | `teamMode` 可以与 `goalMode`、`goalRevision` 同用；团队 Session 中的目标续跑以 Lead 身份运行；团队有成员运行或待处理唤醒时，目标续跑等待 | 避免目标续跑与团队唤醒交替重跑 Lead |
+| Hook `TeamMemberIdle`、`TeamTaskCompleted` | 已接入：前者替代成员的 `Stop`，后者在任务将要完成前运行，拒绝时任务保持原状态 | 语义分别对齐 `SubagentStop` 和工具前置拒绝 |
+| 成员上下文分叉（类似 `fork_turns`） | `context_turns` 把 Lead 最近 0 到 8 轮的用户消息与最终回答冻结为成员常驻指令，上限 16 KiB | 复制条目到成员 Session 会带入工具输出和权限语境；冻结文本保持缓存前缀稳定 |
+| Lead 交接 | 未单独实施；Lead 依靠 Session 压缩继续，压缩保留团队状态段 | 现有压缩已覆盖上下文重置，单独继任者需要新的持久语义 |
+| 团队级 Grant | 未实施 | 涉及权限边界，需要单独设计撤销与审查方式 |
+| 成员再派子 Agent | 保留，按每个成员 Run 计数 | 第 2 节已决定 |
+
+P3（常驻团队）未实施。团队 Session 中的定时任务 Run 和渠道 Run 已经以 Lead 身份运行，可以驱动已有团队；事件到任务的自动转换、Thread 订阅和规则化主动行为仍在路线图中。
 
 返回 [设计目录](README.md)。

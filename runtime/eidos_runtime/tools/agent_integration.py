@@ -11,7 +11,7 @@ import hashlib
 import threading
 from typing import TYPE_CHECKING
 
-from eidos_runtime.application.agent_workspaces import AgentWorkspaceError
+from eidos_runtime.application.agent_workspaces import AgentWorkspaceError, Delivery
 from eidos_runtime.domain.collaboration import IntegrateAgentChanges
 from eidos_runtime.tools.registry import ToolProvenance, ToolRegistryEntry, ToolSpec
 from eidos_runtime.tools.workspace import (
@@ -20,6 +20,7 @@ from eidos_runtime.tools.workspace import (
 
 if TYPE_CHECKING:
     from eidos_runtime.application.agent_workspaces import AgentWorkspaceService
+    from eidos_runtime.application.teams import TeamApplication
 
 TOOL_NAME = 'integrate_agent_changes'
 _DESCRIPTION = (
@@ -31,7 +32,11 @@ _DESCRIPTION = (
 )
 
 
-class AgentIntegrationAdapter:
+class DeliveryIntegrationAdapter:
+    """Prepare file changes from one Worktree delivery for the parent's file-change pipeline."""
+
+    tool_name = TOOL_NAME
+
     def __init__(self, executor: ToolExecutor, spec: ToolSpec, workspaces: AgentWorkspaceService, run_id: str) -> None:
         self.executor = executor
         self.spec = spec
@@ -44,15 +49,19 @@ class AgentIntegrationAdapter:
     def execute(self, arguments: dict[str, object], cancel: threading.Event) -> dict[str, object]:
         raise RuntimeError('integrate_agent_changes requires the Run runtime')
 
-    def prepare_file_change(self, arguments: object, cancel: threading.Event) -> PreparedPatch | dict[str, object]:
+    def _delivery(self, arguments: object) -> tuple[Delivery, list[str] | None]:
         request = IntegrateAgentChanges.model_validate(arguments)
+        return self.workspaces.capture(self.run_id, request.agent_id), request.paths
+
+    def prepare_file_change(self, arguments: object, cancel: threading.Event) -> PreparedPatch | dict[str, object]:
+        TOOL_NAME = self.tool_name
         try:
-            delivery = self.workspaces.capture(self.run_id, request.agent_id)
+            delivery, paths = self._delivery(arguments)
             prefix = self.workspaces.git.show_prefix(self.workspace.path)
         except AgentWorkspaceError as error:
-            return _error(TOOL_NAME, error.code, 'The child changes are not available')
+            return _error(TOOL_NAME, error.code, 'The changes are not available')
         entries = {entry.path: entry for entry in delivery.entries}
-        requested = list(dict.fromkeys(request.paths)) if request.paths is not None else list(entries)
+        requested = list(dict.fromkeys(paths)) if paths is not None else list(entries)
         unknown = [path for path in requested if path not in entries]
         if unknown:
             return _error(TOOL_NAME, 'agent_change_path_unknown', 'Not a changed path: ' + ', '.join(unknown[:20]))
@@ -72,7 +81,7 @@ class AgentIntegrationAdapter:
                 base = self.workspaces.read_object(delivery, entry.base) if entry.base else None
                 result = self.workspaces.read_object(delivery, entry.result) if entry.result else None
             except AgentWorkspaceError as error:
-                return _error(TOOL_NAME, error.code, 'The child changes are not available')
+                return _error(TOOL_NAME, error.code, 'The changes are not available')
             except Exception:
                 blocked.append(f'{path} (unreadable in this workspace)')
                 continue
@@ -117,7 +126,7 @@ class AgentIntegrationAdapter:
         return prepared
 
     def commit_patch(self, prepared: PreparedPatch, cancel: threading.Event) -> tuple[dict[str, object], AppliedPatchDelta]:
-        result, delta = self.executor.commit_patch(TOOL_NAME, prepared, cancel)
+        result, delta = self.executor.commit_patch(self.tool_name, prepared, cancel)
         with self._lock:
             planned = self._planned.pop(id(prepared), None)
         if planned is not None and delta.changes:
@@ -125,7 +134,11 @@ class AgentIntegrationAdapter:
         return result, delta
 
     def commit_file_change(self, change: FileChange, cancel: threading.Event) -> dict[str, object]:
-        return self.executor.commit_file_change(TOOL_NAME, change, cancel)
+        return self.executor.commit_file_change(self.tool_name, change, cancel)
+
+
+class AgentIntegrationAdapter(DeliveryIntegrationAdapter):
+    pass
 
 
 def agent_integration_entry(executor: ToolExecutor, workspaces: AgentWorkspaceService, run_id: str) -> ToolRegistryEntry:
@@ -143,3 +156,60 @@ def agent_integration_entry(executor: ToolExecutor, workspaces: AgentWorkspaceSe
 def executor_registry_entries(executor: ToolExecutor) -> tuple[ToolRegistryEntry, ...]:
     return executor.registry.entries
 
+
+
+TEAM_TOOL_NAME = 'team_integrate'
+_TEAM_DESCRIPTION = (
+    "Bring a team member's Worktree changes into your workspace, by task (its submitted delivery) or by member "
+    "(its current files; the member must be idle). Files you have not changed take the member version; text files "
+    "changed on both sides are merged when Git finds no conflict. If any requested file conflicts or is binary, "
+    "nothing is written and the result lists those paths: integrate the others with paths."
+)
+
+
+class TeamIntegrationAdapter(DeliveryIntegrationAdapter):
+    tool_name = TEAM_TOOL_NAME
+
+    def __init__(self, executor: ToolExecutor, spec: ToolSpec, workspaces: AgentWorkspaceService, run_id: str,
+                 teams: TeamApplication) -> None:
+        super().__init__(executor, spec, workspaces, run_id)
+        self.teams = teams
+
+    def _delivery(self, arguments: object) -> tuple[Delivery, list[str] | None]:
+        from eidos_runtime.domain.teams import TeamIntegrateRequest, TeamRejected
+
+        request = TeamIntegrateRequest.model_validate(arguments)
+        role = self.teams.repository.role_for_run(self.run_id)
+        if role is None or role.role != 'lead' or role.team_id is None:
+            raise AgentWorkspaceError('team_not_active')
+        try:
+            if request.task is not None:
+                task = self.teams.repository.task_row(role.team_id, request.task)
+                if task['delivery_id'] is not None:
+                    delivery = self.workspaces.delivery(task['delivery_id'])
+                    if delivery is not None and delivery.status in {'ready', 'partially_integrated', 'integrated'}:
+                        return delivery, request.paths
+                if task['owner_member_id'] is None:
+                    raise AgentWorkspaceError('delivery_failed')
+                name = next(member.name for member in self.teams.repository.team(role.team_id).members
+                            if member.id == task['owner_member_id'])
+            else:
+                name = str(request.member)
+            return self.workspaces.capture_owner(self.teams.member_owner(role.team_id, name)), request.paths
+        except TeamRejected as error:
+            raise AgentWorkspaceError(str(error)) from error
+
+
+def team_integration_entry(executor: ToolExecutor, workspaces: AgentWorkspaceService, run_id: str,
+                           teams: TeamApplication) -> ToolRegistryEntry:
+    from eidos_runtime.domain.teams import TeamIntegrateRequest
+
+    patch_entry = next(entry for entry in executor_registry_entries(executor) if entry.spec.name == 'apply_patch')
+    spec = ToolSpec(name=TEAM_TOOL_NAME, description=_TEAM_DESCRIPTION, sideEffect='workspace', approvalRequired=False,
+        timeoutSeconds=120, inputSchema=TeamIntegrateRequest.model_json_schema(by_alias=True),
+        resultSchema=patch_entry.spec.result_schema)
+    provenance = ToolProvenance(kind='builtin', sourceId='eidos.team', sourceVersion='1',
+        contentHash=hashlib.sha256(spec.model_dump_json().encode()).hexdigest())
+    adapter = TeamIntegrationAdapter(executor, spec, workspaces, run_id, teams)
+    return ToolRegistryEntry(spec, provenance, adapter, TeamIntegrateRequest, patch_entry.result_data_model,
+        projector=patch_entry.projector, execution_policy=patch_entry.execution_policy)

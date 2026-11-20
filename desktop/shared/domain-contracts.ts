@@ -266,6 +266,7 @@ export interface Run {
   hookActivity?: HookActivity[];
   channelOrigin?: import("./channels.generated.js").ChannelOrigin;
   goalOrigin?: import("./goals.generated.js").GoalRunOrigin;
+  teamOrigin?: import("./teams.generated.js").TeamRunOrigin;
   automationOrigin?: import("./automation.generated.js").AutomationOrigin;
   inherited?: boolean;
   approvalMode?: ApprovalMode;
@@ -752,6 +753,7 @@ export interface RunThinkingParams {
 
 export type RuntimeNotification =
   | { method: "goal/updated"; params: import("./goals.generated.js").GoalChangedNotice }
+  | { method: "team/updated"; params: import("./teams.generated.js").TeamChangedNotice }
   | { method: "memory/changed"; params: import("./memory.generated.js").MemoryChangedNotice }
   | { method: "context/compactionUpdated"; params: { sessionId: string; activity: ContextCompactionActivity } }
   | { method: "model/retryUpdated"; params: { sessionId: string; activity: ModelRetryActivity } }

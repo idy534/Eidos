@@ -39,6 +39,7 @@ class PlanResponse(EidosFrozenStrictModel):
 class RunPlanningOptions(EidosFrozenStrictModel):
     work_mode: WorkMode = 'execute'
     goal_mode: bool = False
+    team_mode: bool = False
     goal_revision: int | None = Field(default=None, ge=1, le=9_007_199_254_740_991)
     plan_id: str | None = None
     plan_revision: int | None = Field(default=None, ge=1)
@@ -49,4 +50,6 @@ class RunPlanningOptions(EidosFrozenStrictModel):
             raise ValueError("goal mode and plan mode are mutually exclusive")
         if self.goal_revision is not None and (self.work_mode != "execute" or self.plan_id is not None or self.plan_revision is not None):
             raise ValueError("goal continuation and plan mode are mutually exclusive")
+        if self.team_mode and (self.work_mode != "execute" or self.plan_id is not None or self.plan_revision is not None):
+            raise ValueError("team mode excludes plan mode")
         return self

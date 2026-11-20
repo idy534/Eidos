@@ -220,6 +220,7 @@ def test_project_scope_follows_memory_reading_and_excludes_channel_and_child_run
         " VALUES('delegation',?,?,?,?,'task','explorer','task',0)",
         (parent["id"], child["id"], child_run["id"], spawn["id"]),
     )
+    store.connection.execute("UPDATE sessions SET internal_kind='agent_child' WHERE id=?", (child["id"],))
     store.connection.commit()
     refused = search_history_entry(store.database, child_run["id"]).adapter.execute(
         {"query": "部署窗口", "scope": "project"}, threading.Event()

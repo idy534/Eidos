@@ -356,7 +356,7 @@ export function applyQueuedRunChange(
   };
 }
 
-const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
+export const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   PROJECT_CONFIGURATION_CONFLICT: "项目配置已经变化，请关闭并重新打开编辑窗口。",
   AGENT_DEFINITION_INVALID: "智能体配置无效，请检查名称、用途说明、指令和 TOML 格式。",
   AGENT_DEFINITION_EXISTS: "智能体名称或配置文件已经存在，请使用其他名称。",
@@ -384,6 +384,13 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   GOAL_INVALID_STATE: "当前目标不能执行这个操作，请重新查看目标状态。",
   GOAL_SOURCE_NOT_ALLOWED: "请在主会话中管理目标。",
   GOAL_SESSION_BUSY: "会话正在处理其他输入，目标稍后继续。",
+  TEAM_MEMBER_HAS_CHANGES: "这名成员有未整合的变更。请先让 Lead 整合，或放弃变更后移除。",
+  TEAM_MEMBER_RUNNING: "这名成员正在运行，请等它停止后再操作。",
+  TEAM_PROPOSAL_INACTIVE: "团队提议已失效，Lead 的运行已结束或已被处理。",
+  TEAM_NOT_ACTIVE: "团队已解散或不可用，请刷新后重试。",
+  TEAM_TASK_CONFLICT: "任务状态已变化，请刷新后重试。",
+  TEAM_WORKSPACE_UNAVAILABLE: "这名成员没有独立 Worktree，或 Worktree 当前不可用。",
+  TEAM_INVALID_REQUEST: "团队操作无效，请检查成员、任务或消息后重试。",
   SKILL_CATALOG_UNAVAILABLE: "技能列表暂时无法读取，请检查技能文件后重试。",
   SKILL_UNAVAILABLE: "技能已不存在或内容无法读取，请重新打开设置。",
   PLUGIN_UNAVAILABLE: "插件文件已变化或版本不匹配。请刷新列表，重新导入并审阅插件。",

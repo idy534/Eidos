@@ -54,6 +54,10 @@ _AGENT_ROLE_TASKS: dict[AgentRole, str] = {
 }
 
 
+def agent_role_task(role: AgentRole) -> str:
+    return _AGENT_ROLE_TASKS[role]
+
+
 FINALIZATION_POLICY_INSTRUCTIONS = """# Finalization
 Tool execution has stopped for the declared stop reason. Do not call tools, request approval or ask for additional user input.
 Give a concise final answer describing the completed work, the blocker or limit reached, and a safe manual strategy when appropriate. Do not claim unverified completion."""
@@ -158,6 +162,7 @@ class InstructionResolver:
         git_repository: bool = False,
         personalization: PersonalizationPreferences | None = None,
         goal_mode: bool = False,
+        team_guidance: str | None = None,
     ) -> ResolvedInstructions:
         layers: list[InstructionLayer] = [
             InstructionLayer.create(
@@ -298,6 +303,11 @@ class InstructionResolver:
                 role="developer",
                 source="eidos:runtime-permissions",
                 content=_build_runtime_permissions_content(step_policy),
+            ))
+        if team_guidance is not None:
+            layers.append(InstructionLayer.create(
+                id="team-role", authority=RUNTIME_AUTHORITY, role="developer", source="eidos:team-role",
+                content=team_guidance,
             ))
         if agent_definition is not None:
             layers.append(InstructionLayer.create(

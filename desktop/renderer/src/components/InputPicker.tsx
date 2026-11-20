@@ -12,6 +12,7 @@ interface Candidate { id: string; label: string; detail: string; request?: Input
 const commands: Candidate[] = [
   { id: "plan", label: "/plan", detail: "开始 Plan 模式", action: "plan" },
   { id: "goal", label: "/goal", detail: "设定持续推进的目标", action: "goal" },
+  { id: "team", label: "/team", detail: "组建 Agent 团队", action: "team" },
   { id: "mcp", label: "/mcp", detail: "查看与管理 MCP", action: "mcp" },
   { id: "plugins", label: "/plugins", detail: "管理 Plugin", action: "plugins" },
 ];
@@ -77,12 +78,13 @@ function measurePickerLayout(surface: HTMLElement, boundary: HTMLElement | null)
   return { top: placement === "above" ? aboveBottom - height : belowTop, left, width, height, placement };
 }
 
-export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, onListId, onSelectPlanMode, onSelectGoalMode, onCreateAgent, anchor }: {
+export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, onListId, onSelectPlanMode, onSelectGoalMode, onSelectTeamMode, onCreateAgent, anchor }: {
   mode: InputPickerMode; query: string; inline: boolean;
   onQuery(value: string): void; onChoose(request: InputPrepareRequest): void; onClose(): void;
   onCommand(command: string): void; onListId?(id: string, active: string | undefined): void;
   onSelectPlanMode?(): void;
   onSelectGoalMode?(): void;
+  onSelectTeamMode?(): void;
   onCreateAgent?: (() => void) | undefined;
   anchor?: RefObject<HTMLElement | null> | undefined;
 }) {
@@ -438,6 +440,20 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
                 <span>目标</span>
               </button>
             </Tooltip>
+            {onSelectTeamMode && <Tooltip content="组建 Agent 团队">
+              <button
+                type="button"
+                className="input-picker__action-btn input-picker__action-btn--team"
+                aria-label="团队模式"
+                onClick={() => {
+                  onSelectTeamMode();
+                  onClose();
+                }}
+              >
+                <TeamIcon />
+                <span>团队</span>
+              </button>
+            </Tooltip>}
           </div>
 
           <Tooltip content="搜索引用">
@@ -664,6 +680,18 @@ export function LightbulbIcon({ className }: { className?: string } = {}) {
       />
       <path d="M6 14.5h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
       <path d="M6.75 12.5h2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function TeamIcon({ className }: { className?: string } = {}) {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true" className={className}>
+      <circle cx="8" cy="5" r="2.1" stroke="currentColor" strokeWidth="1.2" />
+      <circle cx="3.6" cy="6.6" r="1.6" stroke="currentColor" strokeWidth="1.1" />
+      <circle cx="12.4" cy="6.6" r="1.6" stroke="currentColor" strokeWidth="1.1" />
+      <path d="M4.6 13c.3-2 1.7-3.4 3.4-3.4s3.1 1.4 3.4 3.4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <path d="M1.4 12.2c.2-1.4 1-2.3 2.2-2.4M14.6 12.2c-.2-1.4-1-2.3-2.2-2.4" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
     </svg>
   );
 }

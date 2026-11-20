@@ -35,6 +35,7 @@ import {
 import { isBuiltinPluginRequest, isMcpConnectionRequest } from "../shared/mcp-connections.js";
 import { isAutomationRequest, isAutomationHistoryRequest, isAutomationRunNowRequest } from "../shared/automation.js";
 import { isGoalRequest } from "../shared/goals.js";
+import { isTeamMethod, isTeamRequest } from "../shared/teams.js";
 import { resolveRuntimePaths } from "./runtime-paths.js";
 import "./response-runtime-client.js";
 import { redactLogLine, sanitizeLogValue } from "./log-redaction.js";
@@ -652,6 +653,11 @@ ipcMain.handle(IPC.CHANNEL_SAVE, (_event, request: unknown) => {
 ipcMain.handle(IPC.GOAL_EXECUTE, (_event, request: unknown) => {
   if (!isGoalRequest(request)) throw new Error("目标参数无效。");
   return clientOrThrow().goal(request);
+});
+ipcMain.handle(IPC.TEAM_REQUEST, (event, method: unknown, request: unknown) => {
+  inputOwner(event);
+  if (!isTeamMethod(method) || !isTeamRequest(method, request)) throw new Error("团队请求无效。");
+  return clientOrThrow().team(method, request);
 });
 ipcMain.handle(IPC.AUTOMATION_EXECUTE, (_event, request: unknown) => {
   if (!isAutomationRequest(request)) throw new Error("定时任务参数无效。");

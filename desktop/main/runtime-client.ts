@@ -22,6 +22,7 @@ import { isPlanningReadResponse, isUserInputRequest, isPlanResponse } from "../s
 import { isSidebarPinsResponse } from "../shared/sidebar.js";
 import { isAutomationResponse, isAutomationOrigin, type AutomationExecuteRequest, type AutomationHistoryRequest, type AutomationRunNowRequest, type AutomationResponse } from "../shared/automation.js";
 import { isGoalView, isGoalChangedNotice, isGoalRunOrigin, type GoalRequest, type GoalView } from "../shared/goals.js";
+import { isTeamChangedNotice, isTeamRequest, isTeamResponse, isTeamRunOrigin, type TeamMethods } from "../shared/teams.js";
 import { isQueuedRunChangeResponse, isQueuedRunListResponse } from "../shared/queued-runs.js";
 import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunSteerRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "../shared/queued-runs.js";
 import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "../shared/sidebar.js";
@@ -49,6 +50,8 @@ const WINDOWS_INITIALIZE_TIMEOUT_MS = 60_000;
 const RUNTIME_BUSINESS_CODES = new Set([
   "GOAL_NOT_FOUND", "GOAL_REVISION_CONFLICT", "GOAL_INVALID_STATE",
   "GOAL_SOURCE_NOT_ALLOWED", "GOAL_SESSION_BUSY",
+  "TEAM_MEMBER_HAS_CHANGES", "TEAM_MEMBER_RUNNING", "TEAM_PROPOSAL_INACTIVE", "TEAM_NOT_ACTIVE",
+  "TEAM_TASK_CONFLICT", "TEAM_WORKSPACE_UNAVAILABLE", "TEAM_INVALID_REQUEST",
   "AGENT_DEFINITION_INVALID",
   "AGENT_DEFINITION_EXISTS",
   "AGENT_DEFINITION_CONFLICT",
@@ -583,6 +586,11 @@ export class RuntimeClient {
   goal(request: GoalRequest): Promise<GoalView> {
     const method = request.action === "get" ? "goal/get" : request.action === "clear" ? "goal/clear" : "goal/update";
     return this.validatedRequest(method, { ...request }, isGoalView);
+  }
+
+  team<K extends keyof TeamMethods>(method: K, request: TeamMethods[K]["request"]): Promise<TeamMethods[K]["response"]> {
+    if (!isTeamRequest(method, request)) throw new Error("团队请求无效。");
+    return this.validatedRequest(method, Object.fromEntries(Object.entries(request)), (value): value is TeamMethods[K]["response"] => isTeamResponse(method, value));
   }
 
   automationHistory(request: AutomationHistoryRequest): Promise<AutomationResponse> {
@@ -1620,6 +1628,7 @@ function isNotification(value: unknown): value is RuntimeNotification {
   }
   const params = value.params;
   if (value.method === "goal/updated") return isGoalChangedNotice(params);
+  if (value.method === "team/updated") return isTeamChangedNotice(params);
   if (value.method === "memory/changed") {
     return isMemoryChangedNotice(params);
   }
@@ -2364,7 +2373,7 @@ function isRun(value: unknown): value is Run {
       "reconciliationRequired",
       "extensionSnapshot",
       "activatedTools",
-      "automationOrigin", "goalOrigin",
+      "automationOrigin", "goalOrigin", "teamOrigin",
       "channelOrigin",
       "hookActivity",
     ])
@@ -2391,6 +2400,7 @@ function isRun(value: unknown): value is Run {
     && (value.channelOrigin === undefined || isChannelOrigin(value.channelOrigin))
     && (value.automationOrigin === undefined || isAutomationOrigin(value.automationOrigin))
     && (value.goalOrigin === undefined || isGoalRunOrigin(value.goalOrigin))
+    && (value.teamOrigin === undefined || isTeamRunOrigin(value.teamOrigin))
     && (value.hookActivity === undefined || Array.isArray(value.hookActivity) && value.hookActivity.length <= 8 && value.hookActivity.every(item => isHookActivity(item)))
     && isModelId(value.modelId)
     && (value.remoteModelId === undefined || (

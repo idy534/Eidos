@@ -64,6 +64,7 @@ import { ConversationRunRail } from "./ConversationRunRail.js";
 import type { ContextCompactionActivity, ModelRetryActivity } from "../../../shared/context.generated.js";
 import type { GoalActivity } from "../../../shared/goals.js";
 import { GoalActivityMarkers, GoalRunMarker } from "./goals/GoalFeedMarkers.js";
+import { TeamRunMarker } from "./teams/TeamFeedMarkers.js";
 import { GoalMarkIcon } from "./goals/GoalIcons.js";
 import {
   buildSearchTextResults,
@@ -328,7 +329,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
             }
             const runResultItems = resultItemsByRunId.get(runId) ?? EMPTY_ITEMS;
             const canReviseRun = !run.inherited && latestVisibleRun?.id === run.id
-              && (!run.goalOrigin || run.goalOrigin.trigger === "user_input")
+              && (!run.goalOrigin || run.goalOrigin.trigger === "user_input") && !run.teamOrigin
               && TERMINAL_RUN_STATUSES.has(run.status)
               && !hasActiveRun
               && !revisionSubmitting;
@@ -336,6 +337,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
             return (
               <Fragment key={runId}>
                 <GoalRunMarker origin={run.goalOrigin} />
+                <TeamRunMarker origin={run.teamOrigin} />
                 {segments.map((segment, index) => (
                   <RunSegment
                     key={`${runId}:${segment.user?.id ?? index}`}

@@ -6,6 +6,7 @@ import type { WebSearchReadRequest, WebSearchSaveRequest, WebSearchResponse, Web
 import type { CustomProviderRequest, CustomProviderResult } from "../shared/custom-models.js";
 import type { ChannelResponse, ChannelSaveRequest, ChannelReadRequest } from "../shared/channels.js";
 import type { MemoryMethods } from "../shared/memory.js";
+import type { TeamMethods } from "../shared/teams.js";
 import type { AgentCatalogResponse, AgentChanges, AgentChangesRequest, AgentMessageFromUserRequest, CollaborationState } from "../shared/collaboration.generated.js";
 import type { AgentDefinitionSaveRequest, AgentDefinitionRemoveRequest } from "../shared/collaboration.generated.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "../shared/planning.generated.js";
@@ -85,6 +86,7 @@ import type {
 
 const api: EidosRuntimeAPI = {
   goal: (request) => ipcRenderer.invoke(IPC.GOAL_EXECUTE, request),
+  team: <K extends keyof TeamMethods>(method: K, request: TeamMethods[K]["request"]): Promise<TeamMethods[K]["response"]> => ipcRenderer.invoke(IPC.TEAM_REQUEST, method, request),
   readWorkspaceFileForFind: (request) => ipcRenderer.invoke(IPC.WORKSPACE_READ_FOR_FIND, request),
   searchSessions: (request) => ipcRenderer.invoke(IPC.SEARCH_SESSIONS, request),
   readSessionAround: (request) => ipcRenderer.invoke(IPC.SESSION_READ_AROUND, request),

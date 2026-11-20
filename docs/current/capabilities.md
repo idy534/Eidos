@@ -8,6 +8,10 @@
 - 记忆短索引在一个 Run 内保持不变，Hook 反馈放在对话历史之后。两者的变化不再让 Provider 前缀缓存整体失效。显式隐私撤销和关闭记忆读取仍然立即生效。
 - `apply_patch` 的成功结果会附带本次补丁新引入的语法错误提示（Python、TypeScript、TSX、JavaScript、Go），模型可以在下一步直接修正。
 
+## Agent 团队（2026-11-20）
+
+用户可以通过“＋ → 团队”或 `/team` 让主 Agent 组建团队。Lead 先提出编制，用户在输入框位置确认、删减成员或切换工作区后，Lead 在自己的 Durable Intent 下创建成员。成员是跨轮存在的内部 Session，空闲时不调用模型，只在被点名、分派任务、任务解锁、需要审查或成员结束时唤醒；每个团队最多同时运行 8 个成员 Run。团队通过看板、私聊和带依赖、证据、审查与里程碑关口的任务板协作，Git 项目的成员可以使用独立 Worktree，由 Lead 用 `team_integrate` 整合。系统提供 `feature`、`research`、`milestones` 三个内置模板和 `teams/*.toml` 用户模板，团队可以与目标模式同时使用，并接入 `TeamMemberIdle`、`TeamTaskCompleted` 两个 Hook 事件。右侧工作区的“团队”标签提供看板、成员和任务三个视图。行为、协议与限额见 [Agent 团队](features/teams.md)。
+
 ## 目标模式（2026-11-07）
 
 用户可以通过 `/goal` 设定持续目标。Runtime 在每轮正常结束后接纳新的普通 Run，直到模型按要求声明完成、系统记录受阻或用户暂停、清除目标。Desktop 通过输入框的“＋”菜单和 `/goal` 开启目标模式。目标标签位于访问模式右边，并与 Plan 互斥。用户在输入框中直接填写目标，状态区域展示完成证据。目标的权限、取消、工具执行、未知结果和恢复继续使用现有链路。当前 P0 边界见[目标模式](features/goals.md)。

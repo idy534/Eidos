@@ -118,7 +118,8 @@ def parse_output(event: HookEvent, stdout: str, stderr: str, exit_code: int | No
             return HookResult(status="failed", error_code="hook_reason_missing", exit_code=exit_code)
         if event in {"Interrupt", "SessionEnd"}:
             return HookResult(status="failed", error_code="hook_command_failed", message=message, exit_code=exit_code)
-        action = "deny" if event in {"PreToolUse", "UserPromptSubmit"} else "continue" if event in {"Stop", "SubagentStop"} else "feedback"
+        action = ("deny" if event in {"PreToolUse", "UserPromptSubmit", "TeamTaskCompleted"}
+                  else "continue" if event in {"Stop", "SubagentStop", "TeamMemberIdle"} else "feedback")
         return HookResult(action=action, message=message, context_truncated=len(stderr.strip()) > 8192, exit_code=exit_code)
     if exit_code != 0:
         return HookResult(status="failed", error_code="hook_command_failed", exit_code=exit_code)
@@ -177,6 +178,7 @@ def parse_output(event: HookEvent, stdout: str, stderr: str, exit_code: int | No
     if output.decision == "block":
         if not message.strip():
             return HookResult(status="failed", error_code="hook_reason_missing", **base)
-        action = "continue" if event in {"Stop", "SubagentStop"} else "deny" if event == "UserPromptSubmit" else "feedback"
+        action = ("continue" if event in {"Stop", "SubagentStop", "TeamMemberIdle"}
+                  else "deny" if event in {"UserPromptSubmit", "TeamTaskCompleted"} else "feedback")
         return HookResult(action=action, message=message, additional_context=context, **base)
     return HookResult(additional_context=context, **base)

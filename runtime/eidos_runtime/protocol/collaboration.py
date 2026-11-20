@@ -12,6 +12,10 @@ class AgentStopRequest(EidosFrozenStrictModel):
     agent_id: str = Field(min_length=1, max_length=128)
 
 
+class AgentDiscardWorkspaceRequest(AgentStopRequest):
+    """Same shape as stop; a distinct type keeps one request model per registered method."""
+
+
 class AgentMessageFromUserRequest(EidosFrozenStrictModel):
     operation_id: str = Field(min_length=1, max_length=128)
     parent_run_id: str = Field(min_length=1, max_length=128)

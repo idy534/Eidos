@@ -211,8 +211,10 @@ from eidos_runtime.protocol.collaboration import (AgentDefinitionReadRequest, Ag
 from eidos_runtime.domain.agents import AgentCatalogResponse
 from eidos_runtime.application.planning import PlanningApplication
 from eidos_runtime.protocol import planning as planning_dtos
-from eidos_runtime.protocol.collaboration import AgentCatalogRequest, AgentChangesRequest, AgentMessageFromUserRequest, AgentReadRequest, AgentStopRequest
+from eidos_runtime.protocol.collaboration import AgentCatalogRequest, AgentChangesRequest, AgentDiscardWorkspaceRequest, AgentMessageFromUserRequest, AgentReadRequest, AgentStopRequest
 from eidos_runtime.domain.collaboration import AgentChanges, ReviewAgentChanges
+from eidos_runtime.persistence.teams import USER_ACTOR
+from eidos_runtime.protocol import teams as team_dtos
 from eidos_runtime.domain.collaboration import CollaborationState
 from eidos_runtime.protocol import input_context as input_dtos
 from eidos_runtime.extensions.plugins import PluginCatalog
@@ -304,6 +306,23 @@ def valid_initialize_params(params: object) -> bool:
         and bool(client["version"])
         and isinstance(params.get("protocolVersion"), int)
     )
+
+
+# Stable Desktop codes for team rejections; the detailed reason stays in Runtime logs.
+_TEAM_ERROR_CODES = {
+    "team_operation_conflict": "OPERATION_ID_REUSED",
+    "member_has_unintegrated_changes": "TEAM_MEMBER_HAS_CHANGES",
+    "agent_still_running": "TEAM_MEMBER_RUNNING",
+    "team_proposal_inactive": "TEAM_PROPOSAL_INACTIVE",
+    "team_proposal_not_found": "TEAM_PROPOSAL_INACTIVE",
+    "team_not_active": "TEAM_NOT_ACTIVE",
+    "team_not_found": "TEAM_NOT_ACTIVE",
+    "team_task_state_conflict": "TEAM_TASK_CONFLICT",
+    "team_task_version_conflict": "TEAM_TASK_CONFLICT",
+    "team_task_blocked": "TEAM_TASK_CONFLICT",
+    "agent_worktree_unavailable": "TEAM_WORKSPACE_UNAVAILABLE",
+    "agent_workspace_shared": "TEAM_WORKSPACE_UNAVAILABLE",
+}
 
 
 def _application_error_mapping(error: Exception) -> MethodErrorMapping | None:
@@ -1427,8 +1446,9 @@ class RuntimeServer:
              lambda _id, request: self.supervisor.collaboration.changes_from_desktop(ReviewAgentChanges(
                  agent_id=request.agent_id, path=request.path, offset_bytes=request.offset_bytes,
                  max_bytes=request.max_bytes), request.parent_run_id)),
-            ("agent/discardWorkspace", AgentStopRequest, CollaborationState,
+            ("agent/discardWorkspace", AgentDiscardWorkspaceRequest, CollaborationState,
              lambda _id, request: self.supervisor.collaboration.discard_from_desktop(request.parent_run_id, request.agent_id)),
+            *self._team_methods(),
             ("agent/message", AgentMessageFromUserRequest, CollaborationState,
              lambda _id, request: self.supervisor.collaboration.message_from_desktop(
                  request.parent_run_id, request.agent_id, request.operation_id, request.text)),
@@ -1703,6 +1723,13 @@ class RuntimeServer:
             "agent/stop",
             "agent/message",
             "agent/discardWorkspace",
+            "team/confirmRoster",
+            "team/post",
+            "team/taskUpdate",
+            "team/setStatus",
+            "team/stopMembers",
+            "team/removeMember",
+            "team/updateSettings",
             "agent/definitionSave",
             "agent/definitionRemove",
             "plan/edit",
@@ -1975,6 +2002,83 @@ class RuntimeServer:
         return GoalApplication(self.store, resolve_model=self._applications_or_error().runs.select_automation_model,
             changed=self._goal_changed).execute(request)
 
+    def _on_session_idle(self) -> None:
+        self._wake_goals()
+        try:
+            self.supervisor.teams.finish_dissolving()
+            self.supervisor.teams.wake_ready_soon()
+        except Exception:
+            logger.exception("Team wake admission failed")
+
+    def _start_team_wake(self, wake) -> None:
+        """Admit one pending team wake as an ordinary Run in a managed task."""
+        if not self.initialized or self.supervisor.control_state is not RuntimeControlState.RUNNING:
+            return
+        with self.supervisor.lock:
+            preparing = getattr(self, "_preparing_team_wakes", None)
+            if preparing is None:
+                preparing = self._preparing_team_wakes = set()
+            if wake.wake_id in preparing:
+                return
+            preparing.add(wake.wake_id)
+
+        def execute(cancel: threading.Event) -> None:
+            from eidos_runtime.domain.teams import TeamRejected
+            try:
+                if cancel.is_set():
+                    return
+                outcome = self._applications_or_error().runs.start(method_dtos.RunStartRequestDto(
+                    sessionId=wake.session_id, userInput="Team update", modelId=wake.model_id,
+                    reasoningSelection=wake.reasoning_selection, approvalMode=wake.approval_mode,
+                    fullAccessConfirmation=wake.full_access_confirmation,
+                ), team_wake_id=wake.wake_id)
+                outcome.release_after_commit()
+            except TeamRejected:
+                pass
+            except Exception as error:
+                # A wake that cannot start (for example a removed model) must not retry forever.
+                logger.warning("Team wake could not start wake_id=%s code=%s", wake.wake_id, getattr(error, "code", type(error).__name__))
+                self.supervisor.teams.repository.obsolete_wake(wake.wake_id)
+            finally:
+                with self.supervisor.lock:
+                    self._preparing_team_wakes.discard(wake.wake_id)
+                self.supervisor.events.deliver_pending()
+
+        if not self.supervisor.start_managed_task("team-wake", execute):
+            with self.supervisor.lock:
+                self._preparing_team_wakes.discard(wake.wake_id)
+
+    def _team_methods(self):
+        teams = lambda: self.supervisor.teams  # noqa: E731 - resolved per call after Runtime binding
+        handlers = {
+            "team/read": lambda _id, request: teams().session_state(request.session_id),
+            "team/messages": lambda _id, request: self._team_call(lambda: teams().repository.messages_page(
+                request.team_id, USER_ACTOR, after=request.after, limit=request.limit, member=request.member,
+                task=request.task, channel=request.channel)),
+            "team/memberChanges": lambda _id, request: self._team_call(lambda: teams().member_changes(
+                request.team_id, request.name, path=request.path, offset=request.offset_bytes, max_bytes=request.max_bytes)),
+            "team/confirmRoster": lambda _id, request: self._team_call(lambda: teams().decide(
+                request.proposal_id, request.operation_id, request.decision)),
+            "team/post": lambda _id, request: self._team_call(lambda: teams().post(
+                request.team_id, request.operation_id, request.message)),
+            "team/taskUpdate": lambda _id, request: self._team_call(lambda: teams().task_update(request.team_id, request.request)),
+            "team/setStatus": lambda _id, request: self._team_call(lambda: teams().set_status(request.team_id, request.status)),
+            "team/stopMembers": lambda _id, request: self._team_call(lambda: teams().stop_members(request.team_id)),
+            "team/removeMember": lambda _id, request: self._team_call(lambda: teams().remove_member(
+                request.team_id, request.name, "removed by the user", USER_ACTOR, discard_changes=request.discard_changes)),
+            "team/updateSettings": lambda _id, request: self._team_call(lambda: teams().update_settings(
+                request.team_id, auto_wake_lead=request.auto_wake_lead, run_settings=request.run_settings)),
+        }
+        return [(method, request, response, handlers[method]) for method, request, response in team_dtos.TEAM_METHODS]
+
+    def _team_call(self, call):
+        from eidos_runtime.application.errors import ApplicationError
+        from eidos_runtime.domain.teams import TeamRejected
+        try:
+            return call()
+        except TeamRejected as error:
+            raise ApplicationError(_TEAM_ERROR_CODES.get(str(error), "TEAM_INVALID_REQUEST"), str(error)) from error
+
     def _goal_changed(self) -> None:
         self.supervisor.events.deliver_pending()
         self._wake_goals()
@@ -1983,7 +2087,11 @@ class RuntimeServer:
         if not self.initialized or self.supervisor.control_state is not RuntimeControlState.RUNNING:
             return
         repository = GoalRepository(self.store.database)
+        teams = getattr(self.supervisor, "teams", None)
         for intent_id, goal in repository.ready_continuations():
+            if teams is not None and teams.repository.working(goal.session_id):
+                # The intent stays pending; the next idle edge re-checks it.
+                continue
             with self.supervisor.lock:
                 preparing = getattr(self, "_preparing_goal_intents", None)
                 if preparing is None:
@@ -2287,7 +2395,8 @@ class RuntimeServer:
                     managed_resources=self.managed_resources.manager,
                 )
                 self.supervisor.bind_async_kernel(self.async_kernel)
-                self.supervisor.on_session_idle = self._wake_goals
+                self.supervisor.on_session_idle = self._on_session_idle
+                self.supervisor.teams.start_wake = self._start_team_wake
                 with startup_phase("restart_verification"):
                     self.supervisor.verify_restart_state()
                 with startup_phase("applications_and_handoffs"):
@@ -2727,6 +2836,15 @@ def _model_from_environment() -> ModelClient | None:
                 "evidence": [{"requirement": "返回完成状态", "proof": "隔离测试模型已返回结构化声明。"}],
             }),)),
             ModelResponse(text="目标测试已完成。"),
+        ])
+    if fixture == "team":
+        # The lead proposes; every later call (lead, member, wakes) answers with text, so their order does not matter.
+        return ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall("fake-team-propose", "team_propose", {
+                "objective": "整理说明", "members": [{"name": "alice", "role": "worker", "brief": "整理说明文档"}],
+                "tasks": [{"key": "notes", "title": "整理说明", "owner": "alice"}],
+            }),)),
+            *(ModelResponse(text="团队测试已完成。") for _ in range(12)),
         ])
     if fixture == "write":
         return ScriptedModel(

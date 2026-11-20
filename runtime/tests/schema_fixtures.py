@@ -4,8 +4,19 @@ from __future__ import annotations
 import sqlite3
 
 
+def remove_team_schema(connection: sqlite3.Connection) -> None:
+    """Drop the v56 team objects when constructing an older database."""
+    for table in ("team_runs", "team_wakes", "team_message_deliveries", "team_messages", "team_task_deps",
+                  "team_tasks", "team_members", "team_proposals", "teams"):
+        connection.execute(f"DROP TABLE IF EXISTS {table}")
+    connection.execute("DROP INDEX IF EXISTS sessions_internal_kind")
+    if "internal_kind" in {row[1] for row in connection.execute("PRAGMA table_info(sessions)")}:
+        connection.execute("ALTER TABLE sessions DROP COLUMN internal_kind")
+
+
 def remove_agent_workspace_schema(connection: sqlite3.Connection) -> None:
-    """Drop the v55 child workspace objects when constructing an older database."""
+    """Drop the v55 child workspace objects, and later ones, when constructing an older database."""
+    remove_team_schema(connection)
     connection.execute("DROP TABLE IF EXISTS workspace_integrations")
     connection.execute("DROP TABLE IF EXISTS workspace_deliveries")
     connection.execute("DROP INDEX IF EXISTS agent_messages_operation")

@@ -12,11 +12,13 @@ HookEvent = Literal[
     "SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse",
     "PermissionRequest", "PostToolUse", "PreCompact", "PostCompact",
     "SubagentStart", "SubagentStop", "Stop", "Interrupt",
+    "TeamMemberIdle", "TeamTaskCompleted",
 ]
 SUPPORTED_HOOK_EVENTS = frozenset({
     "SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse",
     "PermissionRequest", "PostToolUse", "PreCompact", "PostCompact",
     "SubagentStart", "SubagentStop", "Stop", "Interrupt",
+    "TeamMemberIdle", "TeamTaskCompleted",
 })
 
 

@@ -271,7 +271,10 @@ export function AgentList({
   );
 }
 
-function AgentTranscript({
+/** The fields a transcript needs; team members supply them without a delegation. */
+export type TranscriptSubject = Pick<AgentSummary, "id" | "sessionId" | "runId" | "status" | "createdAt" | "task" | "taskName">;
+
+export function AgentTranscript({
   agent,
   approvals,
   respondingApprovalIds = new Set(),
@@ -285,7 +288,7 @@ function AgentTranscript({
   workspaceRoot,
   models,
 }: {
-  agent: AgentSummary;
+  agent: TranscriptSubject;
   approvals: ApprovalRequest[];
   respondingApprovalIds?: ReadonlySet<string>;
   respondingKindByApprovalId?: Readonly<Record<string, "approve" | "reject">>;

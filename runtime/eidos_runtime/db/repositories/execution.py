@@ -1602,6 +1602,10 @@ class ExecutionRepository(Repository):
                 (run_id, json.dumps(ACTIVE_STATUSES)),
             ).fetchone():
                 raise RunCompletionDeferred("active_children")
+            from eidos_runtime.persistence.teams import TeamRepository
+            if TeamRepository.has_undelivered_in_connection(connection, run_id):
+                # Messages addressed to this team role arrived after the last context.
+                raise RunCompletionDeferred("team_messages")
             if expected_collaboration is not None:
                 from eidos_runtime.persistence.collaboration import CollaborationRepository
 

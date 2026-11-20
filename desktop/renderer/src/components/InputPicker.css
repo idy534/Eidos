@@ -196,6 +196,9 @@
 .input-picker__action-btn--goal svg {
   color: #3b6b88;
 }
+.input-picker__action-btn--team svg {
+  color: #5d6b3b;
+}
 .input-picker__action-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;

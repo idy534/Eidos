@@ -52,6 +52,7 @@
 @import "./components/settings/ShellEnvironmentSettings.css";
 @import "./components/planning.css";
 @import "./components/goals/goals.css";
+@import "./components/teams/teams.css";
 @import "./components/automations/automations.css";
 @import "./components/ModelSelector.css";
 @import "./components/ProviderLogo.css";

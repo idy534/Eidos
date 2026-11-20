@@ -47,7 +47,7 @@ def test_v54_upgrade_adds_child_workspace_schema_and_keeps_defaults(tmp_path):
         assert {"workspace_mode", "worktree_id", "base_tree"} <= _columns(connection, "agent_delegations")
         assert {"sender_kind", "operation_id"} <= _columns(connection, "agent_messages")
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert {"workspace_deliveries", "workspace_integrations"} <= tables
+        assert "workspace_deliveries" in tables
         defaults = {row[1]: row[4] for row in connection.execute("PRAGMA table_info(agent_delegations)")}
         assert defaults["workspace_mode"] == "'shared'"
     finally:
@@ -284,3 +284,40 @@ def test_review_changes_lists_files_and_pages_diff_without_object_ids(tmp_path):
             parent.app.review_changes(parent.run["id"], ReviewAgentChanges(agent_id=child.id, path="missing.txt"))
     finally:
         parent.store.close()
+
+
+def test_v55_upgrade_adds_team_schema_and_marks_existing_children(tmp_path):
+    from schema_fixtures import remove_team_schema
+
+    from eidos_runtime.db.schema import SCHEMA_VERSION
+
+    data = tmp_path / "data"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = SessionStore(data)
+    store.initialize()
+    session = store.create_session(str(workspace))
+    run, _ = store.create_run(session["id"], "coordinate")
+    item = store.create_tool_item(run["id"], 1, 0, "spawn", "spawn_agent", "{}")
+    from eidos_runtime.persistence.collaboration import CollaborationRepository
+    child = CollaborationRepository(store.database).spawn(run["id"], item["id"], SpawnAgent(task_name="look", message="Look."))
+    store.close()
+    with sqlite3.connect(data / "state.sqlite") as connection:
+        remove_team_schema(connection)
+        connection.executescript("""
+CREATE TABLE workspace_integrations (id TEXT PRIMARY KEY);
+CREATE INDEX workspace_integrations_delivery ON workspace_integrations(id);
+""")
+        connection.execute("PRAGMA user_version=55")
+    reopened = SessionStore(data)
+    reopened.initialize()
+    try:
+        connection = reopened.connection
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        assert connection.execute("SELECT internal_kind FROM sessions WHERE id=?", (child.session_id,)).fetchone()[0] == "agent_child"
+        assert connection.execute("SELECT internal_kind FROM sessions WHERE id=?", (session["id"],)).fetchone()[0] is None
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert {"teams", "team_members", "team_tasks", "team_messages", "team_wakes"} <= tables
+        assert "workspace_integrations" not in tables
+    finally:
+        reopened.close()

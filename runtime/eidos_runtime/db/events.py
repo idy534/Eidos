@@ -61,6 +61,12 @@ class GoalChangedPayload(ClosedModel):
     reason: str | None = None
 
 
+class TeamChangedPayload(ClosedModel):
+    session_id: str = Field(alias="sessionId")
+    team_id: str | None = Field(default=None, alias="teamId")
+    kind: Literal["proposal", "team", "member", "task", "message", "status"] = "team"
+
+
 class SessionCreatedPayload(ClosedModel):
     session: SessionDto
 
@@ -252,6 +258,7 @@ EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.BROWSER_GRANT_CHANGED: BrowserGrantChangedPayload,
     EventType.BROWSER_SETTINGS_CHANGED: AutomationChangedPayload,
     EventType.GOAL_CHANGED: GoalChangedPayload,
+    EventType.TEAM_CHANGED: TeamChangedPayload,
 }
 
 

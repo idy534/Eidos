@@ -10,6 +10,10 @@ from opentelemetry.context import Context
 
 from eidos_runtime.application.agent_catalog import AgentCatalog
 from eidos_runtime.application.agent_workspaces import AgentWorkspaceError, AgentWorkspaceService
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from eidos_runtime.application.teams import TeamApplication
 from eidos_runtime.model.config import ModelConfigError
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.collaboration import (
@@ -36,6 +40,7 @@ class CollaborationApplication:
         self._trace_contexts: dict[str, Context] = {}
         self._trace_lock = Lock()
         self.workspaces: AgentWorkspaceService | None = None
+        self.teams: TeamApplication | None = None
 
     def bind_workspaces(self, workspaces: AgentWorkspaceService | None) -> None:
         self.workspaces = workspaces

@@ -34,6 +34,7 @@ from eidos_runtime.protocol.personalization import PersonalizationResponse
 from eidos_runtime.protocol.schemas import ProjectDto
 from eidos_runtime.domain.goal import GoalView
 from eidos_runtime.models.browser import BrowserExtensionTokenResponse
+from eidos_runtime.domain.teams import TeamView
 
 
 class Params(RootModel[dict[str, object]]):
@@ -233,6 +234,7 @@ def test_production_method_registrations_do_not_use_generic_object_models(
         ProjectDto,
         method_dtos.SessionReadResponseDto,
         GoalView,
+        TeamView,
         BrowserExtensionTokenResponse,
     }
     assert all(

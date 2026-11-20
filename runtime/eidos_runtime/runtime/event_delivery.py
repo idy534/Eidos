@@ -191,6 +191,9 @@ class EventDelivery:
                 and isinstance(run_id, str)
             ):
                 origin = run.get("goalOrigin") if run else None
-                if not isinstance(origin, dict) or origin.get("trigger") == "user_input":
+                # Team wakes start Runs without a user item; their input is the team section.
+                automatic = bool(run and run.get("teamOrigin")) or (
+                    isinstance(origin, dict) and origin.get("trigger") != "user_input")
+                if not automatic:
                     item = self.store.get_user_item(run_id)
         return run, item

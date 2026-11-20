@@ -101,6 +101,8 @@ def transition_run(
     if target_status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.STOPPED, RunStatus.CANCELED, RunStatus.INTERRUPTED}:
         from eidos_runtime.persistence.goals import settle_goal_run
         settle_goal_run(connection, run_id, target_status.value, reason)
+        from eidos_runtime.persistence.teams import TeamRepository
+        TeamRepository.settle_run_in_connection(connection, run_id, target_status.value)
         connection.execute("UPDATE agent_waits SET status='canceled' WHERE run_id=? AND status='pending'", (run_id,))
         owner = connection.execute('SELECT p.id,p.session_id FROM agent_delegations d JOIN runs p ON p.id=d.parent_run_id WHERE d.child_session_id=?', (run['sessionId'],)).fetchone()
         if owner is not None:

@@ -194,7 +194,7 @@ export function useRunController(
     try {
       if (inputOverride === undefined) await draftStore.flush(sessionId);
       const returnedRun = await window.eidosRuntime.startRun(
-        sessionId, /^\/(plan|goal)(?:\s|$)/.test(sessionInput.trim()) ? sessionInput.trim().replace(/^\/(plan|goal)(?:\s+|$)/, "").trim() || "请先制定计划。" : sessionInput.trim(), selectedModelId, reasoningSelection, approvalMode, submittedReferences.map((value) => value.id),
+        sessionId, /^\/(plan|goal|team)(?:\s|$)/.test(sessionInput.trim()) ? sessionInput.trim().replace(/^\/(plan|goal|team)(?:\s+|$)/, "").trim() || "请先制定计划。" : sessionInput.trim(), selectedModelId, reasoningSelection, approvalMode, submittedReferences.map((value) => value.id),
         /^\/plan(?:\s|$)/.test(sessionInput.trim()) ? { workMode: "plan" } : planning,
       );
 

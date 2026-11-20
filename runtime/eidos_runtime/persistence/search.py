@@ -167,7 +167,7 @@ class SearchRepository(Repository):
             except (ValueError, TypeError, json.JSONDecodeError) as error:
                 raise InvalidCursorError("invalid search cursor") from error
         conditions = [
-            "NOT EXISTS(SELECT 1 FROM agent_delegations a WHERE a.child_session_id=s.id)"
+            "s.internal_kind IS NULL"
         ]
         values: list[str | int] = []
         if request.session_id:

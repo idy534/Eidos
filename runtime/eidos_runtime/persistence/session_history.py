@@ -306,7 +306,7 @@ class SessionHistoryRepository(Repository):
             if (
                 self._connection()
                 .execute(
-                    "SELECT 1 FROM agent_delegations WHERE child_session_id=?",
+                    "SELECT 1 FROM sessions WHERE id=? AND internal_kind IS NOT NULL",
                     (session_id,),
                 )
                 .fetchone()

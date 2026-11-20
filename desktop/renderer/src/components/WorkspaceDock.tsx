@@ -3,7 +3,7 @@ import { DropdownMenu, ContextMenu } from "./DropdownMenu.js";
 import { CloseIcon, CloseOthersIcon } from "./MenuIcons.js";
 import { WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
 
-export type WorkspaceToolKind = "text-review" | "plan" | "agent" | "review" | "terminal" | "files" | "browser";
+export type WorkspaceToolKind = "text-review" | "plan" | "agent" | "team" | "review" | "terminal" | "files" | "browser";
 
 export interface WorkspaceTab {
   id: string;
@@ -29,6 +29,7 @@ const TOOL_LABELS: Record<WorkspaceToolKind, string> = {
   "text-review": "文本审查",
   plan: "计划",
   agent: "智能体",
+  team: "团队",
   review: "审查",
   terminal: "终端",
   files: "文件",
@@ -39,6 +40,7 @@ const TOOL_DESCRIPTIONS: Record<WorkspaceToolKind, string> = {
   "text-review": "对比本轮与历史文件修改",
   plan: "查看或编辑当前任务计划",
   agent: "查看子任务进度与执行记录",
+  team: "查看团队看板、成员与任务",
   review: "查看代码改动与 Git 提交状态",
   terminal: "在当前项目目录中运行命令",
   files: "浏览项目目录与查看文件内容",
@@ -73,6 +75,17 @@ function ToolIcon({ tool }: { tool: WorkspaceToolKind }) {
   }
   if (tool === "files") {
     return <WorkspaceFolderIcon />;
+  }
+  if (tool === "team") {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="10" cy="6.2" r="2.4" />
+        <circle cx="4.6" cy="8.2" r="1.8" />
+        <circle cx="15.4" cy="8.2" r="1.8" />
+        <path d="M5.8 16c.4-2.4 2.1-4 4.2-4s3.8 1.6 4.2 4" />
+        <path d="M1.8 15c.3-1.6 1.2-2.7 2.6-2.9M18.2 15c-.3-1.6-1.2-2.7-2.6-2.9" />
+      </svg>
+    );
   }
   if (tool === "agent") {
     return (

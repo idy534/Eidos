@@ -163,6 +163,8 @@ def test_internal_child_session_is_not_a_sidebar_target(store):
         "VALUES (?, ?, ?, ?, ?, 'child', 'explorer', 'read files', 1)",
         (str(uuid4()), parent_run["id"], child["id"], child_run["id"], parent_item["id"]),
     )
+    # Production child Sessions are created with this marker (schema v56).
+    value.connection.execute("UPDATE sessions SET internal_kind='agent_child' WHERE id=?", (child["id"],))
     with pytest.raises(ResourceNotFoundError):
         _set(SidebarRepository(value.database), SessionSidebarTarget(kind="session", id=child["id"]))
 

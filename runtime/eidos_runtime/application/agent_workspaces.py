@@ -75,6 +75,17 @@ class Delivery(EidosFrozenStrictModel):
 
 
 @dataclass(frozen=True)
+class WorkspaceOwner:
+    """A child agent or a team member that owns one managed Worktree."""
+
+    kind: Literal["agent", "team_member"]
+    id: str
+    worktree_id: str
+    base_tree: str
+    active: bool
+
+
+@dataclass(frozen=True)
 class PreparedAgentWorkspace:
     operation_id: str
     session_id: str
@@ -254,6 +265,11 @@ class AgentWorkspaceService:
                 self._remove_worktree(worktree_id, agent_id=agent_id)
             except Exception:
                 logger.exception("Orphaned agent Worktree cleanup failed worktree_id=%s", worktree_id)
+        for member_id, worktree_id in self.orphaned_members():
+            try:
+                self._remove_worktree(worktree_id, agent_id=member_id, kind="team_member")
+            except Exception:
+                logger.exception("Team member Worktree cleanup failed worktree_id=%s", worktree_id)
 
     def _close_removed(self, operation_id: str) -> None:
         lifecycle = self.manager.lifecycle
@@ -288,16 +304,21 @@ class AgentWorkspaceService:
     def capture(self, parent_run_id: str, agent_id: str) -> Delivery:
         """Pin the child's current files and list their changes from the base."""
         delegation = self._delegation(parent_run_id, agent_id)
-        if self._child_active(delegation):
+        return self.capture_owner(WorkspaceOwner("agent", agent_id, delegation["worktree_id"],
+                                                 delegation["base_tree"], self._child_active(delegation)))
+
+    def capture_owner(self, owner: WorkspaceOwner) -> Delivery:
+        if owner.active:
             raise AgentWorkspaceError("agent_still_running")
-        root = self._root(delegation["worktree_id"])
+        agent_id = owner.id
+        root = self._root(owner.worktree_id)
         try:
             fingerprint = self.manager.source_snapshot(root, include_local_changes=True).fingerprint
-            latest = self._latest(agent_id)
+            latest = self._latest(agent_id, owner.kind)
             if latest is not None and latest.status != "discarded" and self._fingerprint(latest.id) == fingerprint:
                 return latest
             result_tree = self.git.worktree_tree(root)
-            changes = self.git.tree_changes(root, delegation["base_tree"], result_tree)
+            changes = self.git.tree_changes(root, owner.base_tree, result_tree)
         except (WorktreeError, GitError, OSError, ValueError) as error:
             code = "delivery_submodule_unsupported" if getattr(error, "code", "") == "worktree_gitlink_unsupported" else "delivery_failed"
             raise AgentWorkspaceError(code) from error
@@ -325,15 +346,15 @@ class AgentWorkspaceService:
         delivery_id = str(uuid.uuid4())
         with self.database.transaction() as connection:
             connection.execute(
-                "UPDATE workspace_deliveries SET status='stale' WHERE owner_kind='agent' AND owner_id=? AND status='ready'",
-                (agent_id,))
+                "UPDATE workspace_deliveries SET status='stale' WHERE owner_kind=? AND owner_id=? AND status='ready'",
+                (owner.kind, agent_id))
             connection.execute(
                 "INSERT INTO workspace_deliveries (id,owner_kind,owner_id,worktree_id,base_tree,result_tree,fingerprint,entries_json,status,created_at) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (delivery_id, "agent", agent_id, delegation["worktree_id"], delegation["base_tree"], result_tree,
+                (delivery_id, owner.kind, agent_id, owner.worktree_id, owner.base_tree, result_tree,
                  fingerprint, json.dumps([entry.model_dump(mode="json") for entry in entries]), "ready", now_ms()))
-        return Delivery(id=delivery_id, agent_id=agent_id, worktree_id=delegation["worktree_id"],
-                        base_tree=delegation["base_tree"], result_tree=result_tree, entries=tuple(entries), status="ready")
+        return Delivery(id=delivery_id, agent_id=agent_id, worktree_id=owner.worktree_id,
+                        base_tree=owner.base_tree, result_tree=result_tree, entries=tuple(entries), status="ready")
 
     def diff_page(self, delivery: Delivery, *, path: str | None, offset: int, max_bytes: int) -> tuple[str, int, bool]:
         root = self._root(delivery.worktree_id)
@@ -368,8 +389,14 @@ class AgentWorkspaceService:
                 "UPDATE workspace_deliveries SET status=?,integrated_at=? WHERE id=? AND status IN ('ready','partially_integrated')",
                 ("integrated" if complete else "partially_integrated", now_ms(), delivery_id))
 
-    def latest_delivery(self, agent_id: str) -> Delivery | None:
-        return self._latest(agent_id)
+    def latest_delivery(self, agent_id: str, kind: Literal["agent", "team_member"] = "agent") -> Delivery | None:
+        return self._latest(agent_id, kind)
+
+    def delivery(self, delivery_id: str) -> Delivery | None:
+        with self.database.lock:
+            row = self.database.connection().execute(
+                "SELECT * FROM workspace_deliveries WHERE id=?", (delivery_id,)).fetchone()
+        return self._delivery_from_row(row) if row else None
 
     # Removal -------------------------------------------------------------
 
@@ -378,6 +405,11 @@ class AgentWorkspaceService:
         if self._child_active(delegation):
             raise AgentWorkspaceError("agent_still_running")
         self._remove_worktree(delegation["worktree_id"], agent_id=agent_id)
+
+    def discard_owner(self, owner: WorkspaceOwner) -> None:
+        if owner.active:
+            raise AgentWorkspaceError("agent_still_running")
+        self._remove_worktree(owner.worktree_id, agent_id=owner.id, kind=owner.kind)
 
     def release_for_session(self, session_id: str) -> None:
         """Remove every child Worktree before its parent Session's facts go."""
@@ -388,12 +420,19 @@ class AgentWorkspaceService:
         for row in rows:
             self._remove_worktree(row["worktree_id"], agent_id=row["id"])
         with self.database.lock:
+            members = self.database.connection().execute(
+                "SELECT m.id,m.worktree_id FROM team_members m JOIN teams t ON t.id=m.team_id "
+                "WHERE t.lead_session_id=? AND m.worktree_id IS NOT NULL", (session_id,)).fetchall()
+        for row in members:
+            self._remove_worktree(row["worktree_id"], agent_id=row["id"], kind="team_member")
+        with self.database.lock:
             snapshot_ids = [row[0] for row in self.database.connection().execute(
                 "SELECT id FROM worktree_snapshots WHERE session_id=? AND id LIKE 'agent-%'", (session_id,))]
         for snapshot_id in snapshot_ids:
             self._drop_snapshot(snapshot_id)
 
-    def _remove_worktree(self, worktree_id: str, *, agent_id: str | None = None) -> None:
+    def _remove_worktree(self, worktree_id: str, *, agent_id: str | None = None,
+                         kind: Literal["agent", "team_member"] = "agent") -> None:
         try:
             worktree = self.manager.repository.read_worktree(worktree_id)
         except Exception:
@@ -412,8 +451,8 @@ class AgentWorkspaceService:
         if agent_id is not None:
             with self.database.transaction() as connection:
                 connection.execute(
-                    "UPDATE workspace_deliveries SET status='discarded' WHERE owner_kind='agent' AND owner_id=? "
-                    "AND status IN ('ready','stale','partially_integrated')", (agent_id,))
+                    "UPDATE workspace_deliveries SET status='discarded' WHERE owner_kind=? AND owner_id=? "
+                    "AND status IN ('ready','stale','partially_integrated')", (kind, agent_id))
 
     # Helpers -------------------------------------------------------------
 
@@ -443,7 +482,8 @@ class AgentWorkspaceService:
     def _owner(self, worktree_id: str) -> str | None:
         with self.database.lock:
             row = self.database.connection().execute(
-                "SELECT id FROM agent_delegations WHERE worktree_id=?", (worktree_id,)).fetchone()
+                "SELECT id FROM agent_delegations WHERE worktree_id=? UNION ALL "
+                "SELECT id FROM team_members WHERE worktree_id=? LIMIT 1", (worktree_id, worktree_id)).fetchone()
         return row["id"] if row else None
 
     def _orphaned(self) -> tuple[tuple[str, str], ...]:
@@ -454,14 +494,25 @@ class AgentWorkspaceService:
             ).fetchall()
         return tuple((row["id"], row["worktree_id"]) for row in rows)
 
-    def _latest(self, agent_id: str) -> Delivery | None:
+    def orphaned_members(self) -> tuple[tuple[str, str], ...]:
+        """Worktrees of removed members or dissolved teams that still exist."""
+        with self.database.lock:
+            rows = self.database.connection().execute(
+                "SELECT m.id,m.worktree_id FROM team_members m JOIN teams t ON t.id=m.team_id "
+                "JOIN worktrees w ON w.id=m.worktree_id WHERE w.state != 'deleted' "
+                "AND (m.status='removed' OR t.status='dissolved')").fetchall()
+        return tuple((row["id"], row["worktree_id"]) for row in rows)
+
+    def _latest(self, agent_id: str, kind: Literal["agent", "team_member"] = "agent") -> Delivery | None:
         with self.database.lock:
             row = self.database.connection().execute(
-                "SELECT * FROM workspace_deliveries WHERE owner_kind='agent' AND owner_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
-                (agent_id,)).fetchone()
-        if row is None:
-            return None
-        return Delivery(id=row["id"], agent_id=agent_id, worktree_id=row["worktree_id"], base_tree=row["base_tree"],
+                "SELECT * FROM workspace_deliveries WHERE owner_kind=? AND owner_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                (kind, agent_id)).fetchone()
+        return self._delivery_from_row(row) if row else None
+
+    @staticmethod
+    def _delivery_from_row(row: sqlite3.Row) -> Delivery:
+        return Delivery(id=row["id"], agent_id=row["owner_id"], worktree_id=row["worktree_id"], base_tree=row["base_tree"],
                         result_tree=row["result_tree"], status=row["status"],
                         entries=tuple(DeliveryEntry.model_validate(value) for value in json.loads(row["entries_json"])))
 

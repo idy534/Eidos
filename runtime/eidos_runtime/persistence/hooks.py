@@ -20,8 +20,9 @@ class HookRepository(Repository):
     def child_sessions(self, session_id: str) -> tuple[str, ...]:
         with self.lock:
             return tuple(row[0] for row in self._connection().execute(
-                "SELECT child_session_id FROM agent_delegations WHERE parent_run_id IN (SELECT id FROM runs WHERE session_id=?)",
-                (session_id,),
+                "SELECT child_session_id FROM agent_delegations WHERE parent_run_id IN (SELECT id FROM runs WHERE session_id=?) "
+                "UNION SELECT m.session_id FROM team_members m JOIN teams t ON t.id=m.team_id WHERE t.lead_session_id=?",
+                (session_id, session_id),
             ))
 
     def session_start_source(self, run_id: str) -> str:
@@ -277,5 +278,5 @@ class HookRepository(Repository):
 
     def stop_active(self, run_id: str) -> bool:
         with self.lock:
-            rows = self._connection().execute("SELECT result_json FROM hook_invocations WHERE run_id=? AND event IN ('Stop','SubagentStop') AND result_json IS NOT NULL ORDER BY created_at DESC LIMIT 128", (run_id,)).fetchall()
+            rows = self._connection().execute("SELECT result_json FROM hook_invocations WHERE run_id=? AND event IN ('Stop','SubagentStop','TeamMemberIdle') AND result_json IS NOT NULL ORDER BY created_at DESC LIMIT 128", (run_id,)).fetchall()
         return any(HookResult.model_validate_json(row["result_json"]).action == "continue" for row in rows)

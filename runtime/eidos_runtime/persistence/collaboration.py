@@ -42,6 +42,13 @@ class CollaborationRepository:
                 'SELECT 1 FROM agent_delegations WHERE child_session_id=?', (session_id,),
             ).fetchone() is not None
 
+    def is_internal(self, session_id: str) -> bool:
+        """A Session Runtime owns for another Session: a child agent or a team member."""
+        with self.database.lock:
+            return self.database.connection().execute(
+                "SELECT 1 FROM sessions WHERE id=? AND internal_kind IS NOT NULL", (session_id,),
+            ).fetchone() is not None
+
     def child_for_run(self, run_id: str) -> bool:
         with self.database.lock:
             return self.database.connection().execute(
@@ -319,7 +326,7 @@ class CollaborationRepository:
             # A shared child borrows the execution binding and never owns or
             # deletes the parent's worktree. An isolated child binds the
             # managed Worktree created for this spawn.
-            connection.execute("INSERT INTO sessions (id,workspace_root,workspace_dev,workspace_inode,workspace_uid,title,created_at,updated_at,worktree_id,execution_mode,associated_worktree_id,project_id,workspace_roots_json) SELECT ?,workspace_root,workspace_dev,workspace_inode,workspace_uid,?,?,?,coalesce(?,worktree_id),CASE WHEN ? IS NULL THEN execution_mode ELSE 'worktree' END,?,project_id,workspace_roots_json FROM sessions WHERE id=?",
+            connection.execute("INSERT INTO sessions (id,workspace_root,workspace_dev,workspace_inode,workspace_uid,title,created_at,updated_at,worktree_id,execution_mode,associated_worktree_id,project_id,workspace_roots_json,internal_kind) SELECT ?,workspace_root,workspace_dev,workspace_inode,workspace_uid,?,?,?,coalesce(?,worktree_id),CASE WHEN ? IS NULL THEN execution_mode ELSE 'worktree' END,?,project_id,workspace_roots_json,'agent_child' FROM sessions WHERE id=?",
                 (session_id, request.task_name, now, now, workspace.worktree_id if workspace else None,
                  workspace.worktree_id if workspace else None, workspace.worktree_id if workspace else None,
                  parent['session_id']))

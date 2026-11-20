@@ -308,7 +308,8 @@ class RunApplication:
         model_id, profile, _config = self._select_model(request, environment=environment)
         return AutomationModel(model_id=model_id, reasoning_selection=profile.reasoning_selection)
 
-    def start(self, request: RunStartRequestDto, *, automation_occurrence_id: str | None = None, regenerate_source_run_id: str | None = None, agent_source_run_id: str | None = None, channel_message_id: str | None = None, goal_intent_id: str | None = None) -> RunStartOutcome:
+    def start(self, request: RunStartRequestDto, *, automation_occurrence_id: str | None = None, regenerate_source_run_id: str | None = None, agent_source_run_id: str | None = None, channel_message_id: str | None = None, goal_intent_id: str | None = None,
+              team_wake_id: str | None = None) -> RunStartOutcome:
         store, runtime, environment, scan_text = self._start_dependencies()
         if (request.goal_mode or request.goal_revision is not None) and any(value is not None for value in (automation_occurrence_id, regenerate_source_run_id, agent_source_run_id, channel_message_id, goal_intent_id)):
             raise ApplicationError("INVALID_PARAMS", "只有用户输入可以创建目标。")
@@ -321,14 +322,14 @@ class RunApplication:
         if not environment.model_is_configured():
             raise ApplicationError("INVALID_STATE", "no model is configured")
         try:
-            user_input = "" if goal_intent_id is not None else scan_text(request.user_input)
+            user_input = "" if goal_intent_id is not None or team_wake_id is not None else scan_text(request.user_input)
         except SensitiveContentDenied as error:
             raise ApplicationError("SENSITIVE_CONTENT_REJECTED", str(error)) from error
         except SensitiveScanError as error:
             raise ApplicationError("SENSITIVE_SCAN_FAILED", str(error)) from error
 
         from eidos_runtime.persistence.collaboration import CollaborationRepository
-        if CollaborationRepository(store.database).is_child(request.session_id):
+        if team_wake_id is None and CollaborationRepository(store.database).is_internal(request.session_id):
             raise ApplicationError("INVALID_STATE", "Delegate follow-up work through the parent agent.")
         session = store.read_session(request.session_id)
         if session is None:
@@ -451,7 +452,17 @@ class RunApplication:
                     ):
                         self._repository_runtime.activate_workspace(workspace.path)
                     needs_title = "title" not in current_session
-                    if goal_intent_id is not None:
+                    if team_wake_id is not None:
+                        from eidos_runtime.persistence.teams import TeamRepository
+                        from eidos_runtime.db.repositories.runs import RunRepository
+                        created, _user_item = TeamRepository(store.database).accept_wake(team_wake_id,
+                            lambda connection: RunRepository(store.database).create_run(
+                                request.session_id, "", queued=True, internal_input=True,
+                                model_id=model_id, model_profile=model_profile, approval_mode=request.approval_mode,
+                                extension_snapshot=extension_snapshot, agent_catalog=agent_snapshot,
+                                expected_workspace_identity=expected_workspace_identity, transaction_connection=connection,
+                            ))
+                    elif goal_intent_id is not None:
                         from eidos_runtime.persistence.goals import GoalRepository
                         from eidos_runtime.db.repositories.runs import RunRepository
                         created, _user_item = GoalRepository(store.database).accept(goal_intent_id,
@@ -543,6 +554,11 @@ class RunApplication:
             raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
 
         run_id = str(created["id"])
+        if request.team_mode and team_wake_id is None:
+            from eidos_runtime.persistence.teams import TeamRepository
+            with store.database.transaction() as connection:
+                # Before scheduling: the first Step already offers team tools.
+                TeamRepository(store.database).mark_lead_mode(connection, run_id)
         if model_config is not None:
             environment.freeze_model_config(run_id, model_config)
         try:
@@ -572,7 +588,7 @@ class RunApplication:
                     user_input=user_input or ", ".join(value.reference.label for value in input_snapshots),
                     model_id=model_id,
                 )
-                if needs_title and automation_occurrence_id is None and goal_intent_id is None
+                if needs_title and automation_occurrence_id is None and goal_intent_id is None and team_wake_id is None
                 else None
             ),
         )
