@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { PluginSettings } from "../src/components/settings/PluginSettings.js";
-import type { PluginRecord } from "../src/contracts.js";
+import type { McpServerRecord, PluginRecord } from "../src/contracts.js";
 import "../src/styles.css";
 import "../src/components/settings/SettingsPage.css";
 
@@ -17,11 +17,24 @@ const initial: PluginRecord = {
     definitions: [{ key: "stop", event: "Stop", handlerType: "command", command: '"$RUNTIME_PYTHON" "$PLUGIN_ROOT/hooks/check_workspace_before_completion.py" --configuration local-workspace-checks' }] },
 };
 
+const server: McpServerRecord = {
+  schemaVersion: 1, pluginId: "local-checks", pluginVersion: "1.0.0", pluginHash: "a".repeat(64),
+  serverId: "workspace-checks", executable: "${RUNTIME_PYTHON}", argv: ["${PLUGIN_ROOT}/servers/workspace_checks.py", "--stdio"],
+  envNames: ["CHECKS_TOKEN"], permissionProfile: "workspace_read", startupTimeoutSeconds: 15, toolTimeoutSeconds: 60,
+  declaredEnabled: true, consented: false, available: false, updatedAt: 0,
+};
+
 function Fixture() {
   const [plugin, setPlugin] = useState(initial);
-  return <PluginSettings plugins={[plugin]} pendingAction={undefined} onImportPlugin={async () => {}}
+  const [servers, setServers] = useState([server]);
+  return <PluginSettings plugins={[plugin]} mcpServers={servers} pendingAction={undefined} onImportPlugin={async () => {}}
     onTogglePlugin={async (id, enabled) => { calls.push({ action: "enable", id, enabled }); setPlugin(value => ({ ...value, enabled })); }}
     onTrustPluginHooks={async (id, contentHash, trusted) => { calls.push({ action: "trust", id, contentHash, trusted }); setPlugin(value => ({ ...value, hookReview: { ...value.hookReview!, trusted } })); }}
+    onActivatePlugin={async (id, contentHash) => {
+      calls.push({ action: "activate", id, contentHash });
+      setPlugin(value => ({ ...value, enabled: true, hookReview: { ...value.hookReview!, trusted: true } }));
+      setServers(values => values.map(value => ({ ...value, consented: true, available: true })));
+    }}
     onRemovePlugin={async () => {}} onShowToast={() => {}} />;
 }
 

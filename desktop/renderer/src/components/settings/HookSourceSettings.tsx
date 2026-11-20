@@ -1,3 +1,4 @@
+import { pathBasename, revealFileLabel } from "../../platform.js";
 import { useEffect, useRef, useState } from "react";
 import type { HookConfigurationRequest, HookSourceReview } from "../../../../shared/hooks.js";
 import { userFacingError } from "../../session-state.js";
@@ -18,7 +19,7 @@ function getHookSourceTitle(source: HookSourceReview): string {
     return "个人 Hook";
   }
   const firstPath = source.paths?.[0] || "";
-  const parts = firstPath.split("/").filter(Boolean);
+  const parts = firstPath.split(/[\\/]/).filter(Boolean);
   const eidosIndex = parts.indexOf(".eidos");
   if (eidosIndex > 0 && parts[eidosIndex - 1]) {
     return parts[eidosIndex - 1]!;
@@ -183,7 +184,7 @@ export function HookSourceSettings({ sessionId }: { sessionId?: string | undefin
             const title = getHookSourceTitle(source);
             const isChecked = Boolean(source.trusted && source.enabled);
             const firstPath = source.paths?.[0] || "";
-            const fileName = firstPath.split("/").filter(Boolean).at(-1) || "hooks.json";
+            const fileName = (firstPath ? pathBasename(firstPath) : "") || "hooks.json";
 
             const menuItems: DropdownMenuItem[] = [
               {
@@ -197,7 +198,7 @@ export function HookSourceSettings({ sessionId }: { sessionId?: string | undefin
               },
               {
                 key: "show-in-finder",
-                label: "在 Finder 中显示",
+                label: revealFileLabel,
                 icon: <FinderIcon />,
                 disabled: !firstPath,
                 onClick: () => {

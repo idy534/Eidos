@@ -8,6 +8,8 @@
 
 - [自定义子 Agent](custom-subagents-design.md)：TOML 定义、模型选择、引用、权限与分阶段实施记录。
 - [Session 聊天分叉](session-conversation-fork-design.md)：产品规则、继承历史、文件环境、持久化与界面方案。
+- [Agent Team 调研与设计](agent-team-research-and-design.md)：业界团队模式调研、与现有子 Agent 的差距、Session 级团队协作层方案与分期；当前为设计方案，尚未实施。
+- [Agent Team P0 与 P1 详细设计](agent-team-p0-p1-design.md)：子 Agent Worktree、交付与整合、Team MVP 的数据模型、看板与私聊、唤醒调度、工具、协议、界面与验收；当前为设计方案，尚未实施。
 
 ## 记忆
 
@@ -35,6 +37,10 @@
 - [浏览器操作能力设计方案](browser-automation-design.md)：选型、BrowserHost、沙盒、工具面、授权、上下文与分阶段实施；当前为设计方案。
 - [MCP 工具调用展示优化](mcp-tool-display-design.md)：截图可见、MCP 工具行的标题、结果、参数与错误展示，以及浏览器结果的结构化投影；当前为设计方案。
 - [与用户共用 Chrome（标签组模式）](shared-chrome-tab-group-design.md)：基于 Playwright Extension 的标签组共用、本机代理、令牌、授权与分阶段实施；P1、P2 已实施。
+
+## 平台与沙盒
+
+- [Windows 沙盒适配调研与设计](windows-sandbox-design.md)：候选隔离机制对比、MXC 进程容器方案、权限映射、Shell/Hook/本地 MCP 接入、实机验证清单与分期；当前为设计方案，尚未实施。
 
 ## 执行流
 

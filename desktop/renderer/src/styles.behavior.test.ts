@@ -299,3 +299,38 @@ describe("interactive color tokens", () => {
     );
   });
 });
+
+describe("windows platform styles", () => {
+  it("provides Windows font fallbacks and opaque, traffic-light-free overrides under data-platform=windows", () => {
+    expect(styles).toMatch(/--font-ui:[^;]*"Segoe UI Variable Text"[^;]*"Microsoft YaHei UI"[^;]*sans-serif;/);
+    expect(styles).toMatch(/--font-code:[^;]*"Cascadia Mono"[^;]*"Microsoft YaHei UI"[^;]*monospace;/);
+    expect(styles).toMatch(/:root\[data-platform="windows"\]\s*\{[^}]*--sidebar:\s*#eef0f4;/s);
+    expect(styles).toMatch(/:root\[data-platform="windows"\],\s*:root\[data-platform="windows"\] body,\s*:root\[data-platform="windows"\] #root\s*\{[^}]*background:\s*var\(--surface\)\s*!important;/s);
+    expect(styles).toMatch(/:root\[data-platform="windows"\] \.sidebar\s*\{[^}]*background:\s*var\(--sidebar\);[^}]*backdrop-filter:\s*none;/s);
+    expect(styles).toMatch(/:root\[data-platform="windows"\] \.sidebar-top-bar \.window-traffic-spacer\s*\{[^}]*width:\s*0\.5rem;/s);
+    expect(dockStyles).toMatch(/:root\[data-platform="windows"\] \.workspace-dock__header\s*\{[^}]*-webkit-app-region:\s*no-drag;/s);
+  });
+
+  it("unifies customizable select triggers and popups across macOS and Windows with platform-appropriate backdrop translucency", () => {
+    const controlsStyles = readFileSync(
+      path.resolve(process.cwd(), "desktop/renderer/src/styles/controls.css"),
+      "utf8",
+    );
+    const overlaysStyles = readFileSync(
+      path.resolve(process.cwd(), "desktop/renderer/src/styles/overlays.css"),
+      "utf8",
+    );
+    expect(controlsStyles).toMatch(/^\s*select,\s*\nselect::picker\(select\)\s*\{[^}]*appearance:\s*base-select;/m);
+    expect(controlsStyles).toMatch(/^\s*select::picker-icon\s*\{[^}]*display:\s*none;/m);
+    expect(controlsStyles).not.toContain(':root[data-platform="windows"]');
+    expect(styles).not.toMatch(/(?:^|[\s>+~])select(?=\s|,|\{|::|:|\[)[^{};]*\{[^}]*appearance:\s*none;/);
+    expect(styles).not.toMatch(/\.(?:shell-environment-select|chat-search-scope)[^{};]*\{[^}]*appearance:\s*none;/);
+    expect(overlaysStyles).toMatch(/^\s*select::picker\(select\)\s*\{[^}]*border-radius:\s*var\(--radius-menu\);[^}]*background:\s*rgba\(255,\s*255,\s*255,\s*0\.75\);[^}]*backdrop-filter:\s*blur\(28px\)\s*saturate\(190%\);[^}]*box-shadow:\s*var\(--shadow-menu\);/ms);
+    expect(overlaysStyles).toMatch(/:root\[data-platform="windows"\] select::picker\(select\)\s*\{[^}]*background:\s*rgba\(255,\s*255,\s*255,\s*0\.94\);[^}]*backdrop-filter:\s*blur\(24px\)\s*saturate\(180%\);/s);
+    expect(overlaysStyles).toMatch(/^\s*select option::checkmark\s*\{[^}]*background-color:\s*var\(--accent\);/m);
+    expect(styles).toMatch(/\.composer-context-mode select,\s*\.composer-context-branch select\s*\{[^}]*width:\s*auto;/s);
+    expect(styles).toMatch(/\.automation-form select\s*\{[^}]*background-image:\s*url\(/s);
+    expect(styles).toMatch(/\.git-local-branch-control select,\s*\.git-advanced-controls select\s*\{[^}]*background-image:\s*url\(/s);
+    expect(styles).toMatch(/\.mcp-create-body select\s*\{[^}]*background-image:\s*url\(/s);
+  });
+});

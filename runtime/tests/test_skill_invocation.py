@@ -10,8 +10,20 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.extensions.skill_invocation import (  # noqa: E402
-    parse_skill_script_invocation,
+    parse_skill_script_invocation, skill_command_tokens,
 )
+from eidos_runtime.extensions.resource_invocation import resource_profile  # noqa: E402
+
+
+def test_powershell_profile_and_script_use_the_same_literal_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    script = tmp_path / "O'Neil 工作区" / "scripts/run.py"
+    quoted = str(script).replace("'", "''")
+    command = f"& $env:Runtime_Python '{quoted}' --resource office python file.py"
+    invocation = parse_skill_script_invocation(command, tmp_path)
+    assert invocation is not None and invocation.script_path == script.resolve()
+    assert resource_profile(command, tmp_path, script.resolve()) == "office"
+    assert skill_command_tokens(r'''& "$env:RUNTIME_PYTHON" "C:\Program Files\Eidos\run.py" node file.cjs''')[1] == r"C:\Program Files\Eidos\run.py"
 
 
 class SkillInvocationTests(unittest.TestCase):

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 import hashlib
 import os
 import stat
@@ -111,7 +113,7 @@ class WorkspaceIndex:
         ) -> None:
             nonlocal entry_count
             try:
-                with os.scandir(directory_fd) as scanned:
+                with local_files.scan_directory(directory_fd) as scanned:
                     children = sorted(
                         scanned,
                         key=lambda entry: os.fsencode(entry.name),
@@ -130,11 +132,7 @@ class WorkspaceIndex:
                     else name
                 )
                 try:
-                    metadata = os.stat(
-                        name,
-                        dir_fd=directory_fd,
-                        follow_symlinks=False,
-                    )
+                    metadata = local_files.lstat_at(name, directory_fd)
                 except OSError:
                     raise WorkspaceIndexIncomplete from None
                 entry_count += 1
@@ -260,11 +258,8 @@ class WorkspaceIndex:
                 return None
             if previous == fingerprint and not force_hash:
                 return self._digests.get(relative)
-        flags = os.O_RDONLY | os.O_NONBLOCK
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
         try:
-            descriptor = os.open(name, flags, dir_fd=directory_fd)
+            descriptor = local_files.open_file(name, dir_fd=directory_fd)
             digest = hashlib.sha256()
             while chunk := os.read(descriptor, 64 * 1024):
                 if time.monotonic() >= deadline:

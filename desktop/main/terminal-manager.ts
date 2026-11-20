@@ -70,6 +70,10 @@ function buildTerminalEnvironment(source: NodeJS.ProcessEnv): Record<string, str
   const result: Record<string, string> = {};
   const allowed = [
     "HOME", "USER", "LOGNAME", "PATH", "SHELL", "TMPDIR", "LANG", "LC_ALL", "SSH_AUTH_SOCK",
+    ...(process.platform === "win32"
+      ? ["SystemRoot", "SystemDrive", "COMSPEC", "PATHEXT", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+        "TEMP", "TMP", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "PSModulePath"]
+      : []),
   ];
   for (const key of allowed) {
     const value = source[key];
@@ -129,7 +133,15 @@ export class TerminalManager {
       validateIdentifier(terminalId, "Terminal ");
       if (this.entries.has(terminalId)) throw new Error("终端标识冲突。");
 
-      const process = this.deps.spawn("/bin/zsh", ["-l"], {
+      const windows = globalThis.process.platform === "win32";
+      const systemRoot = this.environment.SystemRoot;
+      if (windows && (!systemRoot || !path.win32.isAbsolute(systemRoot))) {
+        throw new Error("Windows 系统目录不可用。");
+      }
+      const file = windows
+        ? path.win32.join(systemRoot!, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+        : "/bin/zsh";
+      const process = this.deps.spawn(file, windows ? ["-NoLogo"] : ["-l"], {
         cwd,
         cols: DEFAULT_COLUMNS,
         rows: DEFAULT_ROWS,

@@ -5,6 +5,7 @@ import type {
   UserInputRequest,
 } from "../../../shared/planning.generated.js";
 import { userFacingError } from "../session-state.js";
+import { formatPlatformShortcut } from "../platform.js";
 import { Button } from "./Button.js";
 
 export interface ClarificationComposerProps {
@@ -465,7 +466,7 @@ export function ClarificationComposer({
             title={
               !allAnswered
                 ? `还剩 ${questions.length - answeredCount} 个问题未完成`
-                : "提交回答 (Cmd+Enter)"
+                : `提交回答 (${formatPlatformShortcut("Cmd+Enter")})`
             }
           >
             提交回答

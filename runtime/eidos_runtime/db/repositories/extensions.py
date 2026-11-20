@@ -11,6 +11,22 @@ from eidos_runtime.runtime.state_machine import EventType
 from eidos_runtime.models.skill_settings import SkillState
 from eidos_runtime.domain.plugins import PluginVersion
 from eidos_runtime.models.plugin_installation import PluginInstallation, PluginRevision
+from eidos_runtime.db.file_identity import decode_file_identity, encode_file_identity
+
+
+_SQLITE_INTEGER_MAX = (1 << 63) - 1
+
+
+def _stored_file_identity(value: int | None) -> int | str | None:
+    # Only NTFS IDs beyond SQLite's signed range use the text form.
+    return value if value is None or value <= _SQLITE_INTEGER_MAX else encode_file_identity(value)
+
+
+def _optional_file_identity(value: object) -> int | None:
+    if value is None or type(value) is int:
+        return value
+    return decode_file_identity(value)
+
 
 class ExtensionRepository(Repository):
     def skill_states(self) -> tuple[SkillState, ...]:
@@ -22,7 +38,8 @@ class ExtensionRepository(Repository):
             qualified_id=row["qualified_id"], enabled=bool(row["enabled"]),
             removed=bool(row["removed"]), source_kind=row["source_kind"],
             directory_name=row["directory_name"], content_hash=row["content_hash"],
-            directory_device=row["directory_device"], directory_inode=row["directory_inode"],
+            directory_device=_optional_file_identity(row["directory_device"]),
+            directory_inode=_optional_file_identity(row["directory_inode"]),
             cleanup_pending=bool(row["cleanup_pending"]),
         ) for row in rows)
 
@@ -49,7 +66,10 @@ class ExtensionRepository(Repository):
                 cleanup_pending=excluded.cleanup_pending, updated_at=excluded.updated_at
             """,
             (state.qualified_id, int(state.enabled), int(state.removed),
-             state.source_kind, state.directory_name, state.directory_device, state.directory_inode, state.content_hash,
+             state.source_kind, state.directory_name,
+             _stored_file_identity(state.directory_device),
+             _stored_file_identity(state.directory_inode),
+             state.content_hash,
              int(state.cleanup_pending), _now_ms()),
         )
         append_event(connection, EventType.SKILL_STATE_CHANGED, _now_ms(), {
@@ -261,6 +281,54 @@ class ExtensionRepository(Repository):
                 _now_ms(),
                 {"plugin": _plugin_from_row(row)},
             )
+        result = self.plugin_record(plugin_id)
+        assert result is not None
+        return result
+
+    def activate_plugin(
+        self, plugin_id: str, content_hash: str, *, trust_hooks: bool,
+        servers: tuple[dict[str, object], ...],
+    ) -> dict[str, object]:
+        """Enable a reviewed version and grant its bundled resources in one transaction.
+
+        Servers the user already authorized keep their state, including errors.
+        """
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            updated = connection.execute(
+                """UPDATE plugins SET enabled = 1, updated_at = ?
+                WHERE id = ? AND status = 'installed' AND content_hash = ?""",
+                (now, plugin_id, content_hash),
+            )
+            if updated.rowcount != 1:
+                raise ResourceNotFoundError("plugin version changed or is unavailable")
+            if trust_hooks:
+                connection.execute(
+                    """INSERT INTO plugin_hook_trust VALUES (?, ?, ?)
+                    ON CONFLICT(plugin_id) DO UPDATE SET
+                        content_hash = excluded.content_hash, trusted_at = excluded.trusted_at
+                    WHERE plugin_hook_trust.content_hash <> excluded.content_hash""",
+                    (plugin_id, content_hash, now),
+                )
+            for server in servers:
+                granted = connection.execute(
+                    """INSERT INTO mcp_server_states (
+                        plugin_id, server_id, consented, error_code, updated_at
+                    ) VALUES (?, ?, 1, NULL, ?)
+                    ON CONFLICT(plugin_id, server_id) DO UPDATE SET
+                        consented = 1, error_code = NULL, updated_at = excluded.updated_at
+                    WHERE mcp_server_states.consented = 0""",
+                    (plugin_id, server["serverId"], now),
+                )
+                if granted.rowcount == 1:
+                    projection = {**server, "consented": True,
+                                  "available": bool(server["declaredEnabled"]), "updatedAt": now}
+                    projection.pop("errorCode", None)
+                    append_event(connection, EventType.MCP_SERVER_STATE_CHANGED, now,
+                                 {"server": projection})
+            row = connection.execute("SELECT * FROM plugins WHERE id = ?", (plugin_id,)).fetchone()
+            append_event(connection, EventType.PLUGIN_STATE_CHANGED, now,
+                         {"plugin": _plugin_from_row(row)})
         result = self.plugin_record(plugin_id)
         assert result is not None
         return result

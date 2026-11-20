@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import sys
 import uuid
 
@@ -29,13 +30,34 @@ def _default_root() -> Path:
     return Path(os.environ.get("EIDOS_DATA_DIR", "~/.eidos")).expanduser() / "skills"
 
 
+def _is_link(path: Path) -> bool:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return False
+    return stat.S_ISLNK(metadata.st_mode) or bool(
+        getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+
+
 def _private_directory(path: Path) -> None:
-    if path.is_symlink():
+    if _is_link(path):
         raise ValueError("destination must not be a symbolic link")
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if path.stat().st_uid != os.getuid():
+    # Windows has no POSIX owner id; Eidos checks the NTFS owner when it loads the skill.
+    if os.name != "nt" and path.stat().st_uid != os.getuid():
         raise ValueError("destination owner is invalid")
     os.chmod(path, 0o700)
+
+
+def _sync_directory(path: Path) -> None:
+    if os.name == "nt":
+        return  # Windows cannot flush a directory through a CRT descriptor.
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _write(path: Path, content: str, mode: int = 0o600) -> None:
@@ -81,11 +103,7 @@ def main(argv: list[str]) -> int:
         for resource in dict.fromkeys(resources):
             (staging / resource).mkdir(mode=0o700)
         os.replace(staging, destination)
-        descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+        _sync_directory(root)
         print(f"Created {name} at {destination}")
         print("Edit SKILL.md, remove TODOs, then run quick_validate.py.")
         return 0

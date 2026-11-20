@@ -21,6 +21,7 @@ from eidos_runtime.db.errors import (
     WorkspaceBoundaryError,
 )
 from eidos_runtime.db.events import append_event, event_from_row
+from eidos_runtime.db.file_identity import encode_file_identity
 from eidos_runtime.db.mappers import (
     _json_bytes,
     _run_from_row,
@@ -170,6 +171,8 @@ class SessionRepository(Repository):
         ):
             raise WorkspaceBoundaryError("workspace overlaps runtime data")
         metadata = workspace.stat()
+        workspace_dev = encode_file_identity(metadata.st_dev)
+        workspace_inode = encode_file_identity(metadata.st_ino)
         session_id = session_id or str(uuid.uuid4())
         now = _now_ms()
         if title is not None and (not title or len(title) > 60 or len(title.encode("utf-8")) > 120):
@@ -207,7 +210,7 @@ class SessionRepository(Repository):
                 if reservation is None or reservation["status"] != "created" or (
                     reservation["session_id"], reservation["workspace_root"],
                     reservation["workspace_dev"], reservation["workspace_inode"], reservation["workspace_uid"],
-                ) != (session_id, str(workspace), metadata.st_dev, metadata.st_ino, metadata.st_uid):
+                ) != (session_id, str(workspace), workspace_dev, workspace_inode, metadata.st_uid):
                     raise WorkspaceBoundaryError("projectless workspace identity changed")
             if worktree_id is not None:
                 worktree = connection.execute(
@@ -266,8 +269,8 @@ class SessionRepository(Repository):
                 (
                     session_id,
                     str(workspace),
-                    metadata.st_dev,
-                    metadata.st_ino,
+                    workspace_dev,
+                    workspace_inode,
                     metadata.st_uid,
                     worktree_id,
                     execution_mode.value,
@@ -375,7 +378,7 @@ class SessionRepository(Repository):
     ) -> tuple[list[sqlite3.Row], str | None]:
         cursor_state = _decode_cursor(cursor) if cursor is not None else None
         sql = SESSION_SELECT
-        with self.lock:
+        with self.database.read_scope(), self.lock:
             connection = self._connection()
             if cursor_state is None:
                 high_water = connection.execute(
@@ -469,7 +472,7 @@ class SessionRepository(Repository):
         return session_from_row(row) if row is not None else None
 
     def read_session_projection(self, session_id: str) -> SessionProjection | None:
-        with self.lock:
+        with self.database.read_scope(), self.lock:
             row = self._connection().execute(
                 SESSION_SELECT + " WHERE s.id = ?",
                 (session_id,),
@@ -1093,6 +1096,20 @@ class SessionRepository(Repository):
         item_limit: int = 200,
         before_item_id: str | None = None,
     ) -> dict[str, object]:
+        # One read-only snapshot: a Session switch never waits for the writer
+        # lock, and every section of the response comes from the same commit.
+        with self.database.read_scope():
+            return self._read_session_snapshot(
+                session_id, item_limit=item_limit, before_item_id=before_item_id
+            )
+
+    def _read_session_snapshot(
+        self,
+        session_id: str,
+        *,
+        item_limit: int,
+        before_item_id: str | None,
+    ) -> dict[str, object]:
         with self.lock:
             connection = self._connection()
             session_row = connection.execute(
@@ -1261,7 +1278,7 @@ class SessionRepository(Repository):
     ) -> dict[str, object]:
         if after_event_id < 0 or not 1 <= limit <= 500:
             raise ValueError("invalid event cursor")
-        with self.lock:
+        with self.database.read_scope(), self.lock:
             rows = self._connection().execute(
                 """
                 SELECT * FROM events

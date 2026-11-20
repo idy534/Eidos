@@ -485,6 +485,227 @@ span.tool-file-link:hover {
   color: var(--muted);
   font-size: var(--font-size-caption);
 }
+.tool-list-files-wrap,
+.tool-text-search-wrap,
+.tool-history-results,
+.tool-goal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.tool-list-dir {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-caption);
+  font-family: var(--font-code);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-text-search-root,
+.tool-text-search-file-dir {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Clip long directories from the left so the nearest folders stay visible. */
+  direction: rtl;
+  text-align: left;
+  color: var(--text-tertiary);
+  font-family: var(--font-code);
+  font-size: var(--font-size-xs);
+}
+.tool-text-search-root > bdi,
+.tool-text-search-file-dir > bdi {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+.tool-text-search-files {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.tool-text-search-file {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin-left: -0.375rem;
+}
+.tool-text-search-hits {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.tool-text-search-file-head,
+button.tool-text-search-file-head,
+.tool-text-search-hit,
+button.tool-text-search-hit {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  box-sizing: border-box;
+  /* Buttons otherwise size to their content, and a code line is as wide as its text. */
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 0.375rem;
+  background: transparent;
+  font-weight: 400;
+  text-align: left;
+  cursor: default;
+}
+.tool-text-search-file-head,
+button.tool-text-search-file-head {
+  gap: 0.5rem;
+  color: var(--text);
+  font-size: var(--font-size-caption);
+  line-height: 1.6;
+}
+.tool-text-search-hit,
+button.tool-text-search-hit {
+  gap: 0.75rem;
+  color: var(--text-secondary);
+  font-family: var(--font-code);
+  font-size: var(--font-size-xs);
+  line-height: 1.65;
+}
+button.tool-text-search-file-head,
+button.tool-text-search-hit {
+  cursor: pointer;
+}
+button.tool-text-search-file-head:hover:not(:disabled),
+button.tool-text-search-hit:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+.tool-text-search-file-name {
+  flex-shrink: 0;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.tool-text-search-file-dir {
+  flex: 1;
+  min-width: 0;
+}
+.tool-text-search-file-count {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+.tool-text-search-line {
+  flex-shrink: 0;
+  width: calc(var(--tool-search-line-digits, 3) * 1ch);
+  text-align: right;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.tool-text-search-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  tab-size: 2;
+}
+.tool-text-search-ellipsis {
+  color: var(--text-tertiary);
+}
+.tool-text-search-match {
+  border-radius: 2px;
+  padding: 0;
+  color: inherit;
+  background: #e7cc6a80;
+}
+.tool-text-search-more,
+button.tool-text-search-more {
+  align-self: flex-start;
+  border: 0;
+  padding: 0 0.375rem;
+  margin-left: calc(var(--tool-search-line-digits, 3) * 1ch + 0.75rem);
+  color: var(--muted);
+  background: none;
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+  line-height: 1.65;
+}
+button.tool-text-search-more:hover:not(:disabled) {
+  color: var(--text);
+  background: none;
+}
+.tool-history-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.tool-history-session-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  min-width: 0;
+}
+.tool-history-session-btn,
+.tool-history-session-title {
+  font-weight: 500;
+  font-size: var(--font-size-caption);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.tool-history-session-meta {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+}
+.tool-history-hit-btn,
+.tool-history-hit-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+  padding: 0.1rem 0 0.1rem 0.65rem;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+  color: var(--muted);
+}
+.tool-history-hit-btn {
+  cursor: pointer;
+}
+.tool-history-hit-btn:hover .tool-history-snippet,
+.tool-history-hit-btn:focus-visible .tool-history-snippet {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.tool-history-kind {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+}
+.tool-history-snippet {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-body p.tool-goal-status {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.tool-body p.tool-goal-summary {
+  color: var(--text);
+  white-space: pre-wrap;
+}
 .tool-image-container {
   display: flex;
   flex-direction: column;

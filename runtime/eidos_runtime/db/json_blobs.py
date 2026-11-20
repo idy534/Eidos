@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
+from contextlib import contextmanager
 from dataclasses import dataclass
 import gzip
 import hashlib
@@ -10,7 +13,7 @@ from pathlib import Path, PurePosixPath
 import stat
 import tempfile
 import threading
-from typing import Iterable
+from typing import Iterable, Iterator
 import zlib
 
 from eidos_runtime.db.errors import StorageError
@@ -113,6 +116,9 @@ class JsonBlobStore:
     def __init__(self, data_directory: Path) -> None:
         self.root = data_directory / "blobs"
         self.lock = threading.RLock()
+        # Each running collection records every Blob written or reused after it
+        # started, so its sweep never deletes content a new commit may reference.
+        self._collection_pins: list[dict[str, str]] = []
         _prepare_private_directory(self.root)
 
     def put_json(self, kind: str, value: str) -> str:
@@ -142,6 +148,7 @@ class JsonBlobStore:
             )
             if self.read(reference) != value:
                 raise JsonBlobCorruptionError("existing blob content is invalid")
+            self._pin(reference)
             return reference.to_json()
 
         compressed = gzip.compress(raw, mtime=0)
@@ -150,12 +157,12 @@ class JsonBlobStore:
         )
         temporary = Path(temporary_name)
         try:
-            os.fchmod(descriptor, 0o600)
+            local_files.set_file_mode(descriptor, 0o600)
             with os.fdopen(descriptor, "wb", closefd=True) as stream:
                 stream.write(compressed)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, destination)
+            local_files.replace(temporary, destination)
             _fsync_directory(destination.parent)
         except Exception:
             try:
@@ -172,6 +179,7 @@ class JsonBlobStore:
             uncompressed_bytes=len(raw),
             compressed_bytes=len(compressed),
         )
+        self._pin(reference)
         return reference.to_json()
 
     def read_json(self, stored: str, *, expected_kind: str) -> str:
@@ -190,15 +198,14 @@ class JsonBlobStore:
         path = self.root.joinpath(*PurePosixPath(reference.relative_path).parts)
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
         try:
-            descriptor = os.open(path, flags)
+            descriptor = local_files.open_file(path, flags)
         except OSError as error:
             raise JsonBlobCorruptionError("blob file is unavailable") from error
         try:
             metadata = os.fstat(descriptor)
             if (
                 not stat.S_ISREG(metadata.st_mode)
-                or metadata.st_uid != os.getuid()
-                or stat.S_IMODE(metadata.st_mode) != 0o600
+                or not local_files.has_private_access(descriptor, metadata, 0o600)
                 or metadata.st_size != reference.compressed_bytes
             ):
                 raise JsonBlobCorruptionError("blob file metadata is invalid")
@@ -233,8 +240,37 @@ class JsonBlobStore:
     def garbage_collect(
         self, retained_references: Iterable[str], *, cancel: threading.Event | None = None,
     ) -> int:
+        with self.collection() as collection:
+            retained = collection.mark(retained_references, cancel=cancel)
+            if retained is None:
+                return 0
+            return collection.sweep(retained, cancel=cancel)
+
+    @contextmanager
+    def collection(self) -> Iterator[BlobCollection]:
+        """Track Blob writes for one mark-and-sweep pass.
+
+        Register before the caller takes its reference snapshot. Marking reads
+        immutable manifests without the store lock; only each deletion holds it.
+        """
+
+        pins: dict[str, str] = {}
         with self.lock:
-            return self._garbage_collect(retained_references, cancel=cancel)
+            self._collection_pins.append(pins)
+        try:
+            yield BlobCollection(self, pins)
+        finally:
+            with self.lock:
+                self._collection_pins = [
+                    active for active in self._collection_pins if active is not pins
+                ]
+
+    def _pin(self, reference: JsonBlobReference) -> None:
+        if not self._collection_pins:
+            return
+        stored = reference.to_json()
+        for pins in self._collection_pins:
+            pins[reference.relative_path] = stored
 
     def verify_references(self, references: Iterable[str], *, byte_limit: int) -> None:
         """Verify an offline restore, including leaf blobs and nested blocks."""
@@ -260,69 +296,6 @@ class JsonBlobStore:
                                 "context block reference is invalid"
                             )
                         pending.append(child)
-
-    def _garbage_collect(
-        self, retained_references: Iterable[str], *, cancel: threading.Event | None = None,
-    ) -> int:
-        if cancel is not None and cancel.is_set():
-            return 0
-        retained: set[str] = set()
-        # Resolve every reference closure before deleting anything. Process one
-        # root at a time so the SQLite reference iterator remains streaming.
-        for stored in retained_references:
-            if cancel is not None and cancel.is_set():
-                return 0
-            reference = JsonBlobReference.from_json(stored)
-            pending = [reference] if reference is not None else []
-            while pending:
-                if cancel is not None and cancel.is_set():
-                    return 0
-                reference = pending.pop()
-                if reference.relative_path in retained:
-                    continue
-                retained.add(reference.relative_path)
-                for value, kind in self._request_children(reference):
-                    child = JsonBlobReference.from_json(value)
-                    if child is None or child.kind != kind:
-                        raise JsonBlobCorruptionError("context block reference is invalid")
-                    pending.append(child)
-        deleted = 0
-        for directory, directory_names, file_names in os.walk(
-            self.root, topdown=True, followlinks=False
-        ):
-            if cancel is not None and cancel.is_set():
-                return deleted
-            base = Path(directory)
-            safe_directories: list[str] = []
-            for name in directory_names:
-                candidate = base / name
-                if candidate.is_symlink():
-                    raise JsonBlobCorruptionError(
-                        "blob directory must not be a symlink"
-                    )
-                safe_directories.append(name)
-            directory_names[:] = safe_directories
-            directory_deleted = False
-            for name in file_names:
-                if cancel is not None and cancel.is_set():
-                    if directory_deleted:
-                        _fsync_directory(base)
-                    return deleted
-                path = base / name
-                if path.is_symlink():
-                    raise JsonBlobCorruptionError("blob file is invalid")
-                relative = path.relative_to(self.root).as_posix()
-                if relative in retained:
-                    continue
-                metadata = path.stat()
-                if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
-                    raise JsonBlobCorruptionError("blob file is invalid")
-                path.unlink()
-                deleted += 1
-                directory_deleted = True
-            if directory_deleted:
-                _fsync_directory(base)
-        return deleted
 
     def _request_children(self, reference: JsonBlobReference) -> list[tuple[str, str]]:
         from eidos_runtime.db.request_blocks import StoredContextItem, StoredStepResolution
@@ -368,6 +341,113 @@ class JsonBlobStore:
             raise JsonBlobCorruptionError("context manifest is invalid") from None
 
 
+class BlobCollection:
+    """One mark-and-sweep pass over a ``JsonBlobStore``."""
+
+    def __init__(self, store: JsonBlobStore, pins: dict[str, str]) -> None:
+        self._store = store
+        self._pins = pins
+        self._expanded: set[str] = set()
+
+    def mark(
+        self, references: Iterable[str], *, cancel: threading.Event | None = None,
+    ) -> set[str] | None:
+        """Resolve every reference closure; ``None`` means the pass was cancelled."""
+
+        retained: set[str] = set()
+        # Resolve every reference closure before deleting anything. Process one
+        # root at a time so the SQLite reference iterator remains streaming.
+        for stored in references:
+            if cancel is not None and cancel.is_set():
+                return None
+            reference = JsonBlobReference.from_json(stored)
+            if reference is not None and not self._retain(reference, retained, cancel):
+                return None
+        return retained
+
+    def sweep(self, retained: set[str], *, cancel: threading.Event | None = None) -> int:
+        store = self._store
+        deleted = 0
+        for directory, directory_names, file_names in os.walk(
+            store.root, topdown=True, followlinks=False
+        ):
+            if cancel is not None and cancel.is_set():
+                return deleted
+            base = Path(directory)
+            safe_directories: list[str] = []
+            for name in directory_names:
+                candidate = base / name
+                if candidate.is_symlink():
+                    raise JsonBlobCorruptionError(
+                        "blob directory must not be a symlink"
+                    )
+                safe_directories.append(name)
+            directory_names[:] = safe_directories
+            directory_deleted = False
+            for name in file_names:
+                if cancel is not None and cancel.is_set():
+                    if directory_deleted:
+                        _fsync_directory(base)
+                    return deleted
+                path = base / name
+                if path.is_symlink():
+                    raise JsonBlobCorruptionError("blob file is invalid")
+                relative = path.relative_to(store.root).as_posix()
+                if relative in retained:
+                    continue
+                # Writers create or reuse Blobs under the same lock, so a file
+                # cannot become referenced between this check and the unlink.
+                with store.lock:
+                    self._retain_pins(retained)
+                    if relative in retained:
+                        continue
+                    try:
+                        metadata = path.stat()
+                    except FileNotFoundError:
+                        continue
+                    if not stat.S_ISREG(metadata.st_mode) or not local_files.owned_by_user(path, metadata):
+                        raise JsonBlobCorruptionError("blob file is invalid")
+                    try:
+                        path.unlink()
+                    except FileNotFoundError:
+                        continue
+                deleted += 1
+                directory_deleted = True
+            if directory_deleted:
+                _fsync_directory(base)
+        return deleted
+
+    def _retain_pins(self, retained: set[str]) -> None:
+        for relative_path, stored in tuple(self._pins.items()):
+            if relative_path in self._expanded:
+                continue
+            self._expanded.add(relative_path)
+            reference = JsonBlobReference.from_json(stored)
+            if reference is not None:
+                self._retain(reference, retained, None)
+
+    def _retain(
+        self,
+        reference: JsonBlobReference,
+        retained: set[str],
+        cancel: threading.Event | None,
+    ) -> bool:
+        pending = [reference]
+        while pending:
+            if cancel is not None and cancel.is_set():
+                return False
+            current = pending.pop()
+            if current.relative_path in retained:
+                continue
+            retained.add(current.relative_path)
+            for value, kind in self._store._request_children(current):
+                child = JsonBlobReference.from_json(value)
+                if child is None or child.kind != kind:
+                    raise JsonBlobCorruptionError("context block reference is invalid")
+                pending.append(child)
+        return True
+
+
 def _relative_path(kind: str, digest: str) -> str:
     return f"{kind}/{digest[:2]}/{digest}.json.gz"
 
@@ -401,21 +481,17 @@ def _prepare_private_directory(path: Path) -> None:
     metadata = path.stat()
     if (
         not stat.S_ISDIR(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or not local_files.has_private_access(path, metadata, 0o700)
     ):
         raise JsonBlobCorruptionError("blob directory metadata is invalid")
 
 
 def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    local_files.sync_directory(path)
 
 
 __all__ = [
+    "BlobCollection",
     "JsonBlobCorruptionError",
     "JsonBlobReference",
     "JsonBlobStore",

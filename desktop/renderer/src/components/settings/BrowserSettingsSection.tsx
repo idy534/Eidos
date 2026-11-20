@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { BrowserStatus, BrowserTargetRequest } from "../../../../shared/browser.js";
 import { Button } from "../Button.js";
 import { GlobeIcon } from "../MenuIcons.js";
+import { Select } from "../Select.js";
 import { EyeIcon, EyeOffIcon } from "./ChannelIcons.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { SettingRow } from "./SettingRow.js";
@@ -198,14 +199,14 @@ export function BrowserSettingsSection({ onShowToast, onDialogChange }: {
             description={targetDescription(status)}
             action={
               <div className="model-select-control browser-settings-select">
-                <select
+                <Select
                   aria-label="Agent 使用的浏览器"
                   value={target}
                   disabled={pending}
                   onChange={(event) => selectTarget(event.target.value as BrowserTarget)}
                 >
                   {TARGETS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
+                </Select>
                 <span className="model-select-control__chevron" aria-hidden="true">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="m6 9 6 6 6-6" />

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from copy import copy
 from enum import StrEnum
 import hashlib
 import json
 import math
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 import re
 import urllib.parse
 from types import UnionType
@@ -85,19 +87,23 @@ def _read_path(value: str, *, allow_dot: bool = False) -> str:
     if (
         not value
         or "\x00" in value
-        or "\\" in value
+        or ("\\" in value and not local_files.WINDOWS)
         or any(ord(character) < 32 or ord(character) == 127 for character in value)
     ):
         raise ValueError("invalid_relative_path")
     if allow_dot and value == ".":
         return value
-    path = PurePosixPath(value)
+    path = PureWindowsPath(value) if local_files.WINDOWS else PurePosixPath(value)
+    if path.anchor and not path.is_absolute():
+        raise ValueError("invalid_relative_path")
     parts = path.parts[1:] if path.is_absolute() else path.parts
     if value.endswith("/") or any(part in {"", ".", ".."} for part in parts):
         raise ValueError("invalid_relative_path")
+    if not local_files.valid_relative_parts(parts):
+        raise ValueError("invalid_relative_path")
     if len(value.encode("utf-8")) > 512:
         raise ValueError("path_too_large")
-    return value
+    return path.as_posix() if local_files.WINDOWS else value
 
 
 def _utf8_limit(value: str, limit: int, code: str) -> str:
@@ -908,7 +914,7 @@ class RunShellResultData(WorkspaceResultData):
     termination: StrictStr | None = None
     durationMs: StrictInt | None = Field(default=None, ge=0)
     attemptCount: StrictInt | None = Field(default=None, ge=0, le=2)
-    shellKind: Literal["zsh", "bash", "sh"] | None = None
+    shellKind: Literal["zsh", "bash", "sh", "powershell"] | None = None
     environmentSource: Literal["captured", "fallback"] | None = None
     sandboxed: bool | None = None
     sandboxPermissions: SandboxPermissions | None = None

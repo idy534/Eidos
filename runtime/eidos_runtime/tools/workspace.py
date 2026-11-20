@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from dataclasses import dataclass, replace
 import difflib
 import errno
-import fcntl
 import hashlib
 import logging
 import os
@@ -433,11 +434,8 @@ class ToolExecutor:
                 inode=metadata.st_ino,
                 owner=metadata.st_uid,
             )
-        flags = os.O_RDONLY | os.O_DIRECTORY
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
         try:
-            root_fd = os.open(identity.path, flags)
+            root_fd = local_files.open_directory(identity.path)
         except OSError:
             raise WorkspacePathError("workspace_unavailable") from None
         metadata = os.fstat(root_fd)
@@ -1087,7 +1085,7 @@ class ToolExecutor:
                 self.verify_write_scope()
             except (WorkspacePathError, OSError, ValueError):
                 return _error(tool_name, "workspace_identity_changed", "Approved paths or permissions changed")
-            local = replace(change, path=str(Path(change.path).relative_to(external.path)))
+            local = replace(change, path=Path(change.path).relative_to(external.path).as_posix())
             try:
                 with ToolExecutor(external) as writer:
                     writer.write_permissions = self.write_permissions
@@ -1120,6 +1118,9 @@ class ToolExecutor:
                 parent_fd, parts[-1], change.base_sha256, cancel
             )
             if change.delete:
+                if local_files.WINDOWS and source_fd >= 0:
+                    os.close(source_fd)
+                    source_fd = -1
                 final_move_started = True
                 status = secure_workspace_move(
                     self.workspace.path, self.workspace.path / change.path,
@@ -1140,8 +1141,8 @@ class ToolExecutor:
                 )
             if change.base_sha256 is None:
                 temporary_name = f".eidos-{uuid.uuid4().hex}.tmp"
-                flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
-                descriptor = os.open(
+                flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
+                descriptor = local_files.open_file(
                     temporary_name, flags, change.mode, dir_fd=self.root_fd,
                 )
                 try:
@@ -1152,7 +1153,7 @@ class ToolExecutor:
                         if written <= 0:
                             raise WorkspacePathError("file_write_failed")
                         offset += written
-                    os.fchmod(descriptor, change.mode)
+                    local_files.set_file_mode(descriptor, change.mode)
                     os.fsync(descriptor)
                 finally:
                     os.close(descriptor)
@@ -1220,8 +1221,8 @@ class ToolExecutor:
             if change.base_sha256 is None:
                 temporary_name = None
                 try:
-                    os.fsync(parent_fd)
-                    os.fsync(self.root_fd)
+                    local_files.sync_directory(parent_fd)
+                    local_files.sync_directory(self.root_fd)
                 except OSError:
                     return _commit_error(
                         tool_name,
@@ -1279,7 +1280,7 @@ class ToolExecutor:
                 os.close(source_fd)
             if temporary_name is not None and not preserve_temporary:
                 try:
-                    os.unlink(temporary_name, dir_fd=self.root_fd)
+                    local_files.unlink_at(temporary_name, self.root_fd)
                 except OSError:
                     pass
             if parent_fd >= 0:
@@ -1409,7 +1410,7 @@ class ToolExecutor:
                     metadata = _stat_relative_path(reader.root_fd, relative)
                 except OSError:
                     continue
-                if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+                if local_files.is_link(metadata) or not stat.S_ISREG(metadata.st_mode):
                     continue
                 parts = Path(relative).parts
                 relative_depth = len(parts) - base_depth
@@ -1788,7 +1789,7 @@ class ToolExecutor:
         is_git: bool,
     ) -> None:
         if is_git:
-            if stat.S_ISLNK(metadata.st_mode):
+            if local_files.is_link(metadata):
                 raise WorkspacePathError("unsupported_workspace_entry")
             if stat.S_ISREG(metadata.st_mode):
                 if metadata.st_nlink != 1:
@@ -1800,7 +1801,7 @@ class ToolExecutor:
             if metadata.st_uid != self.workspace.owner:
                 raise WorkspacePathError("unsupported_workspace_entry")
             return
-        if stat.S_ISLNK(metadata.st_mode):
+        if local_files.is_link(metadata):
             return
         if stat.S_ISDIR(metadata.st_mode):
             return
@@ -1820,7 +1821,7 @@ class ToolExecutor:
         if external is not None:
             with ToolExecutor(external) as reader:
                 return reader._read_existing_for_change(
-                    str(Path(path).relative_to(external.path)), cancel,
+                    Path(path).relative_to(external.path).as_posix(), cancel,
                     allow_missing_parents=allow_missing_parents,
                 )
         try:
@@ -1842,7 +1843,7 @@ class ToolExecutor:
                 raise WorkspacePathError("unsupported_file_mode")
             if metadata.st_nlink != 1:
                 raise WorkspacePathError("unsupported_workspace_hardlink")
-            if metadata.st_uid != os.getuid():
+            if not local_files.owned_by_user(descriptor, metadata):
                 raise WorkspacePathError("unsupported_file_owner")
             if getattr(metadata, "st_flags", 0) != 0:
                 raise WorkspacePathError("unsupported_file_flags")
@@ -1925,23 +1926,20 @@ class ToolExecutor:
     def _open_directory(
         parent_fd: int, name: str, *, create_missing: bool = False
     ) -> int:
-        flags = os.O_RDONLY | os.O_DIRECTORY
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
         try:
-            return os.open(name, flags, dir_fd=parent_fd)
+            return local_files.open_directory(name, dir_fd=parent_fd)
         except FileNotFoundError:
             if not create_missing:
                 raise WorkspacePathError("workspace_boundary_violation") from None
             try:
-                os.mkdir(name, 0o755, dir_fd=parent_fd)
-                os.fsync(parent_fd)
+                local_files.mkdir_at(name, parent_fd, 0o755)
+                local_files.sync_directory(parent_fd)
             except FileExistsError:
                 pass
             except OSError:
                 raise WorkspacePathError("workspace_boundary_violation") from None
             try:
-                return os.open(name, flags, dir_fd=parent_fd)
+                return local_files.open_directory(name, dir_fd=parent_fd)
             except OSError:
                 raise WorkspacePathError("workspace_boundary_violation") from None
         except OSError:
@@ -1949,11 +1947,8 @@ class ToolExecutor:
 
     @staticmethod
     def _open_file_at(parent_fd: int, name: str) -> int:
-        flags = os.O_RDONLY | os.O_NONBLOCK
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
         try:
-            descriptor = os.open(name, flags, dir_fd=parent_fd)
+            descriptor = local_files.open_file(name, dir_fd=parent_fd)
         except FileNotFoundError:
             raise WorkspacePathError("file_unavailable") from None
         except OSError as error:
@@ -2018,18 +2013,10 @@ def _stat_relative_path(root_fd: int, relative: str) -> os.stat_result:
     parent_fd = root_fd
     try:
         for part in parts[:-1]:
-            descriptor = os.open(
-                part,
-                os.O_RDONLY
-                | getattr(os, "O_DIRECTORY", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
-                dir_fd=parent_fd,
-            )
+            descriptor = local_files.open_directory(part, dir_fd=parent_fd)
             opened.append(descriptor)
             parent_fd = descriptor
-        descriptor = os.open(
-            parts[-1], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd
-        )
+        descriptor = local_files.open_file(parts[-1], dir_fd=parent_fd)
         opened.append(descriptor)
         return os.fstat(descriptor)
     finally:
@@ -2046,12 +2033,12 @@ def resolve_read_path(
         not isinstance(value, str)
         or not value
         or "\x00" in value
-        or "\\" in value
+        or ("\\" in value and not local_files.WINDOWS)
         or any(ord(character) < 32 or ord(character) == 127 for character in value)
     ):
         raise WorkspacePathError("workspace_boundary_violation")
     candidate = Path(value)
-    if ".." in candidate.parts:
+    if ".." in candidate.parts or (candidate.anchor and not candidate.is_absolute()):
         raise WorkspacePathError("workspace_boundary_violation")
     workspace_root = Path(workspace_root)
     if not candidate.is_absolute():
@@ -2110,7 +2097,7 @@ def _validate_relative_path(value: str) -> tuple[str, ...]:
     ):
         raise WorkspacePathError("workspace_boundary_violation")
     path = Path(value)
-    if path.is_absolute() or ".." in path.parts:
+    if path.anchor or ".." in path.parts or not local_files.valid_relative_parts(path.parts):
         raise WorkspacePathError("workspace_boundary_violation")
     parts = tuple(part for part in path.parts if part not in {"", "."})
     if not parts:
@@ -2125,7 +2112,8 @@ def _is_protected_workspace_metadata_path(
         relative = path.relative_to(workspace_root)
     except ValueError:
         return False
-    return any(part in _PROTECTED_WORKSPACE_METADATA_NAMES for part in relative.parts)
+    parts = (part.casefold() for part in relative.parts) if local_files.WINDOWS else relative.parts
+    return any(part in _PROTECTED_WORKSPACE_METADATA_NAMES for part in parts)
 
 
 _MISSING = object()
@@ -2423,10 +2411,6 @@ def _commit_error(
 
 def _fd_path(descriptor: int) -> str:
     try:
-        raw = fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024))
-        value = raw.split(bytes(1), 1)[0].decode("utf-8", errors="strict")
+        return str(local_files.descriptor_path(descriptor))
     except (AttributeError, OSError, UnicodeDecodeError):
         raise WorkspacePathError("workspace_identity_unavailable") from None
-    if not value:
-        raise WorkspacePathError("workspace_identity_unavailable")
-    return value

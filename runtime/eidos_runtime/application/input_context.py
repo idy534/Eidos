@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from eidos_runtime.application.agent_catalog import AgentCatalog
 
 import base64
@@ -90,7 +92,7 @@ class InputContextApplication:
                 if stat.S_ISDIR(before.st_mode):
                     kind, status = 'directory', 'location'
                     names = []
-                    with os.scandir(descriptor) as entries:
+                    with local_files.scan_directory(descriptor) as entries:
                         for entry in entries:
                             if len(names) >= 200:
                                 names.append('…目录摘要仅包含前 200 项')
@@ -108,16 +110,20 @@ class InputContextApplication:
                         raise ValueError('file_changed')
                     if path.suffix.lower() in {'.png', '.jpg', '.jpeg'} or kind == 'image':
                         try:
-                            picture = read_authorized_image(source, ViewImageRootAuthority(path.parent))
+                            if local_files.WINDOWS:
+                                # The selected file was read through a pinned Windows handle above.
+                                mime = detect_image_mime(raw)
+                            else:
+                                picture = read_authorized_image(source, ViewImageRootAuthority(path.parent))
+                                if hashlib.sha256(raw).hexdigest() != picture.sha256:
+                                    raise ValueError('file_changed')
+                                mime = picture.mime
                         except ViewImageError as error:
                             if error.code != 'invalid_image' or request.origin != 'clipboard':
                                 raise
                             raw = _clipboard_png(raw)
-                            kind, mime = 'image', detect_image_mime(raw)
-                        else:
-                            if hashlib.sha256(raw).hexdigest() != picture.sha256:
-                                raise ValueError('file_changed')
-                            kind, mime = 'image', picture.mime
+                            mime = detect_image_mime(raw)
+                        kind = 'image'
                         image = base64.b64encode(raw).decode('ascii')
                         with Image.open(io.BytesIO(raw)) as picture:
                             image_tokens = 1024 + math.ceil(picture.width / 512) * math.ceil(picture.height / 512) * 256
@@ -288,6 +294,8 @@ def _rejection_reason(error: BaseException) -> str:
 
 
 def _open_path(path: Path) -> int:
+    if local_files.WINDOWS:
+        return local_files.open_directory(path) if path.is_dir() else local_files.open_file(path)
     descriptor = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
     try:
         for index, part in enumerate(path.parts[1:]):

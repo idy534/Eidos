@@ -6,6 +6,7 @@ import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 import { SearchIcon } from "../FindBar.js";
 import { CloseIcon } from "../MenuIcons.js";
 import { StatusBadge } from "../StatusBadge.js";
+import { isWindowsPlatform } from "../../platform.js";
 import { McpToolRow } from "./McpToolRow.js";
 import { McpSchemaDialog } from "./McpSchemaDialog.js";
 import { useMcpTools } from "./useMcpTools.js";
@@ -81,6 +82,9 @@ export function McpDetailDialog({
   if (!server) return null;
 
   const authorized = server.consented && server.declaredEnabled;
+  const bundledBrowser = isBundledBrowserServer(server);
+  const windowsSandboxUnavailable = isWindowsPlatform() && state.page?.state === "error"
+    && state.page.errorCode === "mcp_sandbox_unavailable";
   const label = !authorized
     ? "待启用"
     : !server.available
@@ -112,7 +116,7 @@ export function McpDetailDialog({
                 </StatusBadge>
               </div>
               <p className="mcp-detail-command">
-                <code>{(server.remote?.url || isBundledBrowserServer(server)) ? mcpCommandLabel(server) : `$ ${mcpCommandLabel(server)}`}</code>
+                <code>{(server.remote?.url || bundledBrowser) ? mcpCommandLabel(server) : `$ ${mcpCommandLabel(server)}`}</code>
               </p>
               {description ? <p className="mcp-detail-description">{description}</p> : null}
             </div>
@@ -136,7 +140,7 @@ export function McpDetailDialog({
               maxLength={256}
               value={state.query}
               onChange={event => state.setQuery(event.target.value)}
-              disabled={!authorized}
+              disabled={!authorized || windowsSandboxUnavailable}
             />
           </div>
 
@@ -167,7 +171,12 @@ export function McpDetailDialog({
             {state.tools.map(tool => (
               <McpToolRow key={tool.name} tool={tool} onOpenSchema={setActiveSchemaTool} />
             ))}
-            {state.error && (
+            {windowsSandboxUnavailable ? (
+              <div className="mcp-detail-message" role="alert">
+                <p>当前 Windows 版本缺少本地 MCP 沙盒，设置页无法获取工具列表。</p>
+                {bundledBrowser && <p>如需使用浏览器工具，可在聊天中确认开启「完全访问」后启动任务。</p>}
+              </div>
+            ) : state.error && (
               <div className="mcp-detail-message" role="alert">
                 <p>{state.error}</p>
                 <button type="button" onClick={state.retry}>重试</button>
@@ -192,10 +201,12 @@ export function McpDetailDialog({
             <div ref={sentinelRef} aria-hidden="true" className="mcp-detail-sentinel" />
           </div>
 
-          <div className="mcp-detail-note">
-            <span className="mcp-detail-note__icon" aria-hidden="true">ⓘ</span>
-            <span>工具信息以最近一次获取结果为准。</span>
-          </div>
+          {!windowsSandboxUnavailable && (
+            <div className="mcp-detail-note">
+              <span className="mcp-detail-note__icon" aria-hidden="true">ⓘ</span>
+              <span>工具信息以最近一次获取结果为准。</span>
+            </div>
+          )}
         </div>
       </div>
       <McpSchemaDialog

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 import hashlib
 import os
 from pathlib import Path
@@ -163,14 +165,14 @@ class PlanningRepository:
         root = self.database.data_directory
         if root is None:
             raise ValueError('planning_data_directory_unavailable')
-        descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptor = local_files.open_directory(root)
         try:
             for name in ('plans', plan.session_id, plan.id):
                 try:
-                    os.mkdir(name, mode=0o700, dir_fd=descriptor)
+                    local_files.mkdir_at(name, descriptor, 0o700)
                 except FileExistsError:
                     pass
-                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+                child = local_files.open_directory(name, dir_fd=descriptor)
                 os.close(descriptor)
                 descriptor = child
             return descriptor
@@ -182,7 +184,7 @@ class PlanningRepository:
         directory = self._directory(plan)
         try:
             try:
-                descriptor = os.open('plan.md', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+                descriptor = local_files.open_file('plan.md', dir_fd=directory)
             except FileNotFoundError:
                 return None
             with os.fdopen(descriptor, 'rb') as stream:
@@ -216,21 +218,21 @@ class PlanningRepository:
             directory = self._directory(plan)
             temporary = f'.{uuid.uuid4()}.tmp'
             try:
-                descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+                descriptor = local_files.open_file(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, dir_fd=directory)
                 with os.fdopen(descriptor, 'wb') as stream:
                     stream.write(plan.markdown.encode())
                     stream.flush()
                     os.fsync(stream.fileno())
                 if self.file_text(plan) != current:
                     raise ValueError('plan_file_changed')
-                os.replace(temporary, 'plan.md', src_dir_fd=directory, dst_dir_fd=directory)
-                os.fsync(directory)
+                local_files.replace_at(temporary, 'plan.md', directory)
+                local_files.sync_directory(directory)
                 # The Markdown file is a recoverable projection of the committed revision.
                 with self.database.transaction() as connection:
                     connection.execute('UPDATE plans SET projected_sha256=? WHERE id=? AND revision=?', (plan.sha256, plan.id, plan.revision))
             finally:
                 try:
-                    os.unlink(temporary, dir_fd=directory)
+                    local_files.unlink_at(temporary, directory)
                 except FileNotFoundError:
                     pass
                 os.close(directory)

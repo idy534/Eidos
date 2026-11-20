@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from dataclasses import dataclass
 import errno
 import os
@@ -43,11 +45,8 @@ class WorkspaceDiscoveryScope:
 
 
 def _read_root_ignore_file(root_fd: int, name: str) -> list[str]:
-    flags = os.O_RDONLY | os.O_NONBLOCK
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
     try:
-        descriptor = os.open(name, flags, dir_fd=root_fd)
+        descriptor = local_files.open_file(name, dir_fd=root_fd)
     except FileNotFoundError:
         return []
     except OSError as error:

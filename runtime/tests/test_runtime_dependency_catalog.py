@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.infrastructure.runtime_dependencies import (
     RuntimeDependencyCatalog,
     RuntimeDependencyCatalogError,
@@ -344,6 +345,52 @@ def test_manifest_requires_python_metadata_in_inventory(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeDependencyCatalogError, match="inventory|unlisted|metadata"):
         RuntimeDependencyCatalog.from_manifest(_write_manifest(root, payload))
+
+
+def test_python_metadata_is_read_once_per_snapshot_and_rechecked_before_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package_files = {
+        "python/docx/__init__.py": b"",
+        "python/python_docx-1.2.0.dist-info/METADATA": b"Name: Python_Docx\nVersion: 1.2.0\n",
+        "python/example.py": b"",
+        "python/example-2.0.dist-info/METADATA": b"Name: example\nVersion: 2.0\n",
+    }
+    files = [
+        {"path": name, "sha256": _sha256(_write_file(tmp_path, name, content))}
+        for name, content in package_files.items()
+    ]
+    manifest = _write_manifest(tmp_path, {
+        "schemaVersion": 1,
+        "bundleId": "eidos-runtime",
+        "bundleVersion": "1.0.0",
+        "target": "win32-x64" if local_files.WINDOWS else "darwin-arm64",
+        "pythonPath": ["python"],
+        "pythonPackages": [
+            {"name": "python-docx", "importName": "docx", "version": "1.2.0"},
+            {"name": "example", "importName": "example", "version": "2.0"},
+        ],
+        "files": files,
+    })
+    original_open_file = local_files.open_file
+    reads = []
+
+    def track_metadata(path: Path, *args, **kwargs) -> int:
+        if path.name == "METADATA":
+            reads.append(path.relative_to(tmp_path).as_posix())
+        return original_open_file(path, *args, **kwargs)
+
+    monkeypatch.setattr(local_files, "open_file", track_metadata)
+    expected = sorted(name for name in package_files if name.endswith("/METADATA"))
+    catalog = RuntimeDependencyCatalog.from_manifest(manifest)
+    assert sorted(reads) == expected
+
+    reads.clear()
+    (tmp_path / expected[0]).write_bytes(b"Name: example\nVersion: 3.0\n")
+    with pytest.raises(RuntimeDependencyVerificationError, match="python_metadata_mismatch"):
+        catalog.verify_binding(catalog.resolve(None))
+    assert sorted(reads) == expected
 
 
 def test_resolve_is_deterministic_and_context_scoped(tmp_path: Path) -> None:

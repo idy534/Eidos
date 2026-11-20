@@ -93,7 +93,13 @@ Schema v33 增加 `search_documents`、`search_fts`、`search_pending` 和 `sear
 
 ## 1. System Boundary
 
-Eidos 是一个面向 macOS 的本地桌面 Agent Runtime。系统包含 Electron Desktop、Python Runtime、SQLite、本地 Workspace 和远端 Model Provider。
+Eidos 是一个本地桌面 Agent Runtime。系统包含 Electron Desktop、Python Runtime、SQLite、本地 Workspace 和远端 Model Provider。正式产品面向 macOS arm64。Windows x64 预览沿用相同的 typed IPC、stdio JSON-RPC 和业务状态机。
+
+Windows Runtime 通过受控文件句柄加载源码或打包版中的内置敏感扫描规则，统一换行符后校验 SHA-256。规则文件继承共享写权限时仍执行内容校验。规则缺失、文件类型无效或内容校验失败时，Runtime 拒绝启动。显式提供的规则文件仍校验所有者和 ACL。
+
+Windows Runtime 进程在启动时将新建文件和目录的默认所有者设为当前账户，管理员启动时也采用该账户。SQLite 和凭据继续按当前账户和私有 ACL 核验已有数据。系统 Skill 等启动资源的原子发布允许目标父目录的写共享，相关目录句柄仍禁止删除共享。按目录句柄改名的文件（记忆、计划和用户 Skill 删除）也只对改名所在目录开放写共享。删除用户 Skill 时，目录树中的 junction 和符号链接只删除链接本身，不进入目标。Hook 来源、Hook transcript 和数据备份使用同一套句柄、所有者和私有 ACL 核验。
+
+存储进入 `health_only` 时，Runtime 完成诊断握手，`runtime/health` 返回原始存储错误码，Main 的 `Runtime initialized` 日志同时记录 `storageCode`。此时不读取模型配置，`modelConfigured` 为 `false`，业务请求继续返回 `STORAGE_HEALTH_ONLY`。
 
 Renderer 是展示边界。Renderer 不能直接访问 Node 系统能力，也不能直接连接 Python Runtime。Electron Main 是 Desktop 和 Runtime 之间的控制边界。Python Runtime 是 Session、Run、Item、ToolCall、Approval、事件和副作用状态的业务协调边界。
 
@@ -162,6 +168,10 @@ Electron Main → Renderer
 
 Python Runtime 的 stdout 只输出有界的 JSON-RPC 行。Runtime 日志写入 stderr 或受控本地日志。RuntimeServer 的 `initialize`、`runtime/health` 和 `runtime/shutdown` 负责握手、健康状态和有序关闭。
 
+启动时，Runtime 读取当前平台的依赖清单。每次构建依赖快照时，只读取一次清单中位于 Python 根目录下的各份 `.dist-info/METADATA`，并按规范化包名检查声明的版本和唯一性。启动受管依赖进程前会重新构建快照并读取当前元数据，保留路径、文件类型和所有者校验。
+
+Windows 的 `initialize` 请求限时 60 秒，覆盖 Runtime 进程启动、NTFS 文件校验和首次部署内置 Skill。macOS 初始化及其他 RPC 请求继续使用 30 秒限时。
+
 `RunSupervisor.start_managed_task()` 在 AnyIO worker 中完成登记等待、目标执行、错误记录和资源清理。任务清理不再在 AnyIO 事件循环中获取 Supervisor 的同步锁。提交线程仍在锁内通过 BlockingPortal 登记任务；worker 中的清理等待不会挡住 portal 的调度。受保护的等待保留已接纳任务的资源所有权，取消继续通过 `threading.Event` 协作传播，系统不会丢弃仍在执行的线程来冒充资源静止。这项死锁修订尚未进入测试阶段。
 
 `runtime/eidos_runtime/runtime/loop.py` 只导出 `RuntimeEngine` 的兼容名称。它不是当前 Runtime Loop 的第二套实现。
@@ -177,6 +187,8 @@ Renderer 的本地 CSS 由 `desktop/renderer/src/styles.css` 统一导入。该�
 公共控件负责 Button 的颜色、交互状态、焦点和禁用样式。产品不绘制焦点环：`--focus-ring` 统一为 `none`，键盘与鼠标聚焦都不出现绿色轮廓。Chromium 会把弹窗还原的焦点判成 `:focus-visible`，所以这个 token 是移除残留绿圈的唯一入口，各模块只引用它，不再各自定义轮廓。焦点位置改由悬停、选中和边框颜色表达。审批和计划模块只补充按钮排列与尺寸。Composer 的模型与审批模式选择器共用触发按钮和浮层基础规则。列表与选择卡使用 `--surface-selected`，普通悬停使用 `--surface-hover`；危险操作继续使用危险颜色。代码与 Mermaid 共用标题标签和复制控件。聊天专用 `.eidos-chat-prose` 保留独立范围，文件预览与其他 Markdown 不启用该范围。
 
 Workspace Dock 独立维护 Session 内容列和环境浮层。居中 Session 沿用原构建实际生效的单列布局，并由 `--session-content-width` 限制回答与 Composer 宽度。规划样式不再重复定义环境浮层，技能样式不再修改整个设置窗口。样式测试按统一入口读取模块；原生 Electron 定向检查验证最终计算样式和响应式布局。
+
+macOS 窗口使用 `transparent`、`vibrancy: "under-window"` 与 `titleBarStyle: "hidden"`；Windows 窗口使用不透明底色、原生 `default` 标题栏按钮并隐藏传统应用菜单栏，Renderer 通过 `:root[data-platform="windows"]` 与 `platform.ts` 适配实色侧栏、顶栏留白、Windows 盘符路径解析与快捷键文案。macOS 与 Windows 统一通过共享 `Select` 组件与 `base-select` / `::picker(select)` 统一下拉选浮层与表单控件外观，其中 macOS 保持 `0.75` 毛玻璃质感（与 `.dropdown-menu` 一致），Windows 保留 `0.94` 高对比度半透明表面。
 
 Electron Main 负责以下职责：
 
@@ -198,6 +210,10 @@ Terminal 不经过 Python Runtime，也不是 Agent Shell Tool。Renderer 只通
 ## 4. Runtime Transport & Application Layer
 
 `RuntimeServer` 维护 SQLite Store、ModelConfigStore、RunSupervisor、RuntimeAsyncKernel 和 Method Registry。Method Registry 负责方法注册、typed request/response 校验、重复注册检查和稳定错误映射。慢 remote（fetch/pull/push）与慢只读 Git 观察（`project/gitContext`、`session/gitStatus`、`session/gitDiff`）使用 `DeferredMethodResult` 与 supervisor managed task offload，后台经线程安全 `send` 回包，输入循环不等待；draining/重配调度失败时只读观察同步回退。
+
+stdio 输入循环只解析消息。`initialize`、`runtime/shutdown`、`runtime/health` 和格式错误的消息在循环内处理，其余请求由 `RequestDispatcher` 在 RuntimeAsyncKernel 上执行。调度器是 Kernel 的一个常驻服务，使用 TaskGroup 和两个 CapacityLimiter（读 8、写 4），工作线程数有上限。准入按到达顺序和读写键判断。写请求声明 `locks` 和 `touches`：`locks` 相同的写请求按到达顺序执行；`locks` 为空时独占，等待之前所有写请求，之后的写请求也等它，这与此前写请求之间的全序一致。读请求声明 `observes`，只等待之前 `locks` 或 `touches` 与它相交的写请求。写请求不等待读请求。
+
+当前划分如下。Session 读取（`session/read`、`event/list`、Git 状态等）只观察本 Session。会话索引读取（`session/list`、`search/sessions`、置顶）观察会话索引。设置和目录读取观察配置。工具内容、工作区文件和上下文统计读取不等待任何请求。Git 变更共用 `git` 写锁。Session 生命周期操作同时持有 `git` 和本 Session 的写锁。Run 启动等 Session 写入按 Session 加锁。Run 取消、恢复和压缩按 Run 加锁，Stop 不会排在无关写入之后。草稿读写按草稿键排序，审批答复共用审批键。未列出的写请求和缺少作用域参数的请求按独占处理。同一 Session 先写后读的流水线仍能读到自己的写入；其他 Session 的读取不等慢 Git 或设置写入。响应按完成顺序写回，Main 按 `id` 匹配。单个请求排队加执行超过 1 秒时，Runtime 记录 `rpc_slow method=… lane=… queue_ms=… exec_ms=…`。Shutdown 和 Supervisor 关闭先排空调度器：已接受的请求执行完毕后才检查资源静止，超时返回 `RUNTIME_SHUTDOWN_TIMEOUT`。Kernel 不可用时（初始化前或关闭后），请求仍在输入循环内执行。
 
 应用层为 Session、Run、Response Action、Model、Extension、Repository、Context 和 Long Task 提供边界。RuntimeServer 仍保留少量兼容入口，但它不会建立第二套状态权威。
 
@@ -484,6 +500,8 @@ ApprovalCoordinator 把扩权 Approval request、用户 decision、feedback、�
 
 默认 Shell attempt 使用 macOS Seatbelt。Seatbelt Policy 根据 Workspace、Runtime root、Eidos 数据目录、永久拒绝、附加权限和网络权限物化为 effective permission profile，并保存 profile hash。默认 Workspace profile 在权限校验和 Durable Intent 后直接启动。显式权限升级会创建新的 Approval attempt。用户可以通过高危人工审批允许显式 unsandboxed attempt。窗口说明命令及其子进程会使用当前 macOS 用户的权限。Runtime 不因未知副作用自动重放命令。
 
+Windows 使用 NTFS 句柄执行已准备的文件提交。Runtime 保留权限物化、Durable Intent、目标与版本核对、排他创建、原地写入和结果验证。Windows 的 Job Object 管理授权的 Shell、ConPTY 和浏览器进程。Runtime 使用同一托管资源目录安装随包提供的 Windows 文档与浏览器资源。默认受限 Shell 与本地 MCP 仍返回沙盒不可用。Windows 的范围和实机验收见 [当前限制](limitations.md#平台与分发) 和 [开发参考](../development/README.md#windows-x64-预览)。
+
 ### Shell
 
 HostShellResolver 先读取当前账户的 login shell，再读取 `SHELL`，最后按 `/bin/zsh`、`/bin/bash`、`/bin/sh` 顺序选择 fallback。Resolver 只接受存在、可执行且 basename 为 `zsh`、`bash` 或 `sh` 的绝对路径。
@@ -568,6 +586,8 @@ Retrieval（排序版本 2）先执行 grounded 信号：路径、符号、diff�
 
 `ContextBuilder` 是默认在线 Run 的唯一模型输入投影器。它把 Project Rules、Skills、SQLite history、verified compact summary、Repository overview 和 Retrieval evidence 放入一个结构化 `ModelContextItem` 序列。Provider 按最长公共前缀命中缓存。`workspace-environment` 使用独立来源上下文，提供 Workspace 路径、平台、宿主 Shell、当前本地日期和时区。Run 级 `workspaceVersion` 继续由 Runtime 保存，但不进入模型输入。只读结果去重使用投影历史内的 Workspace 变更计数分隔状态；该计数不进入模型提示，也不引用 Run 级版本号。这样单次 Workspace 写入不会仅因版本计数变化而使其后的整段历史失去缓存。Compaction、协议修复、权限变化和动态 Skill 仍可能改变请求前缀，不能把完整模型输入视为只追加序列。每个 ModelAttempt 在 Sampling 前持久化完整的 `ContextSnapshot`。Snapshot 原样保存 model context、resolved instructions、tool definitions、Model/Rule metadata 和可空 Repository lineage。Sampling 只读取已绑定的 Snapshot。可重试的 transport failure 会先完成旧 Attempt，再创建独立 Attempt 并复用同一个 Snapshot。敏感扫描尚未释放的文本不代表可见进度；已经发布的 Assistant Item 会参与 retry safety 判断。已有文本或 ToolCall 进度不会自动重放。协议修复会建立新的 ModelAttempt 和新的 Snapshot。已声明 Tool 的参数校验错误会通过持久化的 `invalid_arguments` Tool Result 进入下一次 Model Context。该结果只保留有界的错误码和摘要，不携带原始参数。真正的协议错误仍然使用 protocol repair context。模型调用本 Step 未声明的 Tool 时（诊断 `toolDeclared=false`，例如插件已移除但历史中仍有其调用），repair context 携带 `toolDeclared` 与 `toolName`，模型收到的反馈会说明该 Tool 在本 Run 不可用，并要求改用已声明的 Tool 或告诉用户需要先安装或启用对应能力，而不是提示修正参数。协议修复次数耗尽后，Step 失败写入的 `runtime-feedback` 会保留到下一个 Step 的模型上下文。此前该反馈会在重建上下文时被清空，模型会收到与上一步相同的输入并重复同一调用。ContextBuilder 收到当前 Step 可调用的 Tool 名集合（available 与 deferred）后，会在历史中出现但不可调用的 Tool 存在时追加一个 `unavailable-tools` 上下文段，最多列出 20 个名称，历史调用本身仍保留。
 
+Watcher 回调只标记 Workspace 变脏，不再每批变更立即重建。Workspace 激活后，watcher 线程先恢复已持久化的完整 generation；没有完整 generation 时立即构建第一代。之后，只有在变更停止 15 秒、且距上次构建至少 120 秒时，才合并构建一次 reconciliation。构建失败或不完整后，只有出现新变更才会重试。缓存维护要求重建时立即构建。Run 不等待构建，它捕获最近的完整 generation 和 dirty paths。
+
 Workspace Explorer 复用 `RepositoryWatchController`。Watcher 事件只产生 `workspace/changed` 缓存失效通知。Renderer 根据相对路径刷新已加载的父目录。Watcher 不提供路径安全事实，也不修改 Run snapshot。
 
 ## 11. Persistence & Events
@@ -576,7 +596,7 @@ Workspace Explorer 复用 `RepositoryWatchController`。Watcher 事件只产生 
 
 Runtime 启动对主库先做结构性 `quick_check` 和 `foreign_key_check`；完整 `integrity_check` 只在新建库、本次启动发生 Schema 迁移、数据目录中的 `integrity.stamp` 缺失、无法读取或超过 7 天，以及 `quick_check` 报告异常时执行，通过后重写该时间戳。时间戳只是缓存，写入失败只会让下次启动重新全量检查，损坏仍 fail closed 为 `database_corrupt`。历史、日志辅助库完整性检查、Schema 迁移、历史投影和业务恢复。v40 已移除旧记忆辅助库；启动清理标记负责删除旧文件，当前记忆元数据归主库管理。仓库索引库只在启动检查路径、权限、版本和必要表，不执行全库扫描或旧库 auto-vacuum 转换。历史快照外置检查按每批 256 条读取 ID 与 payload，取消逐条 SELECT 和全量 ID 列表。Runtime 会跳过已撤销快照，不再把已清空的内容重新保存为 Blob；未撤销快照仍检查 Blob 引用，并保留逐记录提交和中断后重试。旧 Schema 尚无撤销列时，Runtime 继续执行原有迁移路径。
 
-普通启动不主动执行 Blob 全量 GC。Runtime 通过 Supervisor 管理的 `StorageMaintenance` 执行存储清理：任务创建至少 60 秒后，且 Runtime 已初始化、控制状态为 running、没有活动 Run 时，执行一次定期 GC；后续间隔为一小时。该受管任务通过独立只读连接执行仓库库完整性和外键检查，不长时间占用索引查询锁。支持 incremental auto-vacuum 的缓存每次回收最多 1024 个空闲页。旧缓存不自动执行整库 VACUUM 转换。SQLite progress handler 响应取消。GC 从 SQLite 流式读取引用，持有原有 State/Blob 锁，在删除前完整解析 Context 清单并保留共享块、输入引用、手工 MCP 环境和 ModelAttempt 回放。GC 在取消时停止；引用扫描未完成时不删除文件。清理失败会记录本地日志，并按一小时间隔重试。Session 删除和真实隐私撤销仍执行原有即时清理；启动时若存在尚未清理的真实撤销，也会触发该清理。
+普通启动不主动执行 Blob 全量 GC。Runtime 通过 Supervisor 管理的 `StorageMaintenance` 执行存储清理：任务创建至少 60 秒后，且 Runtime 已初始化、控制状态为 running、没有活动 Run 时，执行一次定期 GC；后续间隔为一小时。该受管任务通过独立只读连接执行仓库库完整性和外键检查，不长时间占用索引查询锁。支持 incremental auto-vacuum 的缓存每次回收最多 1024 个空闲页。旧缓存不自动执行整库 VACUUM 转换。SQLite progress handler 响应取消。GC 在删除前完整解析 Context 清单，并保留共享块、输入引用、手工 MCP 环境和 ModelAttempt 回放。GC 只在建立引用快照时短暂持有 State 写锁：写入方从创建 Blob 到提交引用都持有该锁，所以快照点之前写入的 Blob 要么已被提交的数据引用，要么完全没被引用。之后 GC 在只读 WAL 快照上流式读取引用，并在不持锁的情况下解析清单。GC 开始后新写入或去重复用的 Blob 记入本次回收的保留集合；被保留的清单在删除前展开其子块。删除阶段逐个文件短暂持有 Blob 锁，与写入互斥。真实数据（3 万个引用、4.7 万个 Blob 文件）上 GC 用时约 18 秒，期间并发执行的 `session/read` 和 `event/list` p99 为 9 ms；此前 GC 全程持有 State 锁约 14 秒，期间所有主库读写都要等待。GC 在取消时停止；引用扫描未完成时不删除文件。清理失败会记录本地日志，并按一小时间隔重试。Session 删除和真实隐私撤销仍执行原有即时清理；启动时若存在尚未清理的真实撤销，也会触发该清理。
 
 Runtime 使用标准库计时和现有 OpenTelemetry Span，记录各存储阶段、依赖校验、Worktree 恢复与保留、Skill、模型配置、异步内核、重启核验、Handoff、Seatbelt 和待投递事件的 `phase`、`duration_ms` 与完成状态。Seatbelt 自检在有界的受控线程池中并行执行相互独立的检查，并在返回 Shell 能力前等待全部检查完成。网络基线与沙盒联网检查仍按顺序执行；任一检查失败时 Shell 保持不可用。计时不写业务 Event，也不修改协议或 SQLite Schema；初始化前的记录写 stderr，日志存储接入后的记录同时写本地 JSONL。
 
@@ -590,7 +610,9 @@ Session 展示快照与执行快照使用不同的读取入口。`session/read` 
 
 `state.sqlite` 是可变业务状态的唯一权威。它保存 Session、Run、Item、ToolCall、Approval、Tool Attempt、Execution Segment、Step、Model Attempt、Durable Intent、Event、Outbox、Async Operation、Extension Snapshot、Context lineage、Compaction 和 Checkpoint。业务状态变化与 Event/Outbox 仍在同一个 `state.sqlite` transaction 中提交。
 
-Runtime 按职责使用多个独立存储。`repository.sqlite` 保存可重建的 Inventory、Index、Symbol、Reference、Chunk 和 FTS5 数据。它只保留每个 Workspace identity 的最新候选与最新完整 generation，并使用 incremental auto-vacuum 回收删除页；后台索引线程持有写锁时，前台 `read_status` 通过短生命周期的只读 WAL 连接读取已提交状态，避免 `session/read` 激活工作区时阻塞主线程。`thread_history.sqlite` 只索引按 Session 分段的 append-only Event JSONL。Runtime 按流批量追加并先 fsync JSONL，再提交文件 offset；启动时、投影失败后以及空投影时最多每 60 秒核验一次：截断未提交尾部、清理孤立或已删除会话的 JSONL。增量事件投递不重复扫描全量会话文件；空投影本身不代表空闲，因为并发投递可能已经投影了这些事件。`logs.sqlite` 只索引本地日志 JSONL，当前使用独立 schema v2。Runtime 会把使用 `content_sha256` 的旧 v1 表迁移为 `chain_sha256`，也会接纳已经使用 `chain_sha256` 的 v1 表。日志按 8 MiB 分段，默认总量约 128 MiB，Runtime 优先删除最旧的 sealed segment。v40 删除旧 `memories.sqlite` 和 MemoryStore 接口，并清空旧记忆内容。记忆系统以 `state.sqlite` 为业务权威，正文使用 UUID 命名的私有 Markdown 文件，逻辑笔记路径由数据库映射。前台 Run 即时更新主题笔记，`MEMORY.md` 是派生索引；后台只做存储清理。来源、版本、隐私撤销与快照引用见 [docs/current/features/memory.md](features/memory.md)。
+主库只有一个共享写连接，所有线程通过 `Database.lock` 使用它。该锁记录最外层的等待和持有时间，超过 1 秒时写 `storage_lock_wait` 或 `storage_lock_held` 日志，并附上线程名。无副作用的读取可以使用 `Database.read_transaction()` 或 `read_scope()`：它们从最多 4 个只读 WAL 连接中取一个，开启一次读事务，所以同一作用域内的所有查询看到同一个已提交快照，且不等待写锁。`read_scope()` 内的 `connection()` 返回快照连接，`lock` 区域直接放行，嵌套 Repository 无需修改；`transaction()` 仍退出作用域，经共享写连接提交。已持有写锁的线程继续使用写连接，以读到自己未提交的修改。只读连接在打开前核对文件的 device/inode，与初始化时不一致则拒绝打开。当前 `session/read` 快照、`event/list`、`session/list` 和 Session projection 使用读作用域。
+
+Runtime 按职责使用多个独立存储。`repository.sqlite` 保存可重建的 Inventory、Index、Symbol、Reference、Chunk 和 FTS5 数据。它只保留每个 Workspace identity 的最新候选与最新完整 generation，并使用 incremental auto-vacuum 回收删除页。缓存版本 2 为每个完整 generation 的 FTS 行分配从 `creation_seq << 32` 开始的 rowid 区间。裁剪时按快照逐个删除：FTS 按 rowid 区间删除，事实表、文件和目录按主键前缀删除，成本只与被删除的数据量有关，不再全表扫描 FTS 和事实表。打开版本 1 的缓存时，Runtime 先核对私有文件身份和单一硬链接，再删除旧库及其 WAL/SHM 并新建空缓存；各 Workspace 下次激活时重建 generation。身份核对失败时缓存保持不可用，不删除任何文件。旧版主库中的仓库数据迁出时直接写成版本 2，并按 generation 重新分配 FTS rowid。后台索引线程持有写锁时，前台 `read_status` 通过短生命周期的只读 WAL 连接读取已提交状态，避免 `session/read` 激活工作区时阻塞主线程。`thread_history.sqlite` 只索引按 Session 分段的 append-only Event JSONL。Runtime 按流批量追加并先 fsync JSONL，再提交文件 offset；启动时、投影失败后以及空投影时最多每 60 秒核验一次：截断未提交尾部、清理孤立或已删除会话的 JSONL。增量事件投递不重复扫描全量会话文件；空投影本身不代表空闲，因为并发投递可能已经投影了这些事件。`logs.sqlite` 只索引本地日志 JSONL，当前使用独立 schema v2。Runtime 会把使用 `content_sha256` 的旧 v1 表迁移为 `chain_sha256`，也会接纳已经使用 `chain_sha256` 的 v1 表。日志按 8 MiB 分段，默认总量约 128 MiB，Runtime 优先删除最旧的 sealed segment。v40 删除旧 `memories.sqlite` 和 MemoryStore 接口，并清空旧记忆内容。记忆系统以 `state.sqlite` 为业务权威，正文使用 UUID 命名的私有 Markdown 文件，逻辑笔记路径由数据库映射。前台 Run 即时更新主题笔记，`MEMORY.md` 是派生索引；后台只做存储清理。来源、版本、隐私撤销与快照引用见 [docs/current/features/memory.md](features/memory.md)。
 
 ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。新写入的 ContextSnapshot 使用 `context-snapshot-v2` 清单，StepResolutionSnapshot 使用 `step-resolution-v2` 清单。两者复用同一组 `context-item` 和 `context-tools`。消息块引用已有的 `tool-result-content`，不再内嵌图片或文件内容；输入图片单独按内容哈希共享。Step 清单只保存一次消息引用，读取时 Runtime 重建 `context_payload_json` 与 `final_request_json`，再验证原有快照哈希与请求关系。旧版完整快照和旧消息块仍可读取，SQLite Schema 和公开协议不变。Blob 存储不再施加统一的 32 MiB 容量上限。各输入与工具保留自身预算；Blob 读取按记录中的实际大小分块，并继续核验 owner、mode、路径、压缩数据、JSON 和 checksum。相同内容再次保存时，Runtime 验证并复用已有 Blob，不重复压缩。Blob GC 在删除前递归解析两类清单及消息块的媒体引用；引用损坏或扫描取消时不会根据不完整引用集合执行删除。Session 删除后，Runtime 会删除对应 history，并回收不再引用的 Blob。JSONL、Memory 和 Repository 数据都不能改变 `state.sqlite` 中的业务状态。
 
@@ -645,6 +667,8 @@ Project
 `workspaceRoot` 省略或为 null 时，Runtime 创建 projectless Session。默认工作空间是 `~/Eidos/YYYY-MM-DD/可读名称`，与 `EIDOS_DATA_DIR` 分离。Desktop 首次提交通过 `workspaceNameHint` 传递首行短文本；Runtime 统一清理名称并限制 UTF-8 字节长度：Composer 引用标记只保留标签，名称只保留各语言的字母、数字、`_` 和附着其上的组合符号，其余标点、符号、空白和控制字符统一替换为单个 `-`，因此名称在 Shell 中无需引号。早期规则生成的已有目录和创建记录保持原名，重放同一操作仍返回原目录。名称缺省时使用“新会话”，重名时使用 `-2`、`-3`，目录创建采用排他 mkdir。日期使用首次创建请求的本地日期，后续标题变化不移动目录。开发和测试可以通过 `EIDOS_PROJECTLESS_ROOT` 指定独立根目录。该 Session 不创建 Project、Worktree 或 Repository workspace，固定为 Local execution。Run 使用普通 Workspace permission profile，写权限只作用于当前工作空间。RunResources 仍创建文件工具、Shell、Skill、MCP 和 Plugin 资源。projectless Run 不注入 Project Rules 或 Repository Context，但仍提供自身工作目录和环境信息。Desktop 保留输出内容和文件预览，但 Workspace Dock 不展示 Files、Terminal 或 Review；Browser 仍可用。
 
 Schema v23 的 `projectless_workspace_creations` 保存新工作空间的操作 ID、目录分配和身份。重复请求复用首次路径；已保存身份的创建可以在重启后继续。目录已经存在但没有已提交身份时，Runtime 不接管该目录，而是分配下一个后缀。Session、创建完成状态和 `session.created` Event/Outbox 在同一事务提交。失败清理只删除已核验且仍为空的本次目录。子 Agent 继续借用父 Session 的工作空间。
+
+会话和目录创建预留记录保留完整的设备号与文件 ID。超出 SQLite 有符号整数范围的值写入带前缀的十六进制文本，原有整数记录继续可读，读取后用原始数值核验目录身份。
 
 本次 Alpha 更新不兼容或迁移旧无项目 Session。Runtime 在持有 state lock、恢复持久事实后，废弃旧 Projectless 根目录下的无项目 Session 和父子关联记录，并清理对应历史投影。该过程不启动旧 Run、不移动或删除旧工作空间文件，也不触碰 Project/Worktree Session。新版不保留旧路径回退或历史文件映射。
 

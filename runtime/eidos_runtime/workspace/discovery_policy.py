@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 
 HARD_DISCOVERY_DIRECTORIES = frozenset({
     ".git",
@@ -38,6 +40,6 @@ def is_discovery_path_allowed(
         else HARD_DISCOVERY_DIRECTORIES
     )
     return not any(
-        part in hard_directories
+        (part.casefold() if local_files.WINDOWS else part) in hard_directories
         for part in parts[:-1]
     )

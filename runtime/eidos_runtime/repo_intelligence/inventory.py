@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from enum import StrEnum
 import hashlib
 import json
@@ -173,7 +175,7 @@ class RepositoryInventoryBuilder:
         diagnostics: list[InventoryDiagnostic] = []
         complete = True
         try:
-            root_fd = os.open(self.root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            root_fd = local_files.open_directory(self.root)
         except OSError as error:
             raise InventoryError("inventory_root_unavailable") from error
         try:
@@ -232,7 +234,7 @@ class RepositoryInventoryBuilder:
                 if scope.is_ignored(relative, is_directory=False):
                     continue
                 try:
-                    metadata = os.stat(relative, dir_fd=root_fd, follow_symlinks=False)
+                    metadata = local_files.lstat_at(relative, root_fd)
                 except OSError as error:
                     complete = False
                     diagnostics.append(InventoryDiagnostic(
@@ -367,20 +369,11 @@ def read_verified_file(
     opened: list[int] = []
     parent_fd = root_fd
     try:
-        directory_flags = (
-            os.O_RDONLY
-            | getattr(os, "O_DIRECTORY", 0)
-            | getattr(os, "O_NOFOLLOW", 0)
-        )
         for component in parts[:-1]:
-            descriptor = os.open(component, directory_flags, dir_fd=parent_fd)
+            descriptor = local_files.open_directory(component, dir_fd=parent_fd)
             opened.append(descriptor)
             parent_fd = descriptor
-        descriptor = os.open(
-            parts[-1],
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
-            dir_fd=parent_fd,
-        )
+        descriptor = local_files.open_file(parts[-1], dir_fd=parent_fd)
         opened.append(descriptor)
         before = os.fstat(descriptor)
         if (
@@ -400,7 +393,7 @@ def read_verified_file(
         if os.read(descriptor, 1):
             raise OSError("file grew during inventory read")
         after = os.fstat(descriptor)
-        current = os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
+        current = local_files.lstat_at(parts[-1], parent_fd)
         if (
             _file_identity(before) != _file_identity(after)
             or _file_identity(expected) != _file_identity(current)
@@ -432,13 +425,7 @@ def _stat_directory(root_fd: int, relative: str) -> os.stat_result:
     opened: list[int] = [descriptor]
     try:
         for part in Path(relative).parts:
-            next_descriptor = os.open(
-                part,
-                os.O_RDONLY
-                | getattr(os, "O_DIRECTORY", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
-                dir_fd=descriptor,
-            )
+            next_descriptor = local_files.open_directory(part, dir_fd=descriptor)
             descriptor = next_descriptor
             opened.append(descriptor)
         metadata = os.fstat(descriptor)

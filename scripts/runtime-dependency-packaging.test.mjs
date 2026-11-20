@@ -60,13 +60,26 @@ test("runtime dependency source pins the approved Node LTS and docx release", as
     url: "https://nodejs.org/download/release/v24.20.0/node-v24.20.0-darwin-arm64.tar.xz",
     checksumsUrl: "https://nodejs.org/download/release/v24.20.0/SHASUMS256.txt",
     sha256: "b7bf7707070b950ba1ec5f1af3bb6de0f2b1962c5033973d94068ab021ef3014",
+    windowsX64: {
+      archiveBytes: 37539751,
+      sha256: "6cac9ffbca8f6a47091e4b5c772e0606049c3871cb67d900c0cedde630e545ba",
+    },
   });
   assert.equal(packageJson.private, true);
   assert.equal(packageJson.packageManager, "pnpm@11.7.0");
   assert.equal(packageJson.type, "module");
   assert.equal(packageJson.dependencies.docx, "9.7.1");
-  for (const name of ["pptxgenjs", "sharp", "@deepseek-ai/libreoffice-kit", "@deepseek-ai/libreoffice-kit-darwin-arm64", "tesseract.js", "@tesseract.js-data/eng", "@tesseract.js-data/chi_sim"]) {
+  for (const name of ["pptxgenjs", "sharp", "@deepseek-ai/libreoffice-kit", "tesseract.js", "@tesseract.js-data/eng", "@tesseract.js-data/chi_sim"]) {
     assert.match(packageJson.dependencies[name], /^\d+\.\d+\.\d+$/);
+  }
+  // Platform engines are optional dependencies of the kit, so each host's
+  // frozen install selects its own locked engine.
+  for (const name of Object.keys(packageJson.dependencies)) {
+    assert.doesNotMatch(name, /^@deepseek-ai\/libreoffice-kit-(darwin|win32)-/);
+  }
+  for (const target of ["darwin-arm64", "win32-x64"]) {
+    assert.match(lock, new RegExp(`'@deepseek-ai/libreoffice-kit-${target}': 0\\.2\\.3`));
+    assert.match(lock, new RegExp(`'@deepseek-ai/libreoffice-kit-${target}@0\\.2\\.3':\\n    resolution: \\{integrity: sha512-`));
   }
   for (const name of ["react", "react-dom", "react-icons"]) assert.equal(packageJson.dependencies[name], undefined);
   assert.match(lock, /docx@9\.7\.1/);
@@ -125,6 +138,7 @@ test("Runtime builder wires isolated dependencies and the E-owned loader", async
   assert.match(nodeBuilderSource, /rsync -aL/);
   assert.match(nodeBuilderSource, /--exclude='\.gitkeep'/);
   assert.match(nodeBuilderSource, /SOURCE_ROOT\/pnpm-workspace\.yaml/);
+  assert.match(nodeBuilderSource, /libreoffice-kit-darwin-arm64\/bin\/dsoffice/);
   assert.doesNotMatch(nodeBuilderSource, /--ignore-workspace/);
   assert.match(nodeBuilderSource, /RUNTIME_NODE_MODULES|runtime-loader\.mjs/);
   assert.match(pythonBuilderSource, /requirements\.lock/);

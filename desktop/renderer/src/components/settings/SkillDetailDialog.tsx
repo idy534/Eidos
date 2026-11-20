@@ -1,3 +1,4 @@
+import { revealFileLabel } from "../../platform.js";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { SkillDetail, SkillMetadata, SkillRemoval } from "../../contracts.js";
@@ -241,7 +242,7 @@ export function SkillDetailDialog({
         onShowToast("Markdown 已复制", "success");
       }
     } catch {
-      const msg = action === "finder" ? "无法在 Finder 中显示技能目录，请重新打开详情。" : "Markdown 复制失败，请重试。";
+      const msg = action === "finder" ? `无法${revealFileLabel}技能目录，请重新打开详情。` : "Markdown 复制失败，请重试。";
       setError(msg);
       onShowToast(msg, "error");
     }
@@ -294,7 +295,7 @@ export function SkillDetailDialog({
                   triggerAriaLabel="技能选项"
                   className="skill-detail-menu"
                   items={[
-                    { key: "finder", label: "在 Finder 中显示", icon: <FinderIcon />, disabled: !currentDetail || busy, onClick: () => void moreAction("finder") },
+                    { key: "finder", label: revealFileLabel, icon: <FinderIcon />, disabled: !currentDetail || busy, onClick: () => void moreAction("finder") },
                     { key: "copy", label: "复制 Markdown", icon: <CopyIcon />, disabled: !currentDetail || busy, onClick: () => void moreAction("copy") },
                   ]}
                 />

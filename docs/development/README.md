@@ -493,6 +493,39 @@ ZIP 含私有聊天、记忆和执行状态，也可能含 MCP 环境配置，�
 
 ## 构建打包与原生验证
 
+### Windows x64 预览
+
+开发者在 Windows 11 x64 的本地 NTFS 目录构建。构建机使用 Node、pnpm、uv、Python 3.12.4 或更高的 3.12 修订版，以及 Windows 提供的 .NET Framework C# 编译器。用户安装生成的 App 后使用包内 Python、MinGit、ripgrep、Node 和文档资源。浏览器工具使用用户安装的 Google Chrome。
+
+```powershell
+pnpm install
+uv sync --locked --python 3.12
+pnpm build:runtime:win
+pnpm start
+```
+
+`pnpm build:runtime:win` 的输出在 `build/windows-runtime/`。构建器校验上游资产，从锁文件安装 CPython 3.12 wheel 和 Windows Node 模块，然后生成 `runtime.json`、`resource-index.json` 和 `resource-packs/`。源码运行和安装后的 App 都使用这套资源。Windows 初始化握手限时 60 秒。Electron 启动烟测使用临时数据目录，给启动、健康检查和退出共留出 90 秒。
+
+```powershell
+pnpm package:win
+pnpm test:electron-smoke
+uv run --locked --python 3.12 pytest -q runtime/tests/test_windows_platform.py
+```
+
+安装包在 `release/Eidos-*-win-x64.exe`。本地预览可以生成未签名包。Windows CI 单独构建该安装包并保留产物。维护者配置 Authenticode 所需的构建凭据后再验证签名。
+
+实机验收使用普通用户和临时工作区。验收人先检查以下流程。
+
+1. 验收人从未预装 Python、Git 或 ripgrep 的机器安装 App，启动并发起对话，再关闭和重开。验收人核对历史和模型配置仍可读取。
+2. 验收人在包含中文和空格的仓库中检查预览、搜索、创建、更新、删除、Diff、Worktree、快照恢复和取消。验收人检查已有文件身份、写前冲突、受保护路径、硬链接和目录 junction。
+3. 验收人检查默认方式拒绝启动没有隔离后端的 Shell 和本地 MCP。验收人在临时仓库内确认完全访问，检查 PowerShell PIPE 和 Agent PTY。验收人用 `run_shell` 的 `tty=true` 启动交互程序，检查中文输入输出、`control_shell` 尺寸调整、Ctrl-C 和取消后的子进程清理。验收人另外检查桌面终端的输入、尺寸调整和关闭。
+4. 验收人检查文件定位、拖放、中文输入、窗口缩放、覆盖安装和卸载后的数据保留。输入引用覆盖带中文和空格的图片文件、文件夹摘要，分别验证从资源管理器复制图片文件和从截图工具粘贴位图。
+5. 验收人在 Chrome 中检查三种浏览器目标。验收人检查专用 Chrome 的下载拦截与退出清理、用户 Chrome 的远程调试确认，以及 Playwright Extension 的令牌、标签组和重新连接。
+6. 验收人检查保存记忆、计划、用户与项目 Hook、数据备份，以及用 skill-creator 创建、校验再删除用户 Skill。
+7. 验收人在新装环境打开完全访问 Run，使用 DOCX、PPTX、XLSX 和 PDF Skill。验收人断网检查首次解包、Office 转换、公式重算、缩略图、PDF 渲染和中英文 OCR，再重启检查资源复用。Windows CI 同时执行 `scripts/bundled-document-skills-smoke.py`。
+
+Windows 预览对本地 NTFS 目录执行路径、句柄和 ACL 核验。网络盘、reparse point 和启用了大小写敏感的目录在此范围外。Windows 默认 Shell 和本地 MCP 的隔离后端，以及 Qoder 资源包仍待实现。
+
 ### 原生 Seatbelt
 
 ```bash
@@ -611,7 +644,7 @@ uv run --locked pytest runtime/tests -k "schema or migration or instruction or c
 pnpm test:packaging
 ```
 
-`pnpm test:electron-smoke` 会使用临时 `EIDOS_DATA_DIR` 和临时 Electron user-data 目录。该测试不需要真实 Model API Key。
+`pnpm test:electron-smoke` 会使用临时 `EIDOS_DATA_DIR` 和临时 Electron user-data 目录，并要求 Runtime 启动后报告 `storageState=ready`。Windows 上该脚本先把临时目录展开为规范长路径，避免 CI 的 `RUNNER~1` 这类 8.3 短名被数据目录核验拒绝。该测试不需要真实 Model API Key。
 
 ## 运行配置与诊断
 
@@ -686,6 +719,22 @@ API Key 会经过本地模型配置写入链路：Renderer typed IPC → Electro
 ### 常见诊断
 
 Runtime 初始化失败时，先检查启动终端中的 stderr 日志和 `runtime/health` 状态。Runtime 会把协议错误映射为稳定 code，不会把第三方 Provider exception 直接发送到 Renderer。
+
+界面卡顿或请求超时时，按以下步骤检查：
+
+1. 在 stderr 或数据目录 `logs/<日期>/*.jsonl` 中搜索 `rpc_slow`。`queue_ms` 大说明请求在等前面同作用域的写请求，`exec_ms` 大说明处理本身慢。`lane=inline` 表示请求在输入循环内执行，只有控制方法或调度器不可用时才会出现。
+2. 搜索 `storage_lock_held` 和 `storage_lock_wait`。它们记录主库写锁单次持有或等待超过 1 秒的线程名，可以对应到具体的后台任务或 Run。
+3. 仓库索引的构建记录是 `repository_generation_build_started` 到 `repository_generation_ready`。构建只在变更停止 15 秒、且距上次至少 120 秒后发生；连续出现说明 watcher 在持续收到变更。
+
+请求调度规则和作用域定义见 `runtime/eidos_runtime/protocol/dispatch.py`，定向测试为：
+
+```bash
+uv run --locked pytest runtime/tests/test_request_dispatch.py runtime/tests/test_state_read_access.py
+```
+
+若 `initialize` 超时且最后记录为 `phase=storage … outcome=completed`，下一阶段是 `runtime_dependencies`。Windows 源码启动会读取已有的 `build/windows-runtime/runtime.json`，安装版会读取随包清单。可在保留构建产物的情况下运行 `pnpm test:electron-smoke`，用临时数据目录复查握手与关闭。依赖清单的定向回归入口为 `uv run --locked pytest runtime/tests/test_runtime_dependency_catalog.py -k python_metadata_is_read_once`。
+
+Windows 上若 `runtime/health` 返回 `state_security_invalid`（Main 日志的 `storageCode`），检查 `EIDOS_DATA_DIR`（默认 `%USERPROFILE%\.eidos`）是否为不含 8.3 短名的规范路径，以及已有 SQLite 文件的所有者和 ACL。旧版管理员启动可能留下所有者为 `Administrators` 的目录。确认目录为空时，可以退出 Eidos、将目录改名备份并重新启动。目录已有数据时，先完整备份，再检查所有者和私有 ACL。
 
 常见检查如下：
 

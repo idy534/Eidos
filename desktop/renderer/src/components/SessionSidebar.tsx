@@ -1,3 +1,4 @@
+import { formatPlatformShortcut, revealFileLabel } from "../platform.js";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Project, Session, SessionGitStatus } from "../contracts.js";
@@ -619,14 +620,14 @@ export const SessionSidebar = memo(function SessionSidebar({
           </span>
           <span className="brand-badge">Desktop</span>
         </div>
-        <Tooltip content="搜索所有会话" shortcut="⌘K">
+        <Tooltip content="搜索所有会话" shortcut={formatPlatformShortcut("⌘K")}>
           <button className="brand-search" aria-label="搜索所有会话" disabled={disabled} onClick={onSearch}><SearchIcon /></button>
         </Tooltip>
       </div>
       <PrimaryActionButton
         size="compact"
         label="新建会话"
-        shortcut="⌘N"
+        shortcut={formatPlatformShortcut("⌘N")}
         disabled={disabled}
         onClick={() => {
           dismissTooltipImmediately();
@@ -782,7 +783,7 @@ export const SessionSidebar = memo(function SessionSidebar({
             },
             {
               key: "show-in-finder",
-              label: "在 Finder 中显示",
+              label: revealFileLabel,
               icon: <FinderIcon />,
               onClick: () => {
                 setContextMenu(undefined);

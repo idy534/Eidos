@@ -1,6 +1,7 @@
 """Run document code inside the environment selected by Eidos run_shell."""
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 
@@ -39,6 +40,10 @@ def main() -> None:
             os.environ["EIDOS_DOCUMENT_FONTS"] = str(fonts)
     if kind == "node":
         args = ["--preserve-symlinks", "--preserve-symlinks-main", *args]
+    if sys.platform == "win32":
+        # Windows subprocess supplies native argument quoting. The child stays
+        # in the Shell's Job Object, including when it starts other programs.
+        raise SystemExit(subprocess.run([executable, *args], check=False).returncode)
     os.execv(executable, [executable, *args])
 
 

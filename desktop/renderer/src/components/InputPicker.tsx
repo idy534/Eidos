@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import type { InputPrepareRequest } from "../../../shared/input-context.js";
 import { useInputContext } from "./InputContext.js";
 import { userFacingError } from "../session-state.js";
+import { pathBasename } from "../platform.js";
 import { Tooltip } from "./Tooltip.js";
 
 export type InputPickerMode = "all" | "skill" | "commands";
@@ -196,7 +197,7 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
       }
       if (sessions.status === "fulfilled") for (const value of sessions.value.items) {
         const isProjectless = Boolean(value.projectless || !value.project);
-        const projectName = !isProjectless ? (value.project?.name || value.project?.workspaceRoot.split("/").filter(Boolean).at(-1)) : undefined;
+        const projectName = !isProjectless ? (value.project?.name || (value.project?.workspaceRoot ? pathBasename(value.project.workspaceRoot) : undefined)) : undefined;
         const detail = projectName ? `历史对话 · ${projectName}` : "历史对话";
         rows.push({
           id: `history:${value.id}`, label: value.title || "未命名对话", detail,

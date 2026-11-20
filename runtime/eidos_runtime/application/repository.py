@@ -5,6 +5,7 @@ import logging
 import sqlite3
 from pathlib import Path
 import threading
+import time
 from typing import Protocol
 
 from eidos_runtime.models import EidosFrozenStrictModel
@@ -56,6 +57,40 @@ class RepositoryRunCapture(EidosFrozenStrictModel):
 
 
 logger = logging.getLogger("eidos.runtime.repository")
+
+# A workspace is reconciled only after changes stop for ``REBUILD_SETTLE_SECONDS``
+# and at most once per ``REBUILD_INTERVAL_SECONDS``. A Run never waits for a
+# build: it captures the last complete generation plus the dirty paths.
+REBUILD_SETTLE_SECONDS = 15.0
+REBUILD_INTERVAL_SECONDS = 120.0
+
+
+class _RebuildSchedule:
+    """Coalesces watcher invalidations into occasional reconciliation builds."""
+
+    def __init__(self, *, settle: float, interval: float, now: float) -> None:
+        self._settle = settle
+        self._interval = interval
+        self._last_change = now
+        self._last_build: float | None = None
+        self._attempted_epoch: int | None = None
+
+    def changed(self, now: float) -> None:
+        self._last_change = now
+
+    def built(self, now: float, epoch: int) -> None:
+        self._last_build = now
+        self._attempted_epoch = epoch
+
+    def due(self, now: float, active: "ActiveRepositoryState") -> bool:
+        if not active.reconciliation_required:
+            return False
+        # A failed or incomplete attempt is retried only after new changes.
+        if active.invalidation_epoch == self._attempted_epoch:
+            return False
+        if now - self._last_change < self._settle:
+            return False
+        return self._last_build is None or now - self._last_build >= self._interval
 
 
 class RepositoryWatcherShutdownError(RuntimeError):
@@ -431,10 +466,16 @@ class RepositoryWorkspaceRuntime:
             RepositoryWatchController
         ),
         watcher_shutdown_timeout: float = 5.0,
+        rebuild_settle_seconds: float = REBUILD_SETTLE_SECONDS,
+        rebuild_interval_seconds: float = REBUILD_INTERVAL_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.application_factory = application_factory
         self._watcher_factory = watcher_factory
         self._watcher_shutdown_timeout = watcher_shutdown_timeout
+        self._rebuild_settle_seconds = rebuild_settle_seconds
+        self._rebuild_interval_seconds = rebuild_interval_seconds
+        self._clock = clock
         self._active_by_root: dict[str, ActiveRepositoryState] = {}
         self._lock = threading.RLock()
 
@@ -517,13 +558,29 @@ class RepositoryWorkspaceRuntime:
     def _ensure_active_ready(
         self, active: ActiveRepositoryState, *, cancel: threading.Event | None = None,
     ) -> ActiveRepositoryState:
+        self._reconcile(active, cancel=cancel, restore_only=False)
+        return active
+
+    def _reconcile(
+        self,
+        active: ActiveRepositoryState,
+        *,
+        cancel: threading.Event | None,
+        restore_only: bool,
+    ) -> bool:
+        """Restore the persisted generation and, unless ``restore_only``, build.
+
+        Returns whether a build ran. With ``restore_only`` a restored complete
+        generation is published as is and reconciliation is left to the settle
+        schedule; a workspace without one still builds its first generation.
+        """
         if cancel is not None and cancel.is_set():
-            return active
+            return False
         if active.snapshot is not None and not active.reconciliation_required:
-            return active
+            return False
         start_epoch = active.begin_generation_build(cancel)
         if start_epoch is None:
-            return active
+            return False
         repository_id = active.workspace_identity.repository_id
         reason = "first_generation"
         try:
@@ -539,6 +596,8 @@ class RepositoryWorkspaceRuntime:
                             "generation": restored.inventory.generation,
                         },
                     )
+            if restore_only and active.snapshot is not None:
+                return False
             reason = "first_generation" if active.snapshot is None else "reconciliation"
             if reason == "reconciliation":
                 logger.info(
@@ -573,7 +632,7 @@ class RepositoryWorkspaceRuntime:
                         "reason": reason,
                     },
                 )
-                return active
+                return True
             clean = active.publish_generation(
                 candidate, start_invalidation_epoch=start_epoch
             )
@@ -592,7 +651,7 @@ class RepositoryWorkspaceRuntime:
                     "reason": reason,
                 },
             )
-            return active
+            return True
         except Exception as error:
             logger.warning(
                 "repository_generation_build_incomplete",
@@ -605,7 +664,7 @@ class RepositoryWorkspaceRuntime:
                 },
                 exc_info=logger.isEnabledFor(logging.DEBUG),
             )
-            return active
+            return True
         finally:
             active.finish_generation_build()
 
@@ -652,17 +711,40 @@ class RepositoryWorkspaceRuntime:
 
     def _run_watcher(self, active: ActiveRepositoryState) -> None:
         try:
-            initial_build = True
+            initial = True
+            schedule = _RebuildSchedule(
+                settle=self._rebuild_settle_seconds,
+                interval=self._rebuild_interval_seconds,
+                now=self._clock(),
+            )
+
+            def build(*, restore_only: bool) -> None:
+                epoch = active.invalidation_epoch
+                if self._reconcile(
+                    active, cancel=active.watcher_stop, restore_only=restore_only
+                ):
+                    schedule.built(self._clock(), epoch)
 
             def invalidate(changes: tuple[RepositoryChange, ...]) -> None:
-                nonlocal initial_build
+                # Watch events only mark the workspace dirty. The owned watcher
+                # thread reconciles once edits settle instead of rebuilding and
+                # rewriting the whole generation after every change batch.
+                nonlocal initial
+                now = self._clock()
                 if changes:
                     active.invalidate(changes)
-                if initial_build or changes or active.take_cache_rebuild_request():
-                    initial_build = False
-                    # Reuse the owned worker after watch registration. Failed
-                    # builds retry on changes or an explicit refresh, not idle.
-                    self._ensure_active_ready(active, cancel=active.watcher_stop)
+                    schedule.changed(now)
+                if active.take_cache_rebuild_request():
+                    initial = False
+                    build(restore_only=False)
+                elif initial:
+                    initial = False
+                    # Restore the last complete generation now; without one,
+                    # build the first generation after watch registration.
+                    build(restore_only=True)
+                    schedule.changed(self._clock())
+                elif schedule.due(now, active):
+                    build(restore_only=False)
 
             if not active.watcher_stop.is_set():
                 active.watcher.run(active.watcher_stop, invalidate)

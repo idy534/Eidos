@@ -74,3 +74,9 @@ p { margin-top: 0; }
 h1 { margin-bottom: 0.25rem; font-family: ui-serif, Georgia, serif; font-size: 1.6rem; font-weight: 550; letter-spacing: -0.025em; }
 
 h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
+
+:root[data-platform="windows"],
+:root[data-platform="windows"] body,
+:root[data-platform="windows"] #root {
+  background: var(--surface) !important;
+}

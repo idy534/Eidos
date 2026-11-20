@@ -10,6 +10,7 @@ import threading
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.skill_manifest import SkillAgentMetadata
 from eidos_runtime.extensions.skills import SkillCatalog, SkillCatalogSnapshot
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.infrastructure.runtime_dependencies import (
     RuntimeDependencyCatalog,
     RuntimeDependencyCatalogError,
@@ -877,7 +878,11 @@ def discover_runtime_dependency_catalog(
     if index_path.is_file():
         from eidos_runtime.infrastructure.managed_resources import ManagedResourceManager, load_resource_index
         from eidos_runtime.infrastructure.managed_resource_catalog import ManagedResourceCatalog
-        manager = ManagedResourceManager(load_resource_index(index_path), root=resource_root)
+        index = load_resource_index(index_path)
+        if index.target != base.snapshot().target:
+            raise RuntimeDependencyCatalogError("resource_index_invalid", "resource index and bundle target differ")
+        archive_root = path.parent / "resource-packs" if index.target == "win32-x64" else None
+        manager = ManagedResourceManager(index, root=resource_root, archive_root=archive_root)
         if store is not None:
             from eidos_runtime.application.managed_resources import installation_operation
             manager.installation_operation = installation_operation(store, manager)
@@ -898,7 +903,8 @@ def _discover_manifest_path() -> Path | None:
             "manifest_missing",
             "packaged Runtime is missing runtime.json",
         )
-    source_manifest = package_root.parent / "build" / "macos-runtime" / "runtime.json"
+    build = "windows-runtime" if local_files.WINDOWS else "macos-runtime"
+    source_manifest = package_root.parent / "build" / build / "runtime.json"
     if source_manifest.exists():
         return source_manifest
     return None

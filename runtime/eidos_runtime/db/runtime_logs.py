@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from datetime import date
 import hashlib
 import json
@@ -297,7 +299,7 @@ class RuntimeJsonlLogHandler(logging.Handler):
 
 
 def _append(path: Path, committed: int, value: bytes) -> None:
-    descriptor = os.open(
+    descriptor = local_files.open_file(
         path,
         os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
         0o600,
@@ -306,8 +308,7 @@ def _append(path: Path, committed: int, value: bytes) -> None:
         metadata = os.fstat(descriptor)
         if (
             not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
-            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or not local_files.has_private_access(descriptor, metadata, 0o600)
             or metadata.st_size < committed
         ):
             raise StorageError("log_segment_file_invalid")
@@ -368,8 +369,7 @@ def _prepare_private_directory(path: Path) -> None:
     metadata = path.stat()
     if (
         not stat.S_ISDIR(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or not local_files.has_private_access(path, metadata, 0o700)
     ):
         raise StorageError("log_directory_invalid")
 
@@ -380,18 +380,13 @@ def _verify_log_file(path: Path) -> None:
     metadata = path.stat()
     if (
         not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or not local_files.has_private_access(path, metadata, 0o600)
     ):
         raise StorageError("log_segment_file_invalid")
 
 
 def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    local_files.sync_directory(path)
 
 
 __all__ = ["RuntimeJsonlLogHandler", "RuntimeLogStore"]

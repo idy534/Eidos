@@ -17,9 +17,11 @@ from eidos_runtime.db.layout import (
     LEGACY_STATE_DATABASE_NAME,
     LOGS_DATABASE_NAME,
     LOGS_SCHEMA_SQL,
+    REPOSITORY_CACHE_VERSION,
     REPOSITORY_DATABASE_NAME,
     STATE_DATABASE_NAME,
     THREAD_HISTORY_DATABASE_NAME,
+    repository_fts_rowid_range,
 )
 from eidos_runtime.db.json_blobs import JsonBlobCorruptionError, JsonBlobReference, JsonBlobStore
 from eidos_runtime.db.runtime_logs import RuntimeLogStore
@@ -327,6 +329,18 @@ def test_repository_extraction_keeps_only_latest_restorable_generation(
             assert repository_connection.execute(
                 "SELECT COUNT(*) FROM repository_snapshots"
             ).fetchone()[0] == 1
+            # Extracted FTS rows are re-keyed into the retained snapshot's range.
+            creation_seq = repository_connection.execute(
+                "SELECT creation_seq FROM repository_snapshots"
+            ).fetchone()[0]
+            start, end = repository_fts_rowid_range(creation_seq)
+            low, high, count = repository_connection.execute(
+                "SELECT MIN(rowid), MAX(rowid), COUNT(*) FROM repository_fts"
+            ).fetchone()
+            assert count > 0 and start < low and high < end
+            assert repository_connection.execute(
+                "SELECT COUNT(*) FROM repository_fts WHERE repository_fts MATCH 'service'"
+            ).fetchone()[0] > 0
         finally:
             repository_connection.close()
         assert store.database.connection().execute(
@@ -372,6 +386,47 @@ def test_repository_database_prunes_superseded_complete_generation(
             ).fetchone()[0] == second.persisted_snapshot.snapshot_id
         finally:
             connection.close()
+    finally:
+        store.close()
+
+
+def test_pruning_removes_only_the_superseded_generations_fts_rows(
+    tmp_path: Path,
+) -> None:
+    data = tmp_path / "data"
+    root = _workspace(tmp_path)
+    store = SessionStore(data)
+    store.initialize()
+    try:
+        application = RepositoryApplication(
+            root, repository=store.repository_intelligence_repository()
+        )
+        application.build()
+        (root / "src" / "service.py").write_text(
+            "def service(value: str) -> str:\n    return value.upper()\n",
+            encoding="utf-8",
+        )
+        second = application.build()
+        assert second.persisted_snapshot is not None
+
+        connection = sqlite3.connect(data / REPOSITORY_DATABASE_NAME)
+        try:
+            creation_seq = connection.execute(
+                "SELECT creation_seq FROM repository_snapshots"
+            ).fetchone()[0]
+            start, end = repository_fts_rowid_range(creation_seq)
+            low, high, count, owners = connection.execute(
+                "SELECT MIN(rowid), MAX(rowid), COUNT(*), "
+                "COUNT(DISTINCT index_snapshot_id) FROM repository_fts"
+            ).fetchone()
+            owner = connection.execute(
+                "SELECT DISTINCT index_snapshot_id FROM repository_fts"
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        assert count > 0 and owners == 1
+        assert owner == second.persisted_snapshot.index_snapshot_id
+        assert start < low and high < end
     finally:
         store.close()
 
@@ -534,7 +589,7 @@ def test_old_v1_logs_schema_allows_append_after_store_initialization(
         ).fetchone()[0] == 2
         assert store._persistence_layout.repository.connection().execute(
             "PRAGMA user_version"
-        ).fetchone()[0] == 1
+        ).fetchone()[0] == REPOSITORY_CACHE_VERSION
         assert store._persistence_layout.thread_history.connection().execute(
             "PRAGMA user_version"
         ).fetchone()[0] == 1

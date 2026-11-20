@@ -633,6 +633,25 @@
   transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
+.automation-form select {
+  padding-right: 2rem;
+  background-color: var(--surface);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23707572' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  cursor: pointer;
+}
+
+.automation-form select:hover:not(:disabled) {
+  border-color: rgba(0, 0, 0, 0.18);
+  background-color: var(--surface-raised);
+}
+
+.automation-form select:disabled {
+  background-color: var(--surface-muted);
+  opacity: var(--control-disabled-opacity);
+}
+
 .automation-form input:focus,
 .automation-form select:focus,
 .automation-form textarea:focus {
@@ -847,4 +866,13 @@
   .automation-fields {
     grid-template-columns: 1fr;
   }
+}
+
+:root[data-platform="windows"] .automation-page-header {
+  -webkit-app-region: no-drag;
+}
+
+:root[data-platform="windows"] .workbench.workbench--settings .automation-page-header,
+:root[data-platform="windows"] .workbench.workbench--automations .automation-page-header {
+  padding-left: 1.5rem;
 }

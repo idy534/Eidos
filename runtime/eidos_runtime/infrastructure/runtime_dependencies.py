@@ -14,6 +14,7 @@ from packaging.version import InvalidVersion, Version
 from pydantic import ValidationError
 from semantic_version import NpmSpec, Version as NpmVersion
 
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.models.runtime_dependencies import (
     RuntimeDependencyBinding,
     RuntimeDependencyDiagnostic,
@@ -82,6 +83,9 @@ class RuntimeDependencyCatalog:
 
         try:
             path = Path(manifest_path)
+            if local_files.WINDOWS:
+                _verify_directory(path.parent, "bundle_root")
+                _verify_regular_file(path, "manifest")
             bundle_root = path.parent.resolve(strict=True)
             canonical_manifest_path = path.resolve(strict=True)
             _verify_directory(bundle_root, "bundle_root")
@@ -314,6 +318,9 @@ class RuntimeDependencyCatalog:
         python_paths: tuple[Path, ...],
         inventory: dict[Path, RuntimeDependencyInventoryFile],
     ) -> tuple[RuntimeDependencyPackageRoot, ...]:
+        if not self._manifest.python_packages:
+            return ()
+        versions_by_name = _index_python_distribution_metadata(python_paths, inventory)
         roots: list[RuntimeDependencyPackageRoot] = []
         for package in self._manifest.python_packages:
             relative_import = package.import_name.replace(".", "/")
@@ -352,12 +359,7 @@ class RuntimeDependencyCatalog:
                     ),
                     f"pythonPackage:{package.name}",
                     )
-            _verify_python_distribution_metadata(
-                self._bundle_root,
-                python_paths,
-                package,
-                inventory,
-            )
+            _verify_python_distribution_metadata(package, versions_by_name)
             roots.append(
                 RuntimeDependencyPackageRoot(
                     type="python-package",
@@ -481,43 +483,33 @@ class RuntimeDependencyCatalog:
         )
 
 
-def _verify_python_distribution_metadata(
-    bundle_root: Path,
+def _index_python_distribution_metadata(
     python_paths: tuple[Path, ...],
-    package: RuntimeDependencyPythonPackage,
     inventory: dict[Path, RuntimeDependencyInventoryFile],
-) -> None:
-    candidates: list[tuple[Path, RuntimeDependencyInventoryFile]] = []
+) -> dict[str, list[Version]]:
+    versions_by_name: dict[str, list[Version]] = {}
     for path, entry in inventory.items():
-        if path.name != "METADATA" or not path.parent.name.endswith(".dist-info"):
-            continue
-        for python_path in python_paths:
-            try:
-                relative = path.relative_to(python_path)
-            except ValueError:
-                continue
-            if (
-                len(relative.parts) == 2
-                and relative.parts[0].endswith(".dist-info")
-                and relative.parts[1] == "METADATA"
-            ):
-                _verify_expected_file(
-                    path, entry, f"pythonMetadata:{entry.path}",
-                )
-                candidates.append((path, entry))
-                break
+        if (
+            path.name == "METADATA"
+            and path.parent.name.endswith(".dist-info")
+            and path.parent.parent in python_paths
+        ):
+            name, version = _read_python_metadata(path, f"pythonMetadata:{entry.path}")
+            versions_by_name.setdefault(name, []).append(version)
+    return versions_by_name
 
-    if not candidates:
+
+def _verify_python_distribution_metadata(
+    package: RuntimeDependencyPythonPackage,
+    versions_by_name: dict[str, list[Version]],
+) -> None:
+    if not versions_by_name:
         raise RuntimeDependencyCatalogError(
             "python_metadata_missing",
             f"Python package {package.name!r} has no dist-info METADATA",
         )
 
-    matching: list[tuple[Path, str, str]] = []
-    for path, _entry in candidates:
-        metadata_name, metadata_version = _read_python_metadata(path)
-        if canonicalize_name(metadata_name) == canonicalize_name(package.name):
-            matching.append((path, metadata_name, metadata_version))
+    matching = versions_by_name.get(canonicalize_name(package.name), [])
     if not matching:
         raise RuntimeDependencyCatalogError(
             "python_metadata_mismatch",
@@ -529,27 +521,18 @@ def _verify_python_distribution_metadata(
             f"Python package {package.name!r} has multiple matching METADATA files",
         )
 
-    _metadata_path, _metadata_name, metadata_version = matching[0]
-    try:
-        expected_version = Version(package.version)
-        actual_version = Version(metadata_version)
-    except InvalidVersion as error:
-        raise RuntimeDependencyCatalogError(
-            "python_metadata_invalid",
-            f"Python package {package.name!r} has an invalid version: {error}",
-        ) from None
-    if actual_version != expected_version:
+    if matching[0] != Version(package.version):
         raise RuntimeDependencyCatalogError(
             "python_metadata_mismatch",
             f"Python package {package.name!r} METADATA version disagrees with manifest",
         )
 
 
-def _read_python_metadata(path: Path) -> tuple[str, str]:
+def _read_python_metadata(path: Path, label: str) -> tuple[str, Version]:
     content = _read_bounded_file(
         path,
         MAX_PACKAGE_METADATA_BYTES,
-        f"pythonMetadata:{path}",
+        label,
     )
     try:
         message = BytesParser(policy=policy.default).parsebytes(
@@ -579,14 +562,12 @@ def _read_python_metadata(path: Path) -> tuple[str, str]:
             "Python METADATA must contain one non-empty Version header",
         )
     try:
-        canonicalize_name(names[0])
-        Version(versions[0])
+        return canonicalize_name(names[0]), Version(versions[0])
     except (InvalidVersion, ValueError) as error:
         raise RuntimeDependencyCatalogError(
             "python_metadata_invalid",
             f"Python METADATA has invalid package identity: {error}",
         ) from None
-    return names[0], versions[0]
 
 
 def _verify_node_package_json(
@@ -907,12 +888,16 @@ def _resolve_declared_path(root: Path, relative: str, label: str) -> Path:
 
 
 def _resolve_path_candidate(root: Path, candidate: Path, label: str) -> Path:
+    if not _is_contained(candidate, root):
+        raise RuntimeDependencyCatalogError("path_outside_bundle", f"{label} path escapes bundle root")
     try:
         current = candidate
         while current != root:
             metadata = current.lstat()
-            if stat.S_ISLNK(metadata.st_mode):
-                _verify_owner(metadata, f"{label} symlink")
+            if local_files.is_link(metadata):
+                if local_files.WINDOWS:
+                    raise RuntimeDependencyCatalogError("path_invalid", f"{label} contains a reparse point")
+                _verify_owner(current, metadata, f"{label} symlink")
                 target = current.resolve(strict=True)
                 if not _is_contained(target, root):
                     raise RuntimeDependencyCatalogError(
@@ -937,8 +922,9 @@ def _resolve_path_candidate(root: Path, candidate: Path, label: str) -> Path:
     return resolved
 
 
-def _verify_owner(metadata: os.stat_result, label: str) -> None:
-    if metadata.st_uid not in {0, os.getuid()}:
+def _verify_owner(path: Path, metadata: os.stat_result, label: str) -> None:
+    trusted = local_files.trusted_asset(path, metadata) if local_files.WINDOWS else metadata.st_uid in {0, os.getuid()}
+    if not trusted:
         raise RuntimeDependencyCatalogError(
             "owner_invalid", f"{label} is not owned by root or the current user"
         )
@@ -955,7 +941,7 @@ def _verify_directory(path: Path, label: str) -> None:
         raise RuntimeDependencyCatalogError(
             "directory_invalid", f"{label} is not a directory"
         )
-    _verify_owner(metadata, label)
+    _verify_owner(path, metadata, label)
 
 
 def _verify_regular_file(path: Path, label: str) -> os.stat_result:
@@ -969,7 +955,7 @@ def _verify_regular_file(path: Path, label: str) -> os.stat_result:
         raise RuntimeDependencyCatalogError(
             "file_type_invalid", f"{label} is not a regular file"
         )
-    _verify_owner(metadata, label)
+    _verify_owner(path, metadata, label)
     if metadata.st_nlink > 1:
         raise RuntimeDependencyCatalogError(
             "file_type_invalid", f"{label} is a hard link"
@@ -988,7 +974,7 @@ def _read_bounded_file(path: Path, limit: int, label: str) -> bytes:
             "file_too_large", f"{label} exceeds the bounded manifest size"
         )
     try:
-        with path.open("rb") as stream:
+        with os.fdopen(local_files.open_file(path), "rb") as stream:
             content = stream.read(limit + 1)
     except OSError as error:
         raise RuntimeDependencyCatalogError(
@@ -1015,7 +1001,8 @@ def _verify_expected_file(
             "file_not_in_inventory", f"{label} is not in files inventory"
         )
     metadata = _verify_regular_file(path, label)
-    if executable and not metadata.st_mode & 0o111:
+    can_execute = path.suffix.lower() == ".exe" if local_files.WINDOWS else bool(metadata.st_mode & 0o111)
+    if executable and not can_execute:
         raise RuntimeDependencyCatalogError(
             "executable_invalid", f"{label} is not executable"
         )

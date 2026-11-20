@@ -4,6 +4,7 @@ from collections.abc import Mapping
 import os
 import json
 from pathlib import Path
+import sys
 
 from pydantic import Field, ValidationInfo, field_validator
 
@@ -181,6 +182,9 @@ def apply_dependency_environment(
     effective["PYTHONNOUSERSITE"] = "1"
     effective["PYTHONDONTWRITEBYTECODE"] = "1"
     effective["PYTHONSAFEPATH"] = "1"
+    if sys.platform == "win32":
+        effective["PYTHONUTF8"] = "1"
+        effective["PYTHONIOENCODING"] = "utf-8"
 
     if dependency_environment.node_executable is not None:
         effective["RUNTIME_NODE"] = dependency_environment.node_executable

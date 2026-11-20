@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import host_processes, local_files
+
+import base64
 import codecs
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -429,7 +432,7 @@ def _prepare_verified_shell_launch(
         environment=environment,
         attempt=attempt,
         active_skill_roots=active_skill_roots,
-    )
+    ) if sandboxed else None
     for root in (workspace, *workspace.additional_roots):
         _verify_directory_path(root)
     _verify_directory_path(cwd)
@@ -472,7 +475,7 @@ def _create_seatbelt_profile(
 
 def prepare_shell_launch(
     *,
-    profile: SeatbeltProfile,
+    profile: SeatbeltProfile | None,
     command: str,
     cwd: WorkspaceIdentity,
     attempt: SandboxAttempt | None,
@@ -495,18 +498,32 @@ def prepare_shell_launch(
     if shell.kind == "zsh":
         # Run after .zshenv and bypass its aliases without disabling startup files.
         execution_command = "\\builtin \\unsetopt NOMATCH\n" + command
-    shell_argv.extend(("-c", execution_command))
+    if shell.kind == "powershell":
+        script = (
+            "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)\n"
+            "$OutputEncoding = [Console]::OutputEncoding\n" + execution_command
+        )
+        encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+        shell_argv.extend(("-NoLogo", "-NoProfile", "-EncodedCommand", encoded))
+    else:
+        shell_argv.extend(("-c", execution_command))
+    if sandboxed and profile is None:
+        raise SeatbeltUnavailableError("sandbox profile is unavailable")
     argv = (
         profile.command(shell_argv)
-        if sandboxed
+        if sandboxed and profile is not None
         else shell_argv
     )
+    filtered_environment = environment_policy.apply(environment) if environment_policy is not None else dict(environment)
+    if shell.kind == "powershell":
+        # The Windows loader and side-by-side assemblies need the system root
+        # even when the Run selects minimal environment inheritance.
+        filtered_environment["SYSTEMROOT"] = str(shell.executable.parents[3])
     return ShellLaunchSpec(
         argv=tuple(argv),
         cwd=cwd.path,
         environment=apply_dependency_environment(
-            (environment_policy.apply(environment)
-             if environment_policy is not None else environment),
+            filtered_environment,
             dependency_environment,
         ),
         sandboxed=sandboxed,
@@ -535,21 +552,21 @@ def run_shell_process(
         if input_file is not None:
             input_file.write(stdin_bytes)
             input_file.seek(0)
-        process = subprocess.Popen(
+        process = host_processes.start(
             launch.argv,
             cwd=launch.cwd,
             env=launch.environment,
             stdin=input_file if input_file is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            start_new_session=True,
+            hold=True,
         )
     except OSError as error:
         raise ShellProcessStartError from error
     finally:
         if input_file is not None:
             input_file.close()
-    selector = selectors.DefaultSelector()
+    selector = host_processes.pipe_selector()
     assert process.stdout is not None and process.stderr is not None
     selector.register(process.stdout, selectors.EVENT_READ, "stdout")
     selector.register(process.stderr, selectors.EVENT_READ, "stderr")
@@ -571,7 +588,17 @@ def run_shell_process(
     observed_bytes = 0
     termination = "exit"
     termination_started_at: float | None = None
-    process_group = process.pid
+    def terminate() -> None:
+        if host_processes.WINDOWS:
+            host_processes.terminate_tree(process)
+        else:
+            _terminate_group(process.pid)
+
+    def has_members() -> bool:
+        if host_processes.WINDOWS:
+            return host_processes.has_members(process)
+        return _process_group_exists(process.pid)
+
     resource = None
     try:
         if on_started is not None:
@@ -580,21 +607,23 @@ def run_shell_process(
             resource = resource_registry.register(
                 RuntimeResourceKind.SHELL_PROCESS,
                 owner_id=owner_id,
-                cancel=lambda: _terminate_group(process_group),
-                is_quiescent=lambda: not _process_group_exists(process_group),
+                cancel=lambda: terminate(),
+                is_quiescent=lambda: not has_members(),
             )
             resource.start()
+        if not cancel.is_set():
+            host_processes.release(process)
         while selector.get_map() or process.poll() is None:
             if cancel.is_set():
                 if termination == "exit":
                     termination = "canceled"
                     termination_started_at = time.monotonic()
-                    _terminate_group(process_group)
+                    terminate()
             elif time.monotonic() - started >= timeout_seconds:
                 if termination == "exit":
                     termination = "timeout"
                     termination_started_at = time.monotonic()
-                    _terminate_group(process_group)
+                    terminate()
             ready = selector.select(timeout=0.1) if selector.get_map() else ()
             if not selector.get_map() and process.poll() is None:
                 time.sleep(0.05)
@@ -614,10 +643,10 @@ def run_shell_process(
                     preview_bytes += len(preview)
                     emit_decoded(key.data, preview)
             if process.poll() is not None and termination == "exit":
-                if _process_group_exists(process_group):
+                if has_members():
                     termination = "background_process"
                     termination_started_at = time.monotonic()
-                    _terminate_group(process_group)
+                    terminate()
                 elif not selector.get_map():
                     break
             if (
@@ -631,18 +660,19 @@ def run_shell_process(
         try:
             returncode = process.wait(timeout=1)
         except subprocess.TimeoutExpired:
-            _terminate_group(process_group)
+            terminate()
             returncode = process.wait(timeout=1)
     finally:
         selector.close()
-        if process.poll() is None or _process_group_exists(process_group):
-            _terminate_group(process_group)
+        if process.poll() is None or has_members():
+            terminate()
             try:
                 process.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 pass
         process.stdout.close()
         process.stderr.close()
+        host_processes.close_job(process)
         if resource is not None:
             resource.close()
     for stream in outputs:
@@ -751,11 +781,8 @@ def _attach_skill_invocation(
 
 
 def _open_verified_directory(identity: WorkspaceIdentity) -> int:
-    flags = os.O_RDONLY | os.O_DIRECTORY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
     try:
-        descriptor = os.open(identity.path, flags)
+        descriptor = local_files.open_directory(identity.path)
     except OSError:
         raise ShellWorkspaceChangedError("workspace_identity_changed") from None
     metadata = os.fstat(descriptor)

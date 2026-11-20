@@ -155,6 +155,63 @@ class PluginProtocolTests(unittest.TestCase):
             self.assertNotIn(str(source), json.dumps(non_manual_messages))
             server.close()
 
+    def test_activate_enables_reviewed_version_and_grants_local_mcp(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-plugin-rpc-") as directory:
+            root = Path(directory)
+            data = root / "data"
+            source = root / "plugin"
+            data.mkdir(mode=0o700)
+            source.mkdir()
+            (source / "server.py").write_text("# fixture\n", encoding="utf-8")
+            (source / "plugin.json").write_text(json.dumps({
+                "schemaVersion": 1, "id": "demo", "name": "Demo", "version": "1.0.0",
+                "description": "Fixture", "skills": [],
+                "mcpServers": [{
+                    "id": "fixture", "executable": "python3", "argv": ["server.py"],
+                    "permissionProfile": "workspace_read", "enabled": True,
+                }],
+            }), encoding="utf-8")
+            output = io.StringIO()
+            server = RuntimeServer(output, data, ScriptedModel([]))
+            server.handle({
+                "jsonrpc": "2.0", "id": "client-init", "method": "initialize",
+                "params": {"client": {"name": "test", "version": "1"}, "protocolVersion": 1},
+            })
+            server.handle({
+                "jsonrpc": "2.0", "id": "client-import", "method": "plugin/import",
+                "params": {"sourcePath": str(source),
+                           "operationId": "00000000-0000-4000-8000-000000000011"},
+            })
+            self.assertTrue(server.supervisor.wait_managed_tasks(2))
+
+            def result(request_id: str) -> dict[str, object]:
+                messages = [json.loads(line) for line in output.getvalue().splitlines()]
+                return next(message for message in messages if message.get("id") == request_id)
+
+            content_hash = result("client-import")["result"]["contentHash"]
+            server.handle({
+                "jsonrpc": "2.0", "id": "client-invalid", "method": "plugin/activate",
+                "params": {"pluginId": "demo", "contentHash": "not-a-hash"},
+            })
+            for request_id in ("client-activate", "client-activate-replay"):
+                server.handle({
+                    "jsonrpc": "2.0", "id": request_id, "method": "plugin/activate",
+                    "params": {"pluginId": "demo", "contentHash": content_hash,
+                               "operationId": "00000000-0000-4000-8000-000000000012"},
+                })
+            server.handle({
+                "jsonrpc": "2.0", "id": "client-mcp-list", "method": "mcp/list", "params": {},
+            })
+
+            self.assertEqual(result("client-invalid")["error"]["code"], -32602)
+            activated = result("client-activate")["result"]
+            self.assertTrue(activated["enabled"])
+            self.assertEqual(result("client-activate-replay")["result"], activated)
+            fixture = result("client-mcp-list")["result"]["servers"][0]
+            self.assertTrue(fixture["consented"])
+            self.assertTrue(fixture["available"])
+            server.close()
+
     def test_plugin_methods_reject_unknown_fields(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-plugin-rpc-") as directory:
             data = Path(directory) / "data"

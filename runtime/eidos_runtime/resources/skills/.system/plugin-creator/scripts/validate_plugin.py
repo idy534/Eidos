@@ -23,15 +23,30 @@ def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
+def _is_link(metadata: os.stat_result) -> bool:
+    return stat.S_ISLNK(metadata.st_mode) or bool(
+        getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+
+
+def _owned(metadata: os.stat_result) -> bool:
+    # Windows has no POSIX owner id; Eidos checks the NTFS owner during import.
+    return os.name == "nt" or metadata.st_uid == os.getuid()
+
+
 def validate(root: Path) -> str | None:
-    if root.is_symlink() or not root.is_dir() or root.stat().st_uid != os.getuid():
+    try:
+        root_metadata = root.lstat()
+    except OSError:
+        return "plugin root must be a user-owned real directory"
+    if _is_link(root_metadata) or not stat.S_ISDIR(root_metadata.st_mode) or not _owned(root_metadata):
         return "plugin root must be a user-owned real directory"
     count, total = 0, 0
     for directory, names, filenames in os.walk(root, followlinks=False):
         for name in [*names, *filenames]:
             path = Path(directory) / name
             entry = path.lstat()
-            if stat.S_ISLNK(entry.st_mode) or entry.st_uid != os.getuid():
+            if _is_link(entry) or not _owned(entry):
                 return "plugin entries must be user-owned without symbolic links"
             if name in names:
                 if not stat.S_ISDIR(entry.st_mode):

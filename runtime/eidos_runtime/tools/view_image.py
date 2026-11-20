@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -237,7 +239,7 @@ def _canonical_root(root: Path) -> Path:
         raise ValueError("image_root_unavailable") from error
     if canonical != candidate or not stat.S_ISDIR(metadata.st_mode):
         raise ValueError("image_root_must_be_canonical_directory")
-    if metadata.st_uid != os.getuid():
+    if not local_files.owned_by_user(candidate, metadata):
         raise ValueError("image_root_owner_mismatch")
     return canonical
 
@@ -291,10 +293,7 @@ def _read_regular_file(
 ) -> tuple[bytes, Path]:
     if not relative_parts:
         raise ViewImageError("unsafe_path")
-    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
-    cloexec = getattr(os, "O_CLOEXEC", 0)
-    root_fd = os.open(root, directory_flags | nofollow | cloexec)
+    root_fd = local_files.open_directory(root)
     current_fd = root_fd
     try:
         _validate_directory_fd(current_fd)
@@ -303,11 +302,7 @@ def _read_regular_file(
             if (metadata.st_dev, metadata.st_ino, metadata.st_uid) != (identity.device, identity.inode, identity.owner):
                 raise ViewImageError("unsafe_path")
         for component in relative_parts[:-1]:
-            next_fd = os.open(
-                component,
-                directory_flags | nofollow | cloexec,
-                dir_fd=current_fd,
-            )
+            next_fd = local_files.open_directory(component, dir_fd=current_fd)
             try:
                 _validate_directory_fd(next_fd)
             except Exception:
@@ -316,11 +311,7 @@ def _read_regular_file(
             os.close(current_fd)
             current_fd = next_fd
         try:
-            file_fd = os.open(
-                relative_parts[-1],
-                os.O_RDONLY | nofollow | cloexec,
-                dir_fd=current_fd,
-            )
+            file_fd = local_files.open_file(relative_parts[-1], dir_fd=current_fd)
         except OSError as error:
             if error.errno in {errno.ELOOP, errno.ENOTDIR, errno.EACCES, errno.EPERM}:
                 raise ViewImageError("unsafe_path") from error
@@ -329,7 +320,7 @@ def _read_regular_file(
             metadata = os.fstat(file_fd)
             if (
                 not stat.S_ISREG(metadata.st_mode)
-                or metadata.st_uid != os.getuid()
+                or not local_files.owned_by_user(file_fd, metadata)
                 or metadata.st_nlink != 1
             ):
                 raise ViewImageError("unsafe_path")
@@ -362,7 +353,7 @@ def _validate_directory_fd(directory_fd: int) -> None:
     metadata = os.fstat(directory_fd)
     if (
         not stat.S_ISDIR(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
+        or not local_files.owned_by_user(directory_fd, metadata)
     ):
         raise ViewImageError("unsafe_path")
 

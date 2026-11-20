@@ -4,7 +4,7 @@
 
 ## 环境要求
 
-- 开发者需要 macOS、Node.js 22.12.0 或更高版本、pnpm 11、Python 3.11 或 3.12，以及 uv。
+- 开发者需要 Node.js 22.12.0 或更高版本、pnpm 11 和 uv。macOS 开发使用 Python 3.11 或 3.12。Windows 预览使用 Windows 11 x64、本地 NTFS 和 Python 3.12.4 或更高的 3.12 修订版。
 - 原生 Sandbox 验证需要 `/usr/bin/sandbox-exec`。
 - Runtime Bundle 与 DMG 构建需要 Apple Silicon macOS。
 
@@ -18,7 +18,7 @@ uv sync --locked
 pnpm start
 ```
 
-`uv sync --locked` 创建仓库 `.venv`。`pnpm start` 先构建 Preload、Main 和 Renderer，再启动 Electron。源码 Runtime 默认使用 `.venv/bin/python`，开发者不使用全局 Python 安装项目依赖。
+`uv sync --locked` 创建仓库 `.venv`。`pnpm start` 先构建 Preload、Main 和 Renderer，再启动 Electron。源码 Runtime 在 macOS 使用 `.venv/bin/python`，在 Windows 使用 `.venv\Scripts\python.exe`。开发者在 Windows 可用 `uv sync --locked --python 3.12` 选择解释器。
 
 开发者调试文档 Skill 脚本时，可以运行 `uv sync --locked --group document-skills` 安装对应的开发依赖。正式 App 保留核心解释器，文档扩展依赖由 Eidos 准备到 `~/Eidos/Resource/`。开发者在 Eidos 内验收这四个 Skill 前，需要先运行 `pnpm build:runtime:mac`，以生成依赖清单与资源索引；开发依赖 group 本身不提供发布绑定。详细构建与验证见[内置文档 Skill](docs/current/features/document-skills.md)。
 
@@ -64,8 +64,11 @@ pnpm test:electron-smoke
 | `pnpm build:runtime:mac` | 构建独立 macOS arm64 Runtime Bundle。 |
 | `pnpm package:mac` | 生成本地未签名 DMG；流程包含完整回归与原生检查。 |
 | `pnpm package:mac:release` | 生成签名发布包；流程需要 Apple 签名与公证凭据。 |
+| `pnpm build:runtime:win` | 在 Windows x64 构建独立 Runtime 以及随包提供的浏览器和文档资源。 |
+| `pnpm package:win` | 在 Windows x64 构建 NSIS 安装包。 |
 
 开发者在 [构建打包与原生验证](docs/development/README.md#构建打包与原生验证) 中查看 Bundle 校验、签名顺序、CI 复用条件与产物位置。
+Windows 的源码启动、打包和实机验收见 [Windows x64 预览](docs/development/README.md#windows-x64-预览)。
 
 ## 详细参考
 

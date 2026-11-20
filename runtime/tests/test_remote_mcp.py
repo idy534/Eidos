@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import shutil
 import sqlite3
+import sys
 from threading import Event, Thread
 import time
 import uuid
@@ -21,10 +22,13 @@ from eidos_runtime.db.schema import V37_SCHEMA_SQL
 from eidos_runtime.db.mcp_connections_migration import migrate_mcp_connections
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.db.database import now_ms
+from eidos_runtime.extensions import plugins as plugin_catalog
+from eidos_runtime.extensions.browser_plugin import is_bundled_browser_server
 from eidos_runtime.extensions.mcp import McpManager
 from eidos_runtime.extensions.plugin_package import read_package
-from eidos_runtime.extensions.plugins import PluginCatalog
+from eidos_runtime.extensions.plugins import PluginCatalog, PluginImportError
 from eidos_runtime.extensions.skills import SkillCatalog
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.infrastructure.mcp_auth import Credentials
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
 from eidos_runtime.models.mcp_connections import BuiltinPluginRequest, McpConnectionRequest
@@ -239,13 +243,15 @@ def test_remote_cancellation_records_an_unknown_result_without_replaying_the_too
         manager.close()
 
 
-def test_builtin_github_is_available_and_installation_is_idempotent(tmp_path, monkeypatch):
+def test_bundled_plugins_are_available_and_installation_is_idempotent(tmp_path, monkeypatch):
     monkeypatch.delenv("EIDOS_GITHUB_CLIENT_ID", raising=False)
     store = SessionStore(tmp_path / "data")
     store.initialize()
     try:
         plugins = PluginCatalog(store)
-        assert not builtin_plugins(plugins, BuiltinPluginRequest()).plugins[0].installed
+        entries = builtin_plugins(plugins, BuiltinPluginRequest()).plugins
+        assert [entry.id for entry in entries] == ["eidos-github", "eidos-browser"]
+        assert not any(entry.installed for entry in entries)
         for _ in range(2):
             assert builtin_plugins(plugins, BuiltinPluginRequest(action="install")).plugins[0].installed
         assert len(plugins.list_plugins()) == 1
@@ -254,21 +260,52 @@ def test_builtin_github_is_available_and_installation_is_idempotent(tmp_path, mo
         assert not plugins.connections.read("eidos-github", "github").browser_available
         with pytest.raises(ApplicationError, match="GITHUB_CLIENT_ID_REQUIRED"):
             plugins.connections.execute(McpConnectionRequest(plugin_id="eidos-github", server_id="github", action="connect", operation_id="attempt"), None)
+
+        browser = builtin_plugins(plugins, BuiltinPluginRequest(action="install", plugin_id="eidos-browser")).plugins[1]
+        assert browser.installed and not browser.update_available
+        browser_record = plugins.store.plugin_record("eidos-browser")
+        assert browser_record is not None and browser_record["enabled"]
+        assert is_bundled_browser_server("eidos-browser", browser_record["contentHash"], "browser")
+        # Installing a bundled plugin authorizes its local MCP; remote GitHub still needs an account.
+        states = {server["serverId"]: server for server in plugins.list_mcp_servers()}
+        assert states["browser"]["consented"]
+        assert not states["github"]["consented"]
     finally:
         store.close()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows bundled source ownership policy")
+@pytest.mark.parametrize("name", ["github", "browser"])
+def test_windows_bundled_source_requires_shipped_content_without_user_ownership(tmp_path, monkeypatch, name):
+    source = tmp_path / name
+    shutil.copytree(plugin_catalog.BUNDLED_PLUGIN_ROOT / name, source)
+    monkeypatch.setattr(plugin_catalog, "BUNDLED_PLUGIN_ROOT", tmp_path)
+    monkeypatch.setattr(local_files, "owned_by_user", lambda *_args: False)
+
+    manifest = source / "plugin.json"
+    original = manifest.read_bytes().replace(b"\r\n", b"\n")
+    crlf = original.replace(b"\n", b"\r\n")
+    manifest.write_bytes(crlf)
+    assert plugin_catalog.read_bundled_plugin(name)["plugin.json"] == crlf
+    with pytest.raises(PluginImportError, match="plugin_source_invalid"):
+        plugin_catalog._read_source(source)
+
+    manifest.write_bytes(original + b" ")
+    with pytest.raises(PluginImportError, match="plugin_source_invalid"):
+        plugin_catalog.read_bundled_plugin(name)
 
 
 def test_builtin_github_updates_existing_release_and_preserves_old_package(tmp_path):
     bundled = Path(__file__).parents[1] / "eidos_runtime/resources/plugins/github"
     previous = tmp_path / "previous"
     shutil.copytree(bundled, previous)
-    manifest = json.loads((previous / "plugin.json").read_text())
+    manifest = json.loads((previous / "plugin.json").read_text(encoding="utf-8"))
     manifest["version"] = "1.0.0"
     interface = manifest["extensions"]["com.openai"]["interface"]
     interface.pop("composerIcon", None)
     interface.pop("logo", None)
     (previous / "icon.png").unlink(missing_ok=True)
-    (previous / "plugin.json").write_text(json.dumps(manifest))
+    (previous / "plugin.json").write_text(json.dumps(manifest), encoding="utf-8")
     store = SessionStore(tmp_path / "data")
     store.initialize()
     try:
@@ -294,7 +331,8 @@ def test_builtin_same_version_conflict_keeps_specific_error_and_installed_packag
     previous = tmp_path / "previous"
     shutil.copytree(bundled, previous)
     (previous / "skills/github/SKILL.md").write_text(
-        (previous / "skills/github/SKILL.md").read_text() + "\nPrevious contents.\n"
+        (previous / "skills/github/SKILL.md").read_text(encoding="utf-8") + "\nPrevious contents.\n",
+        encoding="utf-8",
     )
     store = SessionStore(tmp_path / "data")
     store.initialize()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import hashlib
+from pathlib import Path
 
 from pydantic import Field, field_validator, model_validator
 
@@ -28,7 +29,7 @@ class Project(EidosFrozenStrictModel):
     def validate_absolute_path(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        if "\x00" in value or not value.startswith("/"):
+        if "\x00" in value or not Path(value).is_absolute():
             raise ValueError("project path must be absolute")
         return value
 
@@ -72,8 +73,7 @@ def direct_project_id(workspace_root: str) -> str:
 def default_project_name(workspace_root: str) -> str:
     """Return the stable display fallback for an unnamed legacy Project."""
 
-    name = workspace_root.rstrip("/").rsplit("/", 1)[-1]
-    return name or workspace_root
+    return Path(workspace_root).name or workspace_root
 
 
 __all__ = [

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from collections import Counter
 import os
 from pathlib import Path
@@ -95,7 +97,7 @@ class AgentCatalog:
         definitions: list[AgentDefinition] = []
         rows: list[AgentCatalogItem] = []
         try:
-            directory = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            directory = local_files.open_directory(self.root)
         except FileNotFoundError:
             return AgentCatalogSnapshot(), AgentCatalogResponse()
         except OSError:
@@ -103,12 +105,12 @@ class AgentCatalog:
                 error="智能体定义目录不可读取。"
             )
         try:
-            if os.fstat(directory).st_uid != os.getuid():
+            if not local_files.owned_by_user(directory, os.fstat(directory)):
                 return AgentCatalogSnapshot(), AgentCatalogResponse(
                     error="智能体定义目录的所有者不匹配。"
                 )
             names: list[str] = []
-            with os.scandir(directory) as entries:
+            with local_files.scan_directory(directory) as entries:
                 for entry in entries:
                     if entry.name.endswith(".toml"):
                         names.append(entry.name)
@@ -186,14 +188,14 @@ class AgentCatalog:
 
     def backup_files(self) -> list[tuple[str, bytes]]:
         try:
-            directory = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            directory = local_files.open_directory(self.root)
         except FileNotFoundError:
             return []
         try:
-            if os.fstat(directory).st_uid != os.getuid():
+            if not local_files.owned_by_user(directory, os.fstat(directory)):
                 raise ValueError("agent_directory_owner")
             files: list[tuple[str, bytes]] = []
-            with os.scandir(directory) as entries:
+            with local_files.scan_directory(directory) as entries:
                 for entry in entries:
                     if entry.name.endswith(".toml"):
                         if len(files) >= MAX_AGENT_FILES:

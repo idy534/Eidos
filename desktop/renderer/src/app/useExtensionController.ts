@@ -26,6 +26,7 @@ export interface ExtensionControllerActions {
   installBuiltinPlugin: (pluginId: string) => Promise<void>;
   setPluginEnabled: (pluginId: string, enabled: boolean) => Promise<void>;
   setPluginHookTrust: (pluginId: string, contentHash: string, trusted: boolean) => Promise<void>;
+  activatePlugin: (pluginId: string, contentHash: string) => Promise<void>;
   removePlugin: (pluginId: string) => Promise<void>;
   setMcpEnabled: (pluginId: string, serverId: string, enabled: boolean) => Promise<void>;
   createMcpServer: (input: McpCreateInput) => Promise<void>;
@@ -131,6 +132,21 @@ export function useExtensionController(): [ExtensionControllerState, ExtensionCo
     setError(undefined);
     try {
       await window.eidosRuntime.setPluginHookTrust(pluginId, contentHash, trusted);
+      await fetchAndApplySnapshot();
+    } catch (cause) {
+      const msg = userFacingError(cause);
+      setError(msg);
+      throw new Error(msg);
+    } finally {
+      setPendingAction(undefined);
+    }
+  }, []);
+
+  const activatePlugin = useCallback(async (pluginId: string, contentHash: string): Promise<void> => {
+    setPendingAction({ type: "toggle_plugin", pluginId });
+    setError(undefined);
+    try {
+      await window.eidosRuntime.activatePlugin(pluginId, contentHash);
       await fetchAndApplySnapshot();
     } catch (cause) {
       const msg = userFacingError(cause);
@@ -276,6 +292,7 @@ export function useExtensionController(): [ExtensionControllerState, ExtensionCo
     installBuiltinPlugin,
     setPluginEnabled,
     setPluginHookTrust,
+    activatePlugin,
     removePlugin,
     setMcpEnabled,
     createMcpServer,

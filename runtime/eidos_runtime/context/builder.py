@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 
 from eidos_runtime.persistence.collaboration import CollaborationRepository
 from eidos_runtime.persistence.hooks import HookRepository
@@ -227,7 +229,8 @@ class ContextBuilder:
                         "pathResolution": "Relative tool paths use the primary workspace; use absolute paths for other attached folders."}
                        if workspace.additional_roots else {}),
                     "platform": platform.system(),
-                    "hostShell": os.environ.get("SHELL", ""),
+                    "hostShell": "Windows PowerShell" if local_files.WINDOWS else os.environ.get("SHELL", ""),
+                    **({"shellSandboxAvailable": False} if local_files.WINDOWS else {}),
                     "currentDate": local_time.date().isoformat(),
                     "timezone": timezone_name,
                 },

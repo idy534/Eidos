@@ -355,3 +355,28 @@
 .draft-git-switch-dialog .modal-body {
   overflow-wrap: anywhere;
 }
+
+:root[data-platform="windows"] .sidebar-top-bar .window-traffic-spacer {
+  width: 0.5rem;
+  -webkit-app-region: no-drag;
+}
+
+:root[data-platform="windows"] .collapsed-navigation-bar .window-traffic-spacer {
+  width: 0.875rem;
+  -webkit-app-region: no-drag;
+}
+
+:root[data-platform="windows"] .workspace-header,
+:root[data-platform="windows"] .workspace-header--empty,
+:root[data-platform="windows"] .runtime-gate {
+  -webkit-app-region: no-drag;
+}
+
+:root[data-platform="windows"] .workbench--sidebar-collapsed .workspace-header::before {
+  width: 8.5rem;
+}
+
+:root[data-platform="windows"] .workbench--sidebar-collapsed .session-header,
+:root[data-platform="windows"] .workbench--sidebar-collapsed .settings-page-header {
+  padding-left: 8.5rem;
+}

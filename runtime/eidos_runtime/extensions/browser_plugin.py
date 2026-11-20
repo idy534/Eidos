@@ -4,7 +4,6 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import lru_cache
-from pathlib import Path
 import threading
 from typing import Literal
 
@@ -13,7 +12,6 @@ from eidos_runtime.infrastructure.browser_runtime import BrowserRuntime
 BROWSER_PLUGIN_ID = "eidos-browser"
 BROWSER_SERVER_ID = "browser"
 BROWSER_PERMISSION_PROFILE = "browser"
-BUNDLED_BROWSER_PLUGIN_ROOT = Path(__file__).resolve().parents[1] / "resources" / "plugins" / "browser"
 # Launch variables only the bundled browser server may use. They resolve to
 # verified managed resources and the Runtime-owned Chrome endpoint.
 BROWSER_LAUNCH_VARIABLES = frozenset({
@@ -24,10 +22,10 @@ BROWSER_LAUNCH_VARIABLES = frozenset({
 
 @lru_cache(maxsize=1)
 def bundled_browser_plugin_hash() -> str | None:
-    from eidos_runtime.extensions.plugins import PluginImportError, _content_hash, _read_source
+    from eidos_runtime.extensions.plugins import PluginImportError, _content_hash, read_bundled_plugin
 
     try:
-        return _content_hash(_read_source(BUNDLED_BROWSER_PLUGIN_ROOT))
+        return _content_hash(read_bundled_plugin("browser"))
     except PluginImportError:
         return None
 

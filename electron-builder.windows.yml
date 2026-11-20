@@ -1,0 +1,35 @@
+appId: com.idy.eidos
+productName: Eidos
+asar: true
+asarUnpack:
+  - node_modules/node-pty/**/*
+artifactName: Eidos-${version}-win-${arch}.${ext}
+
+directories:
+  output: release
+
+files:
+  - dist/main/**/*
+  - dist/shared/**/*
+  - dist/renderer/**/*
+  - package.json
+  - "!dist/**/*.map"
+  - "!dist/**/*.test.js"
+  - "!dist/renderer-test/**/*"
+
+extraResources:
+  - from: build/windows-runtime
+    to: runtime
+
+win:
+  icon: assets/branding/eidos-logo/preview/eidos-app-icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false

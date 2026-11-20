@@ -134,6 +134,35 @@ it("keeps loaded rows after a page failure and retries the same page", async () 
   expect(api.mock.calls[1]).toEqual(api.mock.calls[2]);
 });
 
+it("explains Windows sandbox limits for the bundled browser instead of offering a retry", async () => {
+  vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue("Windows");
+  const { api } = setup(vi.fn().mockResolvedValue({ state: "error", errorCode: "mcp_sandbox_unavailable" }), {
+    ...server, pluginId: "eidos-browser", serverId: "browser", permissionProfile: "browser", available: false,
+  });
+  const user = userEvent.setup();
+  const trigger = screen.getByRole("button", { name: "查看 browser 工具" });
+  await user.click(trigger);
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("当前 Windows 版本缺少本地 MCP 沙盒");
+  expect(alert).toHaveTextContent("在聊天中确认开启「完全访问」后启动任务");
+  expect(screen.getByRole("searchbox", { name: "搜索工具名称或描述" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "重试" })).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  expect(trigger).toHaveFocus();
+  expect(api).toHaveBeenCalledTimes(1);
+});
+
+it("still offers retry for sandbox discovery failures on macOS", async () => {
+  vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue("Macintosh");
+  const { api } = setup(vi.fn().mockResolvedValueOnce({ state: "error", errorCode: "mcp_sandbox_unavailable" })
+    .mockImplementation(async request => response(request)));
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "查看 playwright 工具" }));
+  await user.click(await screen.findByRole("button", { name: "重试" }));
+  expect(await screen.findByText("tool_00")).toBeInTheDocument();
+  expect(api).toHaveBeenCalledTimes(2);
+});
+
 it("reloads an expired catalog and suppresses responses after close", async () => {
   const { api } = setup(); const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "查看 playwright 工具" }));

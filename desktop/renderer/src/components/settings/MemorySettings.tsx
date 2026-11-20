@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MemoryScope } from "../../../../shared/memory.generated.js";
 import { Button } from "../Button.js";
 import { SearchInput } from "../SearchInput.js";
+import { Select } from "../Select.js";
 import { ToastContainer, type ToastItem } from "../ToastContainer.js";
 import { MemoryNoteEditor } from "./MemoryNoteEditor.js";
 import {
@@ -15,6 +16,7 @@ import {
 } from "./MemoryIcons.js";
 import { useMemoryDocuments, type MemoryScopeChoice } from "./useMemoryDocuments.js";
 import { useMemoryLocation } from "./useMemoryLocation.js";
+import { pathBasename } from "../../platform.js";
 
 const modes = { off: "关闭", read: "只读", auto: "自动" } as const;
 type MemoryMode = MemoryScope["mode"];
@@ -110,7 +112,7 @@ function MemorySettingsContent({
   const currentMode = selected?.mode ?? "auto";
 
   const activeProject = location.projects.find((project) => project.id === projectId);
-  const activeProjectName = activeProject ? (activeProject.name ?? activeProject.workspaceRoot.split("/").filter(Boolean).at(-1)) : undefined;
+  const activeProjectName = activeProject ? (activeProject.name ?? pathBasename(activeProject.workspaceRoot)) : undefined;
 
   const statusMessages: React.ReactNode[] = [];
   if (dirty) {
@@ -158,21 +160,21 @@ function MemorySettingsContent({
           <label className="memory-control-group">
             <span className="memory-control-label">位置</span>
             <div className="memory-select-wrapper memory-location-select">
-              <select aria-label="位置" value={projectId ?? ""}
+              <Select aria-label="位置" value={projectId ?? ""}
                 title={activeProjectName}
                 disabled={dirty || busy}
                 onChange={(event) => location.selectProject(event.target.value || null)}>
                 <option value="">无项目</option>
                 {projectId && !valid && <option value={projectId}>{location.loaded ? "项目已不存在" : "正在读取项目…"}</option>}
                 {location.projects.map((project) => {
-                  const projectName = project.name ?? project.workspaceRoot.split("/").filter(Boolean).at(-1);
+                  const projectName = project.name ?? pathBasename(project.workspaceRoot);
                   return (
                     <option key={project.id} value={project.id}>
                       {projectName}
                     </option>
                   );
                 })}
-              </select>
+              </Select>
             </div>
           </label>
 
@@ -180,11 +182,11 @@ function MemorySettingsContent({
             <label className="memory-control-group">
               <span className="memory-control-label">范围</span>
               <div className="memory-select-wrapper">
-                <select aria-label="范围" value={scope} disabled={dirty || busy}
+                <Select aria-label="范围" value={scope} disabled={dirty || busy}
                   onChange={(event) => location.selectScope(event.target.value as MemoryScopeChoice)}>
                   <option value="current">所选项目</option>
                   <option value="global">全局</option>
-                </select>
+                </Select>
               </div>
             </label>
           ) : (
@@ -193,7 +195,7 @@ function MemorySettingsContent({
           <label className="memory-control-group">
             <span className="memory-control-label">模式</span>
             <div className="memory-select-wrapper">
-              <select
+              <Select
                 aria-label="模式"
                 value={currentMode}
                 disabled={!valid || !selected || busy || dirty}
@@ -204,7 +206,7 @@ function MemorySettingsContent({
                     {label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           </label>
 

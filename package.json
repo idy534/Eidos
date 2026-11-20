@@ -49,13 +49,15 @@
     "test:seatbelt-native": ".venv/bin/python scripts/test-seatbelt-native.py",
     "test:electron-smoke": "node scripts/electron-smoke.mjs",
     "build:runtime:mac": "bash scripts/build-macos-runtime.sh",
+    "build:runtime:win": "uv run --locked --python 3.12 python scripts/build-windows-runtime.py",
     "test:runtime:bundled": "node scripts/bundled-runtime-smoke.mjs",
     "test:runtime:bundled-seatbelt": "node scripts/bundled-seatbelt-smoke.mjs",
     "package:mac": "bash scripts/package-macos.sh local",
     "package:mac:release": "bash scripts/package-macos.sh release",
+    "package:win": "pnpm build && pnpm build:runtime:win && electron-builder --config electron-builder.windows.yml --win nsis --x64 --publish never",
     "test:electron-packaged": "node scripts/packaged-electron-smoke.mjs",
     "test:packaging": "node --test scripts/ci-scope.test.mjs scripts/clean-renderer-assets.test.mjs scripts/packaging-config.test.mjs scripts/package-macos.test.mjs scripts/macos-sign.test.mjs scripts/runtime-dependency-packaging.test.mjs scripts/test-affected.test.mjs",
-    "test:documents:bundled": "PYTHONPATH=build/macos-runtime/app build/macos-runtime/python/bin/python3 scripts/bundled-document-skills-smoke.py"
+    "test:documents:bundled": "PYTHONPATH=build/macos-runtime/app build/macos-runtime/python/bin/python3 -B scripts/bundled-document-skills-smoke.py"
   },
   "dependencies": {
     "@js-temporal/polyfill": "0.5.1",

@@ -51,13 +51,22 @@ app.whenReady().then(async () => {
       await wait("document.activeElement?.textContent==='审阅 Hook'");
       await run("document.querySelector('[role=switch]').click()");
       await wait("document.querySelector('[role=alertdialog]')");
-      await run("Array.from(document.querySelectorAll('[role=alertdialog] button')).find(button => button.textContent==='信任此版本的 Hook').click()");
-      await wait("pluginHookFixtureCalls.length===2");
-      assert.deepEqual(await run("pluginHookFixtureCalls.map(call => call.action)"), ["trust", "enable"]);
+      await run("Promise.all(document.querySelector('.modal-backdrop').getAnimations({ subtree:true }).map(animation => animation.finished.catch(() => {})))");
+      const enable = await run(`(() => { const dialog=document.querySelector('[role=alertdialog]'); const bounds=dialog.getBoundingClientRect(); const body=dialog.querySelector('.modal-body'); return { left:bounds.left, right:bounds.right, top:bounds.top, bottom:bounds.bottom, width:innerWidth, height:innerHeight, overflow:body.scrollWidth-body.clientWidth, text:dialog.textContent }; })()`);
+      assert.ok(enable.left >= -1 && enable.right <= enable.width + 1 && enable.top >= -1 && enable.bottom <= enable.height + 1, JSON.stringify(enable));
+      assert.ok(enable.overflow <= 1, JSON.stringify(enable));
+      assert.ok(enable.text.includes("MCP · workspace-checks") && enable.text.includes("check_workspace_before_completion.py"), enable.text);
+      if (process.env.EIDOS_HOOK_SCREENSHOT_DIR) {
+        await writeFile(path.join(process.env.EIDOS_HOOK_SCREENSHOT_DIR, `enable-review-${width}.png`), (await win.webContents.capturePage()).toPNG());
+      }
+      await run("Array.from(document.querySelectorAll('[role=alertdialog] button')).find(button => button.textContent==='启用').click()");
+      await wait("pluginHookFixtureCalls.length===1");
+      assert.deepEqual(await run("pluginHookFixtureCalls.map(call => call.action)"), ["activate"]);
       assert.equal(await run("pluginHookFixtureCalls[0].contentHash"), "a".repeat(64));
+      await wait("!document.querySelector('[role=alertdialog]')");
     }
     assert.deepEqual(errors, []);
-    console.log("Plugin Hook review passed keyboard, focus, trust ordering and 320/768/1024/1440 layout checks.");
+    console.log("Plugin Hook review and one-step enable passed keyboard, focus, activation and 320/768/1024/1440 layout checks.");
   } catch (error) {
     console.error(error);
     code = 1;

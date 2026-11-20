@@ -72,7 +72,7 @@
   display: inline-flex;
   align-items: baseline;
   gap: 0.12rem;
-  font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", "Helvetica Neue", sans-serif;
   font-size: 1.5rem;
   font-weight: 800;
   line-height: 1;
@@ -1058,4 +1058,14 @@
 @media (prefers-reduced-motion: reduce) {
   .task-indicator--spinning { animation: none; }
   .sidebar-chevron { transition: none; }
+}
+
+:root[data-platform="windows"] .sidebar {
+  background: var(--sidebar);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root[data-platform="windows"] .sidebar-top-bar {
+  -webkit-app-region: no-drag;
 }

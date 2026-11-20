@@ -29,6 +29,7 @@ const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime"
 function setup(value = plugin, overrides: Partial<ComponentProps<typeof PluginSettings>> = {}) {
   const props = { plugins: [value], pendingAction: undefined, onImportPlugin: vi.fn().mockResolvedValue(undefined),
     onTogglePlugin: vi.fn().mockResolvedValue(undefined), onTrustPluginHooks: vi.fn().mockResolvedValue(undefined),
+    onActivatePlugin: vi.fn().mockResolvedValue(undefined),
     onRemovePlugin: vi.fn().mockResolvedValue(undefined), onShowToast: vi.fn(), ...overrides };
   render(<PluginSettings {...props} />);
   return props;
@@ -41,16 +42,18 @@ afterEach(() => {
 });
 
 describe("Plugin Hook review", () => {
-  it("reviews commands before enabling and binds trust to the displayed package", async () => {
+  it("reviews commands before enabling and binds activation to the displayed package", async () => {
     const props = setup();
     const user = userEvent.setup();
     await user.click(screen.getByRole("switch", { name: "启用或停用 Demo" }));
-    expect(props.onTogglePlugin).not.toHaveBeenCalled();
+    expect(props.onActivatePlugin).not.toHaveBeenCalled();
     expect(screen.getByText("python3 check.py")).toBeTruthy();
     expect(screen.getByText("/plugins/demo/hook-data")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "信任此版本的 Hook" }));
-    await waitFor(() => expect(props.onTogglePlugin).toHaveBeenCalledWith("demo", true));
-    expect(props.onTrustPluginHooks).toHaveBeenCalledWith("demo", plugin.contentHash, true);
+    await user.click(screen.getByRole("button", { name: "启用" }));
+    await waitFor(() => expect(props.onActivatePlugin).toHaveBeenCalledWith("demo", plugin.contentHash));
+    expect(props.onTrustPluginHooks).not.toHaveBeenCalled();
+    expect(props.onTogglePlugin).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
   });
 
   it("cancel leaves the plugin untrusted and disabled", async () => {
@@ -62,14 +65,49 @@ describe("Plugin Hook review", () => {
     expect(props.onTogglePlugin).not.toHaveBeenCalled();
   });
 
-  it("a failed trust request does not enable the plugin", async () => {
+  it("a failed activation keeps the review open", async () => {
     const props = setup();
-    props.onTrustPluginHooks.mockRejectedValue(new Error("插件版本已改变"));
+    props.onActivatePlugin.mockRejectedValue(new Error("插件版本已改变"));
     const user = userEvent.setup();
     await user.click(screen.getByRole("switch", { name: "启用或停用 Demo" }));
-    await user.click(screen.getByRole("button", { name: "信任此版本的 Hook" }));
+    await user.click(screen.getByRole("button", { name: "启用" }));
     await waitFor(() => expect(screen.getAllByText("插件版本已改变").length).toBeGreaterThan(0));
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     expect(props.onTogglePlugin).not.toHaveBeenCalled();
+  });
+
+  it("reviews pending local MCP together with Hooks in one step", async () => {
+    const connected = { ...server, serverId: "ready", consented: true, available: true };
+    const props = setup(plugin, { mcpServers: [server, connected] });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("switch", { name: "启用或停用 Demo" }));
+    const review = screen.getByRole("alertdialog");
+    expect(review).toHaveTextContent("MCP · local-tools");
+    expect(review).toHaveTextContent("python3 tools.py");
+    expect(review).toHaveTextContent("权限：workspace_read；环境变量：ACCESS_TOKEN");
+    expect(review).not.toHaveTextContent("MCP · ready");
+    expect(review).toHaveTextContent("python3 check.py");
+    await user.click(within(review).getByRole("button", { name: "启用" }));
+    await waitFor(() => expect(props.onActivatePlugin).toHaveBeenCalledTimes(1));
+    expect(props.onActivatePlugin).toHaveBeenCalledWith("demo", plugin.contentHash);
+  });
+
+  it("enables directly when nothing needs review and names remote services that need an account", async () => {
+    const trusted = { ...plugin, hookReview: { ...plugin.hookReview!, trusted: true } };
+    const remote = { ...server, serverId: "remote", executable: "", argv: [], remote: { url: "https://example.com/mcp", authType: "oauth" } };
+    const props = setup(trusted, { mcpServers: [{ ...server, consented: true }, remote] as McpServerRecord[] });
+    await userEvent.setup().click(screen.getByRole("switch", { name: "启用或停用 Demo" }));
+    await waitFor(() => expect(props.onActivatePlugin).toHaveBeenCalledWith("demo", plugin.contentHash));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(props.onShowToast).toHaveBeenCalledWith("Plugin “Demo” 已启用，remote 需要在插件详情中连接账号。", "info");
+  });
+
+  it("disabling only turns the plugin off", async () => {
+    const props = setup({ ...plugin, enabled: true });
+    await userEvent.setup().click(screen.getByRole("switch", { name: "启用或停用 Demo" }));
+    await waitFor(() => expect(props.onTogglePlugin).toHaveBeenCalledWith("demo", false));
+    expect(props.onActivatePlugin).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
   it("keyboard review focuses cancel and Escape returns to the trigger", async () => {

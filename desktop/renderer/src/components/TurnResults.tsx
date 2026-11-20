@@ -1,3 +1,4 @@
+import { pathBasename, revealFileLabel } from "../platform.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseDiff } from "react-diff-view";
 import type { Item, Run } from "../contracts.js";
@@ -93,7 +94,7 @@ function stringArray(value: unknown): string[] {
 }
 
 function fileName(path: string): string {
-  return path.split("/").at(-1) || path;
+  return pathBasename(path) || path;
 }
 
 function fileExtension(path: string): string {
@@ -191,7 +192,7 @@ function itemDeclaredOutputs(item: Item): TurnArtifact[] {
   const data = objectField(result, "data");
   const executionRoot = objectField(data, "executionRoot");
   const outputs = objectField(data, "outputs");
-  if (typeof executionRoot !== "string" || !executionRoot.startsWith("/")
+  if (typeof executionRoot !== "string" || !(executionRoot.startsWith("/") || /^[A-Za-z]:[\\/]/.test(executionRoot))
     || !Array.isArray(outputs) || !outputs.length || outputs.length > 20) return [];
   const artifacts: TurnArtifact[] = [];
   for (const output of outputs) {
@@ -391,7 +392,7 @@ function artifactOpenItems(
   if (actions?.showInFinder && showInFinder) {
     items.push({
       key: "finder",
-      label: "在 Finder 中显示",
+      label: revealFileLabel,
       icon: <FinderIcon />,
       onClick: showInFinder,
     });
@@ -472,11 +473,11 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
     setOpening(true);
     setOpenError(undefined);
     try {
-      if (!actions.showInFinder) throw new Error("当前没有在 Finder 中显示入口。");
+      if (!actions.showInFinder) throw new Error(`当前没有${revealFileLabel}入口。`);
       await actions.showInFinder(artifact.path);
     } catch (error) {
       if (sequence === openSequence.current) setOpenError(
-        `无法在 Finder 中显示文件。${error instanceof Error ? error.message : "文件可能已删除或无法访问。"}`
+        `无法${revealFileLabel}文件。${error instanceof Error ? error.message : "文件可能已删除或无法访问。"}`
       );
     } finally {
       if (sequence === openSequence.current) setOpening(false);

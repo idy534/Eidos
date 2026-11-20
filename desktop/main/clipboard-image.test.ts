@@ -4,7 +4,7 @@ import { link, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { clipboardFilePaths, MAX_PASTED_IMAGE_BYTES, readPastedImageFile } from "./clipboard-image.js";
+import { clipboardFilePaths, MAX_PASTED_IMAGE_BYTES, readPastedImageFile, windowsClipboardFilePaths } from "./clipboard-image.js";
 
 async function fixture(): Promise<{ root: string; data: string; cleanup: () => Promise<void> }> {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "eidos-clipboard-image-")));
@@ -16,7 +16,7 @@ async function fixture(): Promise<{ root: string; data: string; cleanup: () => P
 test("clipboardFilePaths reads the filename list and the file URL", () => {
   const formats: Record<string, string> = {
     NSFilenamesPboardType: `<?xml version="1.0"?><plist><array><string>/Users/me/A &amp; B.jpg</string><string>relative.png</string><string>/tmp/&#x4E2D;.png</string></array></plist>`,
-    "public.file-url": `${pathToFileURL("/Users/me/微信 图片.jpg").href}\n`,
+    "public.file-url": `${pathToFileURL("/Users/me/微信 图片.jpg", { windows: false }).href}\n`,
   };
   const paths = clipboardFilePaths((format) => formats[format] ?? "");
   assert.deepEqual(paths, ["/Users/me/A & B.jpg", "/tmp/中.png", "/Users/me/微信 图片.jpg"]);
@@ -26,6 +26,26 @@ test("clipboardFilePaths tolerates missing formats and reader errors", () => {
   assert.deepEqual(clipboardFilePaths(() => ""), []);
   assert.deepEqual(clipboardFilePaths(() => { throw new Error("unsupported"); }), []);
   assert.deepEqual(clipboardFilePaths((format) => format === "public.file-url" ? "file://%E0%A4%A" : ""), []);
+});
+
+test("Windows clipboard uses the native file list and keeps only local paths", async () => {
+  const files = ["C:\\用户\\截图 示例.png", "D:/其他.jpg", "\\\\host\\share\\image.png", "C:\\image.png:stream"];
+  const legacy = () => Buffer.from("C:\\unlisted.png\0", "utf16le");
+  assert.deepEqual(await windowsClipboardFilePaths(legacy, async () => files), [
+    "C:\\用户\\截图 示例.png", "D:\\其他.jpg",
+  ]);
+});
+
+test("Windows clipboard falls back to the legacy Unicode file name", async () => {
+  function read(filename: string) {
+    return (format: string) => format === "FileNameW"
+      ? Buffer.from(`${filename}\0`, "utf16le")
+      : Buffer.alloc(0);
+  }
+  const noFileDropList = async () => [];
+  assert.deepEqual(await windowsClipboardFilePaths(read("C:\\用户\\截图 示例.png"), noFileDropList), ["C:\\用户\\截图 示例.png"]);
+  assert.deepEqual(await windowsClipboardFilePaths(read("\\\\host\\share\\image.png"), noFileDropList), []);
+  assert.deepEqual(await windowsClipboardFilePaths(read("C:\\image.png:stream"), noFileDropList), []);
 });
 
 test("readPastedImageFile reads a listed file, including a hard-linked one", async () => {

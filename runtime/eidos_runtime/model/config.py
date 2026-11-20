@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 import json
 import hashlib
 import os
@@ -889,7 +891,7 @@ class ModelConfigStore:
         )
         temporary_path = Path(temporary_name)
         try:
-            os.fchmod(descriptor, 0o600)
+            local_files.set_file_mode(descriptor, 0o600)
             serialized = []
             for value in values:
                 excluded = ({"custom", "model_id", "qoder"} if value.custom is None and value.qoder is None
@@ -905,12 +907,8 @@ class ModelConfigStore:
             os.fsync(descriptor)
             os.close(descriptor)
             descriptor = -1
-            os.replace(temporary_path, path)
-            directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            local_files.replace(temporary_path, path)
+            local_files.sync_directory(path.parent)
             self._validate_file(path)
         except Exception:
             if descriptor >= 0:
@@ -925,8 +923,7 @@ class ModelConfigStore:
         metadata = path.stat()
         if (
             not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
-            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or not local_files.has_private_access(path, metadata, 0o600)
         ):
             raise ModelConfigError("model configuration owner or mode is invalid")
 

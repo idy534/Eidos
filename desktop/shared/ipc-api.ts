@@ -355,6 +355,8 @@ export interface EidosRuntimeAPI {
   importPlugin(): Promise<PluginRecord | null>;
   setPluginEnabled(pluginId: string, enabled: boolean): Promise<PluginRecord>;
   setPluginHookTrust(pluginId: string, contentHash: string, trusted: boolean): Promise<PluginRecord>;
+  /** Enables the reviewed version and grants its Hook trust and local MCP consent together. */
+  activatePlugin(pluginId: string, contentHash: string): Promise<PluginRecord>;
   removePlugin(pluginId: string): Promise<PluginRecord>;
 
   listSkills(): Promise<SkillListResult>;

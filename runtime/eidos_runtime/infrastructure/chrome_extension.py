@@ -5,7 +5,7 @@ sandboxed MCP process and opens the extension's connect page in Chrome. The
 sandbox can neither launch Chrome nor read the user's Chrome profile, so the
 relay is pointed at a tiny helper that hands the connect-page URL to a broker
 outside the sandbox. The broker accepts only that exact page with a loopback
-relay address and opens it with LaunchServices.
+relay address and opens it in the system Chrome.
 
 The extension keeps the tabs of each connection in their own tab group; only
 tabs in that group are reported to the relay. See
@@ -14,17 +14,22 @@ docs/design/shared-chrome-tab-group-design.md.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+import hmac
 import json
 import logging
+import os
 from pathlib import Path
 import re
+import subprocess
 from typing import Literal
 from urllib.parse import parse_qs, urlsplit
 
 import anyio
 from anyio.abc import ByteStream, Listener
 
-from eidos_runtime.infrastructure.user_chrome import USER_CHROME_DATA
+from eidos_runtime.infrastructure import local_files
+from eidos_runtime.infrastructure.user_chrome import chrome_user_data
+from eidos_runtime.sandbox.host_shell import sanitize_shell_environment
 
 LOGGER = logging.getLogger(__name__)
 
@@ -36,6 +41,9 @@ CHROME_BUNDLE_ID = "com.google.Chrome"
 TOKEN_ENVIRONMENT = "PLAYWRIGHT_MCP_EXTENSION_TOKEN"
 BROKER_SOCKET_NAME = "connect-broker.sock"
 CONNECT_HELPER_NAME = "open-connect-page"
+WINDOWS_CONNECT_HELPER = "bin/open-connect-page.exe"
+BROKER_PORT_ENV = "EIDOS_BROWSER_BROKER_PORT"
+BROKER_TOKEN_ENV = "EIDOS_BROWSER_BROKER_TOKEN"
 LOOPBACK_SHIM_NAME = "loopback-shim.cjs"
 
 # The extension's status page copies "PLAYWRIGHT_MCP_EXTENSION_TOKEN=<token>";
@@ -73,13 +81,16 @@ def normalize_extension_token(value: str) -> str:
     return token
 
 
-def extension_presence(data_directory: Path = USER_CHROME_DATA) -> ExtensionPresence:
+def extension_presence(data_directory: Path | None = None) -> ExtensionPresence:
     """Whether any Chrome profile has the Playwright Extension.
 
     "unknown" means Chrome's profile files could not be read; the connection
     attempt then decides.
     """
 
+    data_directory = data_directory or chrome_user_data()
+    if data_directory is None:
+        return "unknown"
     try:
         if not data_directory.is_dir():
             return "missing"
@@ -129,8 +140,23 @@ def connect_url_rejection(url: str) -> str | None:
 
 
 async def open_in_chrome(url: str) -> None:
-    """LaunchServices hands the page to the running Chrome, or starts it."""
+    """Hand the page to the running Chrome, or start it."""
 
+    if local_files.WINDOWS:
+        from eidos_runtime.infrastructure.browser_host import find_chrome
+
+        installation = find_chrome()
+        if installation is None:
+            raise FileNotFoundError("Chrome is unavailable")
+        environment = sanitize_shell_environment(os.environ)
+        environment.pop(TOKEN_ENVIRONMENT, None)
+        # This is the user's Chrome, which continues to run after the broker exits.
+        subprocess.Popen(
+            [str(installation.executable), url], env=environment,
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True,
+        )
+        return
     with anyio.fail_after(10):
         await anyio.run_process(["/usr/bin/open", "-b", CHROME_BUNDLE_ID, url], check=False)
 
@@ -138,25 +164,44 @@ async def open_in_chrome(url: str) -> None:
 class ConnectPageBroker:
     """Outside the sandbox: open only the extension connect page, a bounded number of times."""
 
-    def __init__(self, opener: Callable[[str], Awaitable[None]] = open_in_chrome) -> None:
+    def __init__(self, opener: Callable[[str], Awaitable[None]] = open_in_chrome, *, token: str | None = None) -> None:
         self.opener = opener
         self.opened = 0
+        self._token = token.encode("ascii") + b" " if token else b""
 
     async def serve(self, listener: Listener[ByteStream]) -> None:
-        await listener.serve(self._handle)
+        limit = anyio.CapacityLimiter(8)
+
+        async def handle(stream: ByteStream) -> None:
+            try:
+                limit.acquire_nowait()
+            except anyio.WouldBlock:
+                await stream.aclose()
+                return
+            try:
+                await self._handle(stream)
+            finally:
+                limit.release()
+
+        await listener.serve(handle)
 
     async def _handle(self, stream: ByteStream) -> None:
         async with stream:
             data = b""
+            limit = _MAX_CONNECT_URL + len(self._token) + 1
             try:
                 with anyio.fail_after(2):
-                    while b"\n" not in data and len(data) <= _MAX_CONNECT_URL:
-                        chunk = await stream.receive(_MAX_CONNECT_URL + 1)
+                    while b"\n" not in data and len(data) < limit:
+                        chunk = await stream.receive(limit - len(data))
                         if not chunk:
                             break
                         data += chunk
             except (TimeoutError, anyio.EndOfStream, anyio.BrokenResourceError, anyio.ClosedResourceError):
                 pass
+            if self._token:
+                if not data.endswith(b"\n") or not hmac.compare_digest(data[:len(self._token)], self._token):
+                    return
+                data = data[len(self._token):]
             try:
                 url = data.split(b"\n", 1)[0].decode("ascii").strip()
             except UnicodeDecodeError:

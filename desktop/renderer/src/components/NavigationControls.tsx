@@ -1,3 +1,4 @@
+import { formatPlatformShortcut } from "../platform.js";
 import { Tooltip } from "./Tooltip.js";
 
 export interface NavigationControlsProps {
@@ -26,7 +27,7 @@ export function NavigationControls({
     <div className={`navigation-controls ${className}`.trim()}>
       {showTrafficSpacer && <div className="window-traffic-spacer" aria-hidden="true" />}
       <div className="navigation-controls__buttons">
-        <Tooltip content={sidebarOpen ? "收起侧边栏" : "展开侧边栏"} shortcut="⌘B" placement="bottom">
+        <Tooltip content={sidebarOpen ? "收起侧边栏" : "展开侧边栏"} shortcut={formatPlatformShortcut("⌘B")} placement="bottom">
           <button
             type="button"
             className={`nav-icon-btn nav-sidebar-toggle${sidebarOpen ? " nav-sidebar-toggle--open" : ""}`}
@@ -41,7 +42,7 @@ export function NavigationControls({
           </button>
         </Tooltip>
 
-        <Tooltip content="后退" shortcut="⌘[" placement="bottom">
+        <Tooltip content="后退" shortcut={formatPlatformShortcut("⌘[")} placement="bottom">
           <button
             type="button"
             className="nav-icon-btn nav-back-btn"
@@ -55,7 +56,7 @@ export function NavigationControls({
           </button>
         </Tooltip>
 
-        <Tooltip content="前进" shortcut="⌘]" placement="bottom">
+        <Tooltip content="前进" shortcut={formatPlatformShortcut("⌘]")} placement="bottom">
           <button
             type="button"
             className="nav-icon-btn nav-forward-btn"

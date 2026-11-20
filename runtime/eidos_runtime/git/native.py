@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import host_processes, local_files
+
 from dataclasses import dataclass
 from enum import StrEnum
 import logging
@@ -78,21 +80,47 @@ class GitCliDiff:
     file_stats: tuple[GitCliFileStat, ...]
 
 
+def _native_git_path() -> str:
+    if not local_files.WINDOWS:
+        return "/usr/bin/git"
+    bundle = Path(__file__).resolve().parents[3]
+    installed = bundle / "git/cmd/git.exe"
+    if installed.is_file():
+        return str(installed)
+    return str(bundle / "build/windows-runtime/git/cmd/git.exe")
+
+
+def _windows_git_environment(binary: Path, editor_policy: GitEditorPolicy) -> dict[str, str]:
+    environment = {
+        key: value for key in ("SYSTEMROOT", "SYSTEMDRIVE", "COMSPEC", "TEMP", "TMP")
+        if (value := os.environ.get(key))
+    }
+    root = binary.parents[1]
+    environment.update({
+        "PATH": os.pathsep.join(str(root / path) for path in ("cmd", "mingw64/bin", "usr/bin")),
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_ASKPASS": "exit 1",
+        "GIT_SEQUENCE_EDITOR": "exit 1",
+        "GIT_EDITOR": "exit 0" if editor_policy is GitEditorPolicy.PRESERVE_COMMIT_MESSAGE else "exit 1",
+    })
+    return environment
+
+
 class HardenedGitRunner:
     """Run one explicitly supplied native Git argv with bounded hardening."""
 
     def __init__(
         self,
         *,
-        git_executable: str = "/usr/bin/git",
+        git_executable: str | None = None,
         timeout_seconds: float = DEFAULT_GIT_TIMEOUT_SECONDS,
         output_limit_bytes: int = DEFAULT_GIT_OUTPUT_BYTES,
         logger: logging.Logger | None = None,
         user_home: Path | None = None,
     ) -> None:
-        if not git_executable or timeout_seconds <= 0 or output_limit_bytes < 1:
+        if git_executable == "" or timeout_seconds <= 0 or output_limit_bytes < 1:
             raise ValueError("Git runner configuration is invalid")
-        self.git_executable = git_executable
+        self.git_executable = git_executable or _native_git_path()
         self.timeout_seconds = timeout_seconds
         self.output_limit_bytes = output_limit_bytes
         self.logger = logger or logging.getLogger(__name__)
@@ -118,6 +146,14 @@ class HardenedGitRunner:
         git_index_file: Path | None = None,
         disable_transport: bool = False,
     ) -> GitCliResult:
+        if local_files.WINDOWS:
+            binary = Path(self.git_executable)
+            try:
+                metadata = binary.lstat()
+                if not stat.S_ISREG(metadata.st_mode) or not local_files.trusted_asset(binary, metadata):
+                    raise FileNotFoundError
+            except OSError:
+                raise GitCommandFailedError(operation, returncode=None) from None
         if not cwd.is_absolute() or not cwd.is_dir():
             raise GitCommandFailedError(operation, returncode=None)
         if any(not isinstance(argument, str) or "\x00" in argument for argument in args):
@@ -139,7 +175,7 @@ class HardenedGitRunner:
             argv.extend(
                 (
                     "-c",
-                    "core.hooksPath=/dev/null",
+                    f"core.hooksPath={os.devnull}",
                     "-c",
                     "core.fsmonitor=false",
                 )
@@ -156,7 +192,7 @@ class HardenedGitRunner:
             "GIT_OPTIONAL_LOCKS": "0",
             "GIT_PAGER": "cat",
             "GIT_TERMINAL_PROMPT": "0",
-            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_CONFIG_SYSTEM": "/dev/null",
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_ASKPASS": "/usr/bin/false",
@@ -179,6 +215,14 @@ class HardenedGitRunner:
             ssh_auth_sock = _validated_ssh_auth_sock(os.environ.get("SSH_AUTH_SOCK"))
             if ssh_auth_sock is not None:
                 environment["SSH_AUTH_SOCK"] = ssh_auth_sock
+        if local_files.WINDOWS:
+            environment.update(_windows_git_environment(Path(self.git_executable), editor_policy))
+            if profile is GitExecutionProfile.REMOTE:
+                from shlex import quote
+
+                ssh = Path(self.git_executable).parents[1] / "usr/bin/ssh.exe"
+                environment["GIT_SSH_COMMAND"] = f"{quote(ssh.as_posix())} -o BatchMode=yes"
+                environment.pop("SSH_AUTH_SOCK", None)
         if git_index_file is not None:
             environment["GIT_INDEX_FILE"] = str(git_index_file)
         if disable_transport:
@@ -195,15 +239,13 @@ class HardenedGitRunner:
             raise ValueError("Git command timeout must be positive")
         started = time.monotonic()
         try:
-            process = subprocess.Popen(
+            process = host_processes.start(
                 argv,
                 cwd=str(cwd),
                 env=environment,
                 stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                start_new_session=True,
-                shell=False,
             )
         except OSError as error:
             self.logger.error(
@@ -239,6 +281,9 @@ class HardenedGitRunner:
                 },
             )
             raise GitCommandTimeoutError(operation) from None
+
+        finally:
+            host_processes.close_job(process)
 
         result = GitCliResult(
             stdout=stdout,
@@ -1434,7 +1479,7 @@ def _communicate_bounded(
     stdin: bytes | None,
     cancel: threading.Event | None,
 ) -> tuple[bytes, bytes, bool, bool]:
-    selector = selectors.DefaultSelector()
+    selector = host_processes.pipe_selector()
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     truncated = {"stdout": False, "stderr": False}
     streams = {"stdout": process.stdout, "stderr": process.stderr}
@@ -1467,10 +1512,13 @@ def _communicate_bounded(
                         stream.close()
                         continue
                     try:
-                        written = os.write(
+                        written = host_processes.write_pipe(
                             stream.fileno(),
                             (stdin or b"")[stdin_offset : stdin_offset + 16 * 1024],
                         )
+                    except BlockingIOError:
+                        time.sleep(0.01)
+                        continue
                     except BrokenPipeError:
                         written = 0
                     stdin_offset += written
@@ -1509,7 +1557,7 @@ class _GitProcessCanceled(Exception):
 
 
 def _validated_ssh_auth_sock(value: str | None) -> str | None:
-    if not value or "\x00" in value:
+    if local_files.WINDOWS or not value or "\x00" in value:
         return None
     try:
         metadata = os.stat(value, follow_symlinks=False)
@@ -1571,6 +1619,13 @@ def _validate_remote_transport(url: str) -> None:
 
 
 def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
+    if host_processes.WINDOWS:
+        host_processes.terminate_tree(process)
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
+        return
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except (ProcessLookupError, PermissionError):

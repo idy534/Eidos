@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from eidos_runtime.memory.repository import MemoryRejected
 
 from eidos_runtime.domain.planning import PlanningSuspended
@@ -1757,7 +1759,7 @@ def _build_step_policy(
         sandbox_mode = "read-only"
 
     shell_available = "run_shell" in available_tools
-    allow_additional_permissions = shell_available
+    allow_additional_permissions = shell_available and not local_files.WINDOWS
     network_permission_requestable = bool(
         shell_available and allow_additional_permissions
     )

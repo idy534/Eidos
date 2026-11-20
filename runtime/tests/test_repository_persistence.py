@@ -29,6 +29,7 @@ from eidos_runtime.repo_intelligence.inventory import (
     RepositoryInventoryBuilder,
 )
 from eidos_runtime.repo_intelligence.map import RepositoryMap, RepositoryMapBuilder
+from eidos_runtime.workspace.search_driver import RipgrepFileEnumerator
 
 
 def _database(tmp_path: Path) -> RepositoryDatabase:
@@ -135,6 +136,33 @@ def test_repository_intelligence_complete_generation_roundtrips_across_database_
         assert repository.list_fts_documents(index.snapshot_id) == first_fts_documents
     finally:
         reopened.close()
+
+
+def test_repository_generation_roundtrips_wide_filesystem_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    (root / "notes").mkdir(parents=True)
+    (root / "notes" / "example.txt").write_text("example", encoding="utf-8")
+    identity = _workspace_identity(root).model_copy(update={
+        "device": (1 << 64) - 1,
+        "inode": (1 << 127) + 1,
+    })
+    monkeypatch.setattr(
+        RipgrepFileEnumerator, "enumerate", lambda self, root, **kwargs: (("notes/example.txt",), False),
+    )
+    inventory, index, repository_map = _complete_generation(root)
+    database = _database(tmp_path)
+    try:
+        repository = RepositoryIntelligenceRepository(database)
+        committed = repository.commit_complete(inventory, index, repository_map, identity)
+        assert repository.read_latest_complete(identity.repository_id, identity) == committed
+        assert repository.read_status(identity).snapshot_id == committed.snapshot_id
+        assert repository.read_generation_watermark(identity).max_inventory_generation == inventory.generation
+        replacement = identity.model_copy(update={"inode": identity.inode + 1})
+        assert repository.read_latest_complete(identity.repository_id, replacement) is None
+    finally:
+        database.close()
 
 
 def test_incomplete_repository_candidate_never_displaces_last_complete_generation(

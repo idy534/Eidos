@@ -88,8 +88,6 @@
 }
 
 .memory-select-wrapper select {
-  appearance: none;
-  -webkit-appearance: none;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface);

@@ -20,6 +20,8 @@ import { fileURLToPath } from "node:url";
 
 const MANIFEST_NAME = "runtime.json";
 const TARGET = "darwin-arm64";
+const WINDOWS_TARGET = "win32-x64";
+const WINDOWS_SITE = "python/Lib/site-packages";
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const INVENTORY_ROOTS = [
   "python/bin",
@@ -197,8 +199,9 @@ function walkInventory(bundleRoot, rootRelativePath) {
 }
 
 
-function inventoryFiles(bundleRoot) {
-  const roots = [...INVENTORY_ROOTS, ...OPTIONAL_INVENTORY_ROOTS.filter(
+function inventoryFiles(bundleRoot, target) {
+  const platformRoots = target === WINDOWS_TARGET ? ["python", "app", "git"] : INVENTORY_ROOTS;
+  const roots = [...platformRoots, ...OPTIONAL_INVENTORY_ROOTS.filter(
     (relativePath) => existsSync(path.join(bundleRoot, relativePath)),
   )].filter((relativePath) => existsSync(path.join(bundleRoot, relativePath)));
   const candidates = roots.flatMap((rootRelativePath) =>
@@ -337,7 +340,12 @@ function generatedExecutableName(relativePath, usedNames) {
 
 
 function executableEntries(bundleRoot, options, files) {
-  const fixedEntries = new Map([
+  const windows = options.target === WINDOWS_TARGET;
+  const fixedEntries = new Map(windows ? [
+    ["python/python.exe", { name: "python3", version: options.pythonVersion }],
+    ["git/cmd/git.exe", { name: "git", version: options.gitVersion }],
+    ["app/eidos_runtime/resources/bin/ripgrep/win32-x64/rg.exe", { name: "rg", version: options.ripgrepVersion }],
+  ] : [
     ["python/bin/python3", { name: "python3", version: options.pythonVersion }],
     ["dependencies/node/bin/node", { name: "node", version: options.nodeVersion }],
     [
@@ -349,9 +357,10 @@ function executableEntries(bundleRoot, options, files) {
   const usedNames = new Set([...fixedEntries.values()].map(({ name }) => name));
   const entries = [];
   for (const file of files) {
+    if (windows && !fixedEntries.has(file.path)) continue;
     const absolutePath = resolveInside(bundleRoot, file.path, "executable inventory file");
     const metadata = statSync(absolutePath);
-    if ((metadata.mode & 0o111) === 0) continue;
+    if (!windows && (metadata.mode & 0o111) === 0) continue;
     const fixed = fixedEntries.get(file.path);
     const entry = fixed ?? {
       name: generatedExecutableName(file.path, usedNames),
@@ -419,10 +428,12 @@ function validateManifestShape(bundleRoot, manifest) {
   if (manifest.schemaVersion !== 1) fail("schemaVersion must be 1");
   if (typeof manifest.bundleId !== "string" || manifest.bundleId.length === 0) fail("bundleId is required");
   if (typeof manifest.bundleVersion !== "string" || manifest.bundleVersion.length === 0) fail("bundleVersion is required");
-  if (manifest.target !== TARGET) fail(`target must be ${TARGET}`);
+  if (![TARGET, WINDOWS_TARGET].includes(manifest.target)) fail("unsupported Runtime target");
   if (!Array.isArray(manifest.executables) || manifest.executables.length === 0) fail("executables must be non-empty");
   if (!Array.isArray(manifest.pythonPath)) fail("pythonPath must be an array");
-  const coreOnly = manifest.pythonPath.length === 1 && manifest.pythonPath[0] === "app" && manifest.nodeModules == null;
+  const corePath = manifest.target === WINDOWS_TARGET ? WINDOWS_SITE : "app";
+  const coreOnly = manifest.pythonPath.length === 1 && manifest.pythonPath[0] === corePath && manifest.nodeModules == null;
+  if (manifest.target === WINDOWS_TARGET && !coreOnly) fail("Windows requires the core-only Runtime layout");
   if (!coreOnly && (manifest.pythonPath.length !== 1 || manifest.pythonPath[0] !== "dependencies/python")) {
     fail("pythonPath must be exactly dependencies/python");
   }
@@ -461,11 +472,14 @@ function validateManifestShape(bundleRoot, manifest) {
 
 
 function manifestOptions(options) {
+  const target = options.target ?? TARGET;
+  if (![TARGET, WINDOWS_TARGET].includes(target)) fail("unsupported Runtime target");
+  if (target === WINDOWS_TARGET && (!options.coreOnly || !options.gitVersion)) fail("Windows requires the core-only layout and a Git version");
   const bundleRoot = asAbsolutePath(options.bundleRoot, "bundleRoot");
   const pythonLock = options.coreOnly ? null : asAbsolutePath(options.pythonLock, "pythonLock");
   const nodeModules = options.coreOnly ? null : options.nodeModules ?? "dependencies/node/node_modules";
   const nodeLoader = options.coreOnly ? "app/eidos_runtime/resources/runtime-loader.mjs" : options.nodeLoader ?? "dependencies/node/runtime-loader.mjs";
-  const pythonPath = options.coreOnly ? ["app"] : options.pythonPath ?? ["dependencies/python"];
+  const pythonPath = options.coreOnly ? [target === WINDOWS_TARGET ? WINDOWS_SITE : "app"] : options.pythonPath ?? ["dependencies/python"];
   if (!Array.isArray(pythonPath) || pythonPath.length === 0) {
     fail("pythonPath must contain the isolated dependency root");
   }
@@ -474,6 +488,7 @@ function manifestOptions(options) {
   }
   return {
     ...options,
+    target,
     bundleRoot,
     pythonLock,
     nodeModules,
@@ -493,12 +508,12 @@ export function generateRuntimeManifestSync(options) {
     resolveInside(bundleRoot, relativePath, "pythonPath");
   }
   resolveInside(bundleRoot, normalized.nodeLoader, "nodeLoader");
-  const files = inventoryFiles(bundleRoot);
+  const files = inventoryFiles(bundleRoot, normalized.target);
   const manifest = {
     schemaVersion: 1,
     bundleId: normalized.bundleId,
     bundleVersion: normalized.bundleVersion,
-    target: TARGET,
+    target: normalized.target,
     executables: executableEntries(bundleRoot, normalized, files),
     pythonPath: [...normalized.pythonPath],
     pythonPackages,
@@ -526,7 +541,7 @@ export function refreshManifestHashesSync({ bundleRoot, manifestPath } = {}) {
       `executable ${executable.name}`,
     ),
   }));
-  const files = inventoryFiles(normalizedBundleRoot);
+  const files = inventoryFiles(normalizedBundleRoot, loaded.manifest.target);
   const refreshed = {
     ...loaded.manifest,
     executables,
@@ -551,7 +566,7 @@ export function verifyRuntimeManifestSync({ bundleRoot, manifestPath } = {}) {
       fail(`executable hash mismatch for ${executable.path}`);
     }
   }
-  const actualFiles = inventoryFiles(normalizedBundleRoot);
+  const actualFiles = inventoryFiles(normalizedBundleRoot, loaded.manifest.target);
   const expectedFiles = [...loaded.manifest.files].sort((left, right) => compareBytes(left.path, right.path));
   if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
     fail("inventory hash or file set mismatch; the Runtime bundle may be tampered");
@@ -586,6 +601,8 @@ function parseArguments(argv) {
       "--node-modules",
       "--node-loader",
       "--shared-python",
+      "--target",
+      "--git-version",
     ]);
     if (!valueArguments.has(argument)) {
       fail(`unknown argument: ${argument}`);

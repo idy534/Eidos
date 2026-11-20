@@ -6,6 +6,8 @@ import { Tooltip } from "../Tooltip.js";
 import { StatusBadge, type StatusTone } from "../StatusBadge.js";
 import { Toggle } from "../Toggle.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
+import { Select } from "../Select.js";
+import { currentOsUserLabel } from "../../platform.js";
 import { BackArrowIcon, DingTalkLogo, FeishuLogo, WeChatWorkLogo, EyeIcon, EyeOffIcon, RefreshIcon } from "./ChannelIcons.js";
 
 export const channelStateLabels: Record<State, string> = {
@@ -492,7 +494,7 @@ export function ChannelForm({
               <div className="channel-field">
                 <label htmlFor="field-project-id">所属项目</label>
                 <div className="channel-select-wrapper">
-                  <select
+                  <Select
                     id="field-project-id"
                     value={config.projectId ?? ""}
                     onChange={(event) => handleProjectChange(event.target.value || null)}
@@ -504,14 +506,14 @@ export function ChannelForm({
                         {project.name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               </div>
 
               <div className="channel-field">
                 <label htmlFor="field-approval-mode">审批模式</label>
                 <div className="channel-select-wrapper">
-                  <select
+                  <Select
                     id="field-approval-mode"
                     value={config.approvalMode ?? "manual"}
                     onChange={(event) => handleApprovalModeChange(event.target.value as ChannelConfig["approvalMode"])}
@@ -519,7 +521,7 @@ export function ChannelForm({
                     <option value="manual">请求审批</option>
                     <option value="auto_review">替我审批</option>
                     <option value="full_access">完全访问</option>
-                  </select>
+                  </Select>
                 </div>
               </div>
             </div>
@@ -545,7 +547,7 @@ export function ChannelForm({
           <div className="channel-full-access-warning">
             <p>Eidos 将不再逐项请求批准</p>
             <p>
-              此助理今后收到的消息都将以当前 macOS 用户的权限读写文件、运行命令和访问网络。操作可能造成数据丢失、凭据泄露或系统设置变化，也可能修改 Eidos 自身的数据。请仅在信任此助理及可向机器人发送消息的用户时开启。
+              此助理今后收到的消息都将以{currentOsUserLabel()}的权限读写文件、运行命令和访问网络。操作可能造成数据丢失、凭据泄露或系统设置变化，也可能修改 Eidos 自身的数据。请仅在信任此助理及可向机器人发送消息的用户时开启。
             </p>
           </div>
         }

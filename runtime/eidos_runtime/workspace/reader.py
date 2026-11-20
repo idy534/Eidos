@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from dataclasses import dataclass
 import heapq
 import hashlib
@@ -362,7 +364,7 @@ class WorkspaceReader:
         allow_metadata: bool,
     ) -> Iterator[WorkspaceDirectoryEntry]:
         try:
-            with os.scandir(directory_fd) as entries:
+            with local_files.scan_directory(directory_fd) as entries:
                 for entry in entries:
                     if cancel.is_set():
                         raise WorkspacePathError("canceled")
@@ -372,11 +374,11 @@ class WorkspaceReader:
                     if name in HARD_DISCOVERY_DIRECTORIES and not allow_metadata:
                         continue
                     try:
-                        metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                        metadata = local_files.lstat_at(name, directory_fd)
                     except OSError:
                         continue
                     relative = name if directory == "." else f"{directory}/{name}"
-                    if stat.S_ISLNK(metadata.st_mode):
+                    if local_files.is_link(metadata):
                         continue
                     if stat.S_ISDIR(metadata.st_mode):
                         ignored = scope.is_ignored(relative, is_directory=True)
@@ -438,16 +440,13 @@ class WorkspaceReader:
     def _open_absolute_directory(path: Path) -> int:
         if not path.is_absolute():
             raise WorkspacePathError("workspace_unavailable")
-        flags = os.O_RDONLY | os.O_DIRECTORY
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
         try:
-            descriptor = os.open(path.anchor, flags)
+            descriptor = local_files.open_directory(path.anchor)
         except OSError:
             raise WorkspacePathError("workspace_unavailable") from None
         try:
             for part in path.parts[1:]:
-                child = os.open(part, flags, dir_fd=descriptor)
+                child = local_files.open_directory(part, dir_fd=descriptor)
                 os.close(descriptor)
                 descriptor = child
             return descriptor
@@ -462,11 +461,8 @@ class WorkspaceReader:
         *,
         missing_code: str = "workspace_boundary_violation",
     ) -> int:
-        flags = os.O_RDONLY | os.O_DIRECTORY
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
         try:
-            return os.open(name, flags, dir_fd=parent_fd)
+            return local_files.open_directory(name, dir_fd=parent_fd)
         except FileNotFoundError:
             raise WorkspacePathError(missing_code) from None
         except OSError:
@@ -474,12 +470,8 @@ class WorkspaceReader:
 
     @staticmethod
     def _open_file(parent_fd: int, name: str) -> int:
-        # Do not block on a FIFO before the regular-file check can reject it.
-        flags = os.O_RDONLY | os.O_NONBLOCK
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
         try:
-            return os.open(name, flags, dir_fd=parent_fd)
+            return local_files.open_file(name, dir_fd=parent_fd)
         except FileNotFoundError:
             raise WorkspacePathError("file_unavailable") from None
         except OSError:
@@ -493,7 +485,7 @@ def validate_workspace_relative_path(value: str) -> tuple[str, ...]:
     ):
         raise WorkspacePathError("workspace_boundary_violation")
     path = Path(value)
-    if path.is_absolute() or ".." in path.parts:
+    if path.anchor or ".." in path.parts or not local_files.valid_relative_parts(path.parts):
         raise WorkspacePathError("workspace_boundary_violation")
     parts = tuple(part for part in path.parts if part not in {"", "."})
     if not parts:

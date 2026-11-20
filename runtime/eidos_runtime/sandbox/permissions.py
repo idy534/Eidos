@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from enum import StrEnum
 import hashlib
 import json
@@ -126,7 +128,9 @@ class BasePermissionProfile(ClosedModel):
         """Only the user-confirmed Run policy factory selects this profile."""
         return self.model_copy(update={
             "full_access": True, "network_enabled": True,
-            "entries": (FileSystemPermissionEntry(path="/", access=FileSystemAccessMode.WRITE),),
+            "entries": () if local_files.WINDOWS else (
+                FileSystemPermissionEntry(path="/", access=FileSystemAccessMode.WRITE),
+            ),
             "permanent_denies": (), "hard_confidentiality_denies": (),
             "protected_metadata_paths": (), "protected_write_paths": (),
             "approval_write_roots": (),
@@ -612,8 +616,8 @@ def _canonical_active_skill_roots(
             metadata = path.lstat()
             if (
                 not stat.S_ISDIR(metadata.st_mode)
-                or stat.S_ISLNK(metadata.st_mode)
-                or metadata.st_uid != os.getuid()
+                or local_files.is_link(metadata)
+                or not local_files.owned_by_user(path, metadata)
             ):
                 raise ValueError("active Skill root is unavailable")
             resolved = path.resolve(strict=True)

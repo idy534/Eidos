@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import type { PersonalizationPreferences } from "../../../../shared/personalization.js";
 import { Button } from "../Button.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
+import { Select } from "../Select.js";
 import { MarkdownEditor } from "../MarkdownEditor.js";
 import { SettingRow } from "./SettingRow.js";
 import { SettingSection } from "./SettingSection.js";
@@ -49,13 +50,13 @@ export function PersonalizationSettings({ ready = true, paused = false, onShowTo
                 key={choice.key}
                 title={<label htmlFor={`${id}-${choice.key}`}>{choice.label}</label>}
                 action={
-                  <select
+                  <Select
                     id={`${id}-${choice.key}`}
                     value={draft[choice.key] ?? choice.fallback}
                     onChange={event => update(choice.key, event.target.value as PersonalizationPreferences[ChoiceKey], true)}
                   >
                     {choice.options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                  </select>
+                  </Select>
                 }
               />
             ))}

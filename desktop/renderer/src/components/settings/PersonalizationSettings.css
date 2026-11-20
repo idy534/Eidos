@@ -33,6 +33,10 @@
   padding-right: 2rem;
 }
 
+.personalization-settings select:hover:not(:disabled) {
+  border-color: rgba(0, 0, 0, 0.18);
+}
+
 .personalization-settings textarea {
   padding: 0.5rem 0.75rem;
   resize: vertical;

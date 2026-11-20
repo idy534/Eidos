@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 import hashlib
 import json
 import os
@@ -191,12 +193,9 @@ class RepositoryMapBuilder:
     def _read_inventory_file(self, record: FileRecord) -> bytes:
         if record.device is None or record.inode is None:
             raise OSError("manifest identity is incomplete")
-        root_fd = os.open(
-            self.root,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
-        )
+        root_fd = local_files.open_directory(self.root)
         try:
-            current = os.stat(record.path, dir_fd=root_fd, follow_symlinks=False)
+            current = local_files.lstat_at(record.path, root_fd)
             if (
                 current.st_dev != record.device
                 or current.st_ino != record.inode

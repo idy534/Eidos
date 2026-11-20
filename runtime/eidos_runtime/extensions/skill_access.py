@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from dataclasses import dataclass
 from enum import StrEnum
 import hashlib
-import os
 from pathlib import Path
 import stat
 import threading
@@ -165,9 +166,9 @@ class SkillAccess:
                 try:
                     scripts_metadata = scripts.lstat()
                     if (
-                        stat.S_ISLNK(scripts_metadata.st_mode)
+                        local_files.is_link(scripts_metadata)
                         or not stat.S_ISDIR(scripts_metadata.st_mode)
-                        or scripts_metadata.st_uid != os.getuid()
+                        or not local_files.owned_by_user(scripts, scripts_metadata)
                     ):
                         continue
                     scripts = scripts.resolve(strict=True)
@@ -272,18 +273,18 @@ def _trusted_skill_root(entry: object) -> tuple[Path, str]:
     try:
         metadata = document.lstat()
         if (
-            stat.S_ISLNK(metadata.st_mode)
+            local_files.is_link(metadata)
             or not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
+            or not local_files.owned_by_user(document, metadata)
             or metadata.st_size > MAX_SKILL_DOCUMENT_BYTES
         ):
             raise SkillAccessError("skill has no trusted filesystem root")
         root = document.parent.resolve(strict=True)
         root_metadata = root.lstat()
         if (
-            stat.S_ISLNK(root_metadata.st_mode)
+            local_files.is_link(root_metadata)
             or not stat.S_ISDIR(root_metadata.st_mode)
-            or root_metadata.st_uid != os.getuid()
+            or not local_files.owned_by_user(root, root_metadata)
         ):
             raise SkillAccessError("skill has no trusted filesystem root")
         data = document.read_bytes()
@@ -316,9 +317,9 @@ def _verified_script_path(path: Path) -> Path | None:
     try:
         metadata = path.lstat()
         if (
-            stat.S_ISLNK(metadata.st_mode)
+            local_files.is_link(metadata)
             or not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
+            or not local_files.owned_by_user(path, metadata)
         ):
             return None
         return path.resolve(strict=True)

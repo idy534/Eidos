@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from eidos_runtime.sandbox import sensitive  # noqa: E402
 from eidos_runtime.sandbox.sensitive import (  # noqa: E402
     SensitiveContentDenied,
     SensitiveScanError,
@@ -66,18 +67,42 @@ class SensitiveScannerTests(unittest.TestCase):
         assignment.feed("hunter2\n")
         self.assertEqual(redacted, ["[REDACTED:secret_assignment]\n"])
 
-    def test_invalid_or_writable_rule_resource_fails_closed(self) -> None:
+    def test_invalid_rule_resource_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-rules-") as directory:
             rules = Path(directory) / "rules.json"
             rules.write_text("{}", encoding="utf-8")
-            with self.assertRaises(SensitiveScanError):
+            with (
+                patch.object(sensitive.local_files, "trusted_asset", return_value=True),
+                self.assertRaises(SensitiveScanError),
+            ):
                 SensitiveScanner(rules)
-            rules.write_text(
-                '{"version":1,"rules":[]}', encoding="utf-8"
-            )
+
+    @unittest.skipIf(sys.platform == "win32", "POSIX rule file permissions")
+    def test_group_writable_rule_resource_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-rules-") as directory:
+            rules = Path(directory) / "rules.json"
+            rules.write_text('{"version":1,"rules":[]}', encoding="utf-8")
             rules.chmod(0o666)
             with self.assertRaises(SensitiveScanError):
                 SensitiveScanner(rules)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows built-in rule integrity")
+    def test_builtin_rules_verify_contents_with_inherited_windows_permissions(self) -> None:
+        builtin_rules = Path(sensitive.__file__).with_name("sensitive_rules.json")
+        with tempfile.TemporaryDirectory(prefix="eidos-rules-") as directory:
+            rules = Path(directory) / builtin_rules.name
+            rules.write_text(builtin_rules.read_text(encoding="utf-8"), encoding="utf-8", newline="\r\n")
+            with (
+                patch.object(sensitive, "__file__", str(rules.with_suffix(".py"))),
+                patch.object(sensitive.local_files, "trusted_asset", return_value=False),
+            ):
+                with self.assertRaises(SensitiveContentDenied):
+                    SensitiveScanner().scan_text("sk-abcdefghijklmnop")
+                with self.assertRaises(SensitiveScanError):
+                    SensitiveScanner(rules)
+                rules.write_bytes(b'{"version":1,"rules":[]}')
+                with self.assertRaises(SensitiveScanError):
+                    SensitiveScanner()
 
     def test_rejected_run_uses_no_operation_or_persistent_fact(self) -> None:
         with (

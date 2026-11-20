@@ -5,7 +5,9 @@ import type { ToastType } from "../ToastContainer.js";
 import { ModelSelector } from "../ModelSelector.js";
 import { Button } from "../Button.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
+import { Select } from "../Select.js";
 import { userFacingError } from "../../session-state.js";
+import { currentOsUserLabel } from "../../platform.js";
 import { AutomationTimeError, COMMON_TIMEZONE_GROUPS, isCommonTimezone, automationDateInput, formatPreviewTime, initialOneTimeChoice, oneTimeOptions } from "./automation-time.js";
 
 export interface InitialAutomationValues {
@@ -200,8 +202,8 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
       <div className="automation-form-card">
         <h3 className="automation-card-title">执行计划</h3>
         <div className="automation-fields">
-          <label>时间类型<select value={kind} onChange={(event) => { setKind(event.target.value as "at" | "cron"); resetPreview(); }}><option value="cron">周期执行</option><option value="at">执行一次</option></select></label>
-          <label>时区<select required value={timezone} onChange={(event) => { setTimezone(event.target.value); setTimeChoice(""); resetPreview(); }}>
+          <label>时间类型<Select value={kind} onChange={(event) => { setKind(event.target.value as "at" | "cron"); resetPreview(); }}><option value="cron">周期执行</option><option value="at">执行一次</option></Select></label>
+          <label>时区<Select required value={timezone} onChange={(event) => { setTimezone(event.target.value); setTimeChoice(""); resetPreview(); }}>
             {isCustomTimezone && (
               <optgroup label="当前设置">
                 <option value={timezone}>{timezone}</option>
@@ -216,13 +218,13 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
                 ))}
               </optgroup>
             ))}
-          </select></label>
+          </Select></label>
         </div>
         {kind === "cron" ? (
           <label>
             <span>执行规则</span>
             <div className="automation-rule-row">
-              <select
+              <Select
                 aria-label="预设执行规则"
                 className="automation-rule-preset"
                 value={["*/10 * * * *", "*/30 * * * *", "0 * * * *", "0 9 * * *", "0 9 * * 1-5"].includes(expression) ? expression : "custom"}
@@ -237,7 +239,7 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
                 <option value="0 9 * * *">每天 09:00</option>
                 <option value="0 9 * * 1-5">周一至周五 09:00</option>
                 <option value="custom">自定义日历时间</option>
-              </select>
+              </Select>
               <input
                 aria-label="Cron 表达式"
                 className="automation-rule-input"
@@ -275,7 +277,7 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
             {timeResolution.options.length > 1 && (
               <label>
                 这个时间出现两次，请选择执行时刻
-                <select
+                <Select
                   required
                   value={timeChoice}
                   onChange={(event) => {
@@ -289,7 +291,7 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
                       第 {index + 1} 次（UTC{option.offset}）
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
             )}
           </>
@@ -299,16 +301,16 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
       <div className="automation-form-card">
         <h3 className="automation-card-title">执行会话与环境</h3>
         <div className="automation-fields">
-          <label>执行会话<select value={target} onChange={(event) => setTarget(event.target.value)}><option value="new">每次新建会话</option><option value="session">已有会话</option></select></label>
+          <label>执行会话<Select value={target} onChange={(event) => setTarget(event.target.value)}><option value="new">每次新建会话</option><option value="session">已有会话</option></Select></label>
           {target === "session" ? (
-            <label>目标会话<select required value={sessionId} onChange={(event) => setSessionId(event.target.value)}><option value="">选择会话</option>{sessionId && !sessions.some((session) => session.id === sessionId) && <option value={sessionId}>当前绑定的会话</option>}{sessions.map((session) => <option key={session.id} value={session.id}>{session.title ?? "未命名会话"}</option>)}</select></label>
+            <label>目标会话<Select required value={sessionId} onChange={(event) => setSessionId(event.target.value)}><option value="">选择会话</option>{sessionId && !sessions.some((session) => session.id === sessionId) && <option value={sessionId}>当前绑定的会话</option>}{sessions.map((session) => <option key={session.id} value={session.id}>{session.title ?? "未命名会话"}</option>)}</Select></label>
           ) : (
-            <label>所属项目<select value={projectId} onChange={(event) => { setProjectId(event.target.value); setExecutionMode("local"); }}><option value="">无项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+            <label>所属项目<Select value={projectId} onChange={(event) => { setProjectId(event.target.value); setExecutionMode("local"); }}><option value="">无项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</Select></label>
           )}
         </div>
         {target === "new" && projectId && (
           <div className="automation-fields">
-            <label>执行环境<select value={executionMode} onChange={(event) => setExecutionMode(event.target.value as "local" | "worktree")}><option value="local">本地目录</option><option value="worktree">新建工作树（Git 项目）</option></select></label>
+            <label>执行环境<Select value={executionMode} onChange={(event) => setExecutionMode(event.target.value as "local" | "worktree")}><option value="local">本地目录</option><option value="worktree">新建工作树（Git 项目）</option></Select></label>
             {executionMode === "worktree" && <label>起始分支<input value={baseRef} onChange={(event) => setBaseRef(event.target.value)} placeholder="默认分支" /></label>}
           </div>
         )}
@@ -321,12 +323,12 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
             <ModelSelector models={models} selectedModelId={modelId} selection={reasoning || undefined} disabled={busy}
               onModelChange={(id) => { setModelId(id); setReasoning(""); }} onChange={(value) => setReasoning(value ?? "")} />
           </div>
-          <label>审批模式<select value={approvalMode} onChange={(event) => {
+          <label>审批模式<Select value={approvalMode} onChange={(event) => {
             const next = event.target.value as ApprovalMode;
             if (next === approvalMode) return;
             if (next === "full_access") setShowFullAccessDialog(true);
             else { setApprovalMode(next); setFullAccessConfirmed(false); }
-          }}><option value="auto_review">替我审批</option><option value="manual">请求审批</option><option value="full_access">完全访问</option></select></label>
+          }}><option value="auto_review">替我审批</option><option value="manual">请求审批</option><option value="full_access">完全访问</option></Select></label>
         </div>
       </div>
 
@@ -343,7 +345,7 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
       confirmLabel="开启完全访问" cancelLabel="取消"
       description={<div className="automation-full-access-warning">
         <p>Eidos 将不再逐项请求批准</p>
-        <p>此计划今后的每次执行都将以当前 macOS 用户的权限读写文件、运行命令和访问网络。操作可能造成数据丢失、凭据泄露或系统设置变化，也可能修改 Eidos 自身的数据。请仅在信任该定时任务时开启。</p>
+        <p>此计划今后的每次执行都将以{currentOsUserLabel()}的权限读写文件、运行命令和访问网络。操作可能造成数据丢失、凭据泄露或系统设置变化，也可能修改 Eidos 自身的数据。请仅在信任该定时任务时开启。</p>
       </div>}
       onConfirm={() => { setApprovalMode("full_access"); setFullAccessConfirmed(true); setShowFullAccessDialog(false); }}
       onCancel={() => setShowFullAccessDialog(false)} />

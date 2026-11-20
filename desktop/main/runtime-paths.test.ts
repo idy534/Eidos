@@ -84,3 +84,25 @@ test("packaged runtime resolution fails closed when the bundled interpreter is m
     ),
   );
 });
+
+test("Windows selects the repository venv and the bundled interpreter from distinct paths", () => {
+  const appPath = "C:\\Workspace with spaces\\Eidos";
+  const resourcesPath = "C:\\Users\\测试\\AppData\\Local\\Programs\\Eidos\\resources";
+  const development = resolveRuntimePaths({
+    isPackaged: false, platform: "win32", appPath, resourcesPath,
+  });
+  assert.equal(development.pythonExecutable, `${appPath}\\.venv\\Scripts\\python.exe`);
+  const runtimeRoot = `${resourcesPath}\\runtime`;
+  const packaged = resolveRuntimePaths({
+    isPackaged: true, platform: "win32", appPath, resourcesPath,
+    environment: { EIDOS_PYTHON: "C:\\wrong\\python.exe" },
+    pathType: packagedFileTypes([
+      `${runtimeRoot}\\python\\python.exe`,
+      `${runtimeRoot}\\app\\eidos_runtime`,
+    ]),
+  });
+  assert.deepEqual(packaged, {
+    pythonExecutable: `${runtimeRoot}\\python\\python.exe`,
+    runtimeRoot: `${runtimeRoot}\\app`,
+  });
+});

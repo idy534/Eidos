@@ -19,7 +19,7 @@ import type { RunPlanningOptions } from "../shared/planning.generated.js";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, powerMonitor, shell as electronShell } from "electron";
 import { fileURLToPath } from "node:url";
 import { realpath, stat, mkdtemp, writeFile, rm } from "node:fs/promises";
-import { clipboardFilePaths, MAX_PASTED_IMAGE_BYTES, readPastedImageFile } from "./clipboard-image.js";
+import { clipboardFilePaths, MAX_PASTED_IMAGE_BYTES, readPastedImageFile, windowsClipboardFilePaths } from "./clipboard-image.js";
 import os from "node:os";
 import { isInputPrepareRequest, isInputDraft } from "../shared/input-context.js";
 import { isAgentDefinitionSaveRequest, isAgentDefinitionRemoveRequest } from "../shared/agent-definitions.js";
@@ -275,19 +275,29 @@ function isReviewCommentCreateInput(value: unknown): value is ReviewCommentCreat
 // ---------------------------------------------------------------------------
 
 function createWindow(): BrowserWindow {
+  const isMac = process.platform === "darwin";
   const window = new BrowserWindow({
     width: 1180,
     height: 800,
     minWidth: 800,
     minHeight: 600,
     show: false,
-    transparent: true,
-    backgroundColor: "#00000000",
-    vibrancy: "under-window",
-    visualEffectState: "active",
     title: "Eidos",
-    titleBarStyle: "hidden",
-    trafficLightPosition: { x: 16, y: 16 },
+    ...(isMac
+      ? {
+          transparent: true,
+          backgroundColor: "#00000000",
+          vibrancy: "under-window" as const,
+          visualEffectState: "active" as const,
+          titleBarStyle: "hidden" as const,
+          trafficLightPosition: { x: 16, y: 16 },
+        }
+      : {
+          transparent: false,
+          backgroundColor: "#f8f9fb",
+          titleBarStyle: "default" as const,
+          autoHideMenuBar: true,
+        }),
     webPreferences: {
       preload: path.join(currentDirectory, "preload.cjs"),
       contextIsolation: true,
@@ -296,6 +306,9 @@ function createWindow(): BrowserWindow {
       plugins: true,
     },
   });
+  if (!isMac) {
+    window.setMenuBarVisibility(false);
+  }
 
   window.webContents.on("context-menu", (_event, params) => {
     if (!params.isEditable && !params.selectionText) return;
@@ -484,6 +497,7 @@ async function startRuntime(): Promise<void> {
       protocolVersion: initialized.protocolVersion,
       runtimeVersion: initialized.runtimeVersion,
       storageState: storageHealth.state,
+      ...(storageHealth.code ? { storageCode: storageHealth.code } : {}),
     });
     publishStatus({
       state: "ready",
@@ -948,7 +962,9 @@ ipcMain.handle(IPC.WORKSPACE_SHOW_IN_FINDER, async (_event, targetPath: unknown)
     await stat(canonicalTarget);
     electronShell.showItemInFolder(canonicalTarget);
   } catch {
-    throw new Error("无法在 Finder 中显示该路径。");
+    throw new Error(process.platform === "win32"
+      ? "无法在文件资源管理器中显示该路径。"
+      : "无法在 Finder 中显示该路径。");
   }
 });
 ipcMain.handle(IPC.WORKSPACE_OPEN_PATH, async (_event, targetPath: unknown) => {
@@ -1313,7 +1329,9 @@ ipcMain.handle(IPC.INPUT_PASTE_IMAGE, async (event, source: unknown) => {
     bytes = picture.toPNG();
   } else {
     ({ bytes, extension } = await readPastedImageFile(source, {
-      clipboardPaths: clipboardFilePaths((format) => clipboard.read(format)),
+      clipboardPaths: process.platform === "win32"
+        ? await windowsClipboardFilePaths((format) => clipboard.readBuffer(format))
+        : clipboardFilePaths((format) => clipboard.read(format)),
       dataDirectory: runtimeDataDirectory(),
     }));
   }
@@ -1589,6 +1607,12 @@ ipcMain.handle(IPC.PLUGIN_SET_HOOK_TRUST, (_event, pluginId: unknown, contentHas
     throw new Error("Hook 信任参数无效。");
   }
   return clientOrThrow().setPluginHookTrust(pluginId, contentHash, trusted);
+});
+ipcMain.handle(IPC.PLUGIN_ACTIVATE, (_event, pluginId: unknown, contentHash: unknown) => {
+  if (typeof pluginId !== "string" || typeof contentHash !== "string" || !/^[0-9a-f]{64}$/.test(contentHash)) {
+    throw new Error("Plugin 参数无效。");
+  }
+  return clientOrThrow().activatePlugin(pluginId, contentHash);
 });
 
 ipcMain.handle(IPC.SKILL_LIST, () => clientOrThrow().listSkills());

@@ -4,10 +4,11 @@
 
 ## 入口与准备
 
-浏览器能力由内置插件 `eidos-browser`（`runtime/eidos_runtime/resources/plugins/browser/`）提供。用户在 设置 → 插件 → 插件市场 中安装浏览器插件，启用后在插件详情中授权其 MCP 服务。插件详情（`PluginDetailDialog.tsx`）顶部的“浏览器”一节（`BrowserSettingsSection.tsx`）用于选择 Agent 使用的浏览器，并在未找到 Google Chrome 或资源包未就绪时提示。
+浏览器能力由内置插件 `eidos-browser`（`runtime/eidos_runtime/resources/plugins/browser/`）提供。用户在 设置 → 插件 → 插件市场 中安装浏览器插件。安装会启用插件并授权随包的浏览器 MCP 服务；页面操作仍需要下文的 Session 浏览器授权。插件详情（`PluginDetailDialog.tsx`）顶部的“浏览器”一节（`BrowserSettingsSection.tsx`）用于选择 Agent 使用的浏览器，并在未找到 Google Chrome 或资源包未就绪时提示。
 
 - 浏览器工具由固定版本的 `@playwright/mcp@0.0.84` 执行。它和依赖位于 `browser` 资源包，并依赖已有的托管 Node（`node` 资源包）。安装或启用插件时，以及 Runtime 启动时插件已启用的情况下，资源包都在后台准备。Run 启动不会下载资源；未就绪时，该 Run 不提供浏览器工具；“浏览器”一节在资源未就绪时显示状态，下载失败或缺失时提供“重试”或“下载”按钮。插件资源中的工具列表与 Run 使用同一套启动参数，资源未就绪时显示具体原因（如 `browser_runtime_not_ready`），不会显示笼统的 `mcp_protocol_error`。启动命令显示为“Eidos 托管 Node · Playwright MCP”，不显示内部占位变量。
-- Eidos 不随包提供浏览器，需要用户已安装 Google Chrome（`/Applications` 或 `~/Applications`）。未安装时，浏览器工具在审批前返回 `browser_unavailable`，Run 不会终止。Eidos 不下载 Chrome for Testing，也不改用其他浏览器。
+- Eidos 使用已安装的 Google Chrome。macOS 检查 `/Applications` 和 `~/Applications`。Windows 检查 `Program Files`、`Program Files (x86)` 和 `%LOCALAPPDATA%` 下的 Chrome 安装目录。未安装时，浏览器工具在审批前返回 `browser_unavailable`，Run 仍可继续。
+- Windows 安装包包含 `browser` 和 `node` 资源。用户确认完全访问后，Run 可以使用 Eidos 专用 Chrome、用户 Chrome 远程调试或 Playwright Extension 标签组。Windows 读取用户 Chrome 的 `%LOCALAPPDATA%/Google/Chrome/User Data`。当前 Windows 版本缺少本地 MCP 隔离后端，受限 Run 和需要沙盒的设置页 MCP 工具发现返回 `mcp_sandbox_unavailable`。浏览器 MCP 详情会显示该平台限制和聊天中的「完全访问」入口说明。设置页工具发现不受聊天中的审批模式影响。
 - “浏览器”一节用于选择 Agent 使用的浏览器（见[目标浏览器](#目标浏览器)）。设置页不再提供单独打开、关闭或清除 Eidos 浏览器的按钮；用户可以在 Agent 打开的 Eidos 浏览器窗口中登录网站。Main 与 Runtime 中对应的 IPC 和 RPC 仍保留，当前没有界面调用。
 
 ## 调用链
@@ -21,7 +22,8 @@ Model → ToolCallRuntime → ExternalToolHandler（浏览器授权）
      Chrome：Eidos 专用 profile（BrowserHost 启动）或用户自己的 Chrome（用户开启远程调试）
 ```
 
-- `BrowserHost`（`infrastructure/browser_host.py`）由 RuntimeServer 创建，作为持久受管任务运行，所有 Session 共用。它在 Seatbelt 外启动 Chrome。Chrome 保留自身的渲染沙盒，使用 `<数据目录>/browser/profiles/default`（`0700`）。CDP 端口在 MCP 启动前分配，Chrome 运行期间固定。Chrome 只在第一次浏览器操作时启动，30 分钟无调用、用户关闭或 Runtime 退出时停止。Runtime 重启后，BrowserHost 通过私有状态文件和 Chrome 的 `SingletonLock` 接管仍在运行的 Chrome。
+- `BrowserHost`（`infrastructure/browser_host.py`）由 RuntimeServer 创建，作为持久受管任务运行，所有 Session 共用。Chrome 保留自身的渲染沙盒，使用私有的 `<数据目录>/browser/profiles/default`。CDP 端口在 MCP 启动前分配，Chrome 运行期间固定。Chrome 只在第一次浏览器操作时启动，30 分钟无调用、用户关闭或 Runtime 退出时停止。macOS 用私有状态文件和 `SingletonLock` 接管仍在运行的 Chrome。Windows 用 Job Object 管理专用 Chrome，Runtime 进程退出时系统会关闭该进程树。
+- Windows 的标签组 helper 只访问绑定到 `127.0.0.1` 的本次连接 broker。broker 校验临时凭据和固定的扩展连接页，再打开 Chrome。日志只记录拒绝原因，避免保存连接令牌。
 - BrowserHost 为每个 Chrome 保持一条控制用的 CDP 连接，并设置 `Browser.setDownloadBehavior: deny`。Chrome 在设置方断开后会恢复默认，所以连接必须保持打开；断开后，下一次工具调用前会重建。无法设置拒绝下载时，Chrome 会被停止，并返回 `browser_start_failed`。
 - MCP 进程按 Run 启动。Run 结束只关闭 MCP，不关闭 Chrome，后续 Run 可以继续使用已打开的页面。启动参数固定 `--no-webmcp`，网页不能注册工具；参数还固定 `--ignore-roots`，上传根目录为 Workspace。
 - 只有内容 Hash 与随应用发布版本一致的 `eidos-browser` 包，才能使用 `browser` 沙盒配置和浏览器启动变量。同名的本地包会被拒绝，错误码为 `mcp_permission_profile_unsupported`。

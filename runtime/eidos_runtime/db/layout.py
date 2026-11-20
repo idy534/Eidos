@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 from contextlib import AbstractContextManager, contextmanager
 import os
 import logging
@@ -87,6 +89,20 @@ LOGS_DATABASE_NAME = "logs.sqlite"
 STATE_COMPACTION_MARKER_NAME = "state-compaction.pending"
 
 _AUXILIARY_SCHEMA_VERSION = 1
+# v2 keys each generation's FTS rows by ``creation_seq << 32`` so pruning a
+# generation deletes one rowid range instead of scanning every FTS row. A v1
+# cache is derived data in the old layout; it is discarded and rebuilt.
+REPOSITORY_CACHE_VERSION = 2
+REPOSITORY_FTS_ROWID_SHIFT = 32
+
+
+def repository_fts_rowid_range(creation_seq: int) -> tuple[int, int]:
+    """Half-open FTS rowid range owned by one repository snapshot."""
+
+    if creation_seq < 1 or creation_seq >= 1 << 30:
+        raise StorageError("repository_generation_sequence_invalid")
+    start = creation_seq << REPOSITORY_FTS_ROWID_SHIFT
+    return start, start + (1 << REPOSITORY_FTS_ROWID_SHIFT)
 LOGS_SCHEMA_VERSION = 2
 _REPOSITORY_TABLES = (
     "repository_snapshots",
@@ -173,12 +189,16 @@ T = TypeVar("T")
 
 class StateDatabase(Protocol):
     data_directory: Path | None
-    lock: threading.RLock
+    lock: AbstractContextManager[object]
     json_blobs: JsonBlobStore
 
     def connection(self) -> sqlite3.Connection: ...
 
     def transaction(self) -> AbstractContextManager[sqlite3.Connection]: ...
+
+    def read_snapshot_after_writers(
+        self,
+    ) -> AbstractContextManager[sqlite3.Connection]: ...
 
 
 class AuxiliaryDatabase:
@@ -310,6 +330,7 @@ class RepositoryDatabase(AuxiliaryDatabase):
             data_directory,
             name=REPOSITORY_DATABASE_NAME,
             schema_sql=REPOSITORY_SCHEMA_SQL,
+            schema_version=REPOSITORY_CACHE_VERSION,
         )
         self._cache_revision = 0
         self._unavailable = False
@@ -319,6 +340,13 @@ class RepositoryDatabase(AuxiliaryDatabase):
         # This rebuildable cache does not gate authoritative Runtime startup.
         if not set((*_REPOSITORY_TABLES, "repository_fts")).issubset(_table_names(connection)):
             raise StorageError("repository_cache_schema_invalid")
+
+    def _migration_for(
+        self, connection: sqlite3.Connection, revision: int
+    ) -> str | None:
+        if 1 <= revision < REPOSITORY_CACHE_VERSION:
+            raise StorageError("repository_cache_outdated")
+        return super()._migration_for(connection, revision)
 
     def initialize(self) -> None:
         _prepare_private_directory(self.data_directory)
@@ -337,7 +365,9 @@ class RepositoryDatabase(AuxiliaryDatabase):
         except StorageError as error:
             # Unknown cache revisions and path/permission failures remain closed
             # to indexing. They never authorize discarding an untrusted target.
-            if _repository_corruption(error):
+            if str(error) == "repository_cache_outdated":
+                self._replace_outdated()
+            elif _repository_corruption(error):
                 self._rebuild()
             else:
                 self._unavailable = True
@@ -407,6 +437,47 @@ class RepositoryDatabase(AuxiliaryDatabase):
                 connection.set_progress_handler(None, 0)
             return False
 
+    def _replace_outdated(self) -> None:
+        """Delete a verified older-layout cache and start an empty current one.
+
+        Unlike corruption there is nothing to inspect, so the derived files are
+        removed instead of kept beside the new cache.
+        """
+        self.close()
+        try:
+            identities = self._verified_cache_files()
+            for path, expected in identities.items():
+                actual = path.lstat()
+                if (actual.st_dev, actual.st_ino, actual.st_uid, actual.st_nlink) != (
+                    expected.st_dev, expected.st_ino, expected.st_uid, expected.st_nlink,
+                ):
+                    raise StorageError("repository_cache_identity_invalid")
+                path.unlink()
+            _fsync_directory(self.data_directory)
+            super().initialize()
+            self._unavailable = False
+            self._cache_revision += 1
+            logger.info("Repository cache format upgraded; generations will be rebuilt")
+        except (OSError, sqlite3.DatabaseError, StorageError) as error:
+            self._unavailable = True
+            logger.warning(
+                "Repository cache upgrade unavailable error_class=%s", type(error).__name__
+            )
+
+    def _verified_cache_files(self) -> dict[Path, os.stat_result]:
+        paths = [self.path, *(self.path.with_name(self.name + suffix) for suffix in ("-wal", "-shm"))]
+        # Validate all existing targets before touching any of them. Permission,
+        # symlink and hardlink failures do not authorize replacing a path.
+        identities: dict[Path, os.stat_result] = {}
+        for path in paths:
+            if path.exists() or path.is_symlink():
+                _verify_private_database(path)
+                metadata = path.lstat()
+                if metadata.st_nlink != 1:
+                    raise StorageError("repository_cache_identity_invalid")
+                identities[path] = metadata
+        return identities
+
     def _rebuild(self) -> None:
         """Preserve a damaged private cache and start an empty derived store."""
         self._cache_revision += 1
@@ -415,17 +486,7 @@ class RepositoryDatabase(AuxiliaryDatabase):
         self.close()
         try:
             token = uuid.uuid4().hex
-            paths = [self.path, *(self.path.with_name(self.name + suffix) for suffix in ("-wal", "-shm"))]
-            # Validate all existing targets before moving any of them. Permission,
-            # symlink and hardlink failures do not authorize replacing a path.
-            identities: dict[Path, os.stat_result] = {}
-            for path in paths:
-                if path.exists() or path.is_symlink():
-                    _verify_private_database(path)
-                    metadata = path.lstat()
-                    if metadata.st_nlink != 1:
-                        raise StorageError("repository_cache_identity_invalid")
-                    identities[path] = metadata
+            identities = self._verified_cache_files()
             for path, expected in identities.items():
                 actual = path.lstat()
                 if (actual.st_dev, actual.st_ino, actual.st_uid, actual.st_mode, actual.st_nlink) != (
@@ -602,7 +663,7 @@ def _extract_repository_database(
         target.execute("PRAGMA journal_mode = DELETE")
         target.execute("PRAGMA busy_timeout = 5000")
         target.executescript(REPOSITORY_SCHEMA_SQL)
-        target.execute(f"PRAGMA user_version = {_AUXILIARY_SCHEMA_VERSION}")
+        target.execute(f"PRAGMA user_version = {REPOSITORY_CACHE_VERSION}")
         target.execute("ATTACH DATABASE ? AS legacy_state", (str(repository_path.parent / STATE_DATABASE_NAME),))
         with target:
             for table in _REPOSITORY_TABLES:
@@ -631,9 +692,18 @@ def _extract_repository_database(
                     f"INSERT INTO main.{table} SELECT * FROM legacy_state.{table}"
                 )
             columns = ", ".join(_REPOSITORY_FTS_COLUMNS)
+            source_columns = ", ".join(f"fts.{column}" for column in _REPOSITORY_FTS_COLUMNS)
+            # Re-key each generation's rows into its snapshot's rowid range.
             target.execute(
-                f"INSERT INTO main.repository_fts ({columns}) "
-                f"SELECT {columns} FROM legacy_state.repository_fts"
+                f"INSERT INTO main.repository_fts (rowid, {columns}) "
+                f"SELECT (snapshot.creation_seq << {REPOSITORY_FTS_ROWID_SHIFT}) "
+                "+ ROW_NUMBER() OVER (PARTITION BY fts.index_snapshot_id ORDER BY fts.rowid), "
+                f"{source_columns} "
+                "FROM legacy_state.repository_fts AS fts "
+                "JOIN legacy_state.repository_index_generations AS generation "
+                "ON generation.id = fts.index_snapshot_id "
+                "JOIN legacy_state.repository_snapshots AS snapshot "
+                "ON snapshot.id = generation.repository_snapshot_id"
             )
             prune_repository_generations(target)
         target.execute("DETACH DATABASE legacy_state")
@@ -936,92 +1006,79 @@ def _migrate_state_schema(state: StateDatabase) -> None:
 
 
 def prune_repository_generations(connection: sqlite3.Connection) -> None:
-    connection.execute(
-        "CREATE TEMP TABLE retained_repository_snapshots "
-        "(id TEXT PRIMARY KEY) WITHOUT ROWID"
-    )
-    connection.execute(
+    """Keep each workspace's latest candidate and latest complete generation.
+
+    Every delete targets one dropped snapshot through a primary-key prefix or
+    its FTS rowid range, so the cost follows the dropped data, not the cache.
+    """
+
+    rows = connection.execute(
         """
-        INSERT OR IGNORE INTO retained_repository_snapshots (id)
-        SELECT candidate.id
-        FROM repository_snapshots AS candidate
-        WHERE candidate.creation_seq = (
-            SELECT MAX(latest.creation_seq)
-            FROM repository_snapshots AS latest
-            WHERE latest.repository_id = candidate.repository_id
-              AND latest.workspace_root = candidate.workspace_root
-              AND latest.workspace_dev = candidate.workspace_dev
-              AND latest.workspace_inode = candidate.workspace_inode
-              AND latest.workspace_uid = candidate.workspace_uid
-        )
+        SELECT id, creation_seq, complete,
+               repository_id, workspace_root, workspace_dev, workspace_inode,
+               workspace_uid
+        FROM repository_snapshots
+        ORDER BY creation_seq DESC
         """
-    )
-    connection.execute(
-        """
-        INSERT OR IGNORE INTO retained_repository_snapshots (id)
-        SELECT candidate.id
-        FROM repository_snapshots AS candidate
-        WHERE candidate.complete = 1
-          AND candidate.creation_seq = (
-              SELECT MAX(latest.creation_seq)
-              FROM repository_snapshots AS latest
-              WHERE latest.repository_id = candidate.repository_id
-                AND latest.workspace_root = candidate.workspace_root
-                AND latest.workspace_dev = candidate.workspace_dev
-                AND latest.workspace_inode = candidate.workspace_inode
-                AND latest.workspace_uid = candidate.workspace_uid
-                AND latest.complete = 1
-          )
-        """
-    )
-    retained_generations = (
-        "SELECT id FROM repository_index_generations "
-        "WHERE repository_snapshot_id IN "
-        "(SELECT id FROM retained_repository_snapshots)"
-    )
-    connection.execute(
-        "DELETE FROM repository_fts WHERE index_snapshot_id NOT IN ("
-        + retained_generations
-        + ")"
-    )
-    for table in (
-        "repository_parsed_files",
-        "repository_symbols",
-        "repository_imports",
-        "repository_references",
-        "repository_chunks",
-    ):
+    ).fetchall()
+    latest: set[tuple[object, ...]] = set()
+    latest_complete: set[tuple[object, ...]] = set()
+    dropped: list[tuple[str, int]] = []
+    for row in rows:
+        workspace = tuple(row[3:8])
+        keep = False
+        if workspace not in latest:
+            latest.add(workspace)
+            keep = True
+        if row[2] == 1 and workspace not in latest_complete:
+            latest_complete.add(workspace)
+            keep = True
+        if not keep:
+            dropped.append((str(row[0]), int(row[1])))
+    for snapshot_id, creation_seq in dropped:
+        start, end = repository_fts_rowid_range(creation_seq)
         connection.execute(
-            f"DELETE FROM {table} "
-            f"WHERE repository_index_generation_id NOT IN ({retained_generations})"
+            "DELETE FROM repository_fts WHERE rowid >= ? AND rowid < ?", (start, end)
         )
-    connection.execute(
-        "DELETE FROM repository_diagnostics "
-        "WHERE repository_snapshot_id NOT IN "
-        "(SELECT id FROM retained_repository_snapshots)"
-    )
-    connection.execute(
-        "DELETE FROM repository_index_generations "
-        "WHERE repository_snapshot_id NOT IN "
-        "(SELECT id FROM retained_repository_snapshots)"
-    )
-    for table in ("repository_files", "repository_directories"):
+        generations = [
+            str(row[0])
+            for row in connection.execute(
+                "SELECT id FROM repository_index_generations WHERE repository_snapshot_id = ?",
+                (snapshot_id,),
+            )
+        ]
         connection.execute(
-            f"DELETE FROM {table} WHERE repository_snapshot_id NOT IN "
-            "(SELECT id FROM retained_repository_snapshots)"
+            "DELETE FROM repository_diagnostics WHERE repository_snapshot_id = ?",
+            (snapshot_id,),
         )
-    connection.execute(
-        "DELETE FROM repository_snapshots WHERE id NOT IN "
-        "(SELECT id FROM retained_repository_snapshots)"
-    )
-    connection.execute("DROP TABLE retained_repository_snapshots")
+        for generation_id in generations:
+            for table in (
+                "repository_parsed_files",
+                "repository_symbols",
+                "repository_imports",
+                "repository_references",
+                "repository_chunks",
+            ):
+                connection.execute(
+                    f"DELETE FROM {table} WHERE repository_index_generation_id = ?",
+                    (generation_id,),
+                )
+        connection.execute(
+            "DELETE FROM repository_index_generations WHERE repository_snapshot_id = ?",
+            (snapshot_id,),
+        )
+        for table in ("repository_files", "repository_directories"):
+            connection.execute(
+                f"DELETE FROM {table} WHERE repository_snapshot_id = ?", (snapshot_id,)
+            )
+        connection.execute("DELETE FROM repository_snapshots WHERE id = ?", (snapshot_id,))
 
 
 def _prepare_private_database(path: Path) -> None:
     if path.is_symlink():
         raise StorageError("database must not be a symlink")
     if not path.exists():
-        descriptor = os.open(
+        descriptor = local_files.open_file(
             path,
             os.O_CREAT | os.O_EXCL | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
             0o600,
@@ -1038,8 +1095,7 @@ def _prepare_private_directory(path: Path) -> None:
     metadata = path.stat()
     if (
         not stat.S_ISDIR(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or not local_files.has_private_access(path, metadata, 0o700)
     ):
         raise StorageError("data directory owner or mode is invalid")
 
@@ -1050,7 +1106,7 @@ def _verify_private_database(path: Path) -> None:
     metadata = path.stat()
     if not stat.S_ISREG(metadata.st_mode):
         raise StorageError("database must be a regular file")
-    if metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o600:
+    if not local_files.has_private_access(path, metadata, 0o600):
         raise StorageError("database owner or mode is invalid")
 
 
@@ -1065,8 +1121,7 @@ def _retry_state_compaction(state: StateDatabase) -> None:
     metadata = marker.stat()
     if (
         not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or not local_files.has_private_access(marker, metadata, 0o600)
     ):
         raise StorageError("state_security_invalid")
     try:
@@ -1083,7 +1138,7 @@ def _write_empty_marker(path: Path) -> None:
         if path.is_symlink():
             raise StorageError("state_security_invalid")
         return
-    descriptor = os.open(
+    descriptor = local_files.open_file(
         path,
         os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
         0o600,
@@ -1113,7 +1168,7 @@ def _verify_connection(connection: sqlite3.Connection) -> None:
 
 
 def _fsync_file(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    descriptor = local_files.open_file(path, os.O_RDWR if local_files.WINDOWS else os.O_RDONLY)
     try:
         os.fsync(descriptor)
     finally:
@@ -1121,11 +1176,7 @@ def _fsync_file(path: Path) -> None:
 
 
 def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    local_files.sync_directory(path)
 
 
 __all__ = [
@@ -1135,24 +1186,38 @@ __all__ = [
     "LOGS_SCHEMA_VERSION",
     "LogsDatabase",
     "PersistenceLayout",
+    "REPOSITORY_CACHE_VERSION",
     "REPOSITORY_DATABASE_NAME",
     "RepositoryDatabase",
     "STATE_DATABASE_NAME",
     "THREAD_HISTORY_DATABASE_NAME",
     "migrate_legacy_state_database",
     "prune_repository_generations",
+    "repository_fts_rowid_range",
 ]
 
 
 def collect_unreferenced_blobs(
     state: StateDatabase, blobs: JsonBlobStore, *, cancel: threading.Event | None = None,
 ) -> int:
-    with state.lock, blobs.lock:
-        references = iter_blob_references(state.connection())
-        try:
-            return blobs.garbage_collect(references, cancel=cancel)
-        finally:
-            references.close()
+    """Delete Blobs no committed State row references.
+
+    The State lock is held only while the reference snapshot is opened. Reading
+    tens of thousands of references and manifests happens on a read-only WAL
+    snapshot, so Session reads and Run writes continue during collection. Blobs
+    written after the collection starts are pinned by the store.
+    """
+
+    with blobs.collection() as collection:
+        with state.read_snapshot_after_writers() as connection:
+            references = iter_blob_references(connection)
+            try:
+                retained = collection.mark(references, cancel=cancel)
+            finally:
+                references.close()
+        if retained is None:
+            return 0
+        return collection.sweep(retained, cancel=cancel)
 
 
 def iter_blob_references(connection: sqlite3.Connection) -> Iterator[str]:

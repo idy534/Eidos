@@ -151,6 +151,12 @@ env -u NODE_OPTIONS pnpm --dir "$NODE_PROJECT_ROOT" install \
   --prod \
   --node-linker=hoisted \
   --reporter=append-only
+# The engine is an optional dependency of the kit; require the locked macOS
+# arm64 build instead of letting a skipped optional install pass silently.
+if [[ ! -f "$NODE_PROJECT_ROOT/node_modules/@deepseek-ai/libreoffice-kit-darwin-arm64/bin/dsoffice" ]]; then
+  echo "locked Node install is missing the macOS arm64 Office engine" >&2
+  exit 1
+fi
 rsync -aL --delete \
   --exclude='.pnpm/' \
   --exclude='.modules.yaml' \

@@ -9,6 +9,7 @@ import uuid
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.plugins import _private_directory
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.persistence.hooks import HookRepository
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
 
@@ -27,7 +28,7 @@ def write_transcript(store: SessionStore, session_id: str, sensitive: SensitiveS
     truncated = len(items) > 1024
     size = 0
     try:
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        descriptor = local_files.open_file(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "wb") as output:
             for item in items[-1024:]:
                 truncated = truncated or item.truncated
@@ -50,7 +51,7 @@ def write_transcript(store: SessionStore, session_id: str, sensitive: SensitiveS
             output.write((json.dumps({"type": "transcript_metadata", "format": "eidos-hook-v1", "truncated": truncated}) + "\n").encode())
             output.flush()
             os.fsync(output.fileno())
-        os.replace(temporary, path)
+        local_files.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
     return path

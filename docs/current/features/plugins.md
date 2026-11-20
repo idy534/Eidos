@@ -6,7 +6,7 @@
 
 Runtime 接受 Eidos v1、Portable Agent Plugins 和 `.codex-plugin/plugin.json` 三种本地目录。Portable 包以根清单决定身份，以 `skills/` 发现技能，以 `mcp.json` 声明 MCP。`extensions.com.openai` 存在时，它整体替代旧 Codex overlay 的设置。旧 Codex 包可以用 `skills` 和 `mcpServers` 声明目录、内联配置或配置文件；没有显式 MCP 声明时，Runtime 发现 `.mcp.json`。重复 JSON 键、越界路径、链接、特殊文件、过量内容继续拒绝。
 
-插件可以同时提供 Skill、command/MCP Hook、本地 stdio MCP 和远程 Streamable HTTP MCP。导入不启动服务，也不执行脚本。用户需要启用插件，并分别确认 MCP 授权和 Hook 信任。远程服务需要用户主动连接账号或连接无认证服务。MCP Hook 只调用当前 Run 已连接且仍有授权的服务。插件详情提供 Hook 执行历史。Hook 的事件、后台命令、权限和恢复规则见 [docs/current/features/hooks.md](hooks.md)。
+插件可以同时提供 Skill、command/MCP Hook、本地 stdio MCP 和远程 Streamable HTTP MCP。导入不启动服务，也不执行脚本。用户在设置页打开插件开关时，如果当前版本有尚未信任的可执行 Hook 或尚未授权的本地 MCP，Desktop 会在同一个确认框中列出这些 MCP 的启动命令、权限和环境变量名称，以及 Hook 的事件、命令、安装目录和私有数据目录。用户确认后，Desktop 调用 `plugin/activate`。Runtime 先按确认时的内容 Hash 读取并核验插件包，再在同一事务中启用插件、保存该版本的 Hook 信任、授权清单中 `enabled` 的本地 MCP，并写入对应 Event/Outbox。版本已变化时请求返回 `RESOURCE_NOT_FOUND`；安装内容与记录不一致时返回 `PLUGIN_UNAVAILABLE`。两种失败都不留下部分授权。已授权服务保留原有错误状态。用户在详情中单独停用的本地 MCP 会在下次打开插件开关时重新列出并授权。没有待确认资源时，开关直接启用。Skill 沿用各自开关，默认开启。关闭插件只停用插件，不撤销 Hook 信任或 MCP 授权。授权不会立即启动 MCP 进程；服务仍在 Run 需要时按快照启动。远程服务需要用户主动连接账号或连接无认证服务，启用提示会列出尚未连接的远程服务。MCP Hook 只调用当前 Run 已连接且仍有授权的服务。插件详情提供 Hook 执行历史。Hook 的事件、后台命令、权限和恢复规则见 [docs/current/features/hooks.md](hooks.md)。
 
 Runtime 创建新的扩展快照时会核验插件包内容身份。内容身份不匹配或包不可读时，Runtime 会从新快照中省略该插件，并继续加载其他可用扩展。旧快照仍按已固定的版本和内容身份读取，已被修改的包内容不会被使用。
 
@@ -61,7 +61,7 @@ Runtime 只在启动时恢复中断的登录，将其标为需要重新连接。
 
 ## 内置 GitHub
 
-应用随附 `resources/plugins/github/`。设置页展示内置 GitHub，用户点击安装后，Runtime 复用同一包解析、版本管理和安装入口。安装会启用这个受管插件，但不会自动登录或取得账号权限。GitHub 的 MCP 地址是 `https://api.githubcopilot.com/mcp/`，包同时提供 GitHub Skill。连接不依赖用户预装的 Node、Docker、GitHub CLI 或 MCP 二进制。
+应用随附 `resources/plugins/github/`。设置页展示内置 GitHub，用户点击安装后，Runtime 复用同一包解析、版本管理和安装入口。安装使用与 `plugin/activate` 相同的路径启用这个受管插件，并授权随包的本地 MCP，但不会自动登录或取得账号权限。GitHub 的 MCP 地址是 `https://api.githubcopilot.com/mcp/`，包同时提供 GitHub Skill。连接不依赖用户预装的 Node、Docker、GitHub CLI 或 MCP 二进制。
 
 用户可以在 GitHub 的资源详情中输入 PAT，或使用浏览器 Device Flow。浏览器方式需要发行方先注册 GitHub OAuth App / GitHub App 并启用 Device Flow。发行方可以在包的 `auth.clientId` 中提供公开标识；开发环境也可以设置 `EIDOS_GITHUB_CLIENT_ID`。当前仓库没有填入真实 Client ID，界面因此提供 PAT 和“创建 GitHub 令牌”入口，不把浏览器登录显示为可用。修改随包 Client ID 时必须更新插件版本，遵循同版本不可改内容的规则。
 
@@ -90,6 +90,8 @@ v37、v38 不改变已有 v36 的短目录布局。更早的 `<id>/<version>/<ha
 本轮沿用了 Codex 的组合式包、独立服务授权、展示信息和版本安装思路。[Codex 官方文档](https://developers.openai.com/plugins/build/plugins) 同时提供市场分发、远程连接和安装引导；这些能力不能仅靠读取清单获得。
 
 设置页提供“插件市场”弹窗，用于搜索、安装和更新随应用提供的内置插件。弹窗不下载 Git/npm 包，也不包含第三方远程插件目录。Eidos 当前没有 Git/npm 下载器、Codex `.app.json` 连接映射或 MCP Apps 界面。手动 MCP 编辑器仍仅支持本地 stdio，远程配置当前由插件包声明。当前通用 OAuth 覆盖公开客户端、DCR 和 CIMD，不提供让用户录入机密客户端 Secret 的流程。Figma 未内置。真实 GitHub 账号、组织策略和发行方 Client ID 仍需独立验收，模拟服务通过不能替代真实账号验收。
+
+Windows 上，Runtime 对随应用提供的 GitHub 和浏览器插件核对预置的内容指纹，支持由管理员持有的源码目录或安装目录。文件读取继续拒绝链接、重解析点和多硬链接，检查打开的文件身份和大小。指纹核对兼容 Git 对 JSON 和 Markdown 文件的 CRLF 转换，安装和版本身份仍使用原始字节。修改内置包内容时，需同时更新包版本和 `extensions/plugins.py` 中按 LF 计算的预置指纹。本地导入和已安装目录的所有权要求继续适用。
 
 [GitHub 官方 Host 集成指南](https://github.com/github/github-mcp-server/blob/main/docs/host-integration.md) 要求客户端取得有效访问 token，可使用 OAuth 或 PAT。Eidos 不能复用 Codex 账号里的连接。[Figma 官方安装指南](https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/) 要求 HTTP 连接和账号登录，并说明当前只有目录列出的客户端可以连接，新客户端需要申请。Eidos 还需要确认这个接入条件，不能仅凭 OAuth 实现宣称 Figma 可用。
 

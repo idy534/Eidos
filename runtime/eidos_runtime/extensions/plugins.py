@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.infrastructure import local_files
+
 import hashlib
 import json
 import os
@@ -31,6 +33,13 @@ MAX_PLUGIN_FILES = 512
 MAX_PLUGIN_FILE_BYTES = 1024 * 1024
 MAX_PLUGIN_TOTAL_BYTES = 8 * 1024 * 1024
 MANUAL_MCP_PLUGIN_ID = "manual"
+BUNDLED_PLUGIN_ROOT = Path(__file__).resolve().parents[1] / "resources" / "plugins"
+# Windows source checkouts and machine-wide installs can be administrator-owned.
+# Pin the shipped paths and bytes before using those packages as trusted input.
+_BUNDLED_PLUGIN_HASHES = {
+    "github": "853045bd13744d9ad858ba1411febb5d5139bba38743b4955eb51e2d0c2f8458",
+    "browser": "40d3747448015eaecdc121a5d10bf49880bc6cf88fa61cad72ed96c72a3a0837",
+}
 
 
 class PluginImportError(ValueError):
@@ -50,6 +59,17 @@ class PluginCatalog:
     def import_directory(self, source: Path) -> dict[str, object]:
         try:
             files = _read_source(source)
+        except PluginImportError:
+            raise
+        except (KeyError, UnicodeDecodeError, ValueError, RecursionError):
+            raise PluginImportError("plugin_manifest_invalid") from None
+        return self._import_files(files)
+
+    def import_bundled(self, name: str) -> dict[str, object]:
+        return self._import_files(read_bundled_plugin(name))
+
+    def _import_files(self, files: dict[str, bytes]) -> dict[str, object]:
+        try:
             package = read_package(files)
             manifest = package.manifest
             _validate_declared_files(manifest, files)
@@ -153,6 +173,31 @@ class PluginCatalog:
         if enabled:
             self.package(plugin_id)
         return self._describe(self.store.set_plugin_enabled(plugin_id, enabled))
+
+    def activate(self, plugin_id: str, content_hash: str) -> dict[str, object]:
+        """Enable the reviewed version together with the resources it bundles.
+
+        Hook trust and local MCP consent are granted for this content hash only.
+        Remote services still need the user to connect an account.
+        """
+        record = self.store.plugin_record(plugin_id)
+        # A stale review fails the same way whether or not the old files still exist.
+        # The repository repeats this check inside the transaction.
+        if record is None or record["status"] != "installed" or record["contentHash"] != content_hash:
+            raise ResourceNotFoundError("plugin version changed or is unavailable")
+        package = self.package(plugin_id, expected_hash=content_hash)
+        servers = tuple(
+            self._server_projection(record, config) for config in package.manifest.mcp_servers
+            if config.enabled and config.transport != "streamable-http"
+        )
+        ExtensionRepository(self.store.database).activate_plugin(
+            plugin_id, content_hash,
+            trust_hooks=any(hook.supported for hook in package.hooks),
+            servers=servers,
+        )
+        current = self.store.plugin_record(plugin_id)
+        assert current is not None
+        return self._describe(current, package)
 
     def set_hook_trust(self, plugin_id: str, content_hash: str, trusted: bool) -> dict[str, object]:
         if trusted:
@@ -292,36 +337,7 @@ class PluginCatalog:
         result: list[dict[str, object]] = []
         for record in self.list_plugins():
             manifest = self.manifest(str(record["id"]))
-            for config in manifest.mcp_servers:
-                state = self.store.mcp_server_state(str(record["id"]), config.id)
-                projection = {
-                    "schemaVersion": 1,
-                    "pluginId": record["id"],
-                    "pluginVersion": record["version"],
-                    "pluginHash": record["contentHash"],
-                    "serverId": config.id,
-                    "executable": config.executable,
-                    "argv": list(config.argv),
-                    "envNames": list(config.env_names),
-                    "permissionProfile": config.permission_profile,
-                    "startupTimeoutSeconds": config.startup_timeout_seconds,
-                    "toolTimeoutSeconds": config.tool_timeout_seconds,
-                    "declaredEnabled": config.enabled,
-                    "consented": state["consented"],
-                    "available": bool(
-                        record["enabled"] and config.enabled and state["consented"]
-                        and state["errorCode"] is None
-                    ),
-                    "errorCode": state["errorCode"],
-                    "updatedAt": state["updatedAt"],
-                }
-                if projection["errorCode"] is None:
-                    projection.pop("errorCode")
-                if config.transport == "streamable-http":
-                    connection = self.connections.read(str(record["id"]), config.id)
-                    projection["remote"] = {"url": config.url, "authType": connection.auth_type}
-                    projection["available"] = bool(projection["available"] and connection.status == "connected")
-                result.append(projection)
+            result.extend(self._server_projection(record, config) for config in manifest.mcp_servers)
         for record in self.store.list_manual_mcp_servers():
             state = self.store.mcp_server_state(
                 MANUAL_MCP_PLUGIN_ID, str(record["serverId"])
@@ -352,6 +368,37 @@ class PluginCatalog:
             str(value["pluginId"]).encode("utf-8"),
             str(value["serverId"]).encode("utf-8"),
         ))
+
+    def _server_projection(self, record: dict[str, object], config: McpServerConfigV1) -> dict[str, object]:
+        state = self.store.mcp_server_state(str(record["id"]), config.id)
+        projection = {
+            "schemaVersion": 1,
+            "pluginId": record["id"],
+            "pluginVersion": record["version"],
+            "pluginHash": record["contentHash"],
+            "serverId": config.id,
+            "executable": config.executable,
+            "argv": list(config.argv),
+            "envNames": list(config.env_names),
+            "permissionProfile": config.permission_profile,
+            "startupTimeoutSeconds": config.startup_timeout_seconds,
+            "toolTimeoutSeconds": config.tool_timeout_seconds,
+            "declaredEnabled": config.enabled,
+            "consented": state["consented"],
+            "available": bool(
+                record["enabled"] and config.enabled and state["consented"]
+                and state["errorCode"] is None
+            ),
+            "errorCode": state["errorCode"],
+            "updatedAt": state["updatedAt"],
+        }
+        if projection["errorCode"] is None:
+            projection.pop("errorCode")
+        if config.transport == "streamable-http":
+            connection = self.connections.read(str(record["id"]), config.id)
+            projection["remote"] = {"url": config.url, "authType": connection.auth_type}
+            projection["available"] = bool(projection["available"] and connection.status == "connected")
+        return projection
 
     def set_mcp_enabled(
         self, plugin_id: str, server_id: str, enabled: bool
@@ -572,13 +619,25 @@ class PluginCatalog:
         return self.root / plugin_id / version
 
 
-def _read_source(source: Path) -> dict[str, bytes]:
+def read_bundled_plugin(name: str) -> dict[str, bytes]:
+    expected_hash = _BUNDLED_PLUGIN_HASHES.get(name)
+    if expected_hash is None:
+        raise PluginImportError("plugin_source_invalid")
+    return _read_source(
+        BUNDLED_PLUGIN_ROOT / name, expected_hash=expected_hash if local_files.WINDOWS else None,
+    )
+
+
+def _read_source(source: Path, *, expected_hash: str | None = None) -> dict[str, bytes]:
     try:
         root = source.resolve(strict=True)
         metadata = source.lstat()
     except OSError:
         raise PluginImportError("plugin_source_invalid") from None
-    if source.is_symlink() or not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+    if (
+        local_files.is_link(metadata) or not stat.S_ISDIR(metadata.st_mode)
+        or (expected_hash is None and not local_files.owned_by_user(source, metadata))
+    ):
         raise PluginImportError("plugin_source_invalid")
     files: dict[str, bytes] = {}
     total = 0
@@ -590,7 +649,9 @@ def _read_source(source: Path) -> dict[str, bytes]:
                 entry = candidate.lstat()
             except OSError:
                 raise PluginImportError("plugin_source_invalid") from None
-            if stat.S_ISLNK(entry.st_mode) or entry.st_uid != os.getuid():
+            if local_files.is_link(entry) or (
+                expected_hash is None and not local_files.owned_by_user(candidate, entry)
+            ):
                 raise PluginImportError("plugin_source_invalid")
             if name in names:
                 if not stat.S_ISDIR(entry.st_mode):
@@ -604,17 +665,14 @@ def _read_source(source: Path) -> dict[str, bytes]:
             if entry.st_size > MAX_PLUGIN_FILE_BYTES:
                 raise PluginImportError("plugin_source_invalid")
             relative = candidate.relative_to(root).as_posix()
-            flags = os.O_RDONLY
-            if hasattr(os, "O_NOFOLLOW"):
-                flags |= os.O_NOFOLLOW
             try:
-                descriptor = os.open(candidate, flags)
+                descriptor = local_files.open_file(candidate)
                 try:
                     opened = os.fstat(descriptor)
                     if (
                         not stat.S_ISREG(opened.st_mode)
                         or opened.st_nlink != 1
-                        or opened.st_uid != os.getuid()
+                        or (expected_hash is None and not local_files.owned_by_user(descriptor, opened))
                         or (opened.st_dev, opened.st_ino) != (entry.st_dev, entry.st_ino)
                     ):
                         raise PluginImportError("plugin_source_invalid")
@@ -631,6 +689,15 @@ def _read_source(source: Path) -> dict[str, bytes]:
                 or total > MAX_PLUGIN_TOTAL_BYTES
             ):
                 raise PluginImportError("plugin_source_invalid")
+    if expected_hash is not None:
+        # Git may check out shipped text with CRLF. Keep the original bytes
+        # for installation and version identity, as for a local import.
+        canonical = {
+            relative: data.replace(b"\r\n", b"\n") if relative.endswith((".json", ".md")) else data
+            for relative, data in files.items()
+        }
+        if _content_hash(canonical) != expected_hash:
+            raise PluginImportError("plugin_source_invalid")
     return files
 
 
@@ -692,7 +759,7 @@ def _manual_cwd(value: str | None, data_directory: Path | None, server_id: str) 
         metadata = resolved.stat()
     except (OSError, RuntimeError, ValueError):
         raise ValueError("mcp_cwd_invalid") from None
-    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+    if not stat.S_ISDIR(metadata.st_mode) or not local_files.owned_by_user(resolved, metadata):
         raise ValueError("mcp_cwd_invalid")
     if data_directory is not None:
         data_root = data_directory.resolve()
@@ -712,7 +779,7 @@ def _install_files(destination: Path, files: dict[str, bytes]) -> None:
             flags |= os.O_NOFOLLOW
         # Package scripts must stay directly executable after the safe copy.
         # A shebang is part of the content reviewed by Hook trust.
-        descriptor = os.open(target, flags, 0o700 if data.startswith(b"#!") else 0o600)
+        descriptor = local_files.open_file(target, flags, 0o700 if data.startswith(b"#!") else 0o600)
         try:
             offset = 0
             while offset < len(data):
@@ -729,11 +796,7 @@ def _private_directory(path: Path) -> None:
 
 
 def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    local_files.sync_directory(path)
 
 
 def _remove_tree(path: Path, root: Path) -> None:

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { ShellEnvironmentPolicy, ShellEnvironmentResponse } from "../../../../shared/shell-environment.js";
 import { Button } from "../Button.js";
+import { Select } from "../Select.js";
 import { Tooltip } from "../Tooltip.js";
 import { SettingRow } from "../SettingRow.js";
 import { SettingSection } from "../SettingSection.js";
@@ -100,7 +101,7 @@ export function ShellEnvironmentSettings({ onShowToast }: {
         }
         description="沙箱执行命令时继承宿主机环境变量的策略，修改后自动生效于后续命令"
         action={
-          <select
+          <Select
             aria-label="环境继承方式"
             className="shell-environment-select"
             value={settings?.policy.inherit ?? "all"}
@@ -110,7 +111,7 @@ export function ShellEnvironmentSettings({ onShowToast }: {
             <option value="all">继承全部（默认）</option>
             <option value="core">仅基础环境</option>
             <option value="none">不继承</option>
-          </select>
+          </Select>
         }
       />
       <SettingRow

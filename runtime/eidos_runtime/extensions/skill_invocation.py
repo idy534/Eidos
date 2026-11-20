@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import shlex
+import sys
 
 
 SUPPORTED_RUNNERS = frozenset({
@@ -63,6 +65,7 @@ _DENO_SUBCOMMANDS = frozenset({
     "test",
     "upgrade",
 })
+_POWERSHELL_WORD = re.compile(r'''\s*(?:'((?:[^']|'')*)'|"([^"]*)"|([&;]+|[^\s'"&;]+))(?=\s|[&;]|$)''')
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +74,28 @@ class SkillScriptInvocation:
 
     runner: str
     script_path: Path
+
+
+def skill_command_tokens(command: str) -> list[str]:
+    if sys.platform != "win32":
+        return shlex.split(command)
+    # Read the literal words in the documented PowerShell launcher. Backslashes
+    # are path separators and two single quotes represent a literal apostrophe.
+    # Expressions and interpolation are left to PowerShell.
+    tokens: list[str] = []
+    position = 0
+    command = command.rstrip()
+    while position < len(command):
+        match = _POWERSHELL_WORD.match(command, position)
+        if match is None:
+            raise ValueError("invalid literal PowerShell command")
+        single, double, bare = match.groups()
+        if single is not None:
+            tokens.append(single.replace("''", "'"))
+        else:
+            tokens.append(double if double is not None else bare)
+        position = match.end()
+    return tokens[1:] if tokens[:1] == ["&"] else tokens
 
 
 def parse_skill_script_invocation(
@@ -88,7 +113,7 @@ def parse_skill_script_invocation(
     if not command or not isinstance(command, str):
         return None
     try:
-        tokens = shlex.split(command, posix=True)
+        tokens = skill_command_tokens(command)
     except ValueError:
         return None
     if not tokens:
@@ -98,6 +123,11 @@ def parse_skill_script_invocation(
         "$RUNTIME_PYTHON": "python3", "${RUNTIME_PYTHON}": "python3",
         "$RUNTIME_NODE": "node", "${RUNTIME_NODE}": "node",
     }.get(tokens[0])
+    if sys.platform == "win32":
+        runtime_runner = runtime_runner or {
+            "$env:runtime_python": "python3", "${env:runtime_python}": "python3",
+            "$env:runtime_node": "node", "${env:runtime_node}": "node",
+        }.get(tokens[0].lower())
     runner = runtime_runner or Path(tokens[0]).name.removesuffix(".exe").lower()
     if runner not in SUPPORTED_RUNNERS:
         return None

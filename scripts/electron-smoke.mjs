@@ -1,27 +1,34 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-electron-smoke-"));
+const createdRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-electron-smoke-"));
+// Windows CI sets TEMP to an 8.3 alias such as RUNNER~1. The Runtime refuses
+// alternate names for its private data directory, so pass the canonical path.
+const temporaryRoot = process.platform === "win32" ? await realpath(createdRoot) : createdRoot;
 const dataDirectory = path.join(temporaryRoot, "eidos-data");
 const userDataDirectory = path.join(temporaryRoot, "electron-user-data");
-const executable = path.join(root, "node_modules", ".bin", "electron");
+const executable = createRequire(import.meta.url)("electron");
 const environment = {
   ...process.env,
   EIDOS_DATA_DIR: dataDirectory,
   EIDOS_PROJECTLESS_ROOT: `${dataDirectory}-workspaces`,
   EIDOS_ELECTRON_SMOKE: "1",
-  EIDOS_PYTHON: process.env.EIDOS_PYTHON ?? path.join(root, ".venv", "bin", "python"),
+  EIDOS_PYTHON: process.env.EIDOS_PYTHON ?? (process.platform === "win32"
+    ? path.join(root, ".venv", "Scripts", "python.exe")
+    : path.join(root, ".venv", "bin", "python")),
 };
 delete environment.EIDOS_FAKE_MODEL;
 delete environment.ELECTRON_RUN_AS_NODE;
 
 let output = "";
+const smokeTimeoutMs = process.platform === "win32" ? 90_000 : 60_000;
 try {
   const code = await new Promise((resolve, reject) => {
     const child = spawn(
@@ -32,7 +39,7 @@ try {
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       reject(new Error(`Electron smoke timed out.\n${output}`));
-    }, 60_000);
+    }, smokeTimeoutMs);
     const capture = (chunk) => {
       output = (output + chunk.toString("utf8")).slice(-1024 * 1024);
     };
@@ -49,9 +56,9 @@ try {
   });
 
   assert.equal(code, 0, output);
-  assert.match(output, /Runtime initialized/);
+  assert.match(output, /"msg":"Runtime initialized"[^\r\n]*"storageState":"ready"/, output);
   assert.match(output, /Runtime shutdown complete/);
-  console.log("Electron smoke initialized Runtime and exited cleanly.");
+  console.log("Electron smoke initialized Runtime with storage ready and exited cleanly.");
 } finally {
-  await rm(temporaryRoot, { recursive: true, force: true });
+  await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }

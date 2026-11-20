@@ -152,8 +152,6 @@ class BundledBrowserPluginTests(unittest.TestCase):
     """The shipped package runs with a Python stand-in for Playwright MCP."""
 
     def setUp(self) -> None:
-        from eidos_runtime.extensions.browser_plugin import BUNDLED_BROWSER_PLUGIN_ROOT
-
         self.temporary = tempfile.TemporaryDirectory(prefix="eidos-browser-bundled-")
         root = Path(self.temporary.name).resolve()
         self.data = root / "data"
@@ -163,7 +161,7 @@ class BundledBrowserPluginTests(unittest.TestCase):
         self.store = SessionStore(self.data)
         self.store.initialize()
         self.plugins = PluginCatalog(self.store)
-        self.plugins.import_directory(BUNDLED_BROWSER_PLUGIN_ROOT)
+        self.plugins.import_bundled("browser")
         self.plugins.set_enabled("eidos-browser", True)
         self.plugins.set_mcp_enabled("eidos-browser", "browser", True)
         self.resources = ResourceRegistry()

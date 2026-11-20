@@ -1,7 +1,6 @@
 """Bounded, version-checked access to the user's fixed-schema TOML files."""
 
 from contextlib import contextmanager
-import fcntl
 import hashlib
 import json
 import os
@@ -10,6 +9,7 @@ import stat
 import tomllib
 from collections.abc import Iterator
 
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.domain.agents import AgentDefinition, MAX_AGENT_FILE_BYTES
 
 
@@ -20,15 +20,13 @@ class AgentDefinitionFileError(RuntimeError):
 
 
 def read_definition_bytes(directory: int, name: str) -> bytes:
-    descriptor = os.open(
-        name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory
-    )
+    descriptor = local_files.open_file(name, dir_fd=directory)
     with os.fdopen(descriptor, "rb") as stream:
         before = os.fstat(stream.fileno())
         if (
             not stat.S_ISREG(before.st_mode)
             or before.st_nlink != 1
-            or before.st_uid != os.getuid()
+            or not local_files.owned_by_user(stream.fileno(), before)
             or before.st_size > MAX_AGENT_FILE_BYTES
         ):
             raise ValueError("unsafe_file")
@@ -86,16 +84,21 @@ class AgentDefinitionFiles:
         try:
             if create:
                 self.root.mkdir(mode=0o700, exist_ok=True)
-            descriptor = os.open(
-                self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-            )
+            descriptor = local_files.open_directory(self.root)
+            lock = descriptor
             try:
-                if os.fstat(descriptor).st_uid != os.getuid():
+                if not local_files.owned_by_user(descriptor, os.fstat(descriptor)):
                     raise ValueError("owner")
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                if local_files.WINDOWS:
+                    lock = local_files.open_file(self.root.parent / ".agent-definitions.lock", os.O_CREAT | os.O_RDWR)
+                    if not local_files.has_private_access(lock, os.fstat(lock), 0o600):
+                        raise ValueError("invalid lock")
+                local_files.lock_exclusive(lock)
                 self._check_directory(descriptor)
                 yield descriptor
             finally:
+                if lock != descriptor:
+                    os.close(lock)
                 os.close(descriptor)
         except AgentDefinitionFileError:
             raise
@@ -145,10 +148,10 @@ class AgentDefinitionFiles:
         self, directory: int, filename: str, raw: bytes, expected: str | None
     ) -> None:
         self._check_directory(directory)
-        flags = os.O_WRONLY | os.O_NONBLOCK | os.O_NOFOLLOW
+        flags = os.O_WRONLY
         flags |= os.O_EXCL | os.O_CREAT if expected is None else 0
         try:
-            descriptor = os.open(filename, flags, 0o600, dir_fd=directory)
+            descriptor = local_files.open_file(filename, flags, 0o600, dir_fd=directory)
         except FileExistsError as error:
             raise AgentDefinitionFileError(
                 "AGENT_DEFINITION_EXISTS", "同名智能体配置文件已经存在。"
@@ -158,12 +161,12 @@ class AgentDefinitionFiles:
             if (
                 not stat.S_ISREG(before.st_mode)
                 or before.st_nlink != 1
-                or before.st_uid != os.getuid()
+                or not local_files.owned_by_user(stream.fileno(), before)
             ):
                 raise ValueError("unsafe_file")
             if expected is not None:
                 self.check_version(self.read(directory, filename), expected)
-            current = os.stat(filename, dir_fd=directory, follow_symlinks=False)
+            current = local_files.lstat_at(filename, directory)
             if (
                 before.st_dev,
                 before.st_ino,
@@ -196,7 +199,7 @@ class AgentDefinitionFiles:
                 "智能体配置保存后发生变化，请刷新并检查文件。",
             )
         try:
-            os.fsync(directory)
+            local_files.sync_directory(directory)
         except OSError as error:
             raise AgentDefinitionFileError(
                 "AGENT_DEFINITION_WRITE_UNCERTAIN",
@@ -205,15 +208,15 @@ class AgentDefinitionFiles:
 
     def remove(self, directory: int, filename: str, expected: str) -> None:
         self._check_directory(directory)
-        before = os.stat(filename, dir_fd=directory, follow_symlinks=False)
+        before = local_files.lstat_at(filename, directory)
         self.check_version(self.read(directory, filename), expected)
-        if before != os.stat(filename, dir_fd=directory, follow_symlinks=False):
+        if before != local_files.lstat_at(filename, directory):
             raise AgentDefinitionFileError(
                 "AGENT_DEFINITION_CONFLICT", "智能体配置已经变化，请刷新后重试。"
             )
-        os.unlink(filename, dir_fd=directory)
+        local_files.unlink_at(filename, directory)
         try:
-            os.fsync(directory)
+            local_files.sync_directory(directory)
         except OSError as error:
             raise AgentDefinitionFileError(
                 "AGENT_DEFINITION_WRITE_UNCERTAIN",

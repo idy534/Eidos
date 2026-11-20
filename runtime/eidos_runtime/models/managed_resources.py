@@ -8,7 +8,9 @@ from urllib.parse import urlsplit
 from pydantic import Field, field_validator, model_validator
 
 from eidos_runtime.models import EidosFrozenStrictModel
-from eidos_runtime.models.runtime_dependencies import RuntimeDependencyManifest
+from eidos_runtime.models.runtime_dependencies import (
+    RuntimeDependencyManifest, RuntimeDependencyTarget, validate_windows_resource_path,
+)
 
 
 ResourcePhase = Literal["missing", "checking", "downloading", "verifying", "extracting", "ready", "failed"]
@@ -28,7 +30,7 @@ class ResourcePack(EidosFrozenStrictModel):
     title: str = Field(min_length=1, max_length=128)
     version: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9.+-]*$")
     location: str = Field(max_length=512)
-    url: str = Field(max_length=2048)
+    url: str | None = Field(default=None, max_length=2048)
     archive_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     archive_bytes: int = Field(gt=0, le=2 * 1024**3)
     expanded_bytes: int = Field(gt=0, le=3 * 1024**3)
@@ -45,7 +47,9 @@ class ResourcePack(EidosFrozenStrictModel):
 
     @field_validator("url")
     @classmethod
-    def trusted_download_url(cls, value: str) -> str:
+    def trusted_download_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
         parsed = urlsplit(value)
         if (parsed.scheme != "https" or parsed.hostname != "github.com"
                 or parsed.username or parsed.password or parsed.query or parsed.fragment
@@ -54,23 +58,33 @@ class ResourcePack(EidosFrozenStrictModel):
         return value
 
 
+def resource_archive_name(pack_id: str, version: str, target: RuntimeDependencyTarget) -> str:
+    return f"eidos-{pack_id}-{version}-{target}.tar.gz"
+
+
 class ResourceIndex(EidosFrozenStrictModel):
     schema_version: Literal[1] = 1
     version: str = Field(min_length=1, max_length=64)
-    target: Literal["darwin-arm64"] = "darwin-arm64"
+    target: RuntimeDependencyTarget = "darwin-arm64"
     packs: tuple[ResourcePack, ...] = Field(max_length=16)
 
     @model_validator(mode="after")
     def unique_packs(self) -> ResourceIndex:
         ids = [pack.id for pack in self.packs]
         locations = [pack.location for pack in self.packs]
+        if self.target == "win32-x64":
+            locations = [validate_windows_resource_path(path).casefold() for path in locations]
         if len(set(ids)) != len(ids) or len(set(locations)) != len(locations):
             raise ValueError("resource ids and locations must be unique")
-        for pack in self.packs:
+        for pack, location in zip(self.packs, locations, strict=True):
+            if pack.manifest.target != self.target or ((pack.url is None) != (self.target == "win32-x64")):
+                raise ValueError("resource source and manifest must match the index target")
+            if self.target == "win32-x64" and pack.font_directory:
+                validate_windows_resource_path(pack.font_directory)
             if any(dep not in ids or dep == pack.id for dep in pack.requires):
                 raise ValueError("resource prerequisites must identify another pack")
-            for other in self.packs:
-                if other.id != pack.id and PurePosixPath(pack.location).is_relative_to(other.location):
+            for other in locations:
+                if other != location and PurePosixPath(location).is_relative_to(other):
                     raise ValueError("resource locations must not overlap")
         # The standard library owns dependency cycle detection.
         from graphlib import TopologicalSorter

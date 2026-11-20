@@ -4,7 +4,7 @@ Eidos 提供 `docx`、`pptx`、`xlsx`、`pdf` 四个系统 Skill。新安装默�
 
 ## App 与资源目录
 
-App 保留核心 Python、Runtime 生产依赖、ripgrep、Seatbelt 资源、四个 Skill 的说明和脚本。文档扩展依赖由 Eidos 下载到 `~/Eidos/Resource/`。目标机器不需要预装 Python、Node、Office、uv、npm、Homebrew 或编译器。产品不扫描或复用任意全局环境。
+App 保留核心 Python、Runtime 生产依赖、ripgrep 和四个 Skill 的说明和脚本。macOS 从发布页下载文档资源。Windows x64 安装包带上资源压缩包，Runtime 按需校验和安装到 `~/Eidos/Resource/`。用户直接使用包内 Python、Node、Office 引擎、字体与 OCR 数据。
 
 四个 Skill 的图标位于各自的 `assets/<skill-name>-small.svg`。现有设置页按文件名自动读取 SVG，无需新增前端逻辑或图标声明。
 
@@ -25,7 +25,7 @@ App 保留核心 Python、Runtime 生产依赖、ripgrep、Seatbelt 资源、四
 
 核心 Python 继续来自 App 的 `runtime/python/`。下载的 Python 库使用同一 CPython 3.12 ABI。独立 Node 位于上述资源目录。普通聊天和编码不要求先下载文档资源。
 
-`runtime/resource-index.json` 随 App 发布，固定平台、地址、版本、大小、完整性信息、依赖关系和文件范围。地址来自 `idy534/Eidos` 的 GitHub Releases。模型与公开 RPC 不能传入自定义下载地址。就绪资源的 `runtime.json` 是固定清单的回执；SQLite 的现有 Async Operation 记录安装结果。回执和内存进度不构成另一套业务状态机。
+`runtime/resource-index.json` 随 App 发布，固定平台、版本、大小、完整性信息、依赖关系和文件范围。macOS 声明 `idy534/Eidos` 的 GitHub Releases 资源地址。Windows 索引指向同一安装包内的固定资源。就绪资源的 `runtime.json` 保存固定清单，SQLite 的现有 Async Operation 记录安装结果。
 
 ## 准备时机
 
@@ -34,7 +34,7 @@ App 保留核心 Python、Runtime 生产依赖、ripgrep、Seatbelt 资源、四
 | document-python | python-docx、python-pptx、openpyxl、pypdf、lxml 等 | 核心 Runtime 初始化完成后后台准备 |
 | node | 独立 Node | 首次使用依赖 Node 的操作 |
 | document-node | docx、pptxgenjs、薄转换 API 等 | 首次执行相应 JavaScript 操作 |
-| office | LibreOfficeKit macOS arm64 原生引擎 | 首次 Office 转换、缩略图或公式重算 |
+| office | LibreOfficeKit 当前平台原生引擎 | 首次 Office 转换、缩略图或公式重算 |
 | pdf | ReportLab、pdfplumber、PDFium 等 | 首次 PDF 增强或页面渲染 |
 | data | pandas、NumPy 等 | 首次数据分析 |
 | images | sharp 的当前平台原生库 | 首次相应图片处理 |
@@ -72,6 +72,8 @@ skill_read → 工作区脚本 → run_shell
 
 `RUNTIME_PYTHON` 来自已有默认绑定。Runtime 识别 launcher 后准备资源，并在子进程中注入该操作的完整绑定。入口检查 `EIDOS_RESOURCE_PROFILE` 与实际请求一致，只使用绑定提供的绝对解释器路径。入口不创建另一套执行通道。
 
+Windows PowerShell 使用 `& $env:RUNTIME_PYTHON "<skill root>/scripts/run.py" python generate.py`。`--resource office` 等参数的位置相同。Windows 安装包采用独立的 `win32-x64` 目录保存解包资源。Windows 运行 Skill 脚本时沿用明确授权的 PowerShell 无沙盒执行路径。
+
 | 配置 | 用途 |
 | --- | --- |
 | python（默认） | 基础 Python 文档操作 |
@@ -98,9 +100,11 @@ Python 输入来自根 `pyproject.toml` 的 `document-skills` group 和 `uv.lock
 
 `build-macos-runtime.sh` 先在构建机准备完整依赖，再由 `build-resource-packs.py` 拆出 `build/resource-packages/`，并删除 App 中的文档依赖目录。App 生成精简 `runtime.json` 和固定资源索引。构建器通过 wheel RECORD 确定 Python 文件范围；它复用版本一致的核心生产包，并保留运行和第三方声明需要的文件。
 
+`build-windows-runtime.py` 从同一 `uv.lock` 安装 CPython 3.12 Windows x64 wheel，并从同一 Node 锁文件选择 Windows 原生模块。构建器保留完整的 Windows Office 引擎，并把固定的 Microsoft C++ 运行库放在应用目录。`build-resource-packs.py` 把资源包放在 Windows Runtime Bundle 的 `resource-packs/` 下。用户安装时无需系统级 Office 或 C++ 安装步骤。
+
 当前裁剪包括：Office WASM、React/ReactDOM/react-icons、Python 测试与缓存、无关平台开发产物、frame-forwarding SDK 和未使用的 OCR best_int 语言模型。Tesseract.js 7.0.0 的 Node adapter 仍会选择完整内核，因此资源包保留其实际需要的完整与 LSTM 内核。产品不能仅根据入口的 OEM 参数删除它们。OOXML XSD、必要动态库和第三方声明继续保留。
 
-资源发布配置位于 `resources/runtime-dependencies/resource-release.json`。同一发布版本的文件应保持不可变。维护者必须先上传对应 Release 资源，再发布使用该索引的 App。下载失败只影响相关功能，但不能把不存在的远端资源写成已验收。详细命令见[开发参考](../../development/README.md)。
+资源发布配置位于 `resources/runtime-dependencies/resource-release.json`。同一发布版本的文件应保持不可变。维护者先上传 macOS 对应的 Release 资源，再发布使用该索引的 macOS App。Windows 用户随 App 安装拿到压缩包。详细命令见[开发参考](../../development/README.md)。
 
 Office 转换与重算使用固定版本 `0.2.3` 的 LibreOfficeKit。PDF 页面使用 PDFium，最多一次处理 100 页。OCR 支持 eng、chi_sim 及组合，并显式读取本地语言数据。产品不需要 Pandoc、MarkItDown、Poppler、qpdf 或 pdftk。Office 排版与公式可能与 Microsoft Office 不同，OCR 结果也需要核对。
 
