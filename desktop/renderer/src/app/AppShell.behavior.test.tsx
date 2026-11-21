@@ -559,7 +559,8 @@ describe("AppShell Composer goal mode", () => {
     expect(fixture.submitInput).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "发送输入" }));
     await waitFor(() => expect(fixture.submitInput).toHaveBeenCalledWith(expect.objectContaining({
-      selectedModelId: "test-model", approvalMode: "manual", planning: { workMode: "execute", goalMode: true },
+      // Without a saved default, a new conversation starts with model review.
+      selectedModelId: "test-model", approvalMode: "auto_review", planning: { workMode: "execute", goalMode: true },
     })));
     expect(window.eidosRuntime.goal).toHaveBeenCalledWith({ action: "get", sessionId: "session-a" });
   });

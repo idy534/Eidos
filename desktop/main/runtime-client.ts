@@ -2891,6 +2891,13 @@ function approvalRequestFrom(
   if (params.requiresHumanConfirmation === true && (typeof params.riskWarning !== "string" || !params.riskWarning.trim())) return undefined;
   const requiresHumanConfirmation = params.requiresHumanConfirmation as boolean | undefined;
   const riskWarning = params.riskWarning as string | undefined;
+  // Task-scoped approvals of files, commands and MCP tools. Browser and
+  // permission requests carry their own required scope below.
+  const taskGrantScope = params.grantScope === "run" ? "run" as const : undefined;
+  if (
+    params.grantScope !== undefined && taskGrantScope === undefined
+    && params.kind !== "browser_access" && params.kind !== "permission_request"
+  ) return undefined;
   if (params.kind === "file_change") {
     if (typeof params.diff !== "string" || !hasTextReference(params, "diff")) {
       return undefined;
@@ -2916,6 +2923,7 @@ function approvalRequestFrom(
       diffHash: typeof params.diffHash === "string" ? params.diffHash : undefined,
       sandboxPermissions: params.sandboxPermissions as FileApprovalRequest["sandboxPermissions"],
       additionalFileSystemAccess,
+      grantScope: taskGrantScope,
     };
   }
   if (params.kind === "external_tool") {
@@ -2948,6 +2956,7 @@ function approvalRequestFrom(
       permissionProfile: params.permissionProfile as McpPermissionProfile,
       timeoutSeconds: params.timeoutSeconds as number,
       envNames: [...(params.envNames as string[])],
+      grantScope: taskGrantScope,
     };
   }
   if (params.kind === "browser_access") {
@@ -3094,6 +3103,7 @@ function approvalRequestFrom(
       reason: (params.reason as string | undefined) ?? "",
       escalationReason: (params.escalationReason as string | undefined) ?? "",
       attemptOrdinal: (params.attemptOrdinal ?? 0) as 0 | 1,
+      grantScope: taskGrantScope,
     };
   }
   return undefined;

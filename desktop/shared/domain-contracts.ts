@@ -565,6 +565,8 @@ export interface FileApprovalRequest extends ApprovalRequestBase {
   diffHash?: string | undefined;
   sandboxPermissions?: "use_default" | "with_additional_permissions" | "require_escalated" | undefined;
   additionalFileSystemAccess?: ApprovalFileSystemAccess[] | undefined;
+  /** "run": the approved path scope also covers later writes in this task. */
+  grantScope?: "run" | undefined;
 }
 
 export interface CommandApprovalRequest extends ApprovalRequestBase {
@@ -583,6 +585,8 @@ export interface CommandApprovalRequest extends ApprovalRequestBase {
   reason?: string;
   escalationReason?: string;
   attemptOrdinal?: 0 | 1;
+  /** "run": the approved network or Git metadata access covers later commands in this task. */
+  grantScope?: "run" | undefined;
 }
 
 /** `browser` is reserved for the bundled browser plugin; manual servers cannot choose it. */
@@ -596,6 +600,8 @@ export interface ExternalToolApprovalRequest extends ApprovalRequestBase {
   permissionProfile: McpPermissionProfile;
   timeoutSeconds: number;
   envNames: string[];
+  /** "run": later calls of this tool in this task are not asked again. */
+  grantScope?: "run" | undefined;
 }
 
 /** Lets the whole Session operate the shared Eidos Chrome until the user revokes it. */

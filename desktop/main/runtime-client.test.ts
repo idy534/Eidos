@@ -1940,7 +1940,7 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
       "sys.stdin.readline()",
       "send({'jsonrpc':'2.0','id':'server-cmd-1','method':'item/requestApproval','params':{'id':'forged-id','sessionId':'s1','runId':'r1','itemId':'i2','toolCallId':'tc2','summary':'cmd summary','kind':'command_execution','command':'ls','cwd':'/tmp','networkEnabled':False,'timeoutSeconds':30,'displayIntent':'List files','token':'secret-token'}})",
       "sys.stdin.readline()",
-      "send({'jsonrpc':'2.0','id':'server-ext-1','method':'item/requestApproval','params':{'id':'forged-id','sessionId':'s1','runId':'r1','itemId':'i3','toolCallId':'tc3','summary':'ext summary','kind':'external_tool','toolName':'my_tool','arguments':{'foo':'bar'},'provenance':{'kind':'mcp','sourceId':'srv1','sourceVersion':'1.0','contentHash':'h1','extraProvField':'secret'},'permissionProfile':'connector','timeoutSeconds':60,'envNames':['PATH'],'internalDiagnostics':{'stack':'path'}}})",
+      "send({'jsonrpc':'2.0','id':'server-ext-1','method':'item/requestApproval','params':{'id':'forged-id','sessionId':'s1','runId':'r1','itemId':'i3','toolCallId':'tc3','summary':'ext summary','kind':'external_tool','toolName':'my_tool','arguments':{'foo':'bar'},'provenance':{'kind':'mcp','sourceId':'srv1','sourceVersion':'1.0','contentHash':'h1','extraProvField':'secret'},'permissionProfile':'connector','timeoutSeconds':60,'envNames':['PATH'],'grantScope':'run','internalDiagnostics':{'stack':'path'}}})",
       "sys.stdin.readline()",
       "send({'jsonrpc':'2.0','id':'server-net-1','method':'item/requestApproval','params':{'id':'forged-id','sessionId':'s1','runId':'r1','itemId':'i4','toolCallId':'tc4','summary':'net summary','kind':'network_access','toolName':'fetch','hosts':['api.example.com'],'target':'https://api.example.com','secretHeader':'Bearer ...'}})",
       "sys.stdin.readline()",
@@ -1950,7 +1950,9 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
       "assert 'error' in json.loads(sys.stdin.readline())",
       "send({'jsonrpc':'2.0','id':'server-invalid-scope','method':'item/requestApproval','params':{'sessionId':'s1','runId':'r1','itemId':'i6','toolCallId':'tc6','summary':'invalid','kind':'command_execution','command':'ls','cwd':'.','networkEnabled':False,'timeoutSeconds':30,'additionalFileSystemAccess':[{'path':'/tmp/output','access':'write','recursive':'false'}]}})",
       "assert 'error' in json.loads(sys.stdin.readline())",
-      "send({'jsonrpc':'2.0','id':'server-cmd-scopes','method':'item/requestApproval','params':{'sessionId':'s1','runId':'r1','itemId':'i6','toolCallId':'tc6','summary':'scopes','kind':'command_execution','command':'ls','cwd':'.','networkEnabled':False,'timeoutSeconds':30,'additionalFileSystemAccess':[{'path':'/tmp/output','access':'write','recursive':False,'internal':'omit'}]}})",
+      "send({'jsonrpc':'2.0','id':'server-invalid-grant','method':'item/requestApproval','params':{'sessionId':'s1','runId':'r1','itemId':'i6','toolCallId':'tc6','summary':'invalid','kind':'command_execution','command':'ls','cwd':'.','networkEnabled':False,'timeoutSeconds':30,'grantScope':'forever'}})",
+      "assert 'error' in json.loads(sys.stdin.readline())",
+      "send({'jsonrpc':'2.0','id':'server-cmd-scopes','method':'item/requestApproval','params':{'sessionId':'s1','runId':'r1','itemId':'i6','toolCallId':'tc6','summary':'scopes','kind':'command_execution','command':'ls','cwd':'.','networkEnabled':True,'timeoutSeconds':30,'grantScope':'run','additionalFileSystemAccess':[{'path':'/tmp/output','access':'write','recursive':False,'internal':'omit'}]}})",
       "sys.stdin.readline()",
       "json.loads(sys.stdin.readline())",
       "send({'jsonrpc':'2.0','id':'client-2','result':None})",
@@ -1992,7 +1994,7 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     assert.equal(req1.diffBytes, undefined);
     assert.equal(req1.diffHash, undefined);
     assert.deepEqual(Object.keys(req1).sort(), [
-      "additionalFileSystemAccess", "diff", "diffBytes", "diffHash", "id", "itemId", "kind", "reviewFallback", "runId", "sandboxPermissions", "sessionId", "summary", "toolCallId",
+      "additionalFileSystemAccess", "diff", "diffBytes", "diffHash", "grantScope", "id", "itemId", "kind", "reviewFallback", "runId", "sandboxPermissions", "sessionId", "summary", "toolCallId",
       "requiresHumanConfirmation", "riskWarning",
     ].sort());
 
@@ -2009,7 +2011,7 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     assert.deepEqual(Object.keys(req2).sort(), [
       "additionalExecutableAccess", "additionalFileSystemAccess", "additionalReadAccess", "additionalWriteAccess",
       "attemptOrdinal", "command", "cwd", "displayIntent", "escalationReason", "executionMode",
-      "id", "itemId", "kind", "networkEnabled", "reason", "reviewFallback", "runId",
+      "grantScope", "id", "itemId", "kind", "networkEnabled", "reason", "reviewFallback", "runId",
       "sandboxPermissions", "sessionId", "summary", "timeoutSeconds", "toolCallId",
       "requiresHumanConfirmation", "riskWarning",
     ].sort());
@@ -2024,7 +2026,7 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     const prov = req3.provenance as Record<string, unknown>;
     assert.equal(prov.extraProvField, undefined);
     assert.deepEqual(Object.keys(req3).sort(), [
-      "arguments", "envNames", "id", "itemId", "kind", "permissionProfile", "provenance", "reviewFallback", "runId", "sessionId", "summary", "timeoutSeconds", "toolCallId", "toolName",
+      "arguments", "envNames", "grantScope", "id", "itemId", "kind", "permissionProfile", "provenance", "reviewFallback", "runId", "sessionId", "summary", "timeoutSeconds", "toolCallId", "toolName",
       "requiresHumanConfirmation", "riskWarning",
     ].sort());
 
@@ -2046,7 +2048,13 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     assert.deepEqual(req5.permissions, { network: { enabled: true }, fileSystem: [] });
     assert.equal(req5.completedResult, undefined);
     assert.equal(req2.additionalFileSystemAccess, undefined);
+    assert.equal(req1.grantScope, undefined);
+    assert.equal(req2.grantScope, undefined);
+    assert.equal(req3.grantScope, "run");
     assert.deepEqual(receivedRequests[5]!.additionalFileSystemAccess, [{ path: "/tmp/output", access: "write", recursive: false }]);
+    // A task-scoped command approval survives projection; an unknown scope is rejected.
+    assert.equal(receivedRequests[5]!.grantScope, "run");
+    assert.equal(receivedRequests.some((request) => request.id === "server-invalid-grant"), false);
 
     await client.shutdown();
     await client.waitForExit();
