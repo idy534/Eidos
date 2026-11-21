@@ -18,6 +18,14 @@
 }
 .feed[data-following-bottom="true"] { overflow-anchor: none; }
 .feed-content { display: flow-root; }
+.feed-run-anchor {
+  display: block;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-anchor: none;
+  pointer-events: none;
+}
 .feed-loading-older {
   display: flex;
   align-items: center;

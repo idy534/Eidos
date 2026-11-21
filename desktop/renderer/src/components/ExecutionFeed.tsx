@@ -345,6 +345,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
             const modelName = models.find((model) => model.id === run.modelId)?.name ?? run.remoteModelId ?? run.modelId;
             return (
               <Fragment key={runId}>
+                <div className="feed-run-anchor" data-run-anchor={runId} aria-hidden="true" />
                 <GoalRunMarker origin={run.goalOrigin} />
                 {showTeamRunMarkers && <TeamRunMarker origin={run.teamOrigin} />}
                 {segments.map((segment, index) => (

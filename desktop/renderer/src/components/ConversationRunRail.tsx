@@ -8,7 +8,8 @@ import { isFeedAtBottom } from "./useFeedScroll.js";
 
 export interface RunAnchor {
   runId: string;
-  userItemId: string;
+  userItemId: string | undefined;
+  anchorItemId: string | undefined;
   userPreview: string;
   assistantPreview: string;
   isStatusPlaceholder: boolean;
@@ -45,14 +46,27 @@ export function cleanAssistantPreviewText(raw: string): string {
 }
 
 /**
- * 提取主提问预览：还原行内引用、合并空白、截取单行摘要。
+ * 提取主提问或自动续跑来源标题：优先还原用户提问文本，无 user_message 时按团队/目标来源回退。
  */
-export function extractUserPreview(item: Item | undefined): string {
-  if (!item || !item.content) return "查看提问";
-  const plain = formatInlineReferencesAsPlainText(item.content)
-    .replace(/\s+/g, " ")
-    .trim();
-  return plain || "查看提问";
+export function extractUserPreview(item: Item | undefined, run?: Run): string {
+  if (item?.content) {
+    const plain = formatInlineReferencesAsPlainText(item.content)
+      .replace(/\s+/g, " ")
+      .trim();
+    if (plain) return plain;
+  }
+  if (run?.teamOrigin) {
+    return run.teamOrigin.origin === "user_message"
+      ? "你的团队消息"
+      : run.teamOrigin.member
+        ? `团队续跑 · ${run.teamOrigin.member}`
+        : "团队续跑";
+  }
+  if (run?.goalOrigin && run.goalOrigin.trigger !== "user_input") {
+    const text = run.goalOrigin.trigger === "goal_set" ? "目标执行" : "目标续跑";
+    return `${text} · 第 ${run.goalOrigin.sequence} 轮`;
+  }
+  return "查看提问";
 }
 
 /**
@@ -137,6 +151,7 @@ export function buildRunAnchors(options: {
   } = options;
 
   const mountedItemIds = new Set(items.map((it) => it.id));
+  const mountedRunIds = new Set(items.map((it) => it.runId));
   const itemsByRunId = new Map<string, Item[]>();
   for (const it of resultItems) {
     const list = itemsByRunId.get(it.runId);
@@ -155,18 +170,24 @@ export function buildRunAnchors(options: {
   for (const run of validRuns) {
     const runItems = itemsByRunId.get(run.id) ?? [];
     const userItem = runItems.find((it) => it.kind === "user_message" && it.ordinal <= 1);
-    const userItemId = userItem?.id ?? run.id;
-    const userPreview = extractUserPreview(userItem);
+    const earliestItem = userItem ?? runItems.reduce<Item | undefined>(
+      (earliest, current) => (!earliest || current.ordinal < earliest.ordinal ? current : earliest),
+      undefined,
+    );
+    const userItemId = userItem?.id;
+    const anchorItemId = earliestItem?.id;
+    const userPreview = extractUserPreview(userItem, run);
     const { preview: assistantPreview, isStatusPlaceholder } = extractAssistantPreview(
       run,
       runItems,
       contextCompactions,
     );
-    const isMounted = mountedItemIds.has(userItemId);
+    const isMounted = anchorItemId ? mountedItemIds.has(anchorItemId) : mountedRunIds.has(run.id);
 
     anchors.push({
       runId: run.id,
       userItemId,
+      anchorItemId,
       userPreview,
       assistantPreview,
       isStatusPlaceholder,
@@ -175,6 +196,22 @@ export function buildRunAnchors(options: {
   }
 
   return anchors;
+}
+
+function escapeSelectorAttr(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function findAnchorElement(feed: HTMLElement, anchor: RunAnchor): HTMLElement | null {
+  const byRun = feed.querySelector<HTMLElement>(`[data-run-anchor="${escapeSelectorAttr(anchor.runId)}"]`);
+  if (byRun) return byRun;
+  const fallbackItemIds = [anchor.userItemId, anchor.anchorItemId];
+  for (const itemId of fallbackItemIds) {
+    if (!itemId) continue;
+    const byItem = feed.querySelector<HTMLElement>(`[id="${escapeSelectorAttr(`item-${itemId}`)}"]`);
+    if (byItem) return byItem;
+  }
+  return null;
 }
 
 /**
@@ -226,6 +263,7 @@ export const ConversationRunRail = memo(function ConversationRunRail({
   const isPointerDownRef = useRef(false);
   const isDraggingRef = useRef(false);
   const pointerStartYRef = useRef(0);
+  const suppressNextClickRef = useRef(false);
 
   const anchors = useMemo(() => {
     return buildRunAnchors({
@@ -293,7 +331,7 @@ export const ConversationRunRail = memo(function ConversationRunRail({
         let current = anchors[0]?.runId ?? null;
 
         for (const anchor of anchors) {
-          const el = document.getElementById(`item-${anchor.userItemId}`);
+          const el = findAnchorElement(feed, anchor);
           if (!el) continue;
           if (el.getBoundingClientRect().top <= top) {
             current = anchor.runId;
@@ -333,10 +371,20 @@ export const ConversationRunRail = memo(function ConversationRunRail({
     lockedRunIdRef.current = anchor.runId;
     setActiveId(anchor.runId);
 
+    const unlock = () => {
+      if (lockedRunIdRef.current === anchor.runId) {
+        lockedRunIdRef.current = null;
+      }
+    };
+
     const doScroll = () => {
-      const el = document.getElementById(`item-${anchor.userItemId}`);
+      if (lockedRunIdRef.current !== anchor.runId) return;
       const feed = feedRef.current;
-      if (!el || !feed) return;
+      const el = feed ? findAnchorElement(feed, anchor) : null;
+      if (!el || !feed) {
+        unlock();
+        return;
+      }
 
       const feedRect = feed.getBoundingClientRect();
       const elRect = el.getBoundingClientRect();
@@ -349,22 +397,25 @@ export const ConversationRunRail = memo(function ConversationRunRail({
         behavior,
       });
 
-      const unlock = () => {
-        if (lockedRunIdRef.current === anchor.runId) {
-          lockedRunIdRef.current = null;
-        }
-      };
-
       feed.addEventListener("scrollend", unlock, { once: true });
       setTimeout(unlock, 450);
     };
 
-    if (!anchor.isMounted && onEnsureItemMounted) {
-      void onEnsureItemMounted(anchor.userItemId).then(() => {
-        requestAnimationFrame(() => {
-          doScroll();
-        });
-      });
+    if (!anchor.isMounted && anchor.anchorItemId && onEnsureItemMounted) {
+      void onEnsureItemMounted(anchor.anchorItemId).then(
+        (loaded) => {
+          if (!loaded || lockedRunIdRef.current !== anchor.runId) {
+            unlock();
+            return;
+          }
+          requestAnimationFrame(() => {
+            doScroll();
+          });
+        },
+        () => {
+          unlock();
+        },
+      );
     } else {
       doScroll();
     }
@@ -436,8 +487,16 @@ export const ConversationRunRail = memo(function ConversationRunRail({
       } else {
         setActiveId(anchor.runId);
       }
-    } else {
+      suppressNextClickRef.current = true;
+      setTimeout(() => {
+        suppressNextClickRef.current = false;
+      }, 0);
+    } else if (rect.height > 0) {
       jumpToAnchor(anchor, "smooth");
+      suppressNextClickRef.current = true;
+      setTimeout(() => {
+        suppressNextClickRef.current = false;
+      }, 0);
     }
   };
 
@@ -541,7 +600,13 @@ export const ConversationRunRail = memo(function ConversationRunRail({
               tabIndex={isCurrentActive || (activeId === null && index === 0) ? 0 : -1}
               aria-label={`跳转到：${anchor.userPreview}`}
               aria-current={isCurrentActive ? "step" : undefined}
-              onClick={() => jumpToAnchor(anchor, "smooth")}
+              onClick={() => {
+                if (suppressNextClickRef.current) {
+                  suppressNextClickRef.current = false;
+                  return;
+                }
+                jumpToAnchor(anchor, "smooth");
+              }}
               onKeyDown={(e) => handleKeyDown(e, index)}
               onFocus={() => {
                 setFocusedIndex(index);
