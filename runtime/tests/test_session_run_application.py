@@ -16,6 +16,7 @@ from eidos_runtime.application.response_actions import ResponseActionApplication
 from eidos_runtime.application.sessions import SessionApplication
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.approval_policy import ApprovalMode
+from eidos_runtime.extensions.skills import SkillReadError
 from eidos_runtime.model.config import default_profile_snapshot
 from eidos_runtime.persistence.response_actions import ResponseActionRepository
 from eidos_runtime.protocol.methods import (
@@ -485,6 +486,41 @@ def test_run_application_start_defers_worker_release_until_response_delivery(
         assert len(runtime.prepared) == 1
         assert runtime.released == runtime.prepared
         assert len(environment.title_requests) == 1
+    finally:
+        store.close()
+
+
+class _UnavailableSkillCatalogEnvironment(_RunStartEnvironment):
+    def extension_snapshot(self) -> dict[str, object]:
+        raise SkillReadError("skill_catalog_invalid")
+
+
+def test_run_start_reports_an_unavailable_skill_catalog_with_a_stable_code(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = _store(tmp_path)
+    try:
+        session = store.create_session(str(workspace))
+        runtime = _RuntimePort(store)
+        application = RunApplication(
+            store=store,
+            runtime=runtime,
+            environment=_UnavailableSkillCatalogEnvironment(),
+            scan_text=lambda value: value,
+        )
+
+        with pytest.raises(ApplicationError) as unavailable:
+            application.start(RunStartRequestDto(
+                sessionId=session["id"],
+                userInput="inspect the workspace",
+                modelId="deepseek-v4-flash",
+                operationId=str(uuid4()),
+            ))
+
+        assert unavailable.value.code == "SKILL_CATALOG_UNAVAILABLE"
+        assert runtime.prepared == []
     finally:
         store.close()
 

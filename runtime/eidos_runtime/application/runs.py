@@ -35,6 +35,8 @@ from eidos_runtime.db.errors import (
     WorkspaceIdentityChangedError,
 )
 from eidos_runtime.domain.session import SessionProjection
+from eidos_runtime.extensions.plugins import PluginImportError
+from eidos_runtime.extensions.skills import SkillReadError
 from eidos_runtime.git.errors import WorktreeError
 from eidos_runtime.model.client import ModelClient, ModelProfileSnapshot
 from eidos_runtime.model.config import (
@@ -359,7 +361,10 @@ class RunApplication:
                 plan_repository.materialize(document)
             except (ValueError, OSError) as error:
                 raise ApplicationError("INVALID_STATE", str(error)) from error
-        extension_snapshot = environment.extension_snapshot()
+        try:
+            extension_snapshot = environment.extension_snapshot()
+        except (SkillReadError, PluginImportError, OSError) as error:
+            raise ApplicationError("SKILL_CATALOG_UNAVAILABLE") from error
         try:
             workspace = self._admit_session_workspace(
                 request.session_id, touch_last_used=False

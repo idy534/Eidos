@@ -11,6 +11,7 @@ from html import escape
 import io
 from itertools import islice
 import json
+import logging
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -23,7 +24,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import zipfile
-from typing import Callable, Literal
+from typing import Callable, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 from rapidfuzz import process, fuzz
@@ -69,6 +70,7 @@ BUNDLED_SYSTEM_SKILLS = (
     Path(__file__).resolve().parents[1] / "resources" / "skills" / ".system"
 )
 SkillSourceKind = Literal["plugin", "user", "system"]
+logger = logging.getLogger(__name__)
 
 
 class SkillReadError(ValueError):
@@ -184,16 +186,81 @@ class SkillCreation:
     executable_paths: frozenset[str] = frozenset()
 
 
+# Serializes restores of the deployed system Skill tree. A restore swaps the
+# tree with two renames, so readers that fail or find no tree wait here, read
+# again, and restore only when the tree is still damaged or missing.
+_SYSTEM_SKILLS_LOCK = threading.Lock()
+# Data directories whose system Skills this process deployed. Once deployed, a
+# missing tree is damage to restore rather than a catalog without system Skills.
+_DEPLOYED_SYSTEM_SKILLS: set[Path] = set()
+_T = TypeVar("_T")
+
+
 def deploy_system_skills(data_directory: Path) -> None:
+    with _SYSTEM_SKILLS_LOCK:
+        _deploy_system_skills(data_directory)
+        _DEPLOYED_SYSTEM_SKILLS.add(data_directory)
+
+
+def _with_system_skill_restore(
+    data_directory: Path,
+    read: Callable[[], _T],
+    *,
+    absent: Callable[[], _T],
+) -> _T:
+    """Read the deployed system Skills, restoring the bundled copy once if needed.
+
+    The deployed tree is a private copy of the bundled one, which Eidos never
+    edits after deploy. A failed read means something outside Eidos changed or
+    removed it (for example an unsandboxed Python run leaving ``__pycache__``),
+    or that a concurrent restore was swapping it. ``read`` must fail, not return
+    an empty result, when the tree is missing. Restoring is the same deploy that
+    runs at startup and is a no-op when the tree still matches the bundle.
+    ``absent`` answers for a data directory this process never deployed.
+    """
+
+    root = data_directory / "skills" / ".system"
+    if os.path.lexists(root):
+        try:
+            return read()
+        except SkillReadError:
+            pass
+    with _SYSTEM_SKILLS_LOCK:
+        present = os.path.lexists(root)
+        if not present and data_directory not in _DEPLOYED_SYSTEM_SKILLS:
+            return absent()
+        reason = "system_skills_missing"
+        if present:
+            # A reader queued behind a restore finds the tree already repaired.
+            try:
+                return read()
+            except SkillReadError as error:
+                reason = str(error)
+        try:
+            restored = _deploy_system_skills(data_directory)
+        except SkillReadError:
+            logger.warning("System skill restore failed reason=%s", reason)
+            raise
+        if restored:
+            logger.warning("Restored system skills from the bundled copy reason=%s", reason)
+        try:
+            return read()
+        except SkillReadError as error:
+            logger.warning("System skills unreadable after restore code=%s", error)
+            raise
+
+
+def _deploy_system_skills(data_directory: Path) -> bool:
+    """Deploy the bundled system Skills; return whether the tree was rewritten."""
     skills_root = data_directory / "skills"
     _private_directory(skills_root)
-    source_files = _read_tree(BUNDLED_SYSTEM_SKILLS)
+    source_files = _read_tree(BUNDLED_SYSTEM_SKILLS, exclude_generated=True)
     source_hash = _tree_hash(source_files)
     destination = skills_root / ".system"
     if destination.exists():
         try:
             if _tree_hash(_read_tree(destination, private=True)) == source_hash:
-                return
+                return False
         except SkillReadError:
             pass
     staging = skills_root / f".system-stage-{uuid.uuid4().hex}"
@@ -212,6 +279,7 @@ def deploy_system_skills(data_directory: Path) -> None:
         if not destination.exists() and backup.exists():
             local_files.replace(backup, destination)
         raise SkillReadError("system_skills_unavailable") from None
+    return True
 
 
 class SkillCatalog:
@@ -589,13 +657,20 @@ class SkillCatalog:
                         'id': entry.source_identity, 'version': entry.source_version,
                         'contentHash': entry.source_hash,
                     })
-                source = _source(
-                    qualified_id[:-len(entry.name)], root, entry.source_identity, entry.source_version,
-                    # A personal Skill directory is writable by its own scripts
-                    # (caches, outputs). Its tree hash is recorded provenance; the
-                    # instruction identity is the SKILL.md content hash below.
-                    entry.source_hash if entry.source_kind in {'plugin', 'user'} else None,
-                    private=entry.source_kind == 'system', owned=entry.source_kind != 'system', source_kind=entry.source_kind,
+                def read_source() -> _SkillSource:
+                    return _source(
+                        qualified_id[:-len(entry.name)], root, entry.source_identity, entry.source_version,
+                        # A personal Skill directory is writable by its own scripts
+                        # (caches, outputs). Its tree hash is recorded provenance; the
+                        # instruction identity is the SKILL.md content hash below.
+                        entry.source_hash if entry.source_kind in {'plugin', 'user'} else None,
+                        private=entry.source_kind == 'system', owned=entry.source_kind != 'system', source_kind=entry.source_kind,
+                    )
+                data_directory = self.plugins.store.data_directory
+                source = (
+                    _with_system_skill_restore(data_directory, read_source, absent=read_source)
+                    if entry.source_kind == 'system' and data_directory is not None
+                    else read_source()
                 )
                 if _catalog_entry(source) != entry:
                     raise SkillReadError('skill_snapshot_invalid')
@@ -618,15 +693,23 @@ class SkillCatalog:
                     source_kind="plugin",
                     owned=True,
                 ))
-        if self.plugins.store.data_directory is None:
+        data_directory = self.plugins.store.data_directory
+        if data_directory is None:
             raise SkillReadError("skill_catalog_invalid")
-        skills_root = self.plugins.store.data_directory / "skills"
-        sources.extend(_directory_sources(
-            skills_root / ".system", "system", "eidos-system", "builtin",
-            strict=True,
-            source_kind="system",
-            hash_mode=hash_mode,
-        ))
+        skills_root = data_directory / "skills"
+
+        def read_system() -> list[_SkillSource]:
+            return _directory_sources(
+                skills_root / ".system", "system", "eidos-system", "builtin",
+                strict=True,
+                source_kind="system",
+                hash_mode=hash_mode,
+            )
+
+        try:
+            sources.extend(_with_system_skill_restore(data_directory, read_system, absent=list))
+        except SkillReadError:
+            raise SkillReadError("skill_catalog_invalid") from None
         sources.extend(_directory_sources(
             skills_root, "user", "eidos-user", "local",
             source_kind="user",
@@ -1311,6 +1394,10 @@ def _directory_sources(
     hash_mode: TreeHashMode = "full",
 ) -> list[_SkillSource]:
     if not root.exists():
+        if strict:
+            # The system tree's caller decides whether a missing tree is
+            # expected; here it can only be a concurrent swap or a removal.
+            raise SkillReadError("skill_catalog_invalid")
         return []
     try:
         metadata = root.lstat()
@@ -1701,7 +1788,15 @@ def _read_tree(
     *,
     private: bool = False,
     owned: bool = False,
+    exclude_generated: bool = False,
 ) -> _SkillFiles:
+    """Read a Skill tree under its ownership and permission rules.
+
+    ``exclude_generated`` leaves out Finder metadata and Python bytecode caches.
+    Only the bundled source uses it: a development checkout and a packaged build
+    then deploy the same tree, and the deployed tree compares equal to its
+    source because the private read also skips Finder metadata.
+    """
     try:
         metadata = root.lstat()
     except OSError:
@@ -1720,9 +1815,11 @@ def _read_tree(
     executable_paths: set[str] = set()
     total = 0
     for directory, names, filenames in os.walk(root, followlinks=False):
+        if exclude_generated:
+            names[:] = [name for name in names if name != "__pycache__"]
         directory_path = Path(directory)
         for name in [*names, *filenames]:
-            if private and name == ".DS_Store" and name in filenames:
+            if (private or exclude_generated) and name == ".DS_Store" and name in filenames:
                 continue
             candidate = directory_path / name
             try:
@@ -1734,6 +1831,11 @@ def _read_tree(
             if name in names:
                 if (
                     not stat.S_ISDIR(entry.st_mode)
+                    # Deploy never writes bytecode caches into the private tree.
+                    # One here came from a Python run outside the sandbox, and it
+                    # can carry private permissions (umask 077, inherited NTFS
+                    # ACL) while Python would load it in place of the source.
+                    or (private and name == "__pycache__")
                     or (
                         (private or owned)
                         and not local_files.owned_by_user(candidate, entry)

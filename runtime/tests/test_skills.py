@@ -4,6 +4,8 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
+import stat
 import sys
 import tempfile
 import threading
@@ -16,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
+from eidos_runtime.extensions import skills as skills_module  # noqa: E402
 from eidos_runtime.extensions.skills import (  # noqa: E402
     SkillCatalog,
     SkillReadError,
@@ -345,9 +348,183 @@ class SkillCatalogTests(unittest.TestCase):
         )
         self.assertIn("List skills", resource["content"])
 
+        # A changed mode makes the private system read fail; the catalog read
+        # restores the bundled copy instead of failing every later Run.
         os.chmod(installer, 0o644)
-        with self.assertRaisesRegex(SkillReadError, "skill_catalog_invalid"):
-            self.skills.extension_snapshot()
+        restored = self.skills.extension_snapshot()
+        self.assertIn("system:skill-installer", restored["skillCatalogIds"])
+        self.assertEqual(stat.S_IMODE(installer.stat().st_mode), 0o600)
+
+    def test_system_catalog_restores_bytecode_cache_from_unsandboxed_python(self) -> None:
+        assert self.store.data_directory is not None
+        deploy_system_skills(self.store.data_directory)
+        # 0o755 is umask 022. 0o700 is umask 077 (or an inherited NTFS ACL),
+        # which passes every permission check, so the name alone must count.
+        for directory_mode in (0o755, 0o700):
+            with self.subTest(directory_mode=oct(directory_mode)):
+                cache = self._write_system_bytecode_cache(directory_mode)
+
+                with self.assertLogs(skills_module.logger, "WARNING") as logs:
+                    snapshot = self.skills.extension_snapshot()
+
+                self.assertIn("Restored system skills", "\n".join(logs.output))
+                self.assertFalse(cache.exists())
+                self.assertIn("system:skill-installer", snapshot["skillCatalogIds"])
+                self.assertIn(
+                    "system:skill-installer",
+                    {entry["qualifiedId"] for entry in self.skills.catalog(snapshot)},
+                )
+
+    def test_pinned_system_skill_read_restores_a_damaged_tree(self) -> None:
+        assert self.store.data_directory is not None
+        deploy_system_skills(self.store.data_directory)
+        pinned = self.skills.catalog_snapshot(self.skills.extension_snapshot())
+        cache = self._write_system_bytecode_cache(0o700)
+
+        # A new catalog has no in-memory pins, so it re-reads the tree on disk.
+        skill = SkillCatalog(self.plugins).read_skill(pinned, "system:skill-installer")
+
+        self.assertFalse(cache.exists())
+        self.assertIn("skill-installer", skill["content"])
+
+    def test_system_catalog_restores_a_removed_tree(self) -> None:
+        assert self.store.data_directory is not None
+        deploy_system_skills(self.store.data_directory)
+        shutil.rmtree(self.store.data_directory / "skills" / ".system")
+
+        snapshot = self.skills.extension_snapshot()
+
+        self.assertIn("system:skill-installer", snapshot["skillCatalogIds"])
+
+    def test_catalog_without_deployed_system_skills_has_none(self) -> None:
+        # Only a tree this process deployed is restored when it is missing.
+        self.assertFalse(any(
+            identifier.startswith("system:")
+            for identifier in self.snapshot["skillCatalogIds"]
+        ))
+        assert self.store.data_directory is not None
+        self.assertFalse((self.store.data_directory / "skills" / ".system").exists())
+
+    def test_system_catalog_fails_closed_when_restore_is_unavailable(self) -> None:
+        assert self.store.data_directory is not None
+        deploy_system_skills(self.store.data_directory)
+        installer = (
+            self.store.data_directory / "skills" / ".system"
+            / "skill-installer" / "SKILL.md"
+        )
+        os.chmod(installer, 0o644)
+        missing_bundle = Path(self.temporary.name) / "missing-bundle"
+
+        with (
+            patch.object(skills_module, "BUNDLED_SYSTEM_SKILLS", missing_bundle),
+            self.assertLogs(skills_module.logger, "WARNING") as logs,
+        ):
+            with self.assertRaisesRegex(SkillReadError, "skill_catalog_invalid"):
+                self.skills.extension_snapshot()
+
+        self.assertIn("System skill restore failed", "\n".join(logs.output))
+        self.assertEqual(stat.S_IMODE(installer.stat().st_mode), 0o644)
+
+    def test_system_skill_deploy_leaves_bundle_caches_out(self) -> None:
+        assert self.store.data_directory is not None
+        bundle = Path(self.temporary.name) / "bundle"
+        shutil.copytree(
+            skills_module.BUNDLED_SYSTEM_SKILLS, bundle,
+            ignore=shutil.ignore_patterns("__pycache__", ".DS_Store"),
+        )
+        (bundle / ".DS_Store").write_bytes(b"Finder metadata")
+        cache = bundle / "skill-installer" / "scripts" / "__pycache__"
+        cache.mkdir()
+        (cache / "list-skills.cpython-312.pyc").write_bytes(b"bytecode")
+        deployed = self.store.data_directory / "skills" / ".system"
+
+        with patch.object(skills_module, "BUNDLED_SYSTEM_SKILLS", bundle):
+            deploy_system_skills(self.store.data_directory)
+            identity = deployed.stat().st_ino
+            deploy_system_skills(self.store.data_directory)
+
+        # The deployed tree matches its source, so the second deploy keeps it.
+        self.assertEqual(deployed.stat().st_ino, identity)
+        self.assertFalse((deployed / ".DS_Store").exists())
+        self.assertFalse((deployed / "skill-installer" / "scripts" / "__pycache__").exists())
+
+    def test_catalog_read_waits_for_a_system_skill_restore_in_progress(self) -> None:
+        assert self.store.data_directory is not None
+        deploy_system_skills(self.store.data_directory)
+        # A concurrent restore is between its two renames either before the
+        # reader checks for the tree, or after the check and during the scan.
+        for during_scan in (False, True):
+            with self.subTest(during_scan=during_scan):
+                snapshot = self._read_catalog_during_swap(during_scan=during_scan)
+
+                self.assertIn("system:skill-installer", snapshot["skillCatalogIds"])
+
+    def _read_catalog_during_swap(self, *, during_scan: bool) -> dict[str, object]:
+        assert self.store.data_directory is not None
+        deployed = self.store.data_directory / "skills" / ".system"
+        swapped = self.store.data_directory / "skills" / ".system-swapping"
+        lock = threading.Lock()
+        waiting = threading.Event()
+        scan = skills_module._directory_sources
+        swapped_in_scan: list[bool] = []
+
+        class SignallingLock:
+            def __enter__(self) -> None:
+                waiting.set()
+                lock.acquire()
+
+            def __exit__(self, *_exc: object) -> None:
+                lock.release()
+
+        def swap_during_scan(root: Path, *args: object, **kwargs: object):
+            if root == deployed and not swapped_in_scan:
+                swapped_in_scan.append(True)
+                deployed.rename(swapped)
+            return scan(root, *args, **kwargs)
+
+        results: list[dict[str, object]] = []
+        reader = threading.Thread(
+            target=lambda: results.append(self.skills.extension_snapshot())
+        )
+        with (
+            patch.object(skills_module, "_SYSTEM_SKILLS_LOCK", SignallingLock()),
+            patch.object(
+                skills_module, "_directory_sources",
+                swap_during_scan if during_scan else scan,
+            ),
+            patch.object(
+                skills_module, "_deploy_system_skills",
+                wraps=skills_module._deploy_system_skills,
+            ) as deploy,
+        ):
+            with lock:
+                if not during_scan:
+                    deployed.rename(swapped)
+                reader.start()
+                self.assertTrue(waiting.wait(5))
+                swapped.rename(deployed)
+            reader.join(5)
+
+        self.assertFalse(reader.is_alive())
+        self.assertEqual(bool(swapped_in_scan), during_scan)
+        # The swap finished while the reader waited, so it reads without a restore.
+        deploy.assert_not_called()
+        return results[0]
+
+    def _write_system_bytecode_cache(self, directory_mode: int) -> Path:
+        """Leave a cache the way Python does outside the sandbox."""
+
+        assert self.store.data_directory is not None
+        cache = (
+            self.store.data_directory / "skills" / ".system"
+            / "skill-installer" / "scripts" / "__pycache__"
+        )
+        cache.mkdir()
+        os.chmod(cache, directory_mode)
+        compiled = cache / "github_utils.cpython-315.pyc"
+        compiled.write_bytes(b"bytecode")
+        os.chmod(compiled, 0o600)
+        return cache
 
     def test_system_catalog_ignores_finder_metadata(self) -> None:
         assert self.store.data_directory is not None
