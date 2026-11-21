@@ -105,18 +105,28 @@ def team_section(context: RunTeamContext) -> dict[str, object] | None:
         payload["attention"] = {
             "awaitingYourReview": [task.key for task in team.tasks if task.status == "in_review" and task.reviewer in {None, "lead"}],
             "acceptedNotIntegrated": [task.key for task in team.tasks
-                                      if task.status == "done" and task.delivery_status in {"ready", "partially_integrated"}],
+                                      if task.status == "done" and task.delivery_status in {"ready", "stale", "partially_integrated"}],
         }
     text = json.dumps(payload, ensure_ascii=False)
-    delivered = [message.id for message in context.messages if not message.truncated]
+    # A truncated preview counts as delivered: it says so, and team_read pages the full text.
+    delivered = [message.id for message in context.messages]
     while len(text.encode("utf-8")) > TEAM_SECTION_BYTES and payload["tasks"]:
-        # The board shrinks before messages do; team_read pages the rest.
-        payload["tasks"] = [task for task in payload["tasks"] if task["status"] not in {"done", "canceled"}][: max(1, len(payload["tasks"]) // 2)]  # type: ignore[index]
+        # The board shrinks before messages do; team_read pages the rest. Halving
+        # always shortens the list, so the loop ends even when messages alone are too large.
+        tasks = payload["tasks"]
+        payload["tasks"] = [task for task in tasks if task["status"] not in {"done", "canceled"}][: len(tasks) // 2]  # type: ignore[union-attr,index,arg-type]
         payload["omittedTasks"] = True
         text = json.dumps(payload, ensure_ascii=False)
-    if len(text.encode("utf-8")) > TEAM_SECTION_BYTES:
-        payload["messages"] = []
-        payload["omittedMessages"] = len(context.messages)
-        delivered = []
+    kept = list(payload["messages"])  # type: ignore[arg-type]
+    while len(text.encode("utf-8")) > TEAM_SECTION_BYTES and kept:
+        # Keep the oldest messages that fit; the rest stay undelivered for the next request.
+        kept.pop()
+        payload["messages"] = kept
+        payload["omittedMessages"] = len(context.messages) - len(kept)
+        delivered = [message.id for message in context.messages[:len(kept)]]
         text = json.dumps(payload, ensure_ascii=False)
+    if not kept and context.messages:
+        # Not even one preview fits: report them as omitted and delivered, so the
+        # recipient reads them with team_read instead of waiting for them forever.
+        delivered = [message.id for message in context.messages]
     return {"type": "context", "sectionId": "team-state", "content": _PREFIX + text, "teamMessageIds": delivered}

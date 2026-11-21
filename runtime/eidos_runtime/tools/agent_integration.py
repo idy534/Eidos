@@ -160,8 +160,9 @@ def executor_registry_entries(executor: ToolExecutor) -> tuple[ToolRegistryEntry
 
 TEAM_TOOL_NAME = 'team_integrate'
 _TEAM_DESCRIPTION = (
-    "Bring a team member's Worktree changes into your workspace, by task (its submitted delivery) or by member "
-    "(its current files; the member must be idle). Files you have not changed take the member version; text files "
+    "Bring a team member's Worktree changes into your workspace, by task (exactly the delivery submitted with that "
+    "task; a task submitted without one has none) or by member (its current files; the member must be idle). "
+    "Files you have not changed take the member version; text files "
     "changed on both sides are merged when Git finds no conflict. If any requested file conflicts or is binary, "
     "nothing is written and the result lists those paths: integrate the others with paths."
 )
@@ -184,18 +185,17 @@ class TeamIntegrationAdapter(DeliveryIntegrationAdapter):
             raise AgentWorkspaceError('team_not_active')
         try:
             if request.task is not None:
+                # Integrate exactly what was submitted with the task, even after a later
+                # capture made it stale; never substitute the member's current files,
+                # which can hold other, unreviewed work.
                 task = self.teams.repository.task_row(role.team_id, request.task)
-                if task['delivery_id'] is not None:
-                    delivery = self.workspaces.delivery(task['delivery_id'])
-                    if delivery is not None and delivery.status in {'ready', 'partially_integrated', 'integrated'}:
-                        return delivery, request.paths
-                if task['owner_member_id'] is None:
-                    raise AgentWorkspaceError('delivery_failed')
-                name = next(member.name for member in self.teams.repository.team(role.team_id).members
-                            if member.id == task['owner_member_id'])
-            else:
-                name = str(request.member)
-            return self.workspaces.capture_owner(self.teams.member_owner(role.team_id, name)), request.paths
+                if task['delivery_id'] is None:
+                    raise AgentWorkspaceError('team_task_no_delivery')
+                delivery = self.workspaces.delivery(task['delivery_id'])
+                if delivery is None or delivery.status == 'discarded':
+                    raise AgentWorkspaceError('team_task_delivery_unavailable')
+                return delivery, request.paths
+            return self.workspaces.capture_owner(self.teams.member_owner(role.team_id, str(request.member))), request.paths
         except TeamRejected as error:
             raise AgentWorkspaceError(str(error)) from error
 

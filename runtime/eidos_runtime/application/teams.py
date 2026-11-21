@@ -64,10 +64,14 @@ class TeamApplication:
             for _member, workspace in prepared:
                 if workspace is not None and self._workspaces() is not None:
                     self._workspaces().abandon(workspace)  # type: ignore[union-attr]
+            # The decision is spent; a pending card the user cannot answer would block team mode.
+            self.repository.abandon_proposal(proposal.id)
+            self._publish()
             raise
         self._finish_workspaces(team, prepared)
         self._publish()
-        self._schedule()
+        # Members were told to start: turn their wakes into Runs now, not at the next idle edge.
+        self.wake_ready_soon()
         return team
 
     def add_member(self, team_id: str, lead_run_id: str, member: ProposedMember) -> TeamView:
@@ -83,7 +87,7 @@ class TeamApplication:
         team = self.repository.team(team_id)
         self._finish_workspaces(team, [(value, workspace)])
         self._publish()
-        self._schedule()
+        self.wake_ready_soon()
         return team
 
     def _prepare(self, lead_session_id: str, lead_run_id: str, member: ProposedMember, settings: TeamRunSettings,
@@ -164,14 +168,25 @@ class TeamApplication:
         self.repository.remove_member(team_id, name, reason, actor)
         for run_id in self.repository.active_runs(team_id, member_id=row["id"]):
             self._cancel(run_id)
-        if row["worktree_id"] is not None and workspaces is not None:
+        # Cancellation is asynchronous: a Worktree whose Run is still stopping is
+        # removed by finish_removals once that Run is terminal, never under it.
+        self.finish_removals()
+        self._publish()
+        self._schedule()
+        return self.repository.team(team_id)
+
+    def finish_removals(self) -> None:
+        """Remove the Worktrees of removed members whose Runs are quiet."""
+        workspaces = self._workspaces()
+        if workspaces is None:
+            return
+        for row in self.repository.removed_member_worktrees():
+            if self.repository.active_runs(row["team_id"], member_id=row["id"]):
+                continue
             try:
                 workspaces.discard_owner(WorkspaceOwner("team_member", row["id"], row["worktree_id"], row["base_tree"], False))
             except AgentWorkspaceError:
                 logger.warning("Removed member Worktree cleanup deferred member_id=%s", row["id"])
-        self._publish()
-        self._schedule()
-        return self.repository.team(team_id)
 
     # Desktop -----------------------------------------------------------------------
 

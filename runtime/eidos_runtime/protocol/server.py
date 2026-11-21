@@ -2006,6 +2006,7 @@ class RuntimeServer:
         self._wake_goals()
         try:
             self.supervisor.teams.finish_dissolving()
+            self.supervisor.teams.finish_removals()
             self.supervisor.teams.wake_ready_soon()
         except Exception:
             logger.exception("Team wake admission failed")
@@ -2483,6 +2484,12 @@ class RuntimeServer:
         self.managed_resources.warmup()
         self._warm_browser_resources()
         self.supervisor.schedule_next()
+        if self.store.health_state == "ready":
+            # Team wakes left pending by a restart start now, not at the next idle edge.
+            try:
+                self.supervisor.teams.wake_ready_soon()
+            except Exception:
+                logger.exception("Team wake admission failed")
 
     def _browser_application(self) -> BrowserApplication:
         self._applications_or_error()

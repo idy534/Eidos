@@ -19,7 +19,7 @@ from eidos_runtime.db.events import append_event
 from eidos_runtime.domain.collaboration import ACTIVE_STATUSES
 from eidos_runtime.domain.teams import (
     MAX_ACTIVE_MEMBER_RUNS, MAX_DELIVERED_MESSAGES, MAX_TEAM_MEMBERS, MAX_TEAM_MESSAGE_BYTES, MAX_TEAM_TASKS,
-    MAX_FORKED_CONTEXT_BYTES, MESSAGE_PREVIEW_CHARACTERS, PING_PONG_LIMIT, RESERVED_MEMBER_NAMES,
+    MAX_FORKED_CONTEXT_BYTES, MESSAGE_PREVIEW_CHARACTERS, PING_PONG_LIMIT, RESERVED_MEMBER_NAMES, TERMINAL_TASK_STATUSES,
     EvidenceRef, MemberModel, ProposedMember, ProposedTask, RosterDecision, TeamMemberView, TeamMessagePage,
     TeamMessageView, TeamPostRequest, TeamProposal, TeamProposalView, TeamRejected, TeamRunSettings,
     TeamRunOrigin, TeamTaskRequest, TeamTaskView, TeamUsage, TeamView, reject_cycles,
@@ -155,11 +155,24 @@ class TeamRepository:
             return self._team_view(connection, self._team_row(connection, team_id))
 
     def pending_proposal(self, session_id: str) -> TeamProposalView | None:
+        """The proposal still waiting for the user: undecided, and its lead Run still active."""
         with self.database.lock:
             row = self.database.connection().execute(
-                "SELECT * FROM team_proposals WHERE session_id=? AND decision='pending' ORDER BY created_at DESC LIMIT 1",
+                "SELECT p.* FROM team_proposals p JOIN runs r ON r.id=p.run_id "
+                f"WHERE p.session_id=? AND p.decision='pending' AND p.decision_json IS NULL AND r.status IN {_ACTIVE_SQL} "
+                "AND r.cancel_requested_at IS NULL ORDER BY p.created_at DESC LIMIT 1",
                 (session_id,)).fetchone()
             return self._proposal_view(row) if row else None
+
+    def abandon_proposal(self, proposal_id: str) -> None:
+        """Decline a confirmed proposal whose team could not be created."""
+        with self.database.transaction() as connection:
+            row = connection.execute("SELECT session_id FROM team_proposals WHERE id=?", (proposal_id,)).fetchone()
+            changed = connection.execute(
+                "UPDATE team_proposals SET decision='declined',decided_at=coalesce(decided_at,?) "
+                "WHERE id=? AND decision='pending' AND team_id IS NULL", (now_ms(), proposal_id)).rowcount
+            if row is not None and changed:
+                self._event(connection, row["session_id"], None, "proposal")
 
     def context_for_run(self, run_id: str) -> RunTeamContext | None:
         with self.database.lock:
@@ -207,6 +220,13 @@ class TeamRepository:
                 "SELECT r.id FROM runs r JOIN team_members m ON m.session_id=r.session_id "
                 f"WHERE m.team_id=? AND (? IS NULL OR m.id=?) AND r.status IN {_ACTIVE_SQL}",
                 (team_id, member_id, member_id)))
+
+    def removed_member_worktrees(self) -> tuple[sqlite3.Row, ...]:
+        """Removed members whose managed Worktree still exists."""
+        with self.database.lock:
+            return tuple(self.database.connection().execute(
+                "SELECT m.id,m.team_id,m.worktree_id,m.base_tree FROM team_members m JOIN worktrees w ON w.id=m.worktree_id "
+                "WHERE m.status='removed' AND w.state!='deleted'").fetchall())
 
     def lead_turns(self, session_id: str, turns: int) -> str | None:
         """The lead's latest turns as bounded text, frozen into a member at creation.
@@ -440,15 +460,21 @@ class TeamRepository:
                 return member
             now = now_ms()
             connection.execute("UPDATE team_members SET status='removed',removed_at=? WHERE id=?", (now, member["id"]))
+            # Every unfinished task, including blocked ones and gates, returns to the
+            # board unowned; otherwise it would later start for a member that is gone.
+            released = [row["key"] for row in connection.execute(
+                "SELECT key FROM team_tasks WHERE team_id=? AND owner_member_id=? AND status IN ('open','in_progress','in_review') "
+                "ORDER BY created_at,key", (team_id, member["id"]))]
             connection.execute(
                 "UPDATE team_tasks SET status='open',owner_member_id=NULL,version=version+1,updated_at=? "
-                "WHERE team_id=? AND owner_member_id=? AND status IN ('in_progress','in_review')", (now, team_id, member["id"]))
+                "WHERE team_id=? AND owner_member_id=? AND status IN ('open','in_progress','in_review')", (now, team_id, member["id"]))
             connection.execute(
                 "UPDATE team_tasks SET reviewer=NULL,version=version+1,updated_at=? WHERE team_id=? AND reviewer=?",
                 (now, team_id, member["id"]))
             connection.execute("UPDATE team_wakes SET status='obsolete',updated_at=? WHERE team_id=? AND target=? AND status='pending'",
                                (now, team_id, member["id"]))
-            self._system(connection, team, f"{name} left the team ({actor.name}): {reason}", [LEAD] if actor.kind != "lead" else [])
+            unowned = f" Its unfinished tasks are unassigned: {', '.join(released)}." if released else ""
+            self._system(connection, team, f"{name} left the team ({actor.name}): {reason}{unowned}", [LEAD] if actor.kind != "lead" else [])
             self._event(connection, team["lead_session_id"], team_id, "member")
             return connection.execute("SELECT * FROM team_members WHERE id=?", (member["id"],)).fetchone()
 
@@ -479,6 +505,7 @@ class TeamRepository:
                 self._set_dependencies(connection, team_id, request.key, task.depends_on)
                 if task.milestone and task.kind == "work":
                     self._ensure_gates(connection, team_id, task.milestone)
+                    self._hold_gates(connection, team, task.milestone)
                 self._advance_assigned(connection, team_id, request.key, actor=actor)
                 row = self._task(connection, team_id, request.key)
             else:
@@ -507,6 +534,9 @@ class TeamRepository:
         if request.op == "update":
             if not manager and owner != actor.member_id:
                 raise TeamRejected("team_task_forbidden")
+            if not manager and request.milestone is not None:
+                # Milestones decide which gate reviews a task; only the lead and the user move them.
+                raise TeamRejected("team_task_forbidden")
             if request.version != row["version"]:
                 raise TeamRejected("team_task_version_conflict")
             fields: dict[str, object] = {}
@@ -526,6 +556,15 @@ class TeamRepository:
                 update(assignments, tuple(fields.values()), ("open", "in_progress", "in_review", "done", "canceled"))
             if manager and request.depends_on is not None:
                 self._set_dependencies(connection, team_id, key, request.depends_on)
+            if request.milestone is not None and request.milestone != row["milestone"] and row["kind"] == "work":
+                # Unfinished work moved into a milestone holds its gates again; the
+                # milestone it left may now be ready for its gates.
+                self._ensure_gates(connection, team_id, request.milestone)
+                if row["status"] not in TERMINAL_TASK_STATUSES:
+                    self._hold_gates(connection, team, request.milestone)
+                for milestone in (row["milestone"], request.milestone):
+                    if milestone is not None:
+                        self._advance_gates(connection, team_id, milestone, actor)
         elif request.op == "assign":
             if not manager:
                 raise TeamRejected("team_task_forbidden")
@@ -600,10 +639,7 @@ class TeamRepository:
             self._advance_assigned(connection, team_id, dependent["key"], actor=actor)
         if row["milestone"] is not None and row["kind"] == "work":
             # The last work task of a milestone opens its gates.
-            for gate in connection.execute(
-                    "SELECT key FROM team_tasks WHERE team_id=? AND kind='gate' AND milestone=? AND status='open'",
-                    (team_id, row["milestone"])).fetchall():
-                self._advance_assigned(connection, team_id, gate["key"], actor=actor)
+            self._advance_gates(connection, team_id, row["milestone"], actor)
         remaining = connection.execute(
             "SELECT COUNT(*) FROM team_tasks WHERE team_id=? AND status NOT IN ('done','canceled')", (team_id,)).fetchone()[0]
         if remaining == 0:
@@ -670,6 +706,25 @@ class TeamRepository:
                  "Review every work task of this milestone. Submit to pass the gate, or reopen the tasks that fall short with a reason.",
                  members[reviewer], milestone, SYSTEM_ACTOR.name, now, now))
 
+    def _hold_gates(self, connection: sqlite3.Connection, team: sqlite3.Row, milestone: str) -> None:
+        """Unfinished work joining a milestone sends its started or passed gates back to wait for it."""
+        now = now_ms()
+        held = connection.execute(
+            "SELECT id,key,owner_member_id FROM team_tasks WHERE team_id=? AND kind='gate' AND milestone=? "
+            "AND status IN ('in_progress','in_review','done')", (team["id"], milestone)).fetchall()
+        for gate in held:
+            connection.execute("UPDATE team_tasks SET status='open',version=version+1,updated_at=? WHERE id=?", (now, gate["id"]))
+            if gate["owner_member_id"] is not None:
+                # The owner learns at its next turn; the gate wakes it again once the new work is done.
+                self._insert_message(connection, team, SYSTEM_ACTOR, "board", [gate["owner_member_id"]], False, False, gate["id"],
+                                     f"Gate {gate['key']} waits again: new work joined milestone {milestone}.", wake=False)
+
+    def _advance_gates(self, connection: sqlite3.Connection, team_id: str, milestone: str, actor: Actor | None) -> None:
+        for gate in connection.execute(
+                "SELECT key FROM team_tasks WHERE team_id=? AND kind='gate' AND milestone=? AND status='open'",
+                (team_id, milestone)).fetchall():
+            self._advance_assigned(connection, team_id, gate["key"], actor=actor)
+
     @staticmethod
     def _template(team: sqlite3.Row) -> dict[str, object]:
         return json.loads(team["template_json"]) if team["template_json"] else {}
@@ -722,9 +777,12 @@ class TeamRepository:
             if value.item_id is not None:
                 row = connection.execute("SELECT session_id,kind FROM items WHERE id=?", (value.item_id,)).fetchone()
             else:
+                # Provider call ids repeat across Sessions; look only in the submitter's own.
                 row = connection.execute(
-                    "SELECT i.session_id,i.kind FROM tool_calls t JOIN items i ON i.id=t.item_id WHERE t.id=? OR t.provider_call_id=?",
-                    (value.tool_call_id, value.tool_call_id)).fetchone()
+                    "SELECT i.session_id,i.kind FROM tool_calls t JOIN items i ON i.id=t.item_id "
+                    "WHERE (t.id=? OR t.provider_call_id=?) AND i.session_id IN (SELECT value FROM json_each(?)) "
+                    "ORDER BY i.creation_seq DESC LIMIT 1",
+                    (value.tool_call_id, value.tool_call_id, json.dumps(sorted(sessions)))).fetchone()
             if row is None or row["session_id"] not in sessions or row["kind"] not in {"tool_call", "command_execution", "file_change"}:
                 raise TeamRejected("team_evidence_invalid")
 
@@ -1031,6 +1089,16 @@ class TeamRepository:
 
     def settle_run(self, connection: sqlite3.Connection, run_id: str, status: str) -> None:
         """Called inside a Run's terminal transition; writes team events in the same transaction."""
+        # A proposal can only be answered while its lead Run waits; once the Run
+        # ends, an unanswered or uncreated proposal is declined so team mode stays available.
+        proposal = connection.execute(
+            "SELECT session_id FROM team_proposals WHERE run_id=? AND decision='pending' AND team_id IS NULL LIMIT 1",
+            (run_id,)).fetchone()
+        if proposal is not None:
+            connection.execute(
+                "UPDATE team_proposals SET decision='declined',decided_at=coalesce(decided_at,?) "
+                "WHERE run_id=? AND decision='pending' AND team_id IS NULL", (now_ms(), run_id))
+            self._event(connection, proposal["session_id"], None, "proposal")
         role = self._role(connection, run_id)
         if role is None or role.team_id is None:
             return
@@ -1045,8 +1113,11 @@ class TeamRepository:
                     "SELECT 1 FROM team_tasks WHERE team_id=? AND owner_member_id=? AND status='in_progress'",
                     (team["id"], role.member_id)).fetchone():
                 self._system(connection, team, f"{role.member_name} finished its work and has no task in progress.", [LEAD])
-        # Messages that arrived after this Run's last context build still wake it.
-        if self._has_undelivered(connection, team["id"], role.recipient):
+        # Messages that arrived after this Run's last context build still wake it,
+        # but only after it finished normally: a canceled, stopped, interrupted or
+        # failed Run stays stopped (and cannot restart itself into the same failure).
+        # Its unread messages wait for the next wake or the user's next message.
+        if status == "succeeded" and self._has_undelivered(connection, team["id"], role.recipient):
             self._wake(connection, team, role.recipient, "message")
         self._event(connection, team["lead_session_id"], team["id"], "status")
 
@@ -1141,8 +1212,10 @@ class TeamRepository:
 
     @staticmethod
     def _blocked(connection: sqlite3.Connection, task_id: str) -> bool:
+        # A canceled dependency is settled, like canceled work under a gate.
         if connection.execute(
-                "SELECT 1 FROM team_task_deps d JOIN team_tasks t ON t.id=d.depends_on_task_id WHERE d.task_id=? AND t.status!='done' LIMIT 1",
+                "SELECT 1 FROM team_task_deps d JOIN team_tasks t ON t.id=d.depends_on_task_id "
+                "WHERE d.task_id=? AND t.status NOT IN ('done','canceled') LIMIT 1",
                 (task_id,)).fetchone() is not None:
             return True
         # A gate waits for every work task of its milestone, without listing them as dependencies.

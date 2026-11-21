@@ -265,10 +265,19 @@ class TeamToolRuntime(AdapterToolRuntime):
             context.events.deliver_pending()
             if not keep_worker:
                 raise PlanningSuspended()
-            while (saved := repository.proposal_for_item(item_id)) is not None and saved[1] is None:
-                if cancel.is_set():
-                    raise RuntimeCancelled
-                cancel.wait(0.1)
+            # The user's answer is not tool work: pause the tool deadline while waiting, as request_user_input does.
+            suspend_deadline = getattr(cancel, "suspend_deadline", None)
+            resume_deadline = getattr(cancel, "resume_deadline", None)
+            if callable(suspend_deadline):
+                suspend_deadline()
+            try:
+                while (saved := repository.proposal_for_item(item_id)) is not None and saved[1] is None:
+                    if cancel.is_set():
+                        raise RuntimeCancelled
+                    cancel.wait(0.1)
+            finally:
+                if callable(resume_deadline):
+                    resume_deadline()
         if saved is None:
             raise TeamRejected("team_proposal_inactive")
         view, decision = saved

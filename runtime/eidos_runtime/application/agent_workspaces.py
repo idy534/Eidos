@@ -386,7 +386,8 @@ class AgentWorkspaceService:
     def mark_integration(self, delivery_id: str, *, complete: bool) -> None:
         with self.database.transaction() as connection:
             connection.execute(
-                "UPDATE workspace_deliveries SET status=?,integrated_at=? WHERE id=? AND status IN ('ready','partially_integrated')",
+                # A team task integrates the delivery submitted with it, which a later capture may have made stale.
+                "UPDATE workspace_deliveries SET status=?,integrated_at=? WHERE id=? AND status IN ('ready','stale','partially_integrated')",
                 ("integrated" if complete else "partially_integrated", now_ms(), delivery_id))
 
     def latest_delivery(self, agent_id: str, kind: Literal["agent", "team_member"] = "agent") -> Delivery | None:
