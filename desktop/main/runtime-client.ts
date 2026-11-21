@@ -413,6 +413,13 @@ export class RuntimeRequestError extends Error {
   }
 }
 
+export class RuntimeShutdownError extends Error {
+  constructor(message = "Runtime is shutting down") {
+    super(message);
+    this.name = "RuntimeShutdownError";
+  }
+}
+
 export class RuntimeClient {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<string, PendingRequest>();
@@ -443,6 +450,11 @@ export class RuntimeClient {
     });
 
     this.child.stdout.on("data", (chunk: Buffer) => this.handleStdoutChunk(chunk));
+    this.child.stdin.on("error", (error) => {
+      if (!this.shutdownRequested && !this.closed) {
+        this.failAll(error);
+      }
+    });
 
     const stderr = readline.createInterface({ input: this.child.stderr });
     stderr.on("line", (line) => options.onStderr?.(line));
@@ -453,7 +465,11 @@ export class RuntimeClient {
       this.child.once("error", (error) => this.failAll(error));
       this.child.once("close", (code) => {
         this.closed = true;
-        this.failAll(new Error("Runtime process exited"));
+        this.failAll(
+          this.shutdownRequested
+            ? new RuntimeShutdownError("Runtime process exited during shutdown")
+            : new Error("Runtime process exited"),
+        );
         resolve(code ?? 1);
       });
     });
@@ -1393,6 +1409,9 @@ export class RuntimeClient {
   }
 
   private request<T>(method: string, params: Record<string, unknown>): Promise<T> {
+    if (this.shutdownRequested && method !== "runtime/shutdown") {
+      return Promise.reject(new RuntimeShutdownError());
+    }
     if (this.closed || this.child.stdin.destroyed) {
       return Promise.reject(new Error("Runtime process is not available"));
     }
@@ -1546,7 +1565,7 @@ export class RuntimeClient {
   }
 
   private writeProtocolMessage(message: Record<string, unknown>): void {
-    if (this.closed || this.child.stdin.destroyed) {
+    if (this.shutdownRequested || this.closed || this.child.stdin.destroyed) {
       return;
     }
     const serialized = JSON.stringify(message);
@@ -1554,7 +1573,7 @@ export class RuntimeClient {
       this.failProtocol("Runtime protocol response exceeds 1 MiB");
       return;
     }
-    this.child.stdin.write(`${serialized}\n`, "utf8");
+    this.child.stdin.write(`${serialized}\n`, "utf8", () => undefined);
   }
 
   private failProtocol(message: string): void {

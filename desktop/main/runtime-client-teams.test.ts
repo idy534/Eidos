@@ -83,3 +83,83 @@ void test("team mode crosses stdio from proposal to dissolution", { timeout: 400
     await client.shutdown(); assert.equal(await client.waitForExit(), 0);
   } finally { client.terminate(); await client.waitForExit().catch(() => undefined); await rm(temporary, { recursive: true, force: true }); }
 });
+
+void test("team requests during shutdown reject with RuntimeShutdownError without writing to stdin, while crashes still reject as exited", async () => {
+  const { mkdtemp, mkdir, rm, writeFile } = await import("node:fs/promises");
+  const os = await import("node:os");
+  const { RuntimeClient, RuntimeShutdownError } = await import("./runtime-client.js");
+
+  const startControlled = async (crash: boolean) => {
+    const temporary = await mkdtemp(path.join(os.tmpdir(), "eidos-team-shutdown-"));
+    const runtimeRoot = path.join(temporary, "runtime");
+    await mkdir(path.join(runtimeRoot, "eidos_runtime"), { recursive: true });
+    await writeFile(path.join(runtimeRoot, "eidos_runtime/__init__.py"), "");
+    const requestsPath = path.join(temporary, "requests.jsonl");
+    await writeFile(path.join(runtimeRoot, "eidos_runtime/__main__.py"), `
+import json, os, sys, time
+for line in sys.stdin:
+    request = json.loads(line)
+    with open(os.environ["TEST_TEAM_REQUESTS"], "a") as output:
+        output.write(json.dumps(request) + "\\n")
+    if request["method"] == "team/read":
+        if os.environ["TEST_TEAM_CRASH"] == "1":
+            os._exit(3)
+        continue
+    if request["method"] == "runtime/shutdown":
+        print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": {}}), flush=True)
+        time.sleep(0.08)
+        break
+`);
+    const client = new RuntimeClient({
+      pythonExecutable: path.join(root, ".venv/bin/python"),
+      runtimeRoot,
+      environment: { TEST_TEAM_REQUESTS: requestsPath, TEST_TEAM_CRASH: crash ? "1" : "0" },
+    });
+    return {
+      client,
+      requestsPath,
+      cleanup: async () => {
+        client.terminate();
+        await client.waitForExit().catch(() => undefined);
+        await rm(temporary, { recursive: true, force: true });
+      },
+    };
+  };
+
+  const graceful = await startControlled(false);
+  try {
+    const inFlight = graceful.client.team("team/read", { sessionId: "session-1" });
+    const inFlightRejection = assert.rejects(
+      inFlight,
+      (error: unknown) => error instanceof RuntimeShutdownError,
+    );
+    const shutdown = graceful.client.shutdown();
+    await assert.rejects(
+      graceful.client.team("team/read", { sessionId: "session-1" }),
+      (error: unknown) => error instanceof RuntimeShutdownError,
+    );
+    await shutdown;
+    await inFlightRejection;
+    assert.equal(await graceful.client.waitForExit(), 0);
+    const recorded = (await readFile(graceful.requestsPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { method: string });
+    assert.deepEqual(recorded.map((entry) => entry.method), ["team/read", "runtime/shutdown"]);
+  } finally {
+    await graceful.cleanup();
+  }
+
+  const crashed = await startControlled(true);
+  try {
+    await assert.rejects(
+      crashed.client.team("team/read", { sessionId: "session-1" }),
+      (error: unknown) => error instanceof Error
+        && !(error instanceof RuntimeShutdownError)
+        && error.message === "Runtime process exited",
+    );
+    assert.equal(await crashed.client.waitForExit(), 3);
+  } finally {
+    await crashed.cleanup();
+  }
+});

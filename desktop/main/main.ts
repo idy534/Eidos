@@ -40,7 +40,12 @@ import { resolveRuntimePaths } from "./runtime-paths.js";
 import "./response-runtime-client.js";
 import { redactLogLine, sanitizeLogValue } from "./log-redaction.js";
 import { dispatchAppCommand as dispatchCommand } from "./app-command-dispatch.js";
-import { QuitFlowController, type ActiveRunProjection, type QuitFlowDependencies } from "./quit-flow.js";
+import {
+  guardIpcHandlerForQuit,
+  QuitFlowController,
+  type ActiveRunProjection,
+  type QuitFlowDependencies,
+} from "./quit-flow.js";
 import { shutdownRuntime } from "./runtime-shutdown.js";
 import { resolveWorkspaceFileForOpen } from "./workspace-open.js";
 import { ArtifactPreviewManager } from "./artifact-preview.js";
@@ -172,6 +177,18 @@ const quitFlowDeps: QuitFlowDependencies = {
       await runtimeClient.cancelRun(runId);
     }
   },
+  onQuitCommitted: () => {
+    // Drop UI-side pending approval entries without sending synthetic reject
+    // decisions; Runtime's run/cancel and supervisor.shutdown settle them as canceled.
+    pendingApprovals.clear();
+    artifactPreview.closeAll();
+    terminalManager.closeAll();
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.destroy();
+      }
+    }
+  },
   shutdownRuntime: async () => {
     if (runtimeClient) {
       const client = runtimeClient;
@@ -200,14 +217,20 @@ const quitFlowController = new QuitFlowController(activeRunProjection, quitFlowD
 function publishStatus(status: RuntimeStatus): void {
   runtimeStatus = status;
   for (const window of BrowserWindow.getAllWindows()) {
-    window.webContents.send(IPC.RUNTIME_STATUS_EVENT, status);
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      window.webContents.send(IPC.RUNTIME_STATUS_EVENT, status);
+    }
   }
 }
 
 function publishNotification(notification: RuntimeNotification): void {
   updateActiveRunProjection(notification);
-  for (const window of BrowserWindow.getAllWindows()) {
-    window.webContents.send(IPC.RUNTIME_NOTIFICATION_EVENT, notification);
+  if (!quitFlowController.getState().quitCommitted) {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+        window.webContents.send(IPC.RUNTIME_NOTIFICATION_EVENT, notification);
+      }
+    }
   }
   if (notification.method === "run/completed") {
     for (const [id, pending] of pendingApprovals) {
@@ -220,10 +243,16 @@ function publishNotification(notification: RuntimeNotification): void {
 }
 
 function requestApproval(request: ApprovalRequest): Promise<ApprovalDecision> {
+  if (quitFlowController.getState().quitCommitted) {
+    // Leave unsettled so Runtime cancels the pending approval on quit instead of recording a user rejection.
+    return new Promise<ApprovalDecision>(() => {});
+  }
   return new Promise((resolve) => {
     pendingApprovals.set(request.id, { request, resolve });
     for (const window of BrowserWindow.getAllWindows()) {
-      window.webContents.send(IPC.APPROVAL_REQUESTED_EVENT, request);
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+        window.webContents.send(IPC.APPROVAL_REQUESTED_EVENT, request);
+      }
     }
   });
 }
@@ -347,6 +376,7 @@ const windowDeps = {
 };
 
 export async function dispatchAppCommand(command: AppShortcut): Promise<void> {
+  if (quitFlowController.getState().quitCommitted) return;
   await dispatchCommand(command, windowDeps);
 }
 
@@ -491,6 +521,9 @@ async function startRuntime(): Promise<void> {
 
     const initialized = await client.initialize();
     const storageHealth = await client.health();
+    if (quitFlowController.getState().quitCommitted) {
+      return;
+    }
     if (startGeneration !== runtimeStartGeneration || runtimeClient !== client) {
       client.terminate();
       return;
@@ -513,6 +546,9 @@ async function startRuntime(): Promise<void> {
       app.quit();
     }
   } catch (error) {
+    if (quitFlowController.getState().quitCommitted) {
+      return;
+    }
     if (startGeneration !== runtimeStartGeneration) {
       client?.terminate();
       return;
@@ -574,11 +610,21 @@ function restartRuntime(): Promise<RuntimeStatus> {
 // IPC Handlers
 // ---------------------------------------------------------------------------
 
-ipcMain.handle(IPC.RUNTIME_GET_STATUS, () => runtimeStatus);
-ipcMain.handle(IPC.RUNTIME_HEALTH, () => clientOrThrow().health());
-ipcMain.handle(IPC.RUNTIME_RESTART, () => restartRuntime());
+function handleIpc<Args extends unknown[], Result>(
+  channel: string,
+  handler: (event: Electron.IpcMainInvokeEvent, ...args: Args) => Result | Promise<Result>,
+): void {
+  ipcMain.handle(
+    channel,
+    guardIpcHandlerForQuit(() => quitFlowController.getState().quitCommitted, handler),
+  );
+}
 
-ipcMain.handle(IPC.WORKSPACE_SELECT, async () => {
+handleIpc(IPC.RUNTIME_GET_STATUS, () => runtimeStatus);
+handleIpc(IPC.RUNTIME_HEALTH, () => clientOrThrow().health());
+handleIpc(IPC.RUNTIME_RESTART, () => restartRuntime());
+
+handleIpc(IPC.WORKSPACE_SELECT, async () => {
   const result = await dialog.showOpenDialog({
     title: "选择 Eidos Workspace",
     properties: ["openDirectory"],
@@ -586,125 +632,125 @@ ipcMain.handle(IPC.WORKSPACE_SELECT, async () => {
   return result.canceled ? null : result.filePaths[0] ?? null;
 });
 
-ipcMain.handle(IPC.PROJECT_LIST, () => clientOrThrow().listProjects());
-ipcMain.handle(IPC.PROJECT_CREATE_FOLDERS, (_event, request: unknown) => {
+handleIpc(IPC.PROJECT_LIST, () => clientOrThrow().listProjects());
+handleIpc(IPC.PROJECT_CREATE_FOLDERS, (_event, request: unknown) => {
   if (!isProjectCreateFoldersRequest(request)) throw new Error("项目配置无效。");
   return clientOrThrow().createProjectFolders(request);
 });
-ipcMain.handle(IPC.GIT_REPOSITORY_REQUEST, (_event, request: unknown) => {
+handleIpc(IPC.GIT_REPOSITORY_REQUEST, (_event, request: unknown) => {
   if (!isGitWorkspaceRequest(request)) throw new Error("Git 目标参数无效。");
   return clientOrThrow().repositoryGit(request);
 });
-ipcMain.handle(IPC.PROJECT_READ, (_event, request: unknown) => {
+handleIpc(IPC.PROJECT_READ, (_event, request: unknown) => {
   if (!isProjectReadRequest(request)) throw new Error("项目参数无效。");
   return clientOrThrow().readProject(request.projectId);
 });
-ipcMain.handle(IPC.PROJECT_UPDATE, (_event, request: unknown) => {
+handleIpc(IPC.PROJECT_UPDATE, (_event, request: unknown) => {
   if (!isProjectUpdateRequest(request)) throw new Error("项目配置无效。");
   return clientOrThrow().updateProject(request);
 });
-ipcMain.handle(IPC.PERSONALIZATION_READ, (_event, request: unknown) => {
+handleIpc(IPC.PERSONALIZATION_READ, (_event, request: unknown) => {
   const value = request ?? {};
   if (!isPersonalizationReadRequest(value)) throw new Error("个性化读取参数无效。");
   return clientOrThrow().readPersonalization(value);
 });
-ipcMain.handle(IPC.PERSONALIZATION_SAVE, (_event, request: unknown) => {
+handleIpc(IPC.PERSONALIZATION_SAVE, (_event, request: unknown) => {
   if (!isPersonalizationSaveRequest(request)) throw new Error("个性化设置无效，请检查填写内容。");
   return clientOrThrow().savePersonalization(request);
 });
-ipcMain.handle(IPC.SHELL_ENVIRONMENT_READ, (_event, request: unknown) => {
+handleIpc(IPC.SHELL_ENVIRONMENT_READ, (_event, request: unknown) => {
   const value = request ?? {};
   if (!isShellEnvironmentReadRequest(value)) throw new Error("沙盒环境读取参数无效。");
   return clientOrThrow().readShellEnvironment(value);
 });
-ipcMain.handle(IPC.SHELL_ENVIRONMENT_SAVE, (_event, request: unknown) => {
+handleIpc(IPC.SHELL_ENVIRONMENT_SAVE, (_event, request: unknown) => {
   if (!isShellEnvironmentSaveRequest(request)) throw new Error("沙盒环境配置无效，请检查各项参数。");
   return clientOrThrow().saveShellEnvironment(request);
 });
-ipcMain.handle(IPC.SHELL_ENVIRONMENT_REFRESH, (_event, request: unknown) => {
+handleIpc(IPC.SHELL_ENVIRONMENT_REFRESH, (_event, request: unknown) => {
   const value = request ?? {};
   if (!isShellEnvironmentRefreshRequest(value)) throw new Error("沙盒环境刷新参数无效。");
   return clientOrThrow().refreshShellEnvironment(value);
 });
 
-ipcMain.handle(IPC.WEB_SEARCH_READ, (_event, request: unknown) => {
+handleIpc(IPC.WEB_SEARCH_READ, (_event, request: unknown) => {
   const value = request ?? {};
   if (!isWebSearchReadRequest(value)) throw new Error("网页搜索读取参数无效。");
   return clientOrThrow().readWebSearch(value);
 });
-ipcMain.handle(IPC.WEB_SEARCH_SAVE, (_event, request: unknown) => {
+handleIpc(IPC.WEB_SEARCH_SAVE, (_event, request: unknown) => {
   if (!isWebSearchSaveRequest(request)) throw new Error("网页搜索配置无效，请检查各项参数。");
   return clientOrThrow().saveWebSearch(request);
 });
-ipcMain.handle(IPC.WEB_SEARCH_OFFICIAL_PAGE, (event, request: unknown) => {
+handleIpc(IPC.WEB_SEARCH_OFFICIAL_PAGE, (event, request: unknown) => {
   previewOwner(event);
   return electronShell.openExternal(webSearchOfficialUrl(request));
 });
 
-ipcMain.handle(IPC.CHANNEL_READ, (_event, request: unknown) => {
+handleIpc(IPC.CHANNEL_READ, (_event, request: unknown) => {
   const value = request === undefined ? {} : request;
   if (!isChannelReadRequest(value)) throw new Error("助理类型无效，请刷新后重试。");
   return clientOrThrow().readChannel(value);
 });
-ipcMain.handle(IPC.CHANNEL_SAVE, (_event, request: unknown) => {
+handleIpc(IPC.CHANNEL_SAVE, (_event, request: unknown) => {
   if (!isChannelSaveRequest(request)) throw new Error("渠道配置无效，请检查必填项。 ");
   return clientOrThrow().saveChannel(request);
 });
-ipcMain.handle(IPC.GOAL_EXECUTE, (_event, request: unknown) => {
+handleIpc(IPC.GOAL_EXECUTE, (_event, request: unknown) => {
   if (!isGoalRequest(request)) throw new Error("目标参数无效。");
   return clientOrThrow().goal(request);
 });
-ipcMain.handle(IPC.TEAM_REQUEST, (event, method: unknown, request: unknown) => {
+handleIpc(IPC.TEAM_REQUEST, (event, method: unknown, request: unknown) => {
   inputOwner(event);
   if (!isTeamMethod(method) || !isTeamRequest(method, request)) throw new Error("团队请求无效。");
   return clientOrThrow().team(method, request);
 });
-ipcMain.handle(IPC.AUTOMATION_EXECUTE, (_event, request: unknown) => {
+handleIpc(IPC.AUTOMATION_EXECUTE, (_event, request: unknown) => {
   if (!isAutomationRequest(request)) throw new Error("定时任务参数无效。");
   return clientOrThrow().automation(request);
 });
-ipcMain.handle(IPC.AUTOMATION_HISTORY, (_event, request: unknown) => {
+handleIpc(IPC.AUTOMATION_HISTORY, (_event, request: unknown) => {
   if (!isAutomationHistoryRequest(request)) throw new Error("定时任务历史参数无效。");
   return clientOrThrow().automationHistory(request);
 });
-ipcMain.handle(IPC.AUTOMATION_RUN_NOW, (_event, request: unknown) => {
+handleIpc(IPC.AUTOMATION_RUN_NOW, (_event, request: unknown) => {
   if (!isAutomationRunNowRequest(request)) throw new Error("立即执行参数无效。");
   return clientOrThrow().automationRunNow(request);
 });
-ipcMain.handle(IPC.WORKSPACE_READ_FOR_FIND, (_event, request: unknown) => {
+handleIpc(IPC.WORKSPACE_READ_FOR_FIND, (_event, request: unknown) => {
   if (!isFileFindRequest(request)) throw new Error("文件查找参数无效");
   return clientOrThrow().readWorkspaceFileForFind(request);
 });
-ipcMain.handle(IPC.SEARCH_SESSIONS, (_event, request: unknown) => {
+handleIpc(IPC.SEARCH_SESSIONS, (_event, request: unknown) => {
   if (!isSearchRequest(request)) throw new Error("搜索参数无效");
   return clientOrThrow().searchSessions(request);
 });
-ipcMain.handle(IPC.SESSION_READ_AROUND, (_event, request: unknown) => {
+handleIpc(IPC.SESSION_READ_AROUND, (_event, request: unknown) => {
   if (!isReadAroundRequest(request)) throw new Error("消息定位参数无效");
   return clientOrThrow().readSessionAround(request);
 });
-ipcMain.handle(IPC.SIDEBAR_LIST_PINS, () => clientOrThrow().listSidebarPins());
-ipcMain.handle(IPC.RUN_UPDATE_QUEUED, (_event, request: unknown) => {
+handleIpc(IPC.SIDEBAR_LIST_PINS, () => clientOrThrow().listSidebarPins());
+handleIpc(IPC.RUN_UPDATE_QUEUED, (_event, request: unknown) => {
   if (!isQueuedRunUpdateRequest(request)) throw new Error("排队消息参数无效。");
   return clientOrThrow().updateQueuedRun(request);
 });
-ipcMain.handle(IPC.RUN_LIST_QUEUED, (_event, request: unknown) => {
+handleIpc(IPC.RUN_LIST_QUEUED, (_event, request: unknown) => {
   if (!isQueuedRunListRequest(request)) throw new Error("排队消息参数无效。");
   return clientOrThrow().listQueuedRuns(request);
 });
-ipcMain.handle(IPC.RUN_STEER_QUEUED, (_event, request: unknown) => {
+handleIpc(IPC.RUN_STEER_QUEUED, (_event, request: unknown) => {
   if (!isQueuedRunSteerRequest(request)) throw new Error("引导消息参数无效");
   return clientOrThrow().steerQueuedRun(request);
 });
-ipcMain.handle(IPC.RUN_DELETE_QUEUED, (_event, request: unknown) => {
+handleIpc(IPC.RUN_DELETE_QUEUED, (_event, request: unknown) => {
   if (!isQueuedRunDeleteRequest(request)) throw new Error("排队消息参数无效。");
   return clientOrThrow().deleteQueuedRun(request);
 });
-ipcMain.handle(IPC.SIDEBAR_SET_PINNED, (_event, request: unknown) => {
+handleIpc(IPC.SIDEBAR_SET_PINNED, (_event, request: unknown) => {
   if (!isSidebarSetPinnedRequest(request)) throw new Error("置顶参数无效。");
   return clientOrThrow().setSidebarPinned(request);
 });
-ipcMain.handle(IPC.PROJECT_CREATE, (_event, name: unknown, workspaceRoot: unknown) => {
+handleIpc(IPC.PROJECT_CREATE, (_event, name: unknown, workspaceRoot: unknown) => {
   if (
     (name !== undefined && (typeof name !== "string" || name.length > 120))
     || typeof workspaceRoot !== "string"
@@ -717,19 +763,19 @@ ipcMain.handle(IPC.PROJECT_CREATE, (_event, name: unknown, workspaceRoot: unknow
     workspaceRoot,
   );
 });
-ipcMain.handle(IPC.PROJECT_DELETE, (_event, projectId: unknown) => {
+handleIpc(IPC.PROJECT_DELETE, (_event, projectId: unknown) => {
   if (typeof projectId !== "string" || projectId.length === 0 || projectId.length > 256) {
     throw new Error("Project 参数无效。");
   }
   return clientOrThrow().deleteProject(projectId);
 });
-ipcMain.handle(IPC.SESSION_LIST, (_event, cursor: unknown) => {
+handleIpc(IPC.SESSION_LIST, (_event, cursor: unknown) => {
   if (cursor !== undefined && (typeof cursor !== "string" || !cursor || cursor.length > 512)) {
     throw new Error("分页参数无效。");
   }
   return clientOrThrow().listSessions(cursor === undefined ? {} : { cursor });
 });
-ipcMain.handle(IPC.TOOL_TEXT_READ, (_event, sessionId: unknown, toolCallId: unknown, field: unknown, sha256: unknown, offset: unknown) => {
+handleIpc(IPC.TOOL_TEXT_READ, (_event, sessionId: unknown, toolCallId: unknown, field: unknown, sha256: unknown, offset: unknown) => {
   if (typeof sessionId !== "string" || !sessionId || sessionId.length > 256
     || typeof toolCallId !== "string" || !toolCallId || toolCallId.length > 256
     || (field !== "diff" && field !== "result" && field !== "content")
@@ -739,7 +785,7 @@ ipcMain.handle(IPC.TOOL_TEXT_READ, (_event, sessionId: unknown, toolCallId: unkn
   }
   return clientOrThrow().readToolText(sessionId, toolCallId, field, sha256, offset);
 });
-ipcMain.handle(IPC.SESSION_READ, (_event, sessionId: unknown, options: unknown) => {
+handleIpc(IPC.SESSION_READ, (_event, sessionId: unknown, options: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
   if (options !== undefined && (!options || typeof options !== "object" || Object.keys(options).some((key) => !["itemLimit", "beforeItemId"].includes(key)))) throw new Error("分页参数无效。");
   const itemLimit = options ? Reflect.get(options, "itemLimit") : undefined;
@@ -747,23 +793,23 @@ ipcMain.handle(IPC.SESSION_READ, (_event, sessionId: unknown, options: unknown) 
   if (itemLimit !== undefined && (!Number.isInteger(itemLimit) || itemLimit < 1 || itemLimit > 500) || beforeItemId !== undefined && (typeof beforeItemId !== "string" || beforeItemId.length > 256)) throw new Error("分页参数无效。");
   return clientOrThrow().readSession(sessionId, { ...(itemLimit === undefined ? {} : { itemLimit }), ...(beforeItemId === undefined ? {} : { beforeItemId }) });
 });
-ipcMain.handle(IPC.EVENT_LIST, (_event, sessionId: unknown, afterEventId: unknown) => {
+handleIpc(IPC.EVENT_LIST, (_event, sessionId: unknown, afterEventId: unknown) => {
   if (typeof sessionId !== "string" || typeof afterEventId !== "number") {
     throw new Error("Event 参数无效。");
   }
   return clientOrThrow().listEvents(sessionId, afterEventId);
 });
-ipcMain.handle(IPC.SESSION_CREATE, (_event, workspaceRoot: unknown, options: unknown) => {
+handleIpc(IPC.SESSION_CREATE, (_event, workspaceRoot: unknown, options: unknown) => {
   if (workspaceRoot !== null && typeof workspaceRoot !== "string") {
     throw new Error("Workspace 参数无效。");
   }
   return clientOrThrow().createSession(workspaceRoot, validateSessionCreateOptions(options));
 });
-ipcMain.handle(IPC.SESSION_FORK, (_event, request: unknown) => {
+handleIpc(IPC.SESSION_FORK, (_event, request: unknown) => {
   if (!isSessionForkRequest(request)) throw new Error("分叉参数无效。");
   return clientOrThrow().forkSession(request);
 });
-ipcMain.handle(IPC.SESSION_CREATE_BRANCH, (_event, sessionId: unknown, branch: unknown) => {
+handleIpc(IPC.SESSION_CREATE_BRANCH, (_event, sessionId: unknown, branch: unknown) => {
   if (
     typeof sessionId !== "string"
     || typeof branch !== "string"
@@ -774,7 +820,7 @@ ipcMain.handle(IPC.SESSION_CREATE_BRANCH, (_event, sessionId: unknown, branch: u
   }
   return clientOrThrow().createSessionBranch(sessionId, branch);
 });
-ipcMain.handle(IPC.SESSION_HANDOFF, (_event, sessionId: unknown, target: unknown) => {
+handleIpc(IPC.SESSION_HANDOFF, (_event, sessionId: unknown, target: unknown) => {
   if (
     typeof sessionId !== "string"
     || (target !== "local" && target !== "worktree")
@@ -789,7 +835,7 @@ ipcMain.handle(IPC.SESSION_HANDOFF, (_event, sessionId: unknown, target: unknown
     return result;
   });
 });
-ipcMain.handle(IPC.SESSION_RESTORE_WORKTREE, (_event, sessionId: unknown) => {
+handleIpc(IPC.SESSION_RESTORE_WORKTREE, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
   artifactPreview.closeSession(sessionId);
   terminalManager.closeSession(sessionId);
@@ -799,8 +845,8 @@ ipcMain.handle(IPC.SESSION_RESTORE_WORKTREE, (_event, sessionId: unknown) => {
     return result;
   });
 });
-ipcMain.handle(IPC.WORKTREE_SETTINGS_READ, () => clientOrThrow().readWorktreeSettings());
-ipcMain.handle(IPC.WORKTREE_SETTINGS_UPDATE, (_event, input: unknown) => {
+handleIpc(IPC.WORKTREE_SETTINGS_READ, () => clientOrThrow().readWorktreeSettings());
+handleIpc(IPC.WORKTREE_SETTINGS_UPDATE, (_event, input: unknown) => {
   if (
     !input
     || typeof input !== "object"
@@ -814,19 +860,19 @@ ipcMain.handle(IPC.WORKTREE_SETTINGS_UPDATE, (_event, input: unknown) => {
   const settings = input as { automaticCleanup: boolean; managedWorktreeLimit: number };
   return clientOrThrow().updateWorktreeSettings(settings);
 });
-ipcMain.handle(IPC.PROJECT_GIT_CONTEXT, (_event, target: unknown) => {
+handleIpc(IPC.PROJECT_GIT_CONTEXT, (_event, target: unknown) => {
   if (typeof target !== "string" && !isProjectGitContextBinding(target)) {
     throw new Error("Git 目标参数无效。");
   }
   return clientOrThrow().readProjectGitContext(target);
 });
-ipcMain.handle(IPC.SESSION_RENAME, (_event, sessionId: unknown, title: unknown) => {
+handleIpc(IPC.SESSION_RENAME, (_event, sessionId: unknown, title: unknown) => {
   if (typeof sessionId !== "string" || typeof title !== "string") {
     throw new Error("Session 参数无效。");
   }
   return clientOrThrow().renameSession(sessionId, title);
 });
-ipcMain.handle(IPC.SESSION_DELETE, (_event, sessionId: unknown) => {
+handleIpc(IPC.SESSION_DELETE, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
   return clientOrThrow().deleteSession(sessionId).then((result) => {
     artifactPreview.closeSession(sessionId);
@@ -834,11 +880,11 @@ ipcMain.handle(IPC.SESSION_DELETE, (_event, sessionId: unknown) => {
     return result;
   });
 });
-ipcMain.handle(IPC.SESSION_GIT_STATUS, (_event, sessionId: unknown) => {
+handleIpc(IPC.SESSION_GIT_STATUS, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
   return clientOrThrow().readSessionGitStatus(sessionId);
 });
-ipcMain.handle(IPC.WORKSPACE_LIST_DIRECTORY, (
+handleIpc(IPC.WORKSPACE_LIST_DIRECTORY, (
   _event,
   sessionId: unknown,
   relativePath: unknown,
@@ -864,7 +910,7 @@ ipcMain.handle(IPC.WORKSPACE_LIST_DIRECTORY, (
   );
 });
 
-ipcMain.handle(IPC.WORKSPACE_READ_FILE_PREVIEW, (
+handleIpc(IPC.WORKSPACE_READ_FILE_PREVIEW, (
   _event,
   sessionId: unknown,
   relativePath: unknown,
@@ -895,7 +941,7 @@ function previewString(value: unknown): string {
   if (typeof value !== "string" || !value || value.length > 8192 || value.includes("\0")) throw new Error("预览参数无效。");
   return value;
 }
-ipcMain.handle(IPC.WORKSPACE_PREVIEW_URL, (
+handleIpc(IPC.WORKSPACE_PREVIEW_URL, (
   event,
   id: unknown,
   path: unknown,
@@ -915,8 +961,8 @@ ipcMain.handle(IPC.WORKSPACE_PREVIEW_URL, (
     typeof projectId === "string" ? projectId : undefined,
   ));
 });
-ipcMain.handle(IPC.WORKSPACE_RELEASE_PREVIEW, (event, url: unknown) => artifactPreview.release(previewOwner(event), previewString(url)));
-ipcMain.handle(IPC.BROWSER_OPEN, (
+handleIpc(IPC.WORKSPACE_RELEASE_PREVIEW, (event, url: unknown) => artifactPreview.release(previewOwner(event), previewString(url)));
+handleIpc(IPC.BROWSER_OPEN, (
   event,
   id: unknown,
   browserId: unknown,
@@ -932,15 +978,15 @@ ipcMain.handle(IPC.BROWSER_OPEN, (
     typeof workspaceRoot === "string" ? workspaceRoot : undefined,
   );
 });
-ipcMain.handle(IPC.BROWSER_CLOSE, (event, id: unknown, browserId: unknown) => artifactPreview.close(previewOwner(event), previewString(id), previewString(browserId)));
-ipcMain.handle(IPC.BROWSER_STOP, (event, id: unknown, browserId: unknown) => artifactPreview.stop(previewOwner(event), previewString(id), previewString(browserId)));
-ipcMain.handle(IPC.BROWSER_STATE, (event, id: unknown, browserId: unknown) => artifactPreview.state(previewOwner(event), previewString(id), previewString(browserId)));
-ipcMain.handle(IPC.BROWSER_ANNOTATE, (event, id: unknown, browserId: unknown) => artifactPreview.annotate(previewOwner(event), previewString(id), previewString(browserId)));
-ipcMain.handle(IPC.BROWSER_BOUNDS, (event, id: unknown, browserId: unknown, bounds: unknown) => {
+handleIpc(IPC.BROWSER_CLOSE, (event, id: unknown, browserId: unknown) => artifactPreview.close(previewOwner(event), previewString(id), previewString(browserId)));
+handleIpc(IPC.BROWSER_STOP, (event, id: unknown, browserId: unknown) => artifactPreview.stop(previewOwner(event), previewString(id), previewString(browserId)));
+handleIpc(IPC.BROWSER_STATE, (event, id: unknown, browserId: unknown) => artifactPreview.state(previewOwner(event), previewString(id), previewString(browserId)));
+handleIpc(IPC.BROWSER_ANNOTATE, (event, id: unknown, browserId: unknown) => artifactPreview.annotate(previewOwner(event), previewString(id), previewString(browserId)));
+handleIpc(IPC.BROWSER_BOUNDS, (event, id: unknown, browserId: unknown, bounds: unknown) => {
   if (bounds !== null && (typeof bounds !== "object" || !bounds || !["x", "y", "width", "height"].every((key) => typeof Reflect.get(bounds, key) === "number" && Number.isFinite(Reflect.get(bounds, key))))) throw new Error("页面位置无效。");
   artifactPreview.bounds(previewOwner(event), previewString(id), previewString(browserId), bounds as import("../shared/index.js").BrowserBounds | null);
 });
-ipcMain.handle(IPC.WORKSPACE_OPEN_IN_EDITOR, async (
+handleIpc(IPC.WORKSPACE_OPEN_IN_EDITOR, async (
   _event,
   sessionId: unknown,
   relativePath: unknown,
@@ -960,7 +1006,7 @@ ipcMain.handle(IPC.WORKSPACE_OPEN_IN_EDITOR, async (
   const failure = await electronShell.openPath(canonicalTarget);
   if (failure) throw new Error("无法在编辑器中打开文件。");
 });
-ipcMain.handle(IPC.WORKSPACE_SHOW_IN_FINDER, async (_event, targetPath: unknown) => {
+handleIpc(IPC.WORKSPACE_SHOW_IN_FINDER, async (_event, targetPath: unknown) => {
   if (typeof targetPath !== "string" || !targetPath.trim()) {
     throw new Error("路径参数无效。");
   }
@@ -974,7 +1020,7 @@ ipcMain.handle(IPC.WORKSPACE_SHOW_IN_FINDER, async (_event, targetPath: unknown)
       : "无法在 Finder 中显示该路径。");
   }
 });
-ipcMain.handle(IPC.WORKSPACE_OPEN_PATH, async (_event, targetPath: unknown) => {
+handleIpc(IPC.WORKSPACE_OPEN_PATH, async (_event, targetPath: unknown) => {
   if (typeof targetPath !== "string" || !targetPath.trim()) {
     throw new Error("路径参数无效。");
   }
@@ -987,7 +1033,7 @@ ipcMain.handle(IPC.WORKSPACE_OPEN_PATH, async (_event, targetPath: unknown) => {
     throw new Error("无法打开该路径。");
   }
 });
-ipcMain.handle(IPC.TERMINAL_CREATE, (
+handleIpc(IPC.TERMINAL_CREATE, (
   event,
   sessionId: unknown,
   workspaceRoot: unknown,
@@ -1005,13 +1051,13 @@ ipcMain.handle(IPC.TERMINAL_CREATE, (
     typeof projectId === "string" ? projectId : undefined,
   );
 });
-ipcMain.handle(IPC.TERMINAL_WRITE, (event, terminalId: unknown, data: unknown) => {
+handleIpc(IPC.TERMINAL_WRITE, (event, terminalId: unknown, data: unknown) => {
   if (typeof terminalId !== "string" || typeof data !== "string") {
     throw new Error("终端输入参数无效。");
   }
   terminalManager.write(event.sender, terminalId, data);
 });
-ipcMain.handle(IPC.TERMINAL_RESIZE, (
+handleIpc(IPC.TERMINAL_RESIZE, (
   event,
   terminalId: unknown,
   columns: unknown,
@@ -1022,11 +1068,11 @@ ipcMain.handle(IPC.TERMINAL_RESIZE, (
   }
   terminalManager.resize(event.sender, terminalId, columns, rows);
 });
-ipcMain.handle(IPC.TERMINAL_CLOSE, (event, terminalId: unknown) => {
+handleIpc(IPC.TERMINAL_CLOSE, (event, terminalId: unknown) => {
   if (typeof terminalId !== "string") throw new Error("终端参数无效。");
   terminalManager.close(event.sender, terminalId);
 });
-ipcMain.handle(IPC.SESSION_GIT_DIFF, (
+handleIpc(IPC.SESSION_GIT_DIFF, (
   _event,
   sessionId: unknown,
   scope: unknown,
@@ -1050,7 +1096,7 @@ ipcMain.handle(IPC.SESSION_GIT_DIFF, (
     compareRef as string | undefined,
   );
 });
-ipcMain.handle(IPC.SESSION_GIT_SWITCH_BRANCH, (
+handleIpc(IPC.SESSION_GIT_SWITCH_BRANCH, (
   _event,
   sessionId: unknown,
   branch: unknown,
@@ -1066,7 +1112,7 @@ ipcMain.handle(IPC.SESSION_GIT_SWITCH_BRANCH, (
   }
   return clientOrThrow().switchSessionGitBranch(sessionId, branch, operationId);
 });
-ipcMain.handle(IPC.SESSION_GIT_CREATE_BRANCH, (
+handleIpc(IPC.SESSION_GIT_CREATE_BRANCH, (
   _event,
   sessionId: unknown,
   branch: unknown,
@@ -1082,7 +1128,7 @@ ipcMain.handle(IPC.SESSION_GIT_CREATE_BRANCH, (
   }
   return clientOrThrow().createSessionGitBranch(sessionId, branch, operationId);
 });
-ipcMain.handle(IPC.SESSION_GIT_STAGE, (
+handleIpc(IPC.SESSION_GIT_STAGE, (
   _event,
   sessionId: unknown,
   paths: unknown,
@@ -1097,7 +1143,7 @@ ipcMain.handle(IPC.SESSION_GIT_STAGE, (
   }
   return clientOrThrow().stageSessionGit(sessionId, paths, operationId);
 });
-ipcMain.handle(IPC.SESSION_GIT_COMMIT, (
+handleIpc(IPC.SESSION_GIT_COMMIT, (
   _event,
   sessionId: unknown,
   message: unknown,
@@ -1113,7 +1159,7 @@ ipcMain.handle(IPC.SESSION_GIT_COMMIT, (
   }
   return clientOrThrow().commitSessionGit(sessionId, message, operationId);
 });
-ipcMain.handle(IPC.REVIEW_LIST_COMMENTS, (
+handleIpc(IPC.REVIEW_LIST_COMMENTS, (
   _event,
   sessionId: unknown,
   relativePath: unknown,
@@ -1133,7 +1179,7 @@ ipcMain.handle(IPC.REVIEW_LIST_COMMENTS, (
     scope as "head" | "baseline" | undefined,
   );
 });
-ipcMain.handle(IPC.REVIEW_CREATE_COMMENT, (
+handleIpc(IPC.REVIEW_CREATE_COMMENT, (
   _event,
   sessionId: unknown,
   input: unknown,
@@ -1148,7 +1194,7 @@ ipcMain.handle(IPC.REVIEW_CREATE_COMMENT, (
   }
   return clientOrThrow().createReviewComment(sessionId, input, operationId);
 });
-ipcMain.handle(IPC.REVIEW_DELETE_COMMENT, (
+handleIpc(IPC.REVIEW_DELETE_COMMENT, (
   _event,
   sessionId: unknown,
   commentId: unknown,
@@ -1163,11 +1209,11 @@ ipcMain.handle(IPC.REVIEW_DELETE_COMMENT, (
   }
   return clientOrThrow().deleteReviewComment(sessionId, commentId, operationId);
 });
-ipcMain.handle(IPC.SESSION_GIT_REMOTE_STATUS, (_event, sessionId: unknown) => {
+handleIpc(IPC.SESSION_GIT_REMOTE_STATUS, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Git Remote 参数无效。");
   return clientOrThrow().readSessionGitRemoteStatus(sessionId);
 });
-ipcMain.handle(IPC.SESSION_GIT_FETCH, (
+handleIpc(IPC.SESSION_GIT_FETCH, (
   _event,
   sessionId: unknown,
   operationId: unknown,
@@ -1184,7 +1230,7 @@ ipcMain.handle(IPC.SESSION_GIT_FETCH, (
     sessionId, operationId, remote as string | undefined,
   );
 });
-ipcMain.handle(IPC.SESSION_GIT_PULL, (
+handleIpc(IPC.SESSION_GIT_PULL, (
   _event,
   sessionId: unknown,
   operationId: unknown,
@@ -1194,7 +1240,7 @@ ipcMain.handle(IPC.SESSION_GIT_PULL, (
   }
   return clientOrThrow().pullSessionGit(sessionId, operationId);
 });
-ipcMain.handle(IPC.SESSION_GIT_PUSH, (
+handleIpc(IPC.SESSION_GIT_PUSH, (
   _event,
   sessionId: unknown,
   operationId: unknown,
@@ -1211,7 +1257,7 @@ ipcMain.handle(IPC.SESSION_GIT_PUSH, (
     sessionId, operationId, remote as string | undefined,
   );
 });
-ipcMain.handle(IPC.SESSION_GIT_MERGE, (
+handleIpc(IPC.SESSION_GIT_MERGE, (
   _event,
   sessionId: unknown,
   target: unknown,
@@ -1226,7 +1272,7 @@ ipcMain.handle(IPC.SESSION_GIT_MERGE, (
   }
   return clientOrThrow().mergeSessionGit(sessionId, target, operationId);
 });
-ipcMain.handle(IPC.SESSION_GIT_MERGE_ABORT, (
+handleIpc(IPC.SESSION_GIT_MERGE_ABORT, (
   _event,
   sessionId: unknown,
   operationId: unknown,
@@ -1236,7 +1282,7 @@ ipcMain.handle(IPC.SESSION_GIT_MERGE_ABORT, (
   }
   return clientOrThrow().abortSessionGitMerge(sessionId, operationId);
 });
-ipcMain.handle(IPC.SESSION_GIT_REBASE, (
+handleIpc(IPC.SESSION_GIT_REBASE, (
   _event,
   sessionId: unknown,
   target: unknown,
@@ -1251,7 +1297,7 @@ ipcMain.handle(IPC.SESSION_GIT_REBASE, (
   }
   return clientOrThrow().rebaseSessionGit(sessionId, target, operationId);
 });
-ipcMain.handle(IPC.SESSION_GIT_REBASE_CONTINUE, (
+handleIpc(IPC.SESSION_GIT_REBASE_CONTINUE, (
   _event,
   sessionId: unknown,
   operationId: unknown,
@@ -1261,7 +1307,7 @@ ipcMain.handle(IPC.SESSION_GIT_REBASE_CONTINUE, (
   }
   return clientOrThrow().continueSessionGitRebase(sessionId, operationId);
 });
-ipcMain.handle(IPC.SESSION_GIT_REBASE_ABORT, (
+handleIpc(IPC.SESSION_GIT_REBASE_ABORT, (
   _event,
   sessionId: unknown,
   operationId: unknown,
@@ -1281,7 +1327,7 @@ function inputKey(value: unknown): string {
   if (typeof value !== "string" || !value || value.length > 128) throw new Error("输入标识无效。");
   return value;
 }
-ipcMain.handle(IPC.INPUT_PICK, async (event, directory: unknown) => {
+handleIpc(IPC.INPUT_PICK, async (event, directory: unknown) => {
   inputOwner(event);
   if (typeof directory !== "boolean") throw new Error("文件选择参数无效。");
   const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender)!, {
@@ -1290,16 +1336,16 @@ ipcMain.handle(IPC.INPUT_PICK, async (event, directory: unknown) => {
   if (result.filePaths.length > 20) throw new Error("一次最多添加 20 个引用。");
   return result.canceled ? [] : result.filePaths;
 });
-ipcMain.handle(IPC.INPUT_PREPARE, (event, request: unknown) => {
+handleIpc(IPC.INPUT_PREPARE, (event, request: unknown) => {
   inputOwner(event);
   if (!isInputPrepareRequest(request)) throw new Error("引用参数无效。");
   return clientOrThrow().prepareInput(request);
 });
-ipcMain.handle(IPC.INPUT_READ, (event, id: unknown) => {
+handleIpc(IPC.INPUT_READ, (event, id: unknown) => {
   inputOwner(event);
   return clientOrThrow().readInput(inputKey(id));
 });
-ipcMain.handle(IPC.TOOL_CONTENT_PREVIEW_URL, (event, sessionId: unknown, toolCallId: unknown, index: unknown) => {
+handleIpc(IPC.TOOL_CONTENT_PREVIEW_URL, (event, sessionId: unknown, toolCallId: unknown, index: unknown) => {
   if (typeof sessionId !== "string" || !sessionId || sessionId.length > 256
     || typeof toolCallId !== "string" || !toolCallId || toolCallId.length > 256
     || typeof index !== "number" || !Number.isSafeInteger(index) || index < 0 || index > 31) {
@@ -1307,14 +1353,14 @@ ipcMain.handle(IPC.TOOL_CONTENT_PREVIEW_URL, (event, sessionId: unknown, toolCal
   }
   return artifactPreview.prepareToolContent(previewOwner(event), sessionId, toolCallId, index);
 });
-ipcMain.handle(IPC.INPUT_PREVIEW_URL, (event, id: unknown) => {
+handleIpc(IPC.INPUT_PREVIEW_URL, (event, id: unknown) => {
   return artifactPreview.prepareInput(previewOwner(event), inputKey(id));
 });
-ipcMain.handle(IPC.INPUT_DRAFT_READ, (event, key: unknown) => {
+handleIpc(IPC.INPUT_DRAFT_READ, (event, key: unknown) => {
   inputOwner(event);
   return clientOrThrow().readInputDraft(inputKey(key));
 });
-ipcMain.handle(IPC.INPUT_DRAFT_WRITE, (event, key: unknown, draft: unknown) => {
+handleIpc(IPC.INPUT_DRAFT_WRITE, (event, key: unknown, draft: unknown) => {
   inputOwner(event);
   if (!isInputDraft(draft)) throw new Error("草稿参数无效。");
   return clientOrThrow().writeInputDraft(inputKey(key), draft);
@@ -1326,7 +1372,7 @@ function runtimeDataDirectory(): string {
 // a file the pasteboard lists; Main hands the Runtime a private copy so files
 // the selected-file checks reject (other owner, hard links, removed temp files,
 // WebP named .jpg) can still be pasted as images.
-ipcMain.handle(IPC.INPUT_PASTE_IMAGE, async (event, source: unknown) => {
+handleIpc(IPC.INPUT_PASTE_IMAGE, async (event, source: unknown) => {
   inputOwner(event);
   let bytes: Buffer;
   let extension = ".png";
@@ -1353,20 +1399,20 @@ ipcMain.handle(IPC.INPUT_PASTE_IMAGE, async (event, source: unknown) => {
   }
 });
 
-ipcMain.handle(IPC.AGENT_CATALOG, (event) => {
+handleIpc(IPC.AGENT_CATALOG, (event) => {
   inputOwner(event);
   return clientOrThrow().listAgentTypes();
 });
-ipcMain.handle(IPC.AGENT_DEFINITION_READ, (event, source: unknown) => {
+handleIpc(IPC.AGENT_DEFINITION_READ, (event, source: unknown) => {
   inputOwner(event);
   return clientOrThrow().readAgentDefinition(boundedAgentSource(source));
 });
-ipcMain.handle(IPC.AGENT_DEFINITION_SAVE, (event, request: unknown) => {
+handleIpc(IPC.AGENT_DEFINITION_SAVE, (event, request: unknown) => {
   inputOwner(event);
   if (!isAgentDefinitionSaveRequest(request)) throw new Error("智能体配置无效，请检查填写内容。");
   return clientOrThrow().saveAgentDefinition(request);
 });
-ipcMain.handle(IPC.AGENT_DEFINITION_REMOVE, (event, request: unknown) => {
+handleIpc(IPC.AGENT_DEFINITION_REMOVE, (event, request: unknown) => {
   inputOwner(event);
   if (!isAgentDefinitionRemoveRequest(request)) throw new Error("智能体配置版本无效，请刷新后重试。");
   return clientOrThrow().removeAgentDefinition(request);
@@ -1375,41 +1421,41 @@ function boundedAgentSource(source: unknown): string {
   if (typeof source !== "string" || !source || source.length > 4096) throw new Error("智能体配置路径无效。");
   return source;
 }
-ipcMain.handle(IPC.AGENT_READ, (event, sessionId: unknown) => {
+handleIpc(IPC.AGENT_READ, (event, sessionId: unknown) => {
   inputOwner(event);
   return clientOrThrow().readAgents(inputKey(sessionId));
 });
-ipcMain.handle(IPC.AGENT_STOP, (event, parentRunId: unknown, agentId: unknown) => {
+handleIpc(IPC.AGENT_STOP, (event, parentRunId: unknown, agentId: unknown) => {
   inputOwner(event);
   return clientOrThrow().stopAgent(inputKey(parentRunId), inputKey(agentId));
 });
-ipcMain.handle(IPC.AGENT_MESSAGE, (event, request: unknown) => {
+handleIpc(IPC.AGENT_MESSAGE, (event, request: unknown) => {
   inputOwner(event);
   if (!isAgentMessageFromUserRequest(request)) throw new Error("Invalid agent message request.");
   return clientOrThrow().messageAgent(request);
 });
-ipcMain.handle(IPC.AGENT_CHANGES, (event, request: unknown) => {
+handleIpc(IPC.AGENT_CHANGES, (event, request: unknown) => {
   inputOwner(event);
   if (!isAgentChangesRequest(request)) throw new Error("Invalid agent changes request.");
   return clientOrThrow().readAgentChanges(request);
 });
-ipcMain.handle(IPC.AGENT_DISCARD_WORKSPACE, (event, parentRunId: unknown, agentId: unknown) => {
+handleIpc(IPC.AGENT_DISCARD_WORKSPACE, (event, parentRunId: unknown, agentId: unknown) => {
   inputOwner(event);
   return clientOrThrow().discardAgentWorkspace(inputKey(parentRunId), inputKey(agentId));
 });
-ipcMain.handle(IPC.DATA_BACKUP, async (event) => {
+handleIpc(IPC.DATA_BACKUP, async (event) => {
   inputOwner(event);
   const owner = BrowserWindow.fromWebContents(event.sender);
   if (!owner) throw new Error("无法打开备份保存窗口。");
   const result = await dialog.showSaveDialog(owner, {title: "备份本地数据（明文）", defaultPath: "eidos-data-backup.zip", filters: [{name: "ZIP", extensions: ["zip"]}]});
   if (!result.canceled && result.filePath) await clientOrThrow().memory("data/backup", {destination: result.filePath});
 });
-ipcMain.handle(IPC.MEMORY_REQUEST, (event, method: unknown, request: unknown) => {
+handleIpc(IPC.MEMORY_REQUEST, (event, method: unknown, request: unknown) => {
   inputOwner(event);
   if (!isMemoryMethod(method) || method === "data/backup" || !isMemoryRequest(method, request)) throw new Error("记忆请求无效。");
   return clientOrThrow().memory(method, request);
 });
-ipcMain.handle(IPC.MEMORY_EXPORT, async (event, request: unknown) => {
+handleIpc(IPC.MEMORY_EXPORT, async (event, request: unknown) => {
   inputOwner(event);
   if (!isMemoryRequest("memory/export", request)) throw new Error("记忆请求无效。");
   const owner = BrowserWindow.fromWebContents(event.sender);
@@ -1417,33 +1463,33 @@ ipcMain.handle(IPC.MEMORY_EXPORT, async (event, request: unknown) => {
   const saved = await dialog.showSaveDialog(owner, { title: "导出记忆", defaultPath: "eidos-memories.md", filters: [{ name: "Markdown", extensions: ["md"] }] });
   if (!saved.canceled && saved.filePath) await exportMemoryNotes(saved.filePath, { ...request, cursor: 0 }, (page) => clientOrThrow().memory("memory/export", page));
 });
-ipcMain.handle(IPC.PLANNING_READ, (event, sessionId: unknown) => {
+handleIpc(IPC.PLANNING_READ, (event, sessionId: unknown) => {
   inputOwner(event);
   return clientOrThrow().readPlanning(inputKey(sessionId));
 });
-ipcMain.handle(IPC.PLANNING_ANSWER, (event, request: unknown) => {
+handleIpc(IPC.PLANNING_ANSWER, (event, request: unknown) => {
   inputOwner(event);
   if (!isAnswerInputRequest(request)) throw new Error("澄清回答无效。");
   return clientOrThrow().answerUserInput(request);
 });
-ipcMain.handle(IPC.PLAN_READ, (event, planId: unknown, reloadFile: unknown) => {
+handleIpc(IPC.PLAN_READ, (event, planId: unknown, reloadFile: unknown) => {
   inputOwner(event);
   if (typeof reloadFile !== "boolean") throw new Error("计划参数无效。");
   return clientOrThrow().readPlan(inputKey(planId), reloadFile);
 });
-ipcMain.handle(IPC.PLAN_EDIT, (event, request: unknown) => {
+handleIpc(IPC.PLAN_EDIT, (event, request: unknown) => {
   inputOwner(event);
   if (!isPlanEditRequest(request)) throw new Error("计划修改无效。");
   return clientOrThrow().editPlan(request);
 });
-ipcMain.handle(IPC.PLAN_OPEN, async (event, planId: unknown) => {
+handleIpc(IPC.PLAN_OPEN, async (event, planId: unknown) => {
   inputOwner(event);
   const plan = await clientOrThrow().readPlan(inputKey(planId));
   const error = await electronShell.openPath(plan.path);
   if (error) throw new Error(error);
 });
 
-ipcMain.handle(IPC.RUN_START, async (
+handleIpc(IPC.RUN_START, async (
   _event,
   sessionId: unknown,
   userInput: unknown,
@@ -1487,28 +1533,28 @@ ipcMain.handle(IPC.RUN_START, async (
     planning as RunPlanningOptions | undefined,
   );
 });
-ipcMain.handle(IPC.RUN_RESUME, (_event, runId: unknown) => {
+handleIpc(IPC.RUN_RESUME, (_event, runId: unknown) => {
   if (typeof runId !== "string" || !runId || runId.length > 256) throw new Error("任务参数无效");
   return clientOrThrow().resumeRun(runId);
 });
-ipcMain.handle(IPC.RUN_CANCEL, (_event, runId: unknown) => {
+handleIpc(IPC.RUN_CANCEL, (_event, runId: unknown) => {
   if (typeof runId !== "string") throw new Error("Run 参数无效。");
   log("info", "run", "Cancel requested", { runId });
   return clientOrThrow().cancelRun(runId);
 });
-ipcMain.handle(IPC.CONTEXT_USAGE, (_event, runId: unknown) => {
+handleIpc(IPC.CONTEXT_USAGE, (_event, runId: unknown) => {
   if (typeof runId !== "string") throw new Error("Context Usage 参数无效。");
   return clientOrThrow().readContextUsage(runId);
 });
-ipcMain.handle(IPC.CONTEXT_DETAILS, (_event, runId: unknown) => {
+handleIpc(IPC.CONTEXT_DETAILS, (_event, runId: unknown) => {
   if (typeof runId !== "string") throw new Error("上下文参数无效。");
   return clientOrThrow().readContextDetails(runId);
 });
-ipcMain.handle(IPC.CONTEXT_COMPACT, (_event, runId: unknown) => {
+handleIpc(IPC.CONTEXT_COMPACT, (_event, runId: unknown) => {
   if (typeof runId !== "string") throw new Error("上下文参数无效。");
   return clientOrThrow().requestContextCompaction(runId);
 });
-ipcMain.handle(IPC.RUN_REVISE, (_event, sourceRunId: unknown, userInput: unknown, references: unknown, approvalMode: unknown) => {
+handleIpc(IPC.RUN_REVISE, (_event, sourceRunId: unknown, userInput: unknown, references: unknown, approvalMode: unknown) => {
   inputOwner(_event);
   if (
     (references !== undefined && (!Array.isArray(references) || references.length > 20 || !references.every((id) => typeof id === "string" && /^[a-f0-9]{64}$/.test(id))))
@@ -1535,11 +1581,11 @@ ipcMain.handle(IPC.RUN_REVISE, (_event, sourceRunId: unknown, userInput: unknown
   );
 });
 
-ipcMain.handle(IPC.RESPONSE_ACTION_STATE, (_event, sessionId: unknown) => {
+handleIpc(IPC.RESPONSE_ACTION_STATE, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("回复操作参数无效。");
   return clientOrThrow().readResponseActionState(sessionId);
 });
-ipcMain.handle(IPC.ITEM_SET_FEEDBACK, (_event, itemId: unknown, feedback: unknown) => {
+handleIpc(IPC.ITEM_SET_FEEDBACK, (_event, itemId: unknown, feedback: unknown) => {
   if (
     typeof itemId !== "string"
     || (feedback !== null && !["up", "down"].includes(String(feedback)))
@@ -1553,46 +1599,46 @@ ipcMain.handle(IPC.ITEM_SET_FEEDBACK, (_event, itemId: unknown, feedback: unknow
   );
 });
 
-ipcMain.handle(IPC.MODEL_QODER, (_event, input: unknown) => {
+handleIpc(IPC.MODEL_QODER, (_event, input: unknown) => {
   if (!isQoderConnectionRequest(input)) throw new Error("Qoder 参数无效。");
   return clientOrThrow().qoderConnection(input);
 });
-ipcMain.handle(IPC.MODEL_DISCOVER_CUSTOM, (_event, input: unknown) => {
+handleIpc(IPC.MODEL_DISCOVER_CUSTOM, (_event, input: unknown) => {
   if (!input || typeof input !== "object") throw new Error("自定义提供商参数无效。");
   return clientOrThrow().discoverCustomModels(input as CustomProviderRequest);
 });
-ipcMain.handle(IPC.MODEL_PRESETS, () => clientOrThrow().listModelPresets());
-ipcMain.handle(IPC.MODEL_LIST, () => clientOrThrow().listModels());
-ipcMain.handle(IPC.MODEL_CREATE, (_event, input: unknown) => {
+handleIpc(IPC.MODEL_PRESETS, () => clientOrThrow().listModelPresets());
+handleIpc(IPC.MODEL_LIST, () => clientOrThrow().listModels());
+handleIpc(IPC.MODEL_CREATE, (_event, input: unknown) => {
   if (!input || typeof input !== "object") throw new Error("模型参数无效。");
   return clientOrThrow().createModel(input as ModelCreateInput);
 });
-ipcMain.handle(IPC.MODEL_UPDATE, (_event, input: unknown) => {
+handleIpc(IPC.MODEL_UPDATE, (_event, input: unknown) => {
   if (!input || typeof input !== "object") throw new Error("模型参数无效。");
   return clientOrThrow().updateModel(input as ModelUpdateInput);
 });
-ipcMain.handle(IPC.MODEL_DELETE, (_event, id: unknown) => {
+handleIpc(IPC.MODEL_DELETE, (_event, id: unknown) => {
   if (typeof id !== "string") throw new Error("模型参数无效。");
   return clientOrThrow().deleteModel(id);
 });
-ipcMain.handle(IPC.HOOK_CONFIGURATION, (_event, request: unknown) => {
+handleIpc(IPC.HOOK_CONFIGURATION, (_event, request: unknown) => {
   if (!isHookConfigurationRequest(request)) throw new Error("Hook 配置参数无效。");
   return clientOrThrow().hookConfiguration(request);
 });
-ipcMain.handle(IPC.HOOK_HISTORY, (_event, request: unknown) => {
+handleIpc(IPC.HOOK_HISTORY, (_event, request: unknown) => {
   if (!isHookHistoryRequest(request)) throw new Error("Hook 历史参数无效。");
   return clientOrThrow().readHookHistory(request);
 });
-ipcMain.handle(IPC.PLUGIN_LIST, () => clientOrThrow().listPlugins());
-ipcMain.handle(IPC.PLUGIN_BUILTIN, (_event, request: unknown) => {
+handleIpc(IPC.PLUGIN_LIST, () => clientOrThrow().listPlugins());
+handleIpc(IPC.PLUGIN_BUILTIN, (_event, request: unknown) => {
   if (!isBuiltinPluginRequest(request)) throw new Error("INVALID_PARAMS");
   return clientOrThrow().builtinPlugins(request);
 });
-ipcMain.handle(IPC.MCP_CONNECTION, (_event, request: unknown) => {
+handleIpc(IPC.MCP_CONNECTION, (_event, request: unknown) => {
   if (!isMcpConnectionRequest(request)) throw new Error("INVALID_PARAMS");
   return clientOrThrow().mcpConnection(request);
 });
-ipcMain.handle(IPC.MCP_LOGIN_OPEN, async (event, request: unknown) => {
+handleIpc(IPC.MCP_LOGIN_OPEN, async (event, request: unknown) => {
   previewOwner(event);
   if (!isMcpConnectionRequest(request) || (request.action && request.action !== "read")) throw new Error("INVALID_PARAMS");
   const state = await clientOrThrow().mcpConnection(request);
@@ -1605,7 +1651,7 @@ ipcMain.handle(IPC.MCP_LOGIN_OPEN, async (event, request: unknown) => {
   if (url.protocol !== "https:" || url.username || url.password) throw new Error("登录地址无效。");
   await electronShell.openExternal(url.toString());
 });
-ipcMain.handle(IPC.PLUGIN_IMPORT, async () => {
+handleIpc(IPC.PLUGIN_IMPORT, async () => {
   const result = await dialog.showOpenDialog({
     title: "导入本地 Eidos Plugin",
     properties: ["openDirectory"],
@@ -1613,32 +1659,32 @@ ipcMain.handle(IPC.PLUGIN_IMPORT, async () => {
   const sourcePath = result.canceled ? undefined : result.filePaths[0];
   return sourcePath ? clientOrThrow().importPlugin(sourcePath) : null;
 });
-ipcMain.handle(IPC.PLUGIN_SET_ENABLED, (_event, pluginId: unknown, enabled: unknown) => {
+handleIpc(IPC.PLUGIN_SET_ENABLED, (_event, pluginId: unknown, enabled: unknown) => {
   if (typeof pluginId !== "string" || typeof enabled !== "boolean") {
     throw new Error("Plugin 参数无效。");
   }
   return clientOrThrow().setPluginEnabled(pluginId, enabled);
 });
-ipcMain.handle(IPC.PLUGIN_REMOVE, (_event, pluginId: unknown) => {
+handleIpc(IPC.PLUGIN_REMOVE, (_event, pluginId: unknown) => {
   if (typeof pluginId !== "string") throw new Error("Plugin 参数无效。");
   return clientOrThrow().removePlugin(pluginId);
 });
-ipcMain.handle(IPC.PLUGIN_SET_HOOK_TRUST, (_event, pluginId: unknown, contentHash: unknown, trusted: unknown) => {
+handleIpc(IPC.PLUGIN_SET_HOOK_TRUST, (_event, pluginId: unknown, contentHash: unknown, trusted: unknown) => {
   if (typeof pluginId !== "string" || typeof contentHash !== "string" || !/^[0-9a-f]{64}$/.test(contentHash) || typeof trusted !== "boolean") {
     throw new Error("Hook 信任参数无效。");
   }
   return clientOrThrow().setPluginHookTrust(pluginId, contentHash, trusted);
 });
-ipcMain.handle(IPC.PLUGIN_ACTIVATE, (_event, pluginId: unknown, contentHash: unknown) => {
+handleIpc(IPC.PLUGIN_ACTIVATE, (_event, pluginId: unknown, contentHash: unknown) => {
   if (typeof pluginId !== "string" || typeof contentHash !== "string" || !/^[0-9a-f]{64}$/.test(contentHash)) {
     throw new Error("Plugin 参数无效。");
   }
   return clientOrThrow().activatePlugin(pluginId, contentHash);
 });
 
-ipcMain.handle(IPC.SKILL_LIST, () => clientOrThrow().listSkills());
-ipcMain.handle(IPC.RESOURCE_STATUS, () => clientOrThrow().getResourceStatus());
-ipcMain.handle(IPC.RESOURCE_RETRY, (_event, request: unknown) => {
+handleIpc(IPC.SKILL_LIST, () => clientOrThrow().listSkills());
+handleIpc(IPC.RESOURCE_STATUS, () => clientOrThrow().getResourceStatus());
+handleIpc(IPC.RESOURCE_RETRY, (_event, request: unknown) => {
   if (!isResourceRetryRequest(request)) throw new Error("资源参数无效。");
   return clientOrThrow().retryResource(request);
 });
@@ -1648,75 +1694,75 @@ function skillId(value: unknown): string {
   }
   return value;
 }
-ipcMain.handle(IPC.SKILL_DETAIL, (_event, id: unknown) =>
+handleIpc(IPC.SKILL_DETAIL, (_event, id: unknown) =>
   clientOrThrow().readSkillDetail(skillId(id)));
-ipcMain.handle(IPC.SKILL_SET_ENABLED, (_event, id: unknown, enabled: unknown) => {
+handleIpc(IPC.SKILL_SET_ENABLED, (_event, id: unknown, enabled: unknown) => {
   if (typeof enabled !== "boolean") throw new Error("技能状态无效。");
   return clientOrThrow().setSkillEnabled(skillId(id), enabled);
 });
-ipcMain.handle(IPC.SKILL_REMOVE, (_event, id: unknown) =>
+handleIpc(IPC.SKILL_REMOVE, (_event, id: unknown) =>
   clientOrThrow().removeSkill(skillId(id)));
-ipcMain.handle(IPC.MCP_LIST, () => clientOrThrow().listMcpServers());
-ipcMain.handle(IPC.MCP_TOOLS, (_event, request: unknown) => {
+handleIpc(IPC.MCP_LIST, () => clientOrThrow().listMcpServers());
+handleIpc(IPC.MCP_TOOLS, (_event, request: unknown) => {
   if (!isMcpToolsRequest(request)) throw new Error("INVALID_PARAMS");
   return clientOrThrow().readMcpTools(request);
 });
-ipcMain.handle(IPC.BROWSER_AGENT_STATUS, (_event, request: unknown) => {
+handleIpc(IPC.BROWSER_AGENT_STATUS, (_event, request: unknown) => {
   if (!isBrowserStatusRequest(request)) throw new Error("INVALID_PARAMS");
   return clientOrThrow().readBrowserStatus(request);
 });
-ipcMain.handle(IPC.BROWSER_AGENT_REVOKE, (_event, request: unknown) => {
+handleIpc(IPC.BROWSER_AGENT_REVOKE, (_event, request: unknown) => {
   if (!isBrowserGrantRevokeRequest(request)) throw new Error("INVALID_PARAMS");
   return clientOrThrow().revokeBrowserGrant(request);
 });
-ipcMain.handle(IPC.BROWSER_AGENT_CLOSE, () => clientOrThrow().closeSharedBrowser());
-ipcMain.handle(IPC.BROWSER_AGENT_OPEN, () => clientOrThrow().openSharedBrowser());
-ipcMain.handle(IPC.BROWSER_AGENT_CLEAR, () => clientOrThrow().clearSharedBrowserProfile());
-ipcMain.handle(IPC.BROWSER_AGENT_TARGET, (_event, request: unknown) => {
+handleIpc(IPC.BROWSER_AGENT_CLOSE, () => clientOrThrow().closeSharedBrowser());
+handleIpc(IPC.BROWSER_AGENT_OPEN, () => clientOrThrow().openSharedBrowser());
+handleIpc(IPC.BROWSER_AGENT_CLEAR, () => clientOrThrow().clearSharedBrowserProfile());
+handleIpc(IPC.BROWSER_AGENT_TARGET, (_event, request: unknown) => {
   if (!isBrowserTargetRequest(request)) throw new Error("INVALID_PARAMS");
   return clientOrThrow().setBrowserTarget(request);
 });
-ipcMain.handle(IPC.BROWSER_AGENT_EXTENSION_TOKEN, (_event, request: unknown) => {
+handleIpc(IPC.BROWSER_AGENT_EXTENSION_TOKEN, (_event, request: unknown) => {
   if (!isBrowserExtensionTokenRequest(request)) throw new Error("INVALID_PARAMS");
   return clientOrThrow().setBrowserExtensionToken(request);
 });
-ipcMain.handle(IPC.BROWSER_AGENT_EXTENSION_CLEAR, () => clientOrThrow().clearBrowserExtensionToken());
-ipcMain.handle(IPC.BROWSER_AGENT_EXTENSION_STORE, (event) => {
+handleIpc(IPC.BROWSER_AGENT_EXTENSION_CLEAR, () => clientOrThrow().clearBrowserExtensionToken());
+handleIpc(IPC.BROWSER_AGENT_EXTENSION_STORE, (event) => {
   previewOwner(event);
   return electronShell.openExternal(PLAYWRIGHT_EXTENSION_STORE_URL);
 });
-ipcMain.handle(IPC.EXTENSION_READ, () => clientOrThrow().readExtensions());
-ipcMain.handle(IPC.EXTENSION_READ_EVENTS, (_event, afterEventId: unknown) => {
+handleIpc(IPC.EXTENSION_READ, () => clientOrThrow().readExtensions());
+handleIpc(IPC.EXTENSION_READ_EVENTS, (_event, afterEventId: unknown) => {
   if (typeof afterEventId !== "number") throw new Error("Extension Event 参数无效。");
   return clientOrThrow().readExtensionEvents(afterEventId);
 });
-ipcMain.handle(IPC.MCP_SET_ENABLED, (_event, pluginId: unknown, serverId: unknown, enabled: unknown) => {
+handleIpc(IPC.MCP_SET_ENABLED, (_event, pluginId: unknown, serverId: unknown, enabled: unknown) => {
   if (typeof pluginId !== "string" || typeof serverId !== "string" || typeof enabled !== "boolean") {
     throw new Error("MCP Server 参数无效。");
   }
   return clientOrThrow().setMcpEnabled(pluginId, serverId, enabled);
 });
-ipcMain.handle(IPC.MCP_CREATE, (_event, input: unknown) => {
+handleIpc(IPC.MCP_CREATE, (_event, input: unknown) => {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("MCP Server 参数无效。");
   }
   return clientOrThrow().createMcpServer(input as McpCreateInput);
 });
-ipcMain.handle(IPC.MCP_UPDATE, (_event, input: unknown) => {
+handleIpc(IPC.MCP_UPDATE, (_event, input: unknown) => {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("MCP Server 参数无效。");
   }
   return clientOrThrow().updateMcpServer(input as McpUpdateInput);
 });
-ipcMain.handle(IPC.MCP_REMOVE, (_event, serverId: unknown) => {
+handleIpc(IPC.MCP_REMOVE, (_event, serverId: unknown) => {
   if (typeof serverId !== "string") throw new Error("MCP Server 参数无效。");
   return clientOrThrow().removeMcpServer(serverId);
 });
 
-ipcMain.handle(IPC.APPROVAL_LIST, () =>
+handleIpc(IPC.APPROVAL_LIST, () =>
   Array.from(pendingApprovals.values(), ({ request }) => request),
 );
-ipcMain.handle(IPC.APPROVAL_RESPOND, (_event, id: unknown, decision: unknown, feedback: unknown) => {
+handleIpc(IPC.APPROVAL_RESPOND, (_event, id: unknown, decision: unknown, feedback: unknown) => {
   if (
     typeof id !== "string"
     || !["approve", "reject"].includes(String(decision))
@@ -1747,8 +1793,9 @@ if (!hasSingleInstanceLock) {
   app.quit();
 } else {
   app.on("second-instance", () => {
+    if (quitFlowController.getState().quitCommitted) return;
     const window = BrowserWindow.getAllWindows()[0];
-    if (!window) return;
+    if (!window || window.isDestroyed()) return;
     if (window.isMinimized()) window.restore();
     window.show();
     window.focus();
@@ -1756,6 +1803,7 @@ if (!hasSingleInstanceLock) {
 
   app.whenReady().then(() => {
     powerMonitor.on("resume", () => {
+      if (quitFlowController.getState().quitCommitted) return;
       void runtimeClient?.refreshAutomationSchedule().catch(() => undefined);
     });
     artifactPreview.install();
@@ -1764,7 +1812,7 @@ if (!hasSingleInstanceLock) {
     void startRuntime();
 
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
+      if (!quitFlowController.getState().quitCommitted && BrowserWindow.getAllWindows().length === 0) {
         createWindow();
       }
     });
@@ -1786,7 +1834,7 @@ app.on("will-quit", () => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
+  if (process.platform !== "darwin" && !quitFlowController.getState().quitCommitted) {
     app.quit();
   }
 });
