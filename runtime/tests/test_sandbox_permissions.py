@@ -14,6 +14,7 @@ from eidos_runtime.sandbox.permissions import (
     NetworkPermissions,
     SandboxPermissions,
     base_permission_profile_for_workspace,
+    canonical_permissions,
     materialize_effective_profile,
 )
 from eidos_runtime.sandbox.denial import (  # noqa: E402
@@ -49,13 +50,19 @@ class SandboxPermissionTests(unittest.TestCase):
                 network=NetworkPermissions(enabled=True),
             )
 
-            first = materialize_effective_profile(base, overlay)
-            second = materialize_effective_profile(base, overlay)
+            # Callers bind requested paths before policy; materialization
+            # only accepts those exact canonical paths.
+            with self.assertRaisesRegex(ValueError, "changed after approval"):
+                materialize_effective_profile(base, overlay)
+            canonical = canonical_permissions(overlay)
+            assert canonical is not None
+            first = materialize_effective_profile(base, canonical)
+            second = materialize_effective_profile(base, canonical)
 
             added = [
                 entry
                 for entry in first.entries
-                if entry.requested_path in {str(alias), str(outside)}
+                if entry.requested_path == str(outside.resolve())
             ]
             self.assertEqual(len(added), 1)
             self.assertEqual(added[0].resolved_path, str(outside.resolve()))
@@ -85,7 +92,7 @@ class SandboxPermissionTests(unittest.TestCase):
 
     def test_overlay_cannot_write_protected_runtime_but_can_execute_it(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             runtime = root / "runtime"
             runtime.mkdir()
             base = BasePermissionProfile.for_workspace(
@@ -158,7 +165,7 @@ class SandboxPermissionTests(unittest.TestCase):
 
     def test_dynamic_policy_uses_parameters_and_keeps_denies(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             outside = root / "outside"
             state = root / "state"
             outside.mkdir()
@@ -193,7 +200,7 @@ class SandboxPermissionTests(unittest.TestCase):
 
     def test_default_policy_allows_full_read_and_redundant_read_overlay(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             workspace = root / "workspace"
             outside = root / "outside"
             workspace.mkdir()

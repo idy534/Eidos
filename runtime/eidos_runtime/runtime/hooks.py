@@ -19,6 +19,7 @@ from eidos_runtime.domain.hooks import HookBinding, HookEvent, HookOutcome, Hook
 from eidos_runtime.extensions.codex_hooks import matches, parse_output
 from eidos_runtime.extensions.hook_sources import HookSourceCatalog
 from eidos_runtime.extensions.plugins import PluginCatalog, _private_directory
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.persistence.collaboration import CollaborationRepository
 from eidos_runtime.persistence.hooks import HookRepository
 from eidos_runtime.persistence.shell_environment import ShellEnvironmentRepository
@@ -30,7 +31,7 @@ from eidos_runtime.runtime.runtime_dependencies import RuntimeDependencyCoordina
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile, BasePermissionProfile, FileSystemAccessMode,
     FileSystemPermissionEntry, SandboxAttempt, SandboxType,
-    materialize_effective_profile, merge_permissions,
+    current_grants, materialize_effective_profile, merge_permissions,
 )
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
 from eidos_runtime.sandbox.shell import prepare_shell_launch_for_execution, run_shell_process
@@ -224,8 +225,10 @@ class HookService:
                     dependency_environment = self.dependencies.shell_environment(dependency)
             # Trust review grants only this plugin's own private writable data directory.
             permissions = materialize_effective_profile(base, merge_permissions(
-                self.store.run_permission_grants(self.run_id),
-                AdditionalPermissionProfile(fileSystem=(FileSystemPermissionEntry(path=str(data), access=FileSystemAccessMode.WRITE),)),
+                current_grants(self.store.run_permission_grants(self.run_id)),
+                AdditionalPermissionProfile(fileSystem=(FileSystemPermissionEntry(
+                    path=str(local_files.canonical_path(data)), access=FileSystemAccessMode.WRITE,
+                ),)),
             ), allow_protected=True)
             workspace = self.store.workspace_for_run(self.run_id)
             attempt = SandboxAttempt(ordinal=0, sandbox=SandboxType.NONE if base.full_access else SandboxType.MACOS_SEATBELT,

@@ -61,7 +61,8 @@ class _Runtime:
 class ToolOrchestratorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary.name)
+        # Permission paths are canonical; /var is a link to /private/var.
+        self.root = Path(self.temporary.name).resolve()
         self.context = OrchestratorContext(
             tool_call_id="tool-call",
             workspace_root=self.root,

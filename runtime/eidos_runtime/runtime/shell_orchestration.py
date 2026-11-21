@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import os
 from pathlib import Path
+import re
 import shlex
+import sys
 from typing import Callable
+import unicodedata
 
 from eidos_runtime.db.storage import WorkspaceIdentity
 from eidos_runtime.domain.project_workspace import DirectoryIdentity
@@ -17,10 +21,12 @@ from eidos_runtime.sandbox.denial import SandboxDenied
 from eidos_runtime.runtime.permission_policy import PermissionPolicyEvaluator, PermissionDisposition
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile,
+    BasePermissionProfile,
     FileSystemAccessMode,
     FileSystemPermissionEntry,
     SandboxAttempt,
     SandboxPermissions,
+    canonical_permissions,
     merge_permissions,
 )
 from eidos_runtime.tools.contracts import RunShellInput
@@ -81,6 +87,84 @@ def collect_shell_review_scripts(
         if len(scripts) == 3:
             break
     return tuple(scripts)
+
+
+_HOME_PREFIX = r"(?:~|\$\{HOME\}|\$HOME)"
+_PATH_REFERENCE = re.compile(_HOME_PREFIX + r"?/[^\s'\"`;|&<>(){}\[\],:=*?]*")
+_HOME_REFERENCE = re.compile(_HOME_PREFIX + r"(?=$|[\s'\"`;|&<>()])")
+
+
+def references_core_protected_scope(
+    command: str,
+    cwd: Path,
+    base: BasePermissionProfile,
+    scripts: tuple[ShellReviewScript, ...] = (),
+) -> bool:
+    """Find literal references to Eidos core scopes in an unsandboxed command.
+
+    This is a tripwire that routes such commands to human confirmation. It is
+    not an enforcement boundary: an unsandboxed process can reach these paths
+    without naming them, which the approval warning states.
+    """
+    core_write = tuple(Path(path) for path in base.protected_write_paths
+                       if path not in base.approval_write_roots)
+    core_data = tuple(Path(entry.path) for entry in (
+        *base.permanent_denies, *base.hard_confidentiality_denies,
+    ))
+    ordinary = tuple(Path(path) for path in (*base.workspace_roots, *base.approval_write_roots))
+    home = Path.home()
+
+    def touches(path: Path, *, ancestors: bool = True) -> bool:
+        path = Path(os.path.normpath(path))
+        if any(_inside(path, root) for root in core_write):
+            return True
+        if ancestors and any(
+            _inside(root, path) and not _inside(path, root)
+            for root in (*core_write, *core_data)
+        ):
+            return True
+        if any(_inside(path, root) for root in ordinary):
+            return False
+        return any(_inside(path, root) for root in core_data)
+
+    def expand(value: str) -> Path:
+        for prefix in ("${HOME}", "$HOME", "~"):
+            if value == prefix or value.startswith(prefix + "/"):
+                return home / value[len(prefix):].lstrip("/")
+        return Path(value)
+
+    if touches(cwd, ancestors=False):
+        return True
+    for text in (command, *(script.content for script in scripts if script.content)):
+        if any(touches(expand(match.group(0))) for match in _PATH_REFERENCE.finditer(text)):
+            return True
+        if any(touches(home) for _match in _HOME_REFERENCE.finditer(text)):
+            return True
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        tokens = command.split()
+    # Relative operands are interpreted from cwd, e.g. `cat .eidos/state.db`.
+    return any(
+        touches(cwd / token)
+        for token in tokens
+        if token and not token.startswith(("-", "/", "~", "$"))
+        and not set(token) <= set("();<>|&")
+    )
+
+
+def _inside(path: Path, root: Path) -> bool:
+    """Compare as the host volume does; macOS volumes ignore case by default."""
+    left, right = _path_key(path), _path_key(root)
+    return left[:len(right)] == right
+
+
+def _path_key(path: Path) -> tuple[str, ...]:
+    if sys.platform not in {"darwin", "win32"}:
+        return path.parts
+    return tuple(unicodedata.normalize("NFD", part).casefold() for part in path.parts)
 
 
 @dataclass(frozen=True)
@@ -173,7 +257,9 @@ def effective_shell_permissions(
         shell_input.effective_additional_permissions,
         git_permissions,
     )
-    return None if merged.is_empty else merged
+    # Policy and Seatbelt must see the same on-disk path. Raises OSError for
+    # paths that do not exist or have no single canonical location.
+    return None if merged.is_empty else canonical_permissions(merged)
 
 
 class ShellOrchestrationRuntime:

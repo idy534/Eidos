@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-from pathlib import Path
 from typing import Literal
 
 from eidos_runtime.models import EidosFrozenStrictModel
@@ -10,7 +9,8 @@ from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.runtime.approval import ApprovalCoordinator, APPROVAL_REJECTION_GUIDANCE
 from eidos_runtime.runtime.permission_policy import PermissionDisposition, PermissionPolicyEvaluator
 from eidos_runtime.sandbox.permissions import (
-    AdditionalPermissionProfile, BasePermissionProfile, materialize_effective_profile,
+    AdditionalPermissionProfile, BasePermissionProfile, canonical_permissions,
+    current_grants, materialize_effective_profile,
 )
 from eidos_runtime.sandbox.sensitive import default_scanner
 
@@ -32,25 +32,30 @@ class PermissionRequests:
         self.store = store
         self.approval = approval
         self.base = base
+        # Feedback from the last rejected request, for the tool result.
+        self.rejection_feedback: str | None = None
 
     def request(self, run_id: str, item: dict[str, object],
                 permissions: AdditionalPermissionProfile, cancel: threading.Event,
                 *, reason: str | None = None, command: str | None = None,
                 cwd: str | None = None, denial_category: str | None = None,
                 completed_result: dict[str, object] | None = None) -> str:
+        self.rejection_feedback = None
         if self.base.full_access:
             return "already_granted"
         try:
-            permissions = permissions.model_copy(update={
-                "file_system": tuple(entry.model_copy(update={
-                    "path": str(Path(entry.path).resolve(strict=True)),
-                }) for entry in sorted(permissions.file_system, key=lambda entry: (entry.path, entry.access.value, entry.recursive))),
+            canonical = canonical_permissions(permissions)
+            assert canonical is not None
+            permissions = canonical.model_copy(update={
+                "file_system": tuple(sorted(canonical.file_system, key=lambda entry: (
+                    entry.path, entry.access.value, entry.recursive,
+                ))),
             })
             materialize_effective_profile(self.base, permissions, allow_protected=True)
         except (OSError, ValueError, RuntimeError):
             return "permission_not_requestable"
         decision = PermissionPolicyEvaluator().evaluate(
-            self.base, self.store.run_permission_grants(run_id), permissions,
+            self.base, current_grants(self.store.run_permission_grants(run_id)), permissions,
         )
         pending = self.store.typed_runtime_repository().read_pending_approval(run_id)
         if decision.disposition is not PermissionDisposition.ASK and pending is None:
@@ -73,6 +78,8 @@ class PermissionRequests:
             )},
             transition_reason="permission_request",
         )
+        if outcome.decision != "approve":
+            self.rejection_feedback = outcome.feedback
         return "permission_granted" if outcome.decision == "approve" else "user_rejected"
 
 

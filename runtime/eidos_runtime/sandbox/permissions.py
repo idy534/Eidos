@@ -69,6 +69,52 @@ class AdditionalPermissionProfile(ClosedModel):
             raise ValueError("additional_permissions do not match sandbox mode")
 
 
+def canonical_permissions(
+    profile: AdditionalPermissionProfile | None,
+) -> AdditionalPermissionProfile | None:
+    """Bind requested paths to their current on-disk spelling before policy.
+
+    Raises OSError when a path is unavailable or has no single location.
+    """
+    if profile is None:
+        return None
+    return profile.model_copy(update={"file_system": tuple(
+        entry.model_copy(update={"path": str(local_files.canonical_path(entry.path))})
+        for entry in profile.file_system
+    )})
+
+
+def current_grants(
+    granted: AdditionalPermissionProfile | None,
+) -> AdditionalPermissionProfile | None:
+    """Keep Run grant entries that still name their approved location.
+
+    A grant directory that was removed or replaced by a link no longer
+    describes what the user approved. Dropping it only narrows access, keeps
+    the Run usable, and lets the model request the new location again.
+    """
+    if granted is None:
+        return None
+    kept = []
+    for entry in granted.file_system:
+        try:
+            if str(local_files.canonical_path(entry.path)) == entry.path:
+                kept.append(entry)
+        except (OSError, RuntimeError):
+            continue
+    if len(kept) == len(granted.file_system):
+        return granted
+    return granted.model_copy(update={"file_system": tuple(kept)})
+
+
+def _canonical_policy_path(path: Path) -> Path:
+    """Protected roots may not exist yet; existing ones use the disk spelling."""
+    try:
+        return local_files.canonical_path(path)
+    except (OSError, RuntimeError):
+        return path.resolve(strict=False)
+
+
 def merge_permissions(
     *profiles: AdditionalPermissionProfile | None,
 ) -> AdditionalPermissionProfile:
@@ -150,12 +196,12 @@ class BasePermissionProfile(ClosedModel):
         approval_write_roots: tuple[Path, ...] = (),
     ) -> "BasePermissionProfile":
         workspace = workspace_root.resolve(strict=True)
-        protected = tuple(path.resolve(strict=False) for path in protected_paths)
+        protected = tuple(_canonical_policy_path(path) for path in protected_paths)
         protected_write = tuple(
-            path.resolve(strict=False) for path in protected_write_paths
+            _canonical_policy_path(path) for path in protected_write_paths
         )
         hard = tuple(
-            path.resolve(strict=False) for path in hard_confidentiality_paths
+            _canonical_policy_path(path) for path in hard_confidentiality_paths
         )
         return cls(
             workspaceRoots=tuple(str(path) for path in (workspace, *additional_roots)),
@@ -184,7 +230,7 @@ class BasePermissionProfile(ClosedModel):
             activeSkillRoots=tuple(
                 str(path.resolve(strict=True)) for path in active_skill_roots
             ),
-            approvalWriteRoots=tuple(str(path.resolve(strict=False)) for path in approval_write_roots),
+            approvalWriteRoots=tuple(str(_canonical_policy_path(path)) for path in approval_write_roots),
         )
 
 
@@ -223,7 +269,7 @@ def with_project_metadata_paths(
     Metadata must not turn the private data root or a Runtime root into an
     ordinary exception, including when the user's HOME is the workspace.
     """
-    candidates = tuple(str(Path(path).resolve(strict=False)) for path in paths)
+    candidates = tuple(str(_canonical_policy_path(Path(path))) for path in paths)
     core_writes = tuple(Path(path) for path in base.protected_write_paths
                         if path not in base.approval_write_roots)
     ordinary = []
@@ -428,7 +474,7 @@ def materialize_effective_profile(
     )
     if additional is not None:
         for requested in additional.file_system:
-            resolved = Path(requested.path).resolve(strict=True)
+            resolved = local_files.canonical_path(requested.path)
             if not allow_protected and requested.access is not FileSystemAccessMode.DENY and any(
                 _paths_overlap(resolved, Path(entry.path).resolve(strict=False))
                 for entry in base.hard_confidentiality_denies
@@ -565,8 +611,20 @@ def _materialize_entries(
 ) -> tuple[MaterializedFileSystemPermissionEntry, ...]:
     result = []
     for entry in entries:
+        if source == "additional":
+            # Requests and Run grants are canonical when evaluated. Re-resolving
+            # a different location means a link or spelling changed after the
+            # decision, so the approved scope no longer describes this path.
+            resolved = local_files.canonical_path(entry.path)
+            if str(resolved) != entry.path:
+                raise ValueError("additional permission path changed after approval")
+            result.append(MaterializedFileSystemPermissionEntry(
+                requestedPath=entry.path, resolvedPath=str(resolved),
+                access=entry.access, recursive=entry.recursive, source=source,
+            ))
+            continue
         resolved = Path(entry.path).resolve(
-            strict=source in {"base", "additional"}
+            strict=source == "base"
         )
         result.append(
             MaterializedFileSystemPermissionEntry(

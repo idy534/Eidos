@@ -111,10 +111,11 @@ class ToolOrchestrator:
         ] | None = None,
     ) -> OrchestratorResult:
         mode = runtime.sandbox_permissions(request)
-        additional = runtime.additional_permissions(request)
         if context.base_permissions.full_access:
             mode = SandboxPermissions.USE_DEFAULT
             additional = None
+        else:
+            additional = runtime.additional_permissions(request)
         if additional is None:
             if mode is SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS:
                 raise ValueError("additional_permissions are required")

@@ -823,7 +823,8 @@ class SeatbeltSmokeTests(unittest.TestCase):
 
     def test_dynamic_profile_grants_only_approved_external_paths(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-dynamic-paths-") as temporary:
-            root = Path(temporary)
+            # Permission paths are canonical; /var is a link to /private/var.
+            root = Path(temporary).resolve()
             allowed = root / "allowed"
             sibling = root / "sibling"
             executable = root / "executable"
@@ -912,7 +913,8 @@ class SeatbeltSmokeTests(unittest.TestCase):
 
     def test_dynamic_profile_allows_only_approved_git_metadata_write(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-approved-git-") as temporary:
-            root = Path(temporary)
+            # Permission paths are canonical; /var is a link to /private/var.
+            root = Path(temporary).resolve()
             workspace = root / "workspace"
             home = root / "home"
             sandbox_tmp = root / "tmp"
