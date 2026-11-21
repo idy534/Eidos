@@ -737,12 +737,17 @@ class McpToolAdapter:
         local_name: str,
         input_validator: BoundedJsonSchema,
         output_validator: BoundedJsonSchema | None,
+        *,
+        destructive: bool = True,
     ) -> None:
         self.connection = connection
         self.remote_name = remote_name
         self.local_name = local_name
         self.input_validator = input_validator
         self.output_validator = output_validator
+        # Tools that declare destructive updates are approved per call even
+        # where an approval otherwise covers the rest of the task.
+        self.destructive = destructive
 
     def execute(
         self, arguments: dict[str, object], cancel: threading.Event
@@ -1157,7 +1162,8 @@ def _tool_entry(
             **({"displayTitle": title} if (title := _display_title(tool)) else {}),
         }),
         adapter=McpToolAdapter(
-            connection, tool.name, name, input_validator, output_validator
+            connection, tool.name, name, input_validator, output_validator,
+            destructive=tool.annotations is not None and tool.annotations.destructive_hint is True,
         ),
         result_data_model=McpResultData,
         input_schema_validator=input_validator,

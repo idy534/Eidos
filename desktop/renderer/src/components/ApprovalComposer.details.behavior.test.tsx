@@ -67,6 +67,24 @@ describe("Approval decision details", () => {
     expect(screen.getByText("系统沙盒无法启动")).toBeVisible();
   });
 
+  it("states when one approval covers the rest of the task", () => {
+    const { rerender } = show({ ...command, grantScope: "run" });
+    expect(screen.getByText("当前任务内后续命令沿用这些权限")).toBeVisible();
+    expect(screen.queryByText("仅本次命令")).toBeNull();
+    rerender(<ApprovalComposer run={run} onApprove={vi.fn()} onReject={vi.fn()} approval={{
+      id: "m", sessionId: "s", runId: "r", itemId: "i", toolCallId: "t", kind: "external_tool",
+      summary: "Call an external MCP tool", toolName: "create_issue", arguments: {},
+      provenance: { kind: "mcp", sourceId: "tracker", sourceVersion: "1", contentHash: "h" },
+      permissionProfile: "connector", timeoutSeconds: 60, envNames: [], grantScope: "run",
+    }} />);
+    expect(screen.getByText("当前任务内调用此工具不再询问")).toBeVisible();
+    rerender(<ApprovalComposer run={run} onApprove={vi.fn()} onReject={vi.fn()} approval={{
+      id: "f", sessionId: "s", runId: "r", itemId: "i", toolCallId: "t", kind: "file_change",
+      summary: "Write files in the requested permission scope", diff: "+x", grantScope: "run",
+    }} />);
+    expect(screen.getByText("当前任务内写入这些文件不再询问")).toBeVisible();
+  });
+
   it("distinguishes run grants and keeps explicit network restrictions", () => {
     show({ ...command, kind: "permission_request", grantScope: "run",
       permissions: { network: { enabled: false }, fileSystem: [{ path: "/output", access: "write", recursive: true }] },

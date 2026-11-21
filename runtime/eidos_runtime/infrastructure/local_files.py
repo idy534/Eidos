@@ -47,6 +47,50 @@ def descriptor_path(descriptor: int) -> Path:
     return Path(value)
 
 
+def canonical_path(path: str | Path) -> Path:
+    """Return an existing path with symlinks resolved and its on-disk spelling.
+
+    macOS volumes are usually case- and normalization-insensitive while
+    Seatbelt matches paths the same way. Permission checks compare strings, so
+    every permission path must use the spelling the filesystem reports.
+    """
+    resolved = Path(path).resolve(strict=True)
+    if WINDOWS:
+        return resolved
+    try:
+        descriptor = os.open(
+            resolved,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC,
+        )
+    except OSError:
+        # Unreadable objects cannot report their path. Their parent can list them.
+        if resolved.parent == resolved:
+            raise
+        parent = canonical_path(resolved.parent)
+        names = [name for name in os.listdir(parent) if _same_name(name, resolved.name)]
+        if resolved.name in names:
+            return parent / resolved.name
+        if len(names) != 1:
+            raise FileNotFoundError(errno.ENOENT, "path is unavailable", str(path)) from None
+        return parent / names[0]
+    try:
+        canonical = descriptor_path(descriptor)
+    finally:
+        os.close(descriptor)
+    if len(canonical.parts) != len(resolved.parts) or not all(
+        _same_name(left, right) for left, right in zip(canonical.parts, resolved.parts)
+    ):
+        # A hard-linked file can report a different directory. Fail closed.
+        raise OSError(errno.EXDEV, "path has another canonical location", str(path))
+    return canonical
+
+
+def _same_name(left: str, right: str) -> bool:
+    import unicodedata
+
+    return unicodedata.normalize("NFD", left).casefold() == unicodedata.normalize("NFD", right).casefold()
+
+
 def is_link(metadata: os.stat_result) -> bool:
     return stat.S_ISLNK(metadata.st_mode) or (
         WINDOWS and bool(metadata.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)

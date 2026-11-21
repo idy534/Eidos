@@ -183,7 +183,8 @@ export function AppShell({ runtime }: AppShellProps) {
     : activeSnapshot?.session.id;
   const sessionApprovalMode = sessionConfigRun
     ? sessionConfigRun.approvalMode ?? "manual"
-    : runDefaults.approvalMode ?? "manual";
+    // New users start with model review; manual approval stays one click away.
+    : runDefaults.approvalMode ?? "auto_review";
   const approvalMode = (approvalSessionId ? approvalModes[approvalSessionId] : undefined)
     ?? sessionApprovalMode;
   const goals = useGoal(sessionState.snapshot?.session.id, runtimeStatus.state === "ready" && isStorageReady);

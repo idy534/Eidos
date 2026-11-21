@@ -827,7 +827,7 @@ describe("WorkspaceExplorer", () => {
       .toBeInTheDocument();
   });
 
-  it("renders folder dropdown inside the tree pane when multiple roots exist and hides it for a single root", async () => {
+  it("renders unified folder Select inside the tree pane when multiple roots exist and hides it for a single root", async () => {
     const listDirectory = vi.fn(async (_sessionId: string, _path: string, workspaceRoot?: string) => ({
       path: ".",
       entries: [{
@@ -846,7 +846,7 @@ describe("WorkspaceExplorer", () => {
         listDirectory={listDirectory}
       />,
     );
-    expect(screen.queryByRole("button", { name: "选择项目文件夹" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "选择项目文件夹" })).not.toBeInTheDocument();
     expect(screen.queryByText(/^文件夹$/)).not.toBeInTheDocument();
     expect(await screen.findByText("first-file.txt")).toBeInTheDocument();
     single.unmount();
@@ -861,20 +861,20 @@ describe("WorkspaceExplorer", () => {
         listDirectory={listDirectory}
       />,
     );
-    const trigger = screen.getByRole("button", { name: "选择项目文件夹" });
-    expect(trigger).toBeInTheDocument();
-    expect(trigger).toHaveTextContent("agentic-kit");
+    const select = screen.getByRole("combobox", { name: "选择项目文件夹" }) as HTMLSelectElement;
+    expect(select).toBeInTheDocument();
+    expect(select).toHaveAttribute("name", "workspace-root");
+    expect(select.value).toBe("root-1");
+    expect(select.querySelector("button[data-eidos-select-slot='true'] selectedcontent")).toBeInTheDocument();
     expect(screen.queryByText(/^文件夹$/)).not.toBeInTheDocument();
-    expect(document.querySelector(".workspace-tree-root-label")).toHaveTextContent("agentic-kit");
+    expect(screen.getByRole("option", { name: "agentic-kit" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "second · 共享" })).toBeInTheDocument();
     expect(await screen.findByText("first-file.txt")).toBeInTheDocument();
 
-    fireEvent.click(trigger);
-    expect(await screen.findByRole("menuitem", { name: "agentic-kit · 主要" })).toBeInTheDocument();
-    const secondOption = screen.getByRole("menuitem", { name: "second · 共享" });
-    expect(secondOption).toBeInTheDocument();
-    fireEvent.click(secondOption);
+    fireEvent.change(select, { target: { value: "root-2" } });
 
     expect(await screen.findByText("second-file.txt")).toBeInTheDocument();
+    expect((screen.getByRole("combobox", { name: "选择项目文件夹" }) as HTMLSelectElement).value).toBe("root-2");
     multi.unmount();
   });
 });

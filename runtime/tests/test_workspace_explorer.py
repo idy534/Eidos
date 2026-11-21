@@ -19,6 +19,10 @@ from eidos_runtime.protocol.methods import (
     SessionCreateRequestDto,
 )
 from eidos_runtime.repo_intelligence.watcher import RepositoryChange
+from eidos_runtime.workspace.reader import (
+    WorkspaceDirectoryEntry,
+    _directory_entry_sort_key,
+)
 
 
 def _application(
@@ -84,6 +88,113 @@ def test_list_directory_is_lazy_sorted_and_supports_unicode_and_spaces(
                 "kind": "file",
                 "sizeBytes": 6,
             }
+        ]
+    finally:
+        store.close()
+
+
+def test_list_directory_sorts_folders_first_with_case_insensitive_natural_order(
+    tmp_path: Path,
+) -> None:
+    store, application, session_id, workspace = _application(tmp_path)
+    try:
+        for directory_name in ("scripts", ".github", "Assets", "v10", "v2", "docs"):
+            (workspace / directory_name).mkdir()
+        for file_name in (
+            "uv.lock",
+            "README.zh-CN.md",
+            "README.md",
+            "AGENTS.md",
+            "electron-builder.windows.yml",
+            "electron-builder.yml",
+            "tsconfig.renderer-test.json",
+            "tsconfig.renderer.json",
+            ".env.local",
+            ".env",
+            ".gitignore",
+            "phase10.md",
+            "phase2.md",
+            "file_a.txt",
+            "file-a.txt",
+            "file1.txt",
+            "package.json",
+        ):
+            (workspace / file_name).write_text("x\n", encoding="utf-8")
+
+        listing = application.list_directory(
+            WorkspaceListDirectoryRequestDto(sessionId=session_id, path=".")
+        ).root
+
+        assert [entry["name"] for entry in listing["entries"]] == [
+            ".github",
+            "Assets",
+            "docs",
+            "scripts",
+            "v2",
+            "v10",
+            ".env",
+            ".env.local",
+            ".gitignore",
+            "AGENTS.md",
+            "electron-builder.yml",
+            "electron-builder.windows.yml",
+            "file-a.txt",
+            "file1.txt",
+            "file_a.txt",
+            "package.json",
+            "phase2.md",
+            "phase10.md",
+            "README.md",
+            "README.zh-CN.md",
+            "tsconfig.renderer.json",
+            "tsconfig.renderer-test.json",
+            "uv.lock",
+        ]
+    finally:
+        store.close()
+
+
+def test_directory_sort_key_breaks_case_and_leading_zero_ties_deterministically() -> None:
+    entries = [
+        WorkspaceDirectoryEntry("makefile", "makefile", "file"),
+        WorkspaceDirectoryEntry("Makefile", "Makefile", "file"),
+        WorkspaceDirectoryEntry("file1.txt", "file1.txt", "file"),
+        WorkspaceDirectoryEntry("file01.txt", "file01.txt", "file"),
+        WorkspaceDirectoryEntry("..hidden", "..hidden", "file"),
+        WorkspaceDirectoryEntry(".alpha", ".alpha", "file"),
+        WorkspaceDirectoryEntry("z-dir", "z-dir", "directory"),
+    ]
+
+    ordered = [entry.name for entry in sorted(entries, key=_directory_entry_sort_key)]
+
+    assert ordered == [
+        "z-dir",
+        "..hidden",
+        ".alpha",
+        "file01.txt",
+        "file1.txt",
+        "Makefile",
+        "makefile",
+    ]
+
+
+def test_directory_truncation_keeps_folders_before_files(tmp_path: Path) -> None:
+    store, application, session_id, workspace = _application(tmp_path)
+    try:
+        (workspace / "z-folder").mkdir()
+        (workspace / "m-folder").mkdir()
+        for name in ("a-file.txt", "b-file.txt", "c-file.txt"):
+            (workspace / name).write_text("x\n", encoding="utf-8")
+
+        listing = application.list_directory(
+            WorkspaceListDirectoryRequestDto(sessionId=session_id, path=".", limit=3)
+        ).root
+
+        assert listing["truncated"] is True
+        assert [(entry["kind"], entry["name"]) for entry in listing["entries"]] == [
+            ("directory", "m-folder"),
+            ("directory", "z-folder"),
+            ("file", "a-file.txt"),
         ]
     finally:
         store.close()

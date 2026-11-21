@@ -1297,6 +1297,9 @@ class SessionStore:
             requeue=requeue,
         )
 
+    def mark_review_escalated(self, item_id: str, review: dict[str, object]) -> None:
+        self._repository(self._execution).mark_review_escalated(item_id, review)
+
     def resolve_approval_committed(
         self,
         item_id: str,
@@ -1325,6 +1328,9 @@ class SessionStore:
 
     def rejected_approval(self, run_id: str, fingerprint: str) -> Approval | None:
         return self._repository(self._runs).rejected_approval(run_id, fingerprint)
+
+    def run_tool_granted(self, run_id: str, tool_name: str, content_hash: str) -> bool:
+        return self._repository(self._runs).run_tool_granted(run_id, tool_name, content_hash)
 
     def record_sensitive_tool_input(self, run_id: str) -> int:
         return self._repository(self._runs).record_sensitive_tool_input(run_id)

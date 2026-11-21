@@ -216,7 +216,7 @@ function commandFilePermissions(approval: CommandApprovalRequest) {
 function ApprovalContent({ approval }: { approval: ApprovalRequest }) {
   if (approval.kind === "file_change") return <>
     <dl className="approval-details">
-      <DetailRow label="批准范围">仅本次文件操作</DetailRow>
+      <DetailRow label="批准范围">{approval.grantScope === "run" ? "当前任务内写入这些文件不再询问" : "仅本次文件操作"}</DetailRow>
       <FilePermissions entries={approval.additionalFileSystemAccess ?? []} />
     </dl>
     {approval.diffHash
@@ -230,7 +230,7 @@ function ApprovalContent({ approval }: { approval: ApprovalRequest }) {
       {approval.displayIntent?.trim() && <DetailRow label="模型说明">{approval.displayIntent.trim()}</DetailRow>}
       <Directory cwd={approval.cwd} />
       <DetailRow label="执行方式">{approval.executionMode === "unsandboxed" ? "沙盒外执行" : approval.executionMode === "expanded_sandbox" ? "沙盒内执行（已扩展权限）" : "默认沙盒"}</DetailRow>
-      <DetailRow label="批准范围">仅本次命令</DetailRow>
+      <DetailRow label="批准范围">{approval.grantScope === "run" ? "当前任务内后续命令沿用这些权限" : "仅本次命令"}</DetailRow>
       {approval.networkEnabled && approval.executionMode !== "unsandboxed" && <DetailRow label="网络权限">允许访问网络，不限域名</DetailRow>}
       <FilePermissions entries={commandFilePermissions(approval)} />
       {approval.reason && <DetailRow label="申请原因">{approval.reason}</DetailRow>}
@@ -281,7 +281,7 @@ function ApprovalContent({ approval }: { approval: ApprovalRequest }) {
       <DetailRow label="来源">{approval.provenance.serverId ?? approval.provenance.sourceId}</DetailRow>
       {approval.provenance.pluginId && <DetailRow label="插件">{approval.provenance.pluginId}</DetailRow>}
       <DetailRow label="权限配置">{approval.permissionProfile === "workspace_read" ? "工作区只读" : approval.permissionProfile === "browser" ? "浏览器" : "连接器"}</DetailRow>
-      <DetailRow label="批准范围">仅本次工具调用</DetailRow>
+      <DetailRow label="批准范围">{approval.grantScope === "run" ? "当前任务内调用此工具不再询问" : "仅本次工具调用"}</DetailRow>
     </dl>
     <pre className="approval-command" aria-label="工具参数">{JSON.stringify(approval.arguments, null, 2)}</pre>
     <details className="approval-execution-details">

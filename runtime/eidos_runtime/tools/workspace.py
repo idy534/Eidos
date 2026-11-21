@@ -503,6 +503,10 @@ class ToolExecutor:
                     raise WorkspacePathError("workspace_boundary_violation")
                 root = self._project_writer(path)
                 authorized_root = root.path if root else self.workspace.path
+                if path.is_relative_to(authorized_root):
+                    reject_protected_metadata_spelling(path.relative_to(authorized_root).parts)
+                else:
+                    require_canonical_write_target(path)
                 if not path.is_relative_to(authorized_root) or any(
                     part in _PROTECTED_WORKSPACE_METADATA_NAMES
                     for part in path.relative_to(authorized_root).parts
@@ -2103,6 +2107,35 @@ def _validate_relative_path(value: str) -> tuple[str, ...]:
     if not parts:
         raise WorkspacePathError("workspace_boundary_violation")
     return parts
+
+
+def reject_protected_metadata_spelling(parts: tuple[str, ...]) -> None:
+    """Reject `.GIT`-style aliases of protected metadata before authorization.
+
+    Case-insensitive volumes open them as the protected directory, while
+    permission checks compare exact names.
+    """
+    if any(
+        part not in _PROTECTED_WORKSPACE_METADATA_NAMES
+        and part.casefold() in _PROTECTED_WORKSPACE_METADATA_NAMES
+        for part in parts
+    ):
+        raise WorkspacePathError("workspace_boundary_violation")
+
+
+def require_canonical_write_target(path: Path) -> None:
+    """External write targets must use the existing on-disk spelling."""
+    existing = path
+    while not existing.exists():
+        if existing.parent == existing:
+            raise WorkspacePathError("workspace_boundary_violation")
+        existing = existing.parent
+    try:
+        canonical = local_files.canonical_path(existing)
+    except (OSError, RuntimeError):
+        raise WorkspacePathError("workspace_boundary_violation") from None
+    if canonical != existing:
+        raise WorkspacePathError("workspace_boundary_violation")
 
 
 def _is_protected_workspace_metadata_path(

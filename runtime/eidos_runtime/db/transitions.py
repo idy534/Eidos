@@ -214,7 +214,12 @@ def resolve_approval_and_transition(
     expected_source = {"manual": None, "auto_review": "model", "full_access": "mode"}[fact["approval_mode"]]
     human_confirmation = json.loads(fact["request_json"]).get("requiresHumanConfirmation") is True
     if fact["approval_mode"] == "auto_review" and human_confirmation:
-        expected_source = "manual"
+        # Reserved requests need the user to approve. The reviewer may only
+        # decline one the user did not ask for.
+        expected_source = (
+            "model" if review is not None and review.source == "model" and decision == "reject"
+            else "manual"
+        )
     if fact["approval_mode"] == "auto_review" and review is not None and review.source == "manual" and review.allows_manual_fallback:
         expected_source = "manual"
     if review is not None and review.source == "hook" and not human_confirmation and fact["approval_mode"] != "full_access":

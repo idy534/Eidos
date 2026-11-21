@@ -768,11 +768,17 @@ class ToolExecutionController:
                     review = self.approval.last_review
                     decided_item = self.store.read_item(str(item["id"]))
                     feedback = decided_item.get("toolCall", {}).get("approvalFeedback")
-                    outcome = replace(outcome, result={
-                        **outcome.result,
-                        "code": review.reason_code if review is not None else "auto_review_rejected",
-                        "summary": feedback or (review.rationale + " Do not repeat or circumvent the refused action." if review else "Automatic approval review rejected this request. Do not repeat or circumvent it."),
-                    })
+                    if review is not None and review.source == "manual":
+                        # The user decided after review fallback or high-risk
+                        # confirmation; report it as the user's rejection.
+                        if feedback:
+                            outcome = replace(outcome, result={**outcome.result, "summary": feedback})
+                    else:
+                        outcome = replace(outcome, result={
+                            **outcome.result,
+                            "code": review.reason_code if review is not None else "auto_review_rejected",
+                            "summary": feedback or (review.rationale + " Do not repeat or circumvent the refused action." if review else "Automatic approval review rejected this request. Do not repeat or circumvent it."),
+                        })
             if (
                 call.name == "run_shell"
                 and plan.descriptor is not None

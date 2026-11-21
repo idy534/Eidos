@@ -112,7 +112,7 @@ Main 测试通过真实 stdio 启动 Runtime，用 `EIDOS_FAKE_MODEL=team` 的�
 
 ## 尚未提供
 
-- 团队级 Run Grant：成员不继承 Lead 的 Grant，需要时各自通过审批获得。
+- 团队级 Run Grant：成员在 Lead Run 活动期间使用 Lead 已批准的任务级 Grant，不含高危人工授权；Lead Run 结束后不再继承。成员自己申请的 Grant 不回流给 Lead。
 - Lead 交接：Lead 依靠 Session 压缩继续工作，压缩保留团队状态段；没有单独的继任者交接。
 - 常驻团队：定时任务和渠道消息可以驱动已存在团队的 Lead，但没有事件到任务的自动转换、Thread 订阅或规则化的主动行为。
 - 非 Git 项目的成员隔离副本与 Worktree 依赖准备命令。

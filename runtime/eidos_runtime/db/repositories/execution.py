@@ -2316,6 +2316,19 @@ class ExecutionRepository(Repository):
             )
         return CommittedMutation(self.read_item(item_id), (run_event, event))
 
+    def mark_review_escalated(self, item_id: str, review: dict[str, object]) -> None:
+        """Remember that auto review handed this pending approval to the user.
+
+        A restart must not turn the user's question back into a model decision.
+        The binding fingerprint in the request is unchanged.
+        """
+        with self.lock, self._connection() as connection:
+            connection.execute(
+                """UPDATE approvals SET request_json = json_set(request_json, '$.reviewEscalation', json(?))
+                   WHERE item_id = ? AND status = 'pending'""",
+                (json.dumps(review, ensure_ascii=False), item_id),
+            )
+
     def resolve_approval_committed(
         self,
         item_id: str,

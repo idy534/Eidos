@@ -12,7 +12,7 @@ from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.approval_policy import ApprovalReview
 from eidos_runtime.domain.hooks import HookOutcome
 from eidos_runtime.model.client import ModelClient
-from eidos_runtime.runtime.approval_review import review_approval
+from eidos_runtime.runtime.approval_review import build_review_evidence, review_approval, review_feedback
 from eidos_runtime.protocol.schemas import ApprovalDecisionDto
 from eidos_runtime.protocol.tool_text import project_approval_diff
 from eidos_runtime.runtime.events import RuntimeEvents
@@ -145,8 +145,10 @@ class ApprovalCoordinator:
                           else item.get("toolCall", {}).get("argumentsJson")),
             # Derived display metadata must not invalidate old pending approvals
             # or rejection fingerprints. Arguments and permission fields still bind the action.
+            # grantScope is derived from the action and mode; requests created
+            # before it existed must still match after an upgrade.
             "description": {key: value for key, value in description.items()
-                            if key not in {"reason", "summary", "additionalFileSystemAccess"}},
+                            if key not in {"reason", "summary", "additionalFileSystemAccess", "grantScope"}},
             "diff": diff,
             "baseSha256": base_sha256,
             "userEvidence": user_evidence,
@@ -160,6 +162,13 @@ class ApprovalCoordinator:
             "permissionBlockFingerprint": fingerprint,
         }
         rejected = self.store.rejected_approval(run_id, fingerprint)
+        previous_unknown = False
+        if (rejected is not None and rejected.review is not None
+                and rejected.review.source == "model" and rejected.review.retryable):
+            # A failed or inconclusive review is not a decision. Review again;
+            # a second inconclusive review of the same action goes to the user.
+            previous_unknown = rejected.review.reason_code == "auto_review_rejected"
+            rejected = None
         if rejected is not None:
             self.last_review = rejected.review
             return ApprovalOutcome(
@@ -208,7 +217,19 @@ class ApprovalCoordinator:
         if callable(suspend_deadline):
             suspend_deadline()
         try:
-            if human_confirmation:
+            triage = None
+            if human_confirmation and mode == "auto_review" and pending is None and self.reviewer is not None:
+                # The model may only decline a reserved request the user did not
+                # ask for. Anything it allows, or cannot judge, goes to the user.
+                try:
+                    triage = review_approval(self.reviewer, self._review_evidence(
+                        user_evidence, item, request, diff, base_sha256), cancel)
+                except Exception:  # Triage is advisory: any failure asks the user.
+                    triage = None
+            if (triage is not None and triage.decision == "reject"
+                    and triage.reason_code == "auto_review_rejected" and triage.risk != "unknown"):
+                self.last_review = triage
+            elif human_confirmation:
                 result = self._validated(self.transport.request(
                     ApprovalRequest({
                         "sessionId": pending_item["sessionId"], "runId": pending_item["runId"],
@@ -219,22 +240,27 @@ class ApprovalCoordinator:
                 if mode == "auto_review":
                     self.last_review = ApprovalReview(source="manual", decision=result.decision,
                         reason_code="dangerous_permission_confirmed", risk="high",
-                        rationale="用户已决定本次高危操作。")
+                        rationale="用户批准了本次高危操作。" if result.decision == "approve"
+                        else "用户拒绝了本次高危操作。")
             elif mode == "auto_review" and self.last_review is None:
-                if pending is not None:
-                    self.last_review = ApprovalReview(source="model", decision="reject",
-                        reason_code="auto_review_interrupted", rationale="自动审批在 Runtime 重启前未完成；原操作未获批准。")
+                # A review interrupted by a restart has no side effect; run it
+                # again. One that had already handed the request to the user
+                # stays with the user.
+                escalation = pending_request.get("reviewEscalation") if pending_request else None
+                if isinstance(escalation, dict):
+                    self.last_review = ApprovalReview.model_validate(escalation)
                 elif self.reviewer is None:
                     self.last_review = ApprovalReview(source="model", decision="reject",
-                        reason_code="auto_review_unavailable", rationale="自动审批模型不可用；操作未获批准。")
+                        reason_code="auto_review_unavailable", rationale="自动审批模型不可用，操作没有执行。")
                 else:
-                    evidence = json.dumps({
-                        "userMessages": user_evidence,
-                        "tool": item.get("toolCall", {}).get("toolName"),
-                        "arguments": item.get("toolCall", {}).get("argumentsJson"),
-                        "request": request, "diff": diff, "baseSha256": base_sha256,
-                    }, ensure_ascii=False)
-                    self.last_review = review_approval(self.reviewer, evidence, cancel)
+                    self.last_review = review_approval(self.reviewer, self._review_evidence(
+                        user_evidence, item, request, diff, base_sha256), cancel)
+                    if (previous_unknown and self.last_review.reason_code == "auto_review_rejected"
+                            and self.last_review.risk == "unknown"):
+                        self.last_review = self.last_review.model_copy(update={
+                            "reason_code": "auto_review_unresolved",
+                            "rationale": self.last_review.rationale[:1400] + " 补充说明后仍无法判断，交给你决定。",
+                        })
             fallback_review = self.last_review if (
                 mode == "auto_review" and self.last_review is not None
                 and self.last_review.decision == "reject"
@@ -242,6 +268,7 @@ class ApprovalCoordinator:
             ) else None
             if fallback_review is not None:
                 self.check_cancel(run_id, cancel)
+                self.store.mark_review_escalated(str(item["id"]), fallback_review.model_dump(mode="json"))
                 result = self.transport.request(
                     ApprovalRequest({
                         "sessionId": pending_item["sessionId"], "runId": pending_item["runId"],
@@ -255,10 +282,10 @@ class ApprovalCoordinator:
                     "source": "manual", "decision": result.decision,
                     "rationale": fallback_review.rationale[:1470] + (" 用户手动批准。" if result.decision == "approve" else " 用户未批准。"),
                 })
-            elif self.last_review is not None:
-                feedback = None
-                if self.last_review.decision == "reject":
-                    feedback = self.last_review.rationale + " Do not retry the same action or circumvent this refusal. Choose a materially safer alternative or explain the blocker."
+            elif self.last_review is not None and self.last_review.source != "manual":
+                # Model and Hook decisions explain themselves. A human decision
+                # above keeps the user's own result and feedback.
+                feedback = review_feedback(self.last_review) if self.last_review.decision == "reject" else None
                 result = ApprovalResult(self.last_review.decision, feedback)
             elif not human_confirmation:
                 result = self.transport.request(
@@ -298,6 +325,19 @@ class ApprovalCoordinator:
                 else APPROVAL_REJECTION_GUIDANCE
             ),
             item=pending_item,
+        )
+
+    @staticmethod
+    def _review_evidence(
+        user_evidence: tuple[str, ...], item: dict[str, object], request: dict[str, object],
+        diff: str, base_sha256: str | None,
+    ) -> str:
+        tool_call = item.get("toolCall", {})
+        assert isinstance(tool_call, dict)
+        return build_review_evidence(
+            user_messages=user_evidence, tool=tool_call.get("toolName"),
+            arguments=tool_call.get("argumentsJson"), request=request,
+            diff=diff, base_sha256=base_sha256,
         )
 
     def invalidate_unstarted(

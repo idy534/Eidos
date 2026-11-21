@@ -127,7 +127,7 @@ Project → ordered roots + primary root
 
 文件、Shell、workspace_read MCP、图片和 Context 环境可以使用固定的多个根。相对路径仍以主要目录为起点；次根使用绝对路径。权限快照保留全部根及原 Skill/Runtime 授权字段。Shell 的 manifest 合并各根观察。目录身份和文件版本仍由 Reader 与执行层核验。Repo Intelligence 自动索引仍以主要目录为范围。
 
-Desktop Workspace Explorer 提供根选择器。`WorkspaceExplorerApplication` 解析 Session 的固定根，或在草稿中解析持久 Project 配置。Runtime 核验请求的具体 root。目录通知携带 `workspaceRoot`，Renderer 只刷新对应根。预览、资源与文件内查找使用同一个根。`WorkspaceReader` 保留 fd-relative、`O_NOFOLLOW`、有界输出与发现规则。Renderer 继续只经过 typed IPC 访问文件。
+Desktop Workspace Explorer 提供复用全局 `Select` 原语的无框顶栏根选择器。`WorkspaceExplorerApplication` 解析 Session 的固定根，或在草稿中解析持久 Project 配置。Runtime 核验请求的具体 root。目录通知携带 `workspaceRoot`，Renderer 只刷新对应根。预览、资源与文件内查找使用同一个根。`WorkspaceReader` 保留 fd-relative、`O_NOFOLLOW`、有界输出与发现规则，并在截断前按先文件夹后文件、不区分大小写自然数字序及基名/扩展名顺序排列目录项。Renderer 继续只经过 typed IPC 访问文件。
 
 多目录项目的详细行为、Git 仓库范围和恢复范围限制见 [项目说明](features/projects.md)。
 
@@ -846,11 +846,11 @@ Worktree Session create、Session delete、Create Branch Here、retention cleanu
 
 `PermissionPolicyEvaluator` 只根据 Base、当前 Run Grant、动作请求和硬限制返回 `allow / ask / deny`。该组件不访问 SQLite、不创建 Approval，也不执行 Tool。权限类型继续使用 `AdditionalPermissionProfile`、`NetworkPermissions` 和现有文件权限条目。
 
-模型可以调用 `request_permissions` 申请网络和具体绝对路径权限。空请求会进入 Tool 参数校验错误。Runtime 会先规范化路径并检查保护边界。已有权限返回 `already_granted`；受保护权限返回 `permission_not_requestable`；可申请权限通过唯一的 `ApprovalCoordinator` 等待批准或拒绝。
+模型可以调用 `request_permissions` 申请网络和具体绝对路径权限。空请求会进入 Tool 参数校验错误。Runtime 会先规范化路径并检查保护边界。规范化会解析链接，并采用文件系统报告的实际拼写，因此大小写不同的别名按同一位置判断。已有权限返回 `already_granted`；涉及 Eidos 受保护路径的权限进入高危人工确认；路径不存在或没有唯一位置时返回 `permission_not_requestable`；可申请权限通过唯一的 `ApprovalCoordinator` 等待批准或拒绝。
 
 `request_permissions` 的工具说明包含参数结构、文件权限示例和网络权限示例。工具说明和 `permissions` 字段的 Schema 描述都明确要求 JSON 对象，不能传入 JSON 编码字符串。Runtime 保持原有参数校验，不自动解析字符串形式的权限对象。
 
-Run Grant 由当前 Run 中已批准的 `approvals.request_json` 派生。请求必须带有 `kind=permission_request` 和 `grantScope=run`。SQLite 对 Approval 的原子决策同时决定 Grant 是否存在，因此没有新的授权表和第二份状态。Run 终止后，Grant 不再生效。普通 Shell 把 Base、Run Grant 和单次动作请求一起物化为 `EffectivePermissionProfile`。Seatbelt 只消费该结果。显式 Shell 扩权仍只授权当前动作。
+Run Grant 由当前 Run 中已批准的 `approvals.request_json` 派生。请求必须带有 `kind=permission_request` 和 `grantScope=run`。SQLite 对 Approval 的原子决策同时决定 Grant 是否存在，因此没有新的授权表和第二份状态。Run 终止后，Grant 不再生效。Grant 保存批准时的规范路径。Runtime 每次读取 Grant 时重新解析；路径已删除、被替换为链接或指向其他位置时，这条 Grant 不再生效，模型需要重新申请。物化附加权限时，当前规范路径必须与申请时的路径一致，否则执行失败且不启动进程。普通 Shell 把 Base、Run Grant 和单次动作请求一起物化为 `EffectivePermissionProfile`。Seatbelt 只消费该结果。显式 Shell 扩权仍只授权当前动作。
 
 已知网络 denial 会进入同一个权限请求流程。Runtime 会在 Approval 中保存已完成的 Shell 结果。用户批准后，当前调用返回 `permission_granted_retry_required`，模型可以再次调用普通 Shell。Runtime 不会自动重跑这个命令。拒绝返回 `user_rejected_network`。相同请求的拒绝按持久化 fingerprint 去重，不会阻止不同命令或不同类型的审批。LoopGuard 的状态包含权限状态，权限变化后允许模型重新执行相同动作。
 
@@ -901,7 +901,7 @@ Seatbelt 编译器为数据目录内的当前 Workspace 保留祖先路径的 me
 
 Base/Effective Permission 的 `approvalWriteRoots` 标记用户 Skill 存储目录。字段默认空，旧权限快照仍可读取；新 Run 的产品权限工厂填入数据目录的 `skills`。Skill 激活只提供读权限，普通 Skill 的写入必须来自明确的附加授权。Runtime、PermissionPolicyEvaluator 和 Seatbelt 使用同一授权范围；精确文件授权不会开放同目录其他文件。Seatbelt 只允许获批目标祖先的 metadata 检查，不开放祖先目录内容。`skills/.system` 作为独立 protected write path 默认拒写，即使它被选作 Workspace 也需要高危人工批准具体变更；full_access 沿用已确认模式。
 
-裸 Shell 的无沙盒执行继续先审批，但执行模式本身不触发高危人工确认。auto_review 可以批准普通操作；审查证据与人工提示必须说明命令及其子进程使用宿主权限，原路径与网络限制不再强制生效。受控文件 helper 可在明确审批后不使用 Seatbelt，但 Runtime 会继续核验每个目标的保护范围、身份和版本。权限等待后的重物化、Durable Intent、最终内容验证和 Reconciliation 规则保持不变。Skill 文件修改不重写当前 Turn 的 Catalog Snapshot；后续 Turn 重新发现修改后的内容。
+裸 Shell 的无沙盒执行继续先审批，但执行模式本身不触发高危人工确认。命令、cwd 或已预览脚本按字面引用 Eidos 私有数据、Runtime、系统 Skill、受管资源或它们的上级目录时，Runtime 将请求标为高危人工确认，auto_review 不调用审查模型。这项检查只识别直接写出的路径，不能发现间接构造的路径。auto_review 可以批准普通操作；审查证据与人工提示必须说明命令及其子进程使用宿主权限，原路径与网络限制不再强制生效。受控文件 helper 可在明确审批后不使用 Seatbelt，但 Runtime 会继续核验每个目标的保护范围、身份和版本。权限等待后的重物化、Durable Intent、最终内容验证和 Reconciliation 规则保持不变。Skill 文件修改不重写当前 Turn 的 Catalog Snapshot；后续 Turn 重新发现修改后的内容。
 
 ### 产物预览与反馈
 
@@ -962,19 +962,19 @@ SQLite schema v12 增加 `skill_states`。Runtime 将技能开关、卸载标记
 
 低风险操作使用同一 ToolExecutionController 的免审批入口，继续先提交 Durable Intent，再执行和核验。用户已经审阅启用的 MCP Server，其工具明确声明 `readOnlyHint=true` 时不逐次审批，也不调用自动审查模型。缺失或非只读声明继续审批；非破坏性和幂等声明不能代替只读声明。Runtime 信任已启用服务的只读声明，但该声明不是操作系统保证。声明进入现有工具契约 Hash；MCP 继续按 external 类型保留提交窗口、取消、Sandbox、结果校验和未知结果记录。此调整不把 MCP 改为并行只读工具。旧待审批工具只接受审批标记从 true 到 false 的兼容恢复，参数、结果、来源 Hash 及其他契约字段必须保持一致；新工具调用继续使用严格的当前契约绑定。
 
-内置 `web_search` 使用用户选择的默认服务授权，不逐次审批，也不产生 Shell 网络 Grant。Skill 安装的下载阶段复用已有的基础网络权限或当前 Run 网络 Grant；没有网络授权时继续申请下载审批，最终安装仍审批。Shell 对普通宿主文件的读取已经由默认 Seatbelt 放行，显式申请相同读取权限直接返回 `already_granted`；请求涉及受保护读取范围、额外写入、联网或沙盒外执行时继续按原权限判断。文件工具的读取范围保持不变。新规则不扩展单次批准的范围，Run Grant 仍只来自 `permission_request + grantScope=run`。旧版可安全恢复的待审批记录继续处理原决定；存在未完成 Intent 时，系统保留原中断与未知结果记录，不自动重放操作。
+内置 `web_search` 使用用户选择的默认服务授权，不逐次审批，也不产生 Shell 网络 Grant。Skill 安装的下载阶段只为审阅取回公开内容，不单独审批；最终安装审批展示内容，一次决定覆盖两个步骤。旧版遗留的下载待审批仍按原审批恢复。Shell 对普通宿主文件的读取已经由默认 Seatbelt 放行，显式申请相同读取权限直接返回 `already_granted`；请求涉及受保护读取范围、额外写入、联网或沙盒外执行时继续按原权限判断。文件工具的读取范围保持不变。Run Grant 来自带 `grantScope=run` 和 `permissions` 的已批准记录：`permission_request`，以及请求审批模式下的 `networkAccess`/`gitWriteAccess` 命令审批和工作区外已有文件的写入审批。旧版可安全恢复的待审批记录继续处理原决定；存在未完成 Intent 时，系统保留原中断与未知结果记录，不自动重放操作。
 
-Composer 提供 `manual`（请求审批，默认）、`auto_review`（替我审批，推荐）和 `full_access`（完全访问，风险）。选择只影响下一次创建的 Run。已有 Run 的会话从同一个最近 Run 读取模型和审批模式。Draft 会话在首个 Run 被 Runtime 接受后，Renderer 将返回 Run 的模型和审批模式保存到 `localStorage`，作为新会话默认值。Draft 和没有 Run 的会话使用这组默认值；没有有效默认值时，审批模式使用 `manual`，模型使用列表中的第一个模型。设置控件的临时修改只影响当前会话。已有会话的后续 Run 不会改写新会话默认值。
+Composer 提供 `manual`（请求审批）、`auto_review`（替我审批，推荐，新用户默认）和 `full_access`（完全访问，风险）。选择只影响下一次创建的 Run。已有 Run 的会话从同一个最近 Run 读取模型和审批模式。Draft 会话在首个 Run 被 Runtime 接受后，Renderer 将返回 Run 的模型和审批模式保存到 `localStorage`，作为新会话默认值。Draft 和没有 Run 的会话使用这组默认值；没有有效默认值时，审批模式使用 `auto_review`，模型使用列表中的第一个模型。已保存的默认值保持不变。设置控件的临时修改只影响当前会话。已有会话的后续 Run 不会改写新会话默认值。
 
 审批模式选择器位于 Composer 底栏左侧，采用无外边框的自定义下拉菜单（ApprovalModeSelector），与模型选择器保持一致的视觉风格。用户在下拉菜单切换至完全访问模式时，由 Desktop 弹出应用内风险确认对话框（ConfirmDialog）；确认后切换为完全访问，任务启动前不再重复弹窗。Main 在完全访问请求中发送 `fullAccessConfirmation=full-access-v1`；Runtime DTO 拒绝缺少确认版本的完全访问请求。保存的默认值可以是 `full_access`，后续新 Draft 会沿用该模式，载入默认值时不会再次弹出确认框。模型和 Tool 参数没有切换模式的入口。重新回答和编辑后重发会携带 Composer 当前选择的审批模式。Main 沿用普通发送的完全访问确认标记，Runtime 通过同一个 Run 创建入口固定模式和权限。旧调用方省略模式时，Runtime 从 SQLite 读取原 Run 的模式，保留自动审批；原 Run 为完全访问时，旧调用仍按人工模式创建新 Run。原 Run 的模式和权限快照保持不变。
 
 Run 固定模式、基础权限、Sandbox Policy 和确认版本。SQLite v13 在 `runs` 增加 `approval_mode`，旧 Run 默认为 `manual`；该版本在 `approvals` 增加 `review_json`，旧审批默认为空。迁移沿用事务和失败回滚。Runtime 在执行前检查 Run 模式与权限快照一致。当前自定义权限没有配置、解析器或 UI；后续可以在既有 Run 权限快照工厂和 PermissionPolicyEvaluator 中接入 `config.toml`，本期不接受 `custom` 模式。
 
-请求审批模式继续使用原有审批入口。自动模式只接管原本进入 ApprovalCoordinator 的动作，普通 Workspace 写入和默认沙盒 Shell 不额外调用模型。Runtime 将 Eidos 私有数据与保密路径、Runtime、系统 Skill 和受管资源修改保留为高危人工请求。auto_review 对这些请求不调用审查模型；用户通过 danger 样式的审批窗口决定。普通 Git、项目 metadata 与沙盒外执行按实际影响进入普通审批。参数无效、身份变化、版本冲突、取消和结果不确定仍按实际错误处理。自动审批覆盖文件扩权、Shell 扩权、权限 Grant、网络拒绝后的申请，以及仍需审批的 MCP 和 Eidos-state 操作。Coordinator 先持久化 pending，再使用当前 Run 固定的模型进行独立请求。请求不包含主执行模型的对话状态，也不开放可执行工具。支持 Function Tool 的模型通过一个结果 Schema 返回判断；其他模型返回严格 JSON。Runtime 验证完整返回结构、风险和理由，未知风险不能批准。
+请求审批模式继续使用原有审批入口。自动模式只接管原本进入 ApprovalCoordinator 的动作，普通 Workspace 写入和默认沙盒 Shell 不额外调用模型。Runtime 将 Eidos 私有数据与保密路径、Runtime、系统 Skill 和受管资源修改保留为高危人工请求。auto_review 先让审查模型分诊：用户消息没有要求这一受保护范围时，模型可以直接拒绝，不打扰用户；模型允许、无法判断或分诊失败时，用户通过 danger 样式的审批窗口决定。模型不能批准这类请求。普通 Git、项目 metadata 与沙盒外执行按实际影响进入普通审批。参数无效、身份变化、版本冲突、取消和结果不确定仍按实际错误处理。自动审批覆盖文件扩权、Shell 扩权、权限 Grant、网络拒绝后的申请，以及仍需审批的 MCP 和 Eidos-state 操作。Coordinator 先持久化 pending，再使用当前 Run 固定的模型进行独立请求。请求不包含主执行模型的对话状态，也不开放可执行工具。支持 Function Tool 的模型通过一个结果 Schema 返回判断；其他模型返回严格 JSON。Runtime 验证完整返回结构、风险和理由，未知风险不能批准。模型只能自动批准 low 和 medium 风险；模型允许但评估为 high 或 critical 的操作转给用户决定。
 
-审查证据包括当前 Run 及之前最近 32 条用户消息、具体 Tool 参数、权限请求和完整 Diff。Shell 普通自动审批还包含真实执行边界、Eidos 保护路径和最多 3 个、每个最多 8 KiB 的本地脚本预览。Runtime 在启动前复检脚本版本。系统不把脚本预览当作完整依赖图，内部版本不进入审查模型。具体范围和旧待审批兼容规则见 [审批策略](features/approval-policy.md)。Base Hash 等工程校验值仅用于内部检查，不进入审查模型上下文。策略把项目内容、工具输出和操作理由作为不可信数据。请求最多 48 KiB、答复最多 8 KiB、审查超时 60 秒、理由最多 400 字符。明确风险拒绝保留；无法完成可信审查或未知风险时通过原审批通道交由用户决定。请求指纹纳入用户证据，新用户指令可触发重新评估，模型重复相同请求仍去重。
+审查证据包括当前 Run 及之前最近 32 条用户消息、具体 Tool 参数、权限请求和完整 Diff。用户消息按从新到旧保留，每条最多 4 KiB 首尾预览，总计最多 20 KiB；超出部分标注省略，避免长粘贴内容让后续审查全部超限。Shell 普通自动审批还包含真实执行边界、Eidos 保护路径和最多 3 个、每个最多 8 KiB 的本地脚本预览。Runtime 在启动前复检脚本版本。系统不把脚本预览当作完整依赖图，内部版本不进入审查模型。具体范围和旧待审批兼容规则见 [审批策略](features/approval-policy.md)。Base Hash 等工程校验值仅用于内部检查，不进入审查模型上下文。策略把项目内容、工具输出和操作理由作为不可信数据。请求最多 48 KiB、答复最多 8 KiB、理由最多 400 字符。超过上限时先把 Diff 和参数改为首尾预览，仍超限才让模型拆小操作。审查没有固定总时限，依靠 Provider 的连接与读取超时和用户取消；无效答复重试一次。明确风险拒绝保留并去重；审查失败、不可用或证据超限作为“暂时无法批准”返回模型，可以重试，不询问用户。首次未知风险把缺失证据返回模型；同一操作再次无法判断时交由用户决定。请求指纹纳入用户证据，新用户指令可触发重新评估，模型重复相同请求仍去重。
 
-审批决定、理由、风险、模型标识、策略及证据 Hash、可取得的 Token Usage 和耗时写入原 Approval 记录。该记录与 Tool 状态、Run 状态、Event/Outbox 同事务提交。事务验证审批来源与 Run 模式一致。取消优先于迟到判断。Runtime 重启后不重新采样未完成的自动审批，保留中断原因和未获批准事实，并交由用户决定原请求。Desktop 在自动审查时通过位于底栏上方的状态胶囊（ApprovalStatusBanner）展示“模型正在审查操作…”与动效进度，并保留取消入口；Feed 展示审批状态与拒绝理由；实际决定来源保存在 Approval 记录中。ToolResult 区分模型拒绝和人工拒绝。审查用量保存在 Approval 中，当前 Context Usage 展示仍只反映主模型上下文。
+审批决定、理由、风险、模型标识、策略及证据 Hash、可取得的 Token Usage 和耗时写入原 Approval 记录。该记录与 Tool 状态、Run 状态、Event/Outbox 同事务提交。事务验证审批来源与 Run 模式一致。取消优先于迟到判断。Runtime 重启后重新审查未完成的自动审批；审查没有副作用。已经转给用户的请求在待审批记录中保存 `reviewEscalation`，重启后仍由用户决定；待处理的高危人工确认同样如此。Desktop 在自动审查时通过位于底栏上方的状态胶囊（ApprovalStatusBanner）展示“模型正在审查操作…”与动效进度，并保留取消入口；Feed 展示审批状态与拒绝理由；实际决定来源保存在 Approval 记录中。ToolResult 区分模型拒绝和人工拒绝。审查用量保存在 Approval 中，当前 Context Usage 展示仍只反映主模型上下文。
 
 完全访问使用 `fullAccess` 权限快照，启用网络并移除 Eidos 路径 deny。Shell、受控文件 helper 和 MCP 执行不使用 Seatbelt。所有操作直接执行，不创建逐项 Approval，不进入 waiting_approval，不记录模式授权，也不调用审查模型或人工窗口。共享执行入口仍先提交 Durable Intent，再执行和核验。模型不暴露 request_permissions，并被指示使用普通参数。历史或冗余的网络、Git 和沙盒权限 request 参数按完全访问模式直接执行。历史的完全访问审批卡片不再显示。文件工具允许绝对路径访问，但仍拒绝不支持的链接和特殊文件；Shell 使用当前 macOS 用户的权限，不能绕过操作系统 ACL、TCC 或只读卷。该模式没有管理员提权，也没有无界输出或自动重放不确定副作用。
 

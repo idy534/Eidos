@@ -26,7 +26,16 @@ class ApprovalReview(EidosFrozenStrictModel):
 
     @property
     def allows_manual_fallback(self) -> bool:
+        """The review ends with a question to the user, not a model decision."""
+        return self.reason_code in {"auto_review_requires_human", "auto_review_unresolved"}
+
+    @property
+    def retryable(self) -> bool:
+        """No judgement was reached; the same request may be reviewed again.
+
+        Earlier releases recorded these codes too, so they stay recognized.
+        """
         return self.reason_code in {
-            "auto_review_unavailable", "auto_review_interrupted",
-            "auto_review_input_too_large", "auto_review_timeout", "auto_review_failed",
+            "auto_review_failed", "auto_review_unavailable", "auto_review_input_too_large",
+            "auto_review_timeout", "auto_review_interrupted",
         } or (self.reason_code == "auto_review_rejected" and self.risk == "unknown")
