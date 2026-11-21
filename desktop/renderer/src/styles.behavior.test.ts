@@ -343,5 +343,8 @@ describe("windows platform styles", () => {
     expect(styles).toMatch(/\.automation-form select\s*\{[^}]*background-image:\s*url\(/s);
     expect(styles).toMatch(/\.git-local-branch-control select,\s*\.git-advanced-controls select\s*\{[^}]*background-image:\s*url\(/s);
     expect(styles).toMatch(/\.mcp-create-body select\s*\{[^}]*background-image:\s*url\(/s);
+    expect(styles).toMatch(/\.workspace-tree-root-header\s*\{[^}]*border-bottom:\s*1px solid var\(--line\);/s);
+    expect(styles).toMatch(/\.workspace-tree-root-control select\s*\{[^}]*border:\s*0;[^}]*background:\s*transparent;/s);
+    expect(styles).toMatch(/\.workspace-tree-root-control:has\(select:open\)\s*\{[^}]*background:\s*var\(--surface-selected\);/s);
   });
 });

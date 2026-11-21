@@ -14,7 +14,8 @@ import type {
 } from "../contracts.js";
 import { runtimeBusinessCode, userFacingError } from "../session-state.js";
 import { useArtifacts, usePreviewUrl, type WorkspaceFilePosition } from "./ArtifactContext.js";
-import { ContextMenu, DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
+import { ContextMenu } from "./DropdownMenu.js";
+import { Select } from "./Select.js";
 import { ToastContainer } from "./ToastContainer.js";
 import { FinderIcon, CopyIcon, ExternalLinkIcon, CloseIcon, CloseOthersIcon } from "./MenuIcons.js";
 import { WorkspaceFileIcon, WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
@@ -527,21 +528,6 @@ function WorkspaceExplorerContent({
   const activePreview = activePreviewPath ? previews[activePreviewPath] : undefined;
 
   const currentRoot = roots?.find((entry) => entry.id === selectedRootId) ?? roots?.[0];
-  const currentRootName = (currentRoot?.path ? pathBasename(currentRoot.path) : undefined) ?? currentRoot?.id ?? "";
-
-  const rootMenuItems: DropdownMenuItem[] = useMemo(() => (
-    (roots ?? []).map((entry, index) => {
-      const name = pathBasename(entry.path) || entry.id;
-      const label = `${name}${index === 0 ? " · 主要" : entry.shared ? " · 共享" : ""}`;
-      return {
-        key: entry.id,
-        label,
-        checked: entry.id === selectedRootId,
-        disabled: entry.id === selectedRootId,
-        onClick: () => onSelectRoot?.(entry.id),
-      };
-    })
-  ), [roots, selectedRootId, onSelectRoot]);
 
   return (
     <section
@@ -553,20 +539,49 @@ function WorkspaceExplorerContent({
       <aside className="workspace-tree-pane" aria-label="文件树">
         {roots && roots.length > 1 && (
           <div className="workspace-tree-root-header">
-            <DropdownMenu
-              className="workspace-tree-root-dropdown"
-              menuClassName="workspace-tree-root-menu"
-              label="项目文件夹"
-              triggerAriaLabel="选择项目文件夹"
-              trigger={(
-                <span className="workspace-tree-root-trigger" title={`当前文件夹：${currentRoot?.path ?? ""}`}>
-                  <span className="workspace-tree-root-icon" aria-hidden="true"><WorkspaceFolderIcon /></span>
-                  <span className="workspace-tree-root-label">{currentRootName}</span>
-                  <span className="dropdown-caret" aria-hidden="true">▾</span>
-                </span>
-              )}
-              items={rootMenuItems}
-            />
+            <label
+              className="workspace-tree-root-control"
+              title={currentRoot?.path ? `当前文件夹：${currentRoot.path}` : undefined}
+            >
+              <span className="sr-only">选择项目文件夹</span>
+              <span className="workspace-tree-root-icon" aria-hidden="true">
+                <WorkspaceFolderIcon />
+              </span>
+              <Select
+                className="workspace-tree-root-select"
+                name="workspace-root"
+                aria-label="选择项目文件夹"
+                value={currentRoot?.id ?? ""}
+                onChange={(event) => {
+                  const nextId = event.target.value;
+                  if (nextId && nextId !== selectedRootId) onSelectRoot?.(nextId);
+                }}
+              >
+                {roots.map((entry) => {
+                  const name = pathBasename(entry.path) || entry.id;
+                  const suffix = entry.shared ? " · 共享" : "";
+                  return (
+                    <option key={entry.id} value={entry.id}>
+                      {name}{suffix}
+                    </option>
+                  );
+                })}
+              </Select>
+              <span className="workspace-tree-root-chevron" aria-hidden="true">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </span>
+            </label>
           </div>
         )}
         {error && (

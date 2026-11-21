@@ -7,6 +7,7 @@ import heapq
 import hashlib
 import os
 from pathlib import Path
+import re
 import stat
 import threading
 import time
@@ -85,6 +86,53 @@ _ASSET_MIMES = {
     ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript",
     ".json": "application/json", ".woff": "font/woff", ".woff2": "font/woff2",
 }
+
+
+_ASCII_DIGITS_RE = re.compile(r"[0-9]+")
+
+
+def _split_name_for_sort(
+    name: str,
+    kind: Literal["file", "directory"],
+) -> tuple[str, str]:
+    if kind == "directory":
+        return name, ""
+    dot = name.rfind(".")
+    if dot <= 0 or not name[:dot].strip("."):
+        return name, ""
+    return name[:dot], name[dot + 1:]
+
+
+def _natural_sort_tokens(value: str) -> tuple[tuple[int, int], ...]:
+    folded = value.casefold()
+    tokens: list[tuple[int, int]] = []
+    position = 0
+    for match in _ASCII_DIGITS_RE.finditer(folded):
+        start, end = match.span()
+        if start > position:
+            for char in folded[position:start]:
+                code = ord(char)
+                tokens.append((0 if code < 0x30 else 2, code))
+        tokens.append((1, int(match.group(0))))
+        position = end
+    if position < len(folded):
+        for char in folded[position:]:
+            code = ord(char)
+            tokens.append((0 if code < 0x30 else 2, code))
+    return tuple(tokens)
+
+
+def _directory_entry_sort_key(
+    entry: WorkspaceDirectoryEntry,
+) -> tuple[int, tuple[tuple[int, int], ...], tuple[tuple[int, int], ...], str]:
+    kind_rank = 0 if entry.kind == "directory" else 1
+    stem, extension = _split_name_for_sort(entry.name, entry.kind)
+    return (
+        kind_rank,
+        _natural_sort_tokens(stem),
+        _natural_sort_tokens(extension),
+        entry.name,
+    )
 
 
 def preview_mime(suffix: str) -> str | None:
@@ -218,7 +266,7 @@ class WorkspaceReader:
                     include_ignored_directories,
                     allow_metadata,
                 ),
-                key=lambda item: item.name.encode("utf-8"),
+                key=_directory_entry_sort_key,
             )
         finally:
             os.close(directory_fd)

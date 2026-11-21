@@ -127,7 +127,7 @@ Project → ordered roots + primary root
 
 文件、Shell、workspace_read MCP、图片和 Context 环境可以使用固定的多个根。相对路径仍以主要目录为起点；次根使用绝对路径。权限快照保留全部根及原 Skill/Runtime 授权字段。Shell 的 manifest 合并各根观察。目录身份和文件版本仍由 Reader 与执行层核验。Repo Intelligence 自动索引仍以主要目录为范围。
 
-Desktop Workspace Explorer 提供根选择器。`WorkspaceExplorerApplication` 解析 Session 的固定根，或在草稿中解析持久 Project 配置。Runtime 核验请求的具体 root。目录通知携带 `workspaceRoot`，Renderer 只刷新对应根。预览、资源与文件内查找使用同一个根。`WorkspaceReader` 保留 fd-relative、`O_NOFOLLOW`、有界输出与发现规则。Renderer 继续只经过 typed IPC 访问文件。
+Desktop Workspace Explorer 提供复用全局 `Select` 原语的无框顶栏根选择器。`WorkspaceExplorerApplication` 解析 Session 的固定根，或在草稿中解析持久 Project 配置。Runtime 核验请求的具体 root。目录通知携带 `workspaceRoot`，Renderer 只刷新对应根。预览、资源与文件内查找使用同一个根。`WorkspaceReader` 保留 fd-relative、`O_NOFOLLOW`、有界输出与发现规则，并在截断前按先文件夹后文件、不区分大小写自然数字序及基名/扩展名顺序排列目录项。Renderer 继续只经过 typed IPC 访问文件。
 
 多目录项目的详细行为、Git 仓库范围和恢复范围限制见 [项目说明](features/projects.md)。
 
