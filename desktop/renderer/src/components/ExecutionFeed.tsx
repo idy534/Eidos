@@ -65,6 +65,13 @@ import type { ContextCompactionActivity, ModelRetryActivity } from "../../../sha
 import type { GoalActivity } from "../../../shared/goals.js";
 import { GoalActivityMarkers, GoalRunMarker } from "./goals/GoalFeedMarkers.js";
 import { TeamRunMarker } from "./teams/TeamFeedMarkers.js";
+import {
+  TeamToolItem,
+  isTeamCoordinationTool,
+  isTeamTool,
+  teamToolIcon,
+  teamToolSummary,
+} from "./teams/TeamToolFeed.js";
 import { GoalMarkIcon } from "./goals/GoalIcons.js";
 import {
   buildSearchTextResults,
@@ -119,6 +126,7 @@ interface Props {
   allowFeedback?: boolean | undefined;
   allowRegenerate?: boolean | undefined;
   allowEditResend?: boolean | undefined;
+  showTeamRunMarkers?: boolean | undefined;
 }
 
 interface Segment {
@@ -199,6 +207,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   allowFeedback = true,
   allowRegenerate = true,
   allowEditResend = true,
+  showTeamRunMarkers = true,
 }: Props) {
   const {
     feedRef, contentRef, atBottom, following, scheduleFollow, jumpToBottom, pauseFollowing,
@@ -337,7 +346,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
             return (
               <Fragment key={runId}>
                 <GoalRunMarker origin={run.goalOrigin} />
-                <TeamRunMarker origin={run.teamOrigin} />
+                {showTeamRunMarkers && <TeamRunMarker origin={run.teamOrigin} />}
                 {segments.map((segment, index) => (
                   <RunSegment
                     key={`${runId}:${segment.user?.id ?? index}`}
@@ -741,7 +750,7 @@ export function groupProcessEntries(entries: readonly ProcessEntry[]): ProcessNo
   return nodes;
 }
 
-type ToolGroupKind = "read" | "image" | "search" | "edit" | "shell" | "other";
+type ToolGroupKind = "read" | "image" | "search" | "edit" | "shell" | "team" | "other";
 
 function toolGroupKind(toolName: string): ToolGroupKind {
   if (toolName === "run_shell") return "shell";
@@ -749,11 +758,12 @@ function toolGroupKind(toolName: string): ToolGroupKind {
   if (toolName === "view_image") return "image";
   if (["search_text", "search_text_wait", "search_history", "tool_search", "web_search"].includes(toolName)) return "search";
   if (["write_file", "apply_patch", "delete_file"].includes(toolName)) return "edit";
+  if (isTeamTool(toolName)) return "team";
   return "other";
 }
 
 export function summarizeToolGroup(items: readonly Item[]): { parts: Array<{ kind: ToolGroupKind; text: string }>; failed: number } {
-  const counts: Record<ToolGroupKind, number> = { read: 0, image: 0, search: 0, edit: 0, shell: 0, other: 0 };
+  const counts: Record<ToolGroupKind, number> = { read: 0, image: 0, search: 0, edit: 0, shell: 0, team: 0, other: 0 };
   const editedPaths = new Set<string>();
   let editsWithoutPath = 0;
   let failed = 0;
@@ -776,6 +786,7 @@ export function summarizeToolGroup(items: readonly Item[]): { parts: Array<{ kin
   if (counts.search) parts.push({ kind: "search", text: `搜索 ${counts.search} 次` });
   if (counts.edit) parts.push({ kind: "edit", text: `编辑 ${counts.edit} 个文件` });
   if (counts.shell) parts.push({ kind: "shell", text: `运行 ${counts.shell} 条命令` });
+  if (counts.team) parts.push({ kind: "team", text: `团队协作 ${counts.team} 次` });
   if (counts.other) parts.push({ kind: "other", text: `${parts.length ? "其他" : "调用"} ${counts.other} 项工具` });
   return { parts, failed };
 }
@@ -2877,6 +2888,10 @@ const ToolItem = memo(function ToolItem({
     );
   }
 
+  if (isTeamCoordinationTool(toolCall.toolName)) {
+    return <TeamToolItem item={item} toolCall={toolCall} details={details} />;
+  }
+
   const toolResult = parseObject(toolCall.resultJson);
   if (toolCall.toolName === "automation" && toolCall.provenance?.kind === "builtin" && toolCall.provenance.sourceId === "eidos.automation" && toolResult.outcome === "success") {
     const data = toolResult.data && typeof toolResult.data === "object" ? toolResult.data as Record<string, unknown> : {};
@@ -3086,13 +3101,14 @@ const ToolItem = memo(function ToolItem({
   const showSummary = (!isDeclareOutputs || isError) && !isRedundantFileSummary;
   const browserTool = browserToolName(toolCall.toolName);
   const filePaths = toolFilePaths(toolCall);
-  const patchFileHeader = toolCall.toolName === "apply_patch" && item.kind === "file_change"
+  const patchFileHeader = (toolCall.toolName === "apply_patch" || toolCall.toolName === "team_integrate")
+    && item.kind === "file_change"
     && Boolean(toolCall.changeDiff || toolCall.changeDiffHash);
 
   return (
     <details className="tool-item" open={details.open} onToggle={details.onToggle}>
       <summary>
-        <span className="tool-icon" aria-hidden="true">{toolIcon(toolCall.toolName)}</span>
+        <span className="tool-icon" aria-hidden="true">{toolIcon(toolCall.toolName, toolCall.argumentsJson, toolCall.resultJson)}</span>
         <span>{toolSummary(toolCall, item.status, agents, mcpNames, searchQueries)}</span>
       </summary>
       {details.mounted && <div className="tool-body">
@@ -3643,6 +3659,7 @@ function toolSummary(
   mcpNames: ReadonlyMap<string, string> = new Map(),
   searchQueries: ReadonlyMap<string, SearchTextQuery> = NO_SEARCH_TEXT_QUERIES,
 ): string {
+  if (isTeamTool(toolCall.toolName)) return teamToolSummary(toolCall, status);
   const browserTool = browserToolName(toolCall.toolName);
   if (browserTool) return browserToolSummary(toolCall, status, browserTool);
   if (isMcpTool(toolCall)) {
@@ -3946,7 +3963,8 @@ function DefaultToolIcon() {
   );
 }
 
-function toolIcon(name: string): ReactNode {
+function toolIcon(name: string, argumentsJson?: string, resultJson?: string): ReactNode {
+  if (isTeamTool(name)) return teamToolIcon(name, argumentsJson, resultJson);
   if (name === "automation") return <AutomationsIcon />;
   if (name === "update_goal") return <GoalMarkIcon width={14} height={14} />;
   if (name === "web_search") return <WebSearchIcon />;

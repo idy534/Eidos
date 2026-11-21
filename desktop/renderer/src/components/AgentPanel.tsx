@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentSummary, CollaborationState } from "../../../shared/collaboration.generated.js";
 import type { ApprovalRequest, Item, Run, SessionSnapshot, ModelOption } from "../contracts.js";
 import { ApprovalComposer } from "./ApprovalComposer.js";
@@ -287,6 +287,8 @@ export function AgentTranscript({
   onOpenPlan,
   workspaceRoot,
   models,
+  showTeamRunMarkers = true,
+  refreshNonce = 0,
 }: {
   agent: TranscriptSubject;
   approvals: ApprovalRequest[];
@@ -300,9 +302,12 @@ export function AgentTranscript({
   onOpenPlan?: (() => void) | undefined;
   workspaceRoot?: string | undefined;
   models?: readonly ModelOption[] | undefined;
+  showTeamRunMarkers?: boolean | undefined;
+  refreshNonce?: number | undefined;
 }) {
   const [snapshot, setSnapshot] = useState<SessionSnapshot>();
   const [error, setError] = useState("");
+  const reloadRef = useRef<(() => void) | undefined>(undefined);
 
   useEffect(() => {
     setSnapshot(undefined);
@@ -371,16 +376,22 @@ export function AgentTranscript({
       }
     };
 
+    reloadRef.current = () => { void load(); };
     void load();
     const unsubscribe = window.eidosRuntime.onNotification((notification) => {
       if ("sessionId" in notification.params && notification.params.sessionId === agent.sessionId) scheduleLoad();
     });
     return () => {
       disposed = true;
+      reloadRef.current = undefined;
       clearTimeout(timer);
       unsubscribe();
     };
   }, [agent.sessionId, agent.runId]);
+
+  useEffect(() => {
+    if (refreshNonce > 0) reloadRef.current?.();
+  }, [refreshNonce]);
 
   const childApprovals = useMemo(
     () => approvals.filter((request) => request.sessionId === agent.sessionId),
@@ -473,6 +484,7 @@ export function AgentTranscript({
           allowFeedback={false}
           allowRegenerate={false}
           allowEditResend={false}
+          showTeamRunMarkers={showTeamRunMarkers}
         />
       </div>
     </section>

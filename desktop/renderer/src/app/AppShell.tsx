@@ -2034,7 +2034,10 @@ export function AppShell({ runtime }: AppShellProps) {
                   run={activeRun}
                   approval={approvals.find((a) => a.runId === activeRun?.id)}
                   pendingUserInput={planning.pendingQuestion}
-                  pendingRoster={teams.proposal && activeRun?.id === teams.proposal.runId && activeRun.status === "waiting_input"
+                  // The lead waits in waiting_input, or stays running when it keeps a background
+                  // shell; Runtime only reports a proposal while it is undecided and its Run active.
+                  pendingRoster={teams.proposal && activeRun?.id === teams.proposal.runId
+                    && (activeRun.status === "waiting_input" || activeRun.status === "running")
                     ? <TeamRoster key={teams.proposal.id} proposal={teams.proposal}
                         approvalMode={activeRun.approvalMode ?? approvalMode}
                         modelLabel={feedModels.find((model) => model.id === activeRun.modelId)?.name ?? activeRun.modelId}

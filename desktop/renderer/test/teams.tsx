@@ -54,7 +54,7 @@ const messages = [
   { id: "d", seq: 4, channel: "board", author: "user", authorKind: "user", recipients: ["tester"], content: "测试里也覆盖一下令牌过期的情况。", createdAt: Date.now() - 30000 },
 ];
 const noop = () => {};
-type View = "entry" | "roster" | "team";
+type View = "entry" | "roster" | "team" | "team-wide";
 declare global { interface Window { teamTest: { show: (value: View) => void } } }
 const state: { value: TeamSessionState } = { value: { team, usage: [
   { member: "builder", inputTokens: 18200, outputTokens: 4100 }, { member: "tester", inputTokens: 9100, outputTokens: 2200, incomplete: true },
@@ -84,20 +84,22 @@ function Preview() {
   const [input, setInput] = useState("重构登录模块，拆分接口与界面，并补齐失败路径测试");
   const [access, setAccess] = useState<ApprovalMode>("manual");
   window.teamTest = { show: setView };
-  return <main className="team-preview">
-    <section className="team-preview__session">
-      <article><p>先梳理登录相关的调用方，再按模块组建团队。</p></article>
-      {view === "roster"
-        ? <TeamRoster proposal={proposal} approvalMode={access === "full_access" ? "full_access" : access} modelLabel="DeepSeek-V4.1-Flash"
-            worktreeAvailable busy={false} error={undefined} onDecide={() => setView("team")} />
-        : <InputContextProvider sessionId={sessionId} workspaceRoot="/workspace" ready onAdd={noop} onSettings={noop}>
-            <Composer composerMode="idle" activeRun={undefined} input={input} workMode={mode} onWorkModeChange={setMode}
-              teamAvailable={view === "entry"} approvalMode={access} onApprovalModeChange={setAccess} modelList={models} selectedModelId="model"
-              contextUsage={undefined} modelConfigured modelLoading={false} isSubmitting={false} submitKind={undefined}
-              cancelingRunId={undefined} onInputChange={setInput} onSubmit={noop} onCancel={noop} onModelChange={noop} onOpenModelSettings={noop} />
-          </InputContextProvider>}
-    </section>
-    {view === "team" && <aside className="team-preview__dock"><Dock /></aside>}
+  return <main className={`team-preview${view === "team-wide" ? " team-preview--wide" : ""}`}>
+    {view !== "team-wide" && (
+      <section className="team-preview__session">
+        <article><p>先梳理登录相关的调用方，再按模块组建团队。</p></article>
+        {view === "roster"
+          ? <TeamRoster proposal={proposal} approvalMode={access === "full_access" ? "full_access" : access} modelLabel="DeepSeek-V4.1-Flash"
+              worktreeAvailable busy={false} error={undefined} onDecide={() => setView("team")} />
+          : <InputContextProvider sessionId={sessionId} workspaceRoot="/workspace" ready onAdd={noop} onSettings={noop}>
+              <Composer composerMode="idle" activeRun={undefined} input={input} workMode={mode} onWorkModeChange={setMode}
+                teamAvailable={view === "entry"} approvalMode={access} onApprovalModeChange={setAccess} modelList={models} selectedModelId="model"
+                contextUsage={undefined} modelConfigured modelLoading={false} isSubmitting={false} submitKind={undefined}
+                cancelingRunId={undefined} onInputChange={setInput} onSubmit={noop} onCancel={noop} onModelChange={noop} onOpenModelSettings={noop} />
+            </InputContextProvider>}
+      </section>
+    )}
+    {(view === "team" || view === "team-wide") && <aside className="team-preview__dock"><Dock /></aside>}
   </main>;
 }
 createRoot(document.getElementById("root")!).render(<Preview />);
