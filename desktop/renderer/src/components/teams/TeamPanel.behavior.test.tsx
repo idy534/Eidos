@@ -472,3 +472,32 @@ it("hides workspace selectors and keeps every member shared when the Session has
   expect(decide).toHaveBeenCalledWith(expect.objectContaining({ workspaces: { scout: "shared" },
     approvalMode: "full_access", fullAccessConfirmation: "full-access-v1" }));
 });
+
+it("hides the header status badge when an active team has no running members and restores it when work resumes or status changes", async () => {
+  const idleMembers: TeamView["members"] = team.members.map((entry) => ({ ...entry, runStatus: "succeeded" }));
+  state = { team: { ...team, status: "active", members: idleMembers }, usage: [] };
+  const { rerender } = render(<Harness />);
+  expect(await screen.findByText("接口已完成")).toBeInTheDocument();
+  expect(document.querySelector(".team-panel__status-wrap")).not.toBeInTheDocument();
+  expect(screen.queryByText("运行中")).not.toBeInTheDocument();
+
+  // When a member begins executing, the running status badge appears.
+  state = { team, usage: [] };
+  act(() => { for (const listener of listeners) listener({ method: "team/updated", params: { sessionId } }); });
+  await waitFor(() => expect(document.querySelector(".team-panel__status-wrap")).toBeInTheDocument());
+  expect(screen.getByText("运行中")).toBeInTheDocument();
+
+  // Non-active lifecycle statuses stay visible even when no members are running.
+  for (const [status, label] of [["paused", "已暂停"], ["dissolving", "正在解散"], ["dissolved", "已解散"]] as const) {
+    state = { team: { ...team, status, members: idleMembers }, usage: [] };
+    act(() => { for (const listener of listeners) listener({ method: "team/updated", params: { sessionId } }); });
+    await waitFor(() => expect(screen.getByText(label)).toBeInTheDocument());
+    expect(document.querySelector(".team-panel__status-wrap")).toBeInTheDocument();
+  }
+
+  // Re-rendering with active + idle hides the badge again.
+  state = { team: { ...team, status: "active", members: idleMembers }, usage: [] };
+  act(() => { for (const listener of listeners) listener({ method: "team/updated", params: { sessionId } }); });
+  rerender(<Harness />);
+  await waitFor(() => expect(document.querySelector(".team-panel__status-wrap")).not.toBeInTheDocument());
+});
