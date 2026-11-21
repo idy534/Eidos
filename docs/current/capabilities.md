@@ -623,7 +623,7 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 
 Eidos 使用全局/项目范围的 `MEMORY.md` 索引和主题 Markdown 笔记。模型在当前 Run 中通过 `memory_read`、`memory_search`、`memory_edit` 即时读取和保存，正文支持分页与版本 CAS。Runtime 自动记录来源和更新版本，自动模式允许更正用户笔记。普通整理采用可恢复归档；彻底遗忘和关闭记忆继续执行隐私撤销。聊天来源变化不再连带撤销笔记。v42 已移除会话级临时记忆模式，所有会话按所属范围的记忆模式工作。记忆页只保留范围、模式、笔记编辑、来源/版本及整个范围的 Markdown 导出，完整备份移至运行时的本地数据区。v40 按用户要求清除旧记忆，不转换旧内容；后台模型整理、候选确认、历史回填和预算任务已移除。详见 [docs/current/features/memory.md](features/memory.md)。
 
-审批支持高危人工确认。manual 与 auto_review 遇到受保护数据、Runtime、系统 Skill、非专用 Git 路径扩权或显式取消沙盒保护时，展示 danger 样式和具体范围，由用户决定。批准后系统执行对应操作；相邻路径、身份和版本核验继续生效。full_access 不请求或记录逐项审批，模型使用默认工具参数直接执行。
+审批支持高危人工确认。manual 与 auto_review 遇到受保护数据、Runtime、系统 Skill 或受管资源的扩权，以及按字面引用这些路径的沙盒外命令时，展示 danger 样式和具体范围，由用户决定。其他沙盒外命令按当前模式审批。批准后系统执行对应操作；相邻路径、身份和版本核验继续生效。full_access 不请求或记录逐项审批，模型使用默认工具参数直接执行。
 
 ## 容量恢复与未知结果（2026-10-19）
 

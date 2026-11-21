@@ -10,6 +10,7 @@ import pytest
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
+from eidos_runtime.model.config import default_profile_snapshot
 from eidos_runtime.runtime.approval import ApprovalDecision
 from eidos_runtime.runtime.engine import RuntimeEngine
 from eidos_runtime.runtime.run_resources import RunResources
@@ -36,12 +37,16 @@ def fixture(tmp_path: Path, mode: str):
     return store, run, target
 
 
-def patch_model(target: Path):
-    return ScriptedModel([
-        ModelResponse(tool_calls=(ModelToolCall('edit', 'apply_patch', {'patch':
-            f'*** Begin Patch\n*** Update File: {target}\n@@\n-old\n+new\n*** End Patch'}),)),
-        ModelResponse(text='done'),
-    ])
+def patch_model(target: Path, mode: str = 'manual'):
+    edit = ModelResponse(tool_calls=(ModelToolCall('edit', 'apply_patch', {'patch':
+        f'*** Begin Patch\n*** Update File: {target}\n@@\n-old\n+new\n*** End Patch'}),))
+    # auto_review first lets the reviewer decline unrequested reserved actions.
+    # It allows this one, so the user still decides.
+    triage = ModelResponse(tool_calls=(ModelToolCall('triage', 'submit_approval_assessment', {
+        'outcome': 'allow', 'risk': 'high', 'rationale': 'The user asked to update the system skill.'}),))
+    model = ScriptedModel([edit, *((triage,) if mode == 'auto_review' else ()), ModelResponse(text='done')])
+    model.profile_snapshot = default_profile_snapshot('deepseek-v4-flash')
+    return model
 
 
 @pytest.mark.parametrize('mode', ['manual', 'auto_review'])
@@ -60,7 +65,7 @@ def test_system_skill_uses_human_confirmation_and_executes_only_after_approval(t
         return ApprovalDecision(decision)
 
     try:
-        RuntimeEngine(store, patch_model(target), lambda _: None, request_approval=confirm).run(run['id'], threading.Event())
+        RuntimeEngine(store, patch_model(target, mode), lambda _: None, request_approval=confirm).run(run['id'], threading.Event())
         assert len(requests) == 1
         assert target.read_text() == ('new\n' if decision == 'approve' else 'old\n')
         row = store.connection.execute('SELECT status,review_json FROM approvals').fetchone()
@@ -81,7 +86,7 @@ def test_dangerous_approval_rechecks_file_version(tmp_path, monkeypatch):
         return ApprovalDecision('approve')
 
     try:
-        RuntimeEngine(store, patch_model(target), lambda _: None, request_approval=confirm).run(run['id'], threading.Event())
+        RuntimeEngine(store, patch_model(target, 'auto_review'), lambda _: None, request_approval=confirm).run(run['id'], threading.Event())
         result = json.loads(store.connection.execute('SELECT result_json FROM tool_calls').fetchone()[0])
         assert result['code'] == 'file_version_conflict'
         assert result['sideEffectsMayExist'] is False
@@ -100,7 +105,7 @@ def test_dangerous_approval_recovers_with_a_human_decision(tmp_path, monkeypatch
         raise Crash()
     try:
         with pytest.raises(Crash):
-            RuntimeEngine(store, patch_model(target), lambda _: None, request_approval=crash).run(run['id'], threading.Event())
+            RuntimeEngine(store, patch_model(target, 'auto_review'), lambda _: None, request_approval=crash).run(run['id'], threading.Event())
         assert target.read_text() == 'old\n'
         confirmations = []
         def confirm(request, cancel):
@@ -214,7 +219,7 @@ def test_cancel_during_human_confirmation_does_not_commit(tmp_path, monkeypatch)
         cancel.set()
         return ApprovalDecision('approve')
     try:
-        RuntimeEngine(store, patch_model(target), lambda _: None, request_approval=confirm).run(run['id'], cancel)
+        RuntimeEngine(store, patch_model(target, 'auto_review'), lambda _: None, request_approval=confirm).run(run['id'], cancel)
         assert target.read_text() == 'old\n'
         assert store.connection.execute('SELECT count(*) FROM durable_intents').fetchone()[0] == 0
         assert store.read_run(run['id'])['status'] == 'canceled'

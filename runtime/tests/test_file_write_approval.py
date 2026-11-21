@@ -54,6 +54,7 @@ class FileWriteApprovalTests(unittest.TestCase):
             store=SimpleNamespace(
                 run_permission_grants=Mock(return_value=None),
                 reconciliation_file_paths=Mock(return_value=frozenset()),
+                read_run=Mock(return_value={"approvalMode": "manual"}),
             ),
             execute_side_effect=Mock(), execute_workspace_side_effect=Mock(),
         )
@@ -129,6 +130,48 @@ class FileWriteApprovalTests(unittest.TestCase):
         self.assertEqual(request.approval_kind, "escalated")
         self.assertEqual(request.approval_request["sandboxPermissions"], "require_escalated")
         self.assertNotIn("requiresHumanConfirmation", request.approval_request)
+
+    def test_missing_sandbox_still_asks_before_writing_outside_the_workspace(self) -> None:
+        self.dependencies.execute_side_effect.return_value = (SimpleNamespace(decision="reject"), None)
+        execute = Mock()
+        with self.executor.external_write_scope((self.target,), self.permissions):
+            with patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=False):
+                result = self.effect(execute)
+        execute.assert_not_called()
+        self.dependencies.execute_workspace_side_effect.assert_not_called()
+        self.assertEqual(result.result["code"], "user_rejected")
+        request = self.dependencies.execute_side_effect.call_args.kwargs["prepared"]
+        self.assertEqual(request.approval_kind, "escalated")
+        self.assertEqual(request.approval_request["sandboxPermissions"], "require_escalated")
+        self.assertNotIn("requiresHumanConfirmation", request.approval_request)
+        # Unsandboxed writes stay one-off even in request-approval mode.
+        self.assertNotIn("grantScope", request.approval_request)
+
+    def test_manual_external_approval_covers_later_writes_to_the_same_scope(self) -> None:
+        self.dependencies.execute_side_effect.return_value = (SimpleNamespace(decision="reject"), None)
+        with self.executor.external_write_scope((self.target,), self.permissions):
+            self.effect(Mock())
+        request = self.dependencies.execute_side_effect.call_args.kwargs["prepared"]
+        self.assertEqual(request.approval_request["grantScope"], "run")
+        self.assertEqual(request.approval_request["permissions"], request.approval_request["additionalPermissions"])
+        self.assertEqual(request.approval_description["grantScope"], "run")
+        self.assertNotIn("permissions", request.approval_description)
+
+    def test_new_external_file_approval_stays_one_off(self) -> None:
+        # A new file's scope is an existing ancestor directory; it is not kept for the task.
+        self.dependencies.execute_side_effect.return_value = (SimpleNamespace(decision="reject"), None)
+        with self.executor.external_write_scope((self.external / "new.txt",), self.permissions):
+            self.effect(Mock())
+        request = self.dependencies.execute_side_effect.call_args.kwargs["prepared"]
+        self.assertNotIn("grantScope", request.approval_request)
+
+    def test_auto_review_external_approval_stays_one_off(self) -> None:
+        self.dependencies.store.read_run.return_value = {"approvalMode": "auto_review"}
+        self.dependencies.execute_side_effect.return_value = (SimpleNamespace(decision="reject"), None)
+        with self.executor.external_write_scope((self.target,), self.permissions):
+            self.effect(Mock())
+        request = self.dependencies.execute_side_effect.call_args.kwargs["prepared"]
+        self.assertNotIn("grantScope", request.approval_request)
 
     def test_protected_path_can_prepare_a_candidate_for_human_approval(self) -> None:
         self.dependencies.base_permissions = BasePermissionProfile.for_workspace(

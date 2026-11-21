@@ -643,3 +643,35 @@ def test_lead_pending_instruction_lists_templates_with_their_policies(team):
     text = team_instruction(context, None, tuple(TeamTemplateCatalog(None).summaries()))
     assert "- milestones:" in text and "Gates by: critic, challenger." in text
     assert "Everyone shares the workspace." in text and "kind=gate" in text
+
+
+def test_members_use_the_leads_active_task_grants(team):
+    team.confirm()
+    claimed = team.store.claim_next_run_committed()
+    assert claimed is not None and claimed.value["id"] == team.run["id"]
+    step = team.store.increment_model_step(team.run["id"])
+    item = team.store.create_tool_item(team.run["id"], step, 0, "grant", "request_permissions", "{}")
+    team.store.begin_approval_committed(item["id"], "", None, request={
+        "kind": "permission_request", "grantScope": "run", "permissions": {"network": {"enabled": True}},
+    })
+    team.store.resolve_approval_committed(item["id"], "approve", None)
+    member_run, _ = team.store.create_run(team.sessions["alice"], "work on t1")
+    # One approval in the Lead covers its members while the Lead Run is active.
+    assert team.store.run_permission_grants(member_run["id"]).network.enabled is True
+    team.store.fail_run(team.run["id"], "lead_done")
+    assert team.store.run_permission_grants(member_run["id"]).network is None
+
+
+def test_members_do_not_inherit_the_leads_high_risk_grants(team):
+    team.confirm()
+    team.store.claim_next_run_committed()
+    step = team.store.increment_model_step(team.run["id"])
+    item = team.store.create_tool_item(team.run["id"], step, 0, "grant", "request_permissions", "{}")
+    team.store.begin_approval_committed(item["id"], "", None, request={
+        "kind": "permission_request", "grantScope": "run", "requiresHumanConfirmation": True,
+        "riskWarning": "protected", "permissions": {"network": {"enabled": True}},
+    })
+    team.store.resolve_approval_committed(item["id"], "approve", None)
+    member_run, _ = team.store.create_run(team.sessions["alice"], "work on t1")
+    assert team.store.run_permission_grants(team.run["id"]).network.enabled is True
+    assert team.store.run_permission_grants(member_run["id"]).network is None

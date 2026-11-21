@@ -191,7 +191,10 @@ def test_pending_legacy_unsandboxed_approval_keeps_the_human_decision_after_rest
                 'command': 'sh ./render.sh', 'sandboxPermissions': 'require_escalated',
                 'justification': 'Render the document',
                 **({'display_intent': 'Create a document preview'} if with_intent else {}),
+            }),)), ModelResponse(tool_calls=(ModelToolCall('triage', 'submit_approval_assessment', {
+                'outcome': 'allow', 'risk': 'high', 'rationale': 'The user asked to render the document.',
             }),))])
+            model.profile_snapshot = default_profile_snapshot('deepseek-v4-flash')
             with pytest.raises(Crash):
                 RuntimeEngine(store, model, lambda _: None, shell_available=True,
                               request_approval=lambda *_: (_ for _ in ()).throw(Crash())).run(run['id'], threading.Event())

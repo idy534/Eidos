@@ -311,13 +311,41 @@ def test_approval_transition_rejects_a_review_source_that_does_not_match_run_mod
         store.close()
 
 
-@pytest.mark.parametrize('reviewer_kind', ['unavailable', 'unknown', 'invalid'])
-@pytest.mark.parametrize('decision', ['approve', 'reject'])
-def test_auto_review_uncertainty_uses_manual_decision_and_records_its_source(tmp_path, reviewer_kind, decision):
+@pytest.mark.parametrize('reviewer_kind,code', [
+    ('unavailable', 'auto_review_unavailable'), ('unknown', 'auto_review_rejected'), ('invalid', 'auto_review_failed'),
+])
+def test_inconclusive_auto_review_returns_to_the_model_without_asking(tmp_path, reviewer_kind, code):
     store, run, item = _approval_fixture(tmp_path, 'auto_review')
     reviewer = None if reviewer_kind == 'unavailable' else _reviewer(risk='unknown')
     if reviewer_kind == 'invalid':
         reviewer.response = ModelResponse(text='invalid assessment')
+    requests = []
+
+    def transport(request, cancel):
+        requests.append(request)
+        return ApprovalDecision('approve')
+
+    coordinator = ApprovalCoordinator(store, transport, RuntimeEvents(lambda _: None), RuntimePhaseTracker(),
+        lambda _: None, lambda: None, lambda *_: None, lambda *_: None, requeue=False, reviewer=reviewer)
+    try:
+        result = coordinator.request(str(run['id']), item, {'kind': 'file_change'}, threading.Event(),
+            transition_reason='file_change_approval')
+        assert result.decision == 'reject'
+        assert requests == []
+        assert coordinator.last_review.source == 'model'
+        assert coordinator.last_review.reason_code == code
+        assert 'retry' in result.feedback
+        if reviewer_kind == 'invalid':
+            # One more attempt covers a malformed answer.
+            assert len(reviewer.calls) == 2
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('decision', ['approve', 'reject'])
+def test_second_inconclusive_review_of_the_same_action_asks_the_user(tmp_path, decision):
+    store, run, first = _approval_fixture(tmp_path, 'auto_review')
+    reviewer = _reviewer(outcome='deny', risk='unknown', rationale='The target file is not shown.')
     requests = []
 
     def transport(request, cancel):
@@ -327,15 +355,19 @@ def test_auto_review_uncertainty_uses_manual_decision_and_records_its_source(tmp
     coordinator = ApprovalCoordinator(store, transport, RuntimeEvents(lambda _: None), RuntimePhaseTracker(),
         lambda _: None, lambda: None, lambda *_: None, lambda *_: None, requeue=False, reviewer=reviewer)
     try:
-        result = coordinator.request(str(run['id']), item, {'kind': 'file_change'}, threading.Event(),
+        assert coordinator.request(str(run['id']), first, {'kind': 'file_change'}, threading.Event(),
+            transition_reason='file_change_approval').decision == 'reject'
+        assert requests == []
+        second = store.create_tool_item(str(run['id']), int(store.read_run(str(run['id']))['modelStepCount']), 1,
+            'call-again', 'write_file', '{}')
+        result = coordinator.request(str(run['id']), second, {'kind': 'file_change'}, threading.Event(),
             transition_reason='file_change_approval')
         assert result.decision == decision
         assert len(requests) == 1 and requests[0]['reviewFallback']
-        approval_id = store.connection.execute('SELECT id FROM approvals WHERE item_id=?', (item['id'],)).fetchone()[0]
+        approval_id = store.connection.execute('SELECT id FROM approvals WHERE item_id=?', (second['id'],)).fetchone()[0]
         approval = store.typed_runtime_repository().read_approval(approval_id)
-        assert approval.review.source == 'manual'
+        assert (approval.review.source, approval.review.reason_code) == ('manual', 'auto_review_unresolved')
         assert approval.review.decision == decision
-        assert store.read_run(str(run['id']))['approvalMode'] == 'auto_review'
     finally:
         store.close()
 
@@ -468,7 +500,9 @@ def test_relaxed_policy_preserves_pending_human_confirmation(tmp_path, changed):
             assert requests[0]['requiresHumanConfirmation'] is True
             assert coordinator.last_review.source == 'manual'
             assert store.connection.execute('SELECT id FROM approvals').fetchone()[0] == pending.id
-        assert reviewer.calls == []
+        # The reviewer triaged the reserved request once before the first
+        # prompt; the restarted request goes straight back to the user.
+        assert len(reviewer.calls) == 1
     finally:
         store.close()
 

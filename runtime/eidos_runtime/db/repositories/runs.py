@@ -684,14 +684,36 @@ class RunRepository(Repository):
             # Run-scoped grants remain bounded by the parent's active lifetime.
             # A child cannot request a grant, but can use one already approved
             # for the parent through the same effective permission checks.
-            run_ids = (run_id, parent['parent_run_id'] if parent else run_id)
+            run_ids = [run_id, *((parent['parent_run_id'],) if parent else ())]
+            # Team members use the Lead's active grants the same way, so the
+            # user is not asked once per member for one approved scope.
+            lead_ids = [row['id'] for row in connection.execute(
+                """SELECT lead.id FROM runs member
+                   JOIN team_members m ON m.session_id = member.session_id AND m.status = 'active'
+                   JOIN teams t ON t.id = m.team_id AND t.status IN ('active', 'paused')
+                   JOIN runs lead ON lead.session_id = t.lead_session_id
+                   WHERE member.id = ?
+                     AND lead.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing')""",
+                (run_id,),
+            )]
+            run_ids += lead_ids
+            placeholders = ",".join("?" for _ in run_ids)
+            # A high-risk grant was confirmed for the Lead only; members never
+            # saw that decision, so they do not inherit it.
+            # IN (NULL) would be NULL and drop every row; '' matches no Run id.
+            lead_placeholders = ",".join("?" for _ in lead_ids) or "''"
+            # Task-scoped approvals of commands, file writes and permission
+            # requests all record the approved scope in `permissions`.
             rows = connection.execute(
-                """SELECT a.request_json FROM approvals a JOIN runs r ON r.id = a.run_id
-                   WHERE a.run_id IN (?, ?) AND a.status = 'approved'
+                f"""SELECT a.request_json FROM approvals a JOIN runs r ON r.id = a.run_id
+                   WHERE a.run_id IN ({placeholders}) AND a.status = 'approved'
                      AND r.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing')
                      AND json_extract(a.request_json, '$.grantScope') = 'run'
-                     AND json_extract(a.request_json, '$.kind') = 'permission_request'
-                   ORDER BY a.creation_seq""", run_ids,
+                     AND json_extract(a.request_json, '$.kind') IN ('permission_request', 'command_execution', 'file_change')
+                     AND json_extract(a.request_json, '$.permissions') IS NOT NULL
+                     AND NOT (a.run_id IN ({lead_placeholders})
+                              AND json_extract(a.request_json, '$.requiresHumanConfirmation') IS 1)
+                   ORDER BY a.creation_seq""", [*run_ids, *lead_ids],
             )
             for row in rows:
                 profile = AdditionalPermissionProfile.model_validate_json(
@@ -699,6 +721,21 @@ class RunRepository(Repository):
                 )
                 granted = merge_permissions(granted, profile)
         return granted
+
+    def run_tool_granted(self, run_id: str, tool_name: str, content_hash: str) -> bool:
+        """Whether the user approved this exact external tool for the active Run."""
+        with self.lock:
+            row = self._connection().execute(
+                """SELECT 1 FROM approvals a JOIN runs r ON r.id = a.run_id
+                   WHERE a.run_id = ? AND a.status = 'approved'
+                     AND r.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing')
+                     AND json_extract(a.request_json, '$.kind') = 'external_tool'
+                     AND json_extract(a.request_json, '$.grantScope') = 'run'
+                     AND json_extract(a.request_json, '$.toolName') = ?
+                     AND json_extract(a.request_json, '$.provenance.contentHash') = ?
+                   LIMIT 1""", (run_id, tool_name, content_hash),
+            ).fetchone()
+        return row is not None
 
     def record_sensitive_tool_input(self, run_id: str) -> int:
         with self.lock, self._connection() as connection:

@@ -74,7 +74,7 @@ from eidos_runtime.runtime.tool_fingerprints import tool_payload_fingerprint_val
 from eidos_runtime.runtime.hooks import HookService
 from eidos_runtime.runtime.permission_requests import PermissionRequests, network_permission_result
 from eidos_runtime.runtime.permission_policy import PermissionPolicyEvaluator, PermissionDisposition
-from eidos_runtime.sandbox.permissions import AdditionalPermissionProfile, NetworkPermissions
+from eidos_runtime.sandbox.permissions import AdditionalPermissionProfile, NetworkPermissions, current_grants
 from eidos_runtime.tools.request_permissions import RequestPermissionsInput
 from eidos_runtime.workspace.codex_patch import PatchError, format_patch_error
 from eidos_runtime.runtime.shell_orchestration import (
@@ -85,6 +85,7 @@ from eidos_runtime.runtime.shell_orchestration import (
     resolve_git_write_roots,
     verify_git_metadata_identities,
     collect_shell_review_scripts,
+    references_core_protected_scope,
     ShellReviewScript,
 )
 from eidos_runtime.workspace.reader import capture_directory_identity
@@ -138,6 +139,8 @@ from eidos_runtime.tools.workspace import (
     PreparedPatch,
     ToolCancelled,
     WorkspacePathError,
+    reject_protected_metadata_spelling,
+    require_canonical_write_target,
 )
 from eidos_runtime.domain.browser import BrowserGrant, BrowserToolClass
 from eidos_runtime.extensions.browser_plugin import BROWSER_PLUGIN_ID, bundled_browser_plugin_hash
@@ -155,6 +158,7 @@ from eidos_runtime.runtime.browser_tools import (
 from eidos_runtime.tools.contracts import (
     GitWriteAccess,
     MAX_SHELL_DISPLAY_INTENT_LENGTH,
+    NetworkAccess,
     RunShellInput,
     WriteStdinInput,
     ControlShellInput,
@@ -364,6 +368,7 @@ class FileChangeToolHandler:
                                 *base.protected_write_paths),
             ) if call.name == "apply_patch" else ()
             if call.name != "apply_patch":
+                reject_protected_metadata_spelling(Path(call.arguments["path"]).parts)
                 target = executor.workspace.path / call.arguments["path"]
                 if not any(target.is_relative_to(Path(root)) for root in base.workspace_roots) or any(
                     target == Path(root) or target.is_relative_to(root)
@@ -374,6 +379,8 @@ class FileChangeToolHandler:
                 return HandlerOutcome(tool_error(call.name, "permission_not_requestable", "File permissions are unavailable"), "failed", "failed")
             entries = []
             for path in paths:
+                # Authorization and the commit helper must name the same location.
+                require_canonical_write_target(path)
                 permission_path = path
                 while not permission_path.exists():
                     permission_path = permission_path.parent
@@ -384,7 +391,7 @@ class FileChangeToolHandler:
             additional = AdditionalPermissionProfile(fileSystem=tuple(
                 {entry.path: entry for entry in entries}.values()
             ))
-            granted = self.dependencies.store.run_permission_grants(run_id)
+            granted = current_grants(self.dependencies.store.run_permission_grants(run_id))
             decision = PermissionPolicyEvaluator().evaluate(base, granted, additional)
             if decision.disposition is PermissionDisposition.DENY:
                 return HandlerOutcome(tool_error(call.name, decision.reason_code, "This path cannot be authorized for writing"), "failed", "failed")
@@ -392,7 +399,7 @@ class FileChangeToolHandler:
 
             def revalidate_permissions() -> EffectivePermissionProfile:
                 return materialize_effective_profile(base, merge_permissions(
-                    self.dependencies.store.run_permission_grants(run_id), additional,
+                    current_grants(self.dependencies.store.run_permission_grants(run_id)), additional,
                 ), allow_protected=True)
 
             scope = ExitStack()
@@ -427,6 +434,7 @@ class FileChangeToolHandler:
                 runtime.spec.name, "sandbox_unavailable", "File sandbox is unavailable and escalation is forbidden",
             ))
         if full_access or ((not external or executor.external_write_approved) and not unsandboxed):
+            # AGENTS.md: every write without Seatbelt needs its own approval.
             executor.unsandboxed_write = full_access
             if external:
                 prepared = prepared.model_copy(update={"intent_preconditions": {
@@ -458,13 +466,26 @@ class FileChangeToolHandler:
             request["requiresHumanConfirmation"] = True
         if executor.dangerous_write or unsandboxed:
             request["riskWarning"] = "此操作会修改受保护路径或在沙盒外写入。它可能改变 Eidos 数据、Runtime、系统 Skill 或 Git metadata。批准仅适用于本次文件变更。"
+        # In request-approval mode the approved path scope covers later writes
+        # in this task. Protected and unsandboxed writes stay one-off.
+        # Only existing files qualify: a new file's scope is its nearest
+        # existing ancestor, and a task grant also reaches later Shell commands.
+        task_grant = (
+            external and permissions is not None and not executor.dangerous_write and not unsandboxed
+            and all(Path(path).is_file() for path in executor._external_writers)
+            and self.dependencies.store.read_run(run_id).get("approvalMode") == "manual"
+        )
+        if task_grant:
+            request["grantScope"] = "run"
         approved_prepared = prepared.model_copy(update={
             "approval_description": {
                 **prepared.approval_description,
                 "summary": ("Write files without the sandbox" if unsandboxed else "Write files in the requested permission scope"),
                 **request,
             },
-            "approval_request": request,
+            "approval_request": {**request, **(
+                {"permissions": request["additionalPermissions"]} if task_grant else {}
+            )},
             "approval_kind": "escalated" if unsandboxed else "additional_permissions",
             "transition_reason": "file_write_permission_requested",
             "intent_preconditions": {
@@ -490,7 +511,8 @@ class FileChangeToolHandler:
             return verified
         return VerifiedToolExecutionResult(result=tool_error(
             runtime.spec.name, "user_rejected" if approval.decision != "approve" else "file_write_failed",
-            APPROVAL_REJECTION_GUIDANCE,
+            (getattr(approval, "feedback", None) or APPROVAL_REJECTION_GUIDANCE)
+            if approval.decision != "approve" else APPROVAL_REJECTION_GUIDANCE,
         ))
 
     def _execute(
@@ -816,10 +838,24 @@ class ShellToolHandler:
                     "failed",
                     "failed",
                 )
-        effective_additional_permissions = effective_shell_permissions(
-            shell_input,
-            git_write_roots,
-        )
+        try:
+            effective_additional_permissions = effective_shell_permissions(
+                shell_input,
+                git_write_roots,
+            )
+        except (OSError, RuntimeError, ValueError):
+            if not full_access:
+                return HandlerOutcome(
+                    tool_error(
+                        call.name,
+                        "permission_not_requestable",
+                        "Requested permission paths must exist and resolve to one location",
+                    ),
+                    "failed",
+                    "failed",
+                )
+            # Full access ignores redundant permission requests.
+            effective_additional_permissions = None
         skill_access = self.dependencies.skill_access
         skill_invocation = (
             skill_access.activate_implicit(command, cwd.path)
@@ -922,7 +958,7 @@ class ShellToolHandler:
         base_permissions = self.dependencies.base_permissions
         if base_permissions is None:
             raise RuntimeError("step permission profile is unavailable")
-        grants = self.dependencies.store.run_permission_grants(run_id)
+        grants = current_grants(self.dependencies.store.run_permission_grants(run_id))
         if active_skill_roots:
             base_permissions = base_permissions.model_copy(update={
                 "active_skill_roots": tuple(
@@ -1036,6 +1072,7 @@ class ShellToolHandler:
             return diff_workspace_manifests(manifest_before, manifest_after)
 
         review_scripts: tuple[ShellReviewScript, ...] | None = None
+        rejection_feedback: str | None = None
         review_roots = (workspace, *workspace.additional_roots)
 
         def execute_shell_attempt(
@@ -1255,7 +1292,7 @@ class ShellToolHandler:
             )
 
         def approve(request: OrchestratorApprovalRequest) -> bool:
-            nonlocal review_scripts, review_roots
+            nonlocal review_scripts, review_roots, rejection_feedback
             summary = request.effective_permissions
             mode = (
                 "unsandboxed"
@@ -1305,12 +1342,8 @@ class ShellToolHandler:
                     else {}
                 ),
             }
-            if request.requires_human_confirmation:
-                description["requiresHumanConfirmation"] = True
-            if request.requires_human_confirmation or mode == "unsandboxed":
-                description["riskWarning"] = "此命令会开放受保护路径，或使用当前 macOS 用户的权限在沙盒外执行。沙盒外命令及其子进程可能读取、修改工作区外文件并访问网络。批准仅适用于本次命令。"
-            review_evidence = {}
-            if self.dependencies.store.read_run(run_id).get("approvalMode") == "auto_review" and not request.requires_human_confirmation:
+            auto_review = self.dependencies.store.read_run(run_id).get("approvalMode") == "auto_review"
+            if auto_review and not request.requires_human_confirmation:
                 skill_roots = []
                 for root in active_skill_roots:
                     try:
@@ -1319,6 +1352,30 @@ class ShellToolHandler:
                         continue
                 review_roots = (workspace, *workspace.additional_roots, *skill_roots)
                 review_scripts = collect_shell_review_scripts(command, cwd.path, review_roots)
+            # Outside Seatbelt nothing enforces the Eidos core paths. Commands
+            # that name them keep the reserved human confirmation.
+            human_confirmation = request.requires_human_confirmation or (
+                mode == "unsandboxed" and references_core_protected_scope(
+                    command, cwd.path, base_permissions, review_scripts or (),
+                )
+            )
+            if human_confirmation:
+                description["requiresHumanConfirmation"] = True
+            if human_confirmation or mode == "unsandboxed":
+                description["riskWarning"] = "此命令会开放受保护路径，或使用当前 macOS 用户的权限在沙盒外执行。沙盒外命令及其子进程可能读取、修改工作区外文件并访问网络。批准仅适用于本次命令。"
+            # In request-approval mode one approval of network access or Git
+            # metadata writes covers the rest of the task, like a permission
+            # request. Auto review keeps judging each command at no user cost.
+            task_grant = (
+                not auto_review and mode == "expanded_sandbox" and not human_confirmation
+                and request.additional_permissions is not None
+                and (shell_input.networkAccess is NetworkAccess.REQUEST
+                     or shell_input.gitWriteAccess is GitWriteAccess.REQUEST)
+            )
+            if task_grant:
+                description["grantScope"] = "run"
+            review_evidence = {}
+            if auto_review and not human_confirmation:
                 review_evidence = {
                     "sandboxEnforced": mode != "unsandboxed",
                     "protectedEidosPaths": {
@@ -1367,6 +1424,9 @@ class ShellToolHandler:
                     "approvalKey": request.approval_key,
                     "effectivePermissions": request.effective_permissions,
                     **review_evidence,
+                    **({"permissions": request.additional_permissions.model_dump(
+                        mode="json", by_alias=True, exclude_none=True,
+                    )} if task_grant and request.additional_permissions is not None else {}),
                 },
                 attempt_ordinal=request.attempt_ordinal,
                 approval_kind=request.approval_kind,
@@ -1376,6 +1436,12 @@ class ShellToolHandler:
                 item=item,
                 prepared=prepared,
                 cancel=cancel,
+            )
+            # Keep the existing summary unless the person supplied feedback.
+            rejection_feedback = (
+                approval.feedback
+                if approval.decision != "approve" and approval.feedback != APPROVAL_REJECTION_GUIDANCE
+                else None
             )
             return approval.decision == "approve"
 
@@ -1465,6 +1531,8 @@ class ShellToolHandler:
             record_attempt=record_attempt,
         )
         result = orchestration.result
+        if rejection_feedback and result.get("code") in {"user_rejected", "user_rejected_escalation"}:
+            result["summary"] = rejection_feedback
         if isinstance(result.get("data"), dict):
             result["data"]["outputCallId"] = call.provider_call_id
         if result.get("data", {}).get("executionStatus") == "running":
@@ -1639,7 +1707,27 @@ class ExternalToolHandler:
             if rejected is not None:
                 return HandlerOutcome(rejected, "failed", "failed")
         pending = self.dependencies.store.typed_runtime_repository().read_pending_approval(run_id)
-        if grant is not None and pending is None:
+        # In request-approval mode an approved non-destructive tool is not
+        # asked again in this task. Auto review keeps judging each call.
+        tool_grant_scope = (
+            browser is None and runtime.spec.approval_required
+            and getattr(implementation, "destructive", True) is False
+            and self.dependencies.store.read_run(run_id).get("approvalMode") == "manual"
+        )
+        content_hash = runtime.provenance.content_hash
+        if tool_grant_scope and pending is None and self.dependencies.store.run_tool_granted(
+            run_id, call.name, content_hash,
+        ):
+            verified = self.dependencies.execute_workspace_side_effect(
+                item=item,
+                prepared=prepared.model_copy(update={"intent_preconditions": {
+                    **prepared.intent_preconditions,
+                    "authorization": "run_tool_grant",
+                }}),
+                cancel=cancel,
+                execute=execute,
+            )
+        elif grant is not None and pending is None:
             verified = self.dependencies.execute_workspace_side_effect(
                 item=item,
                 prepared=prepared.model_copy(update={"intent_preconditions": {
@@ -1651,6 +1739,10 @@ class ExternalToolHandler:
                 execute=execute,
             )
         elif runtime.spec.approval_required or pending is not None:
+            if tool_grant_scope:
+                prepared = prepared.model_copy(update={"approval_description": {
+                    **prepared.approval_description, "grantScope": "run",
+                }})
             approval, verified = self.dependencies.execute_side_effect(
                 run_id=run_id,
                 item=item,
@@ -1807,12 +1899,20 @@ class EidosStateToolHandler:
                 or (grants.network is not None and grants.network.enabled is True)
             )
             pending = self.dependencies.store.typed_runtime_repository().read_pending_approval(run_id)
-            if network_enabled and pending is None:
+            pending_download = pending is not None and json.loads(pending.request_json).get("kind") == "network_access"
+            if not pending_download:
+                # Downloading a public Skill only fetches it for review. The
+                # install approval below shows the content, so one decision
+                # covers both steps. A pending legacy download approval still
+                # resumes through the approval path; a pending install approval
+                # is matched again after the same content is fetched.
                 verified = self.dependencies.execute_workspace_side_effect(
                     item=item,
                     prepared=network_execution.model_copy(update={"intent_preconditions": {
                         **network_execution.intent_preconditions,
-                        "authorization": "existing_network_permission",
+                        "authorization": (
+                            "existing_network_permission" if network_enabled else "skill_review_download"
+                        ),
                     }}),
                     cancel=cancel,
                     execute=download,
@@ -1993,7 +2093,7 @@ class ToolCallRuntime:
             code, {
                 "permission_granted": "Permissions granted for this run. Continue the task.",
                 "already_granted": "The requested permissions are already granted.",
-                "user_rejected": APPROVAL_REJECTION_GUIDANCE,
+                "user_rejected": self.permissions.rejection_feedback or APPROVAL_REJECTION_GUIDANCE,
                 "permission_not_requestable": "These permissions cannot be requested.",
             }[code],
         ), "completed" if success else "declined" if declined else "failed", "completed")

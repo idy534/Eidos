@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from eidos_runtime.model.context_projection import model_result_json
+from eidos_runtime.model.context_projection import model_result_json, text_preview
 import json
 import threading
 import time
@@ -16,7 +16,6 @@ from eidos_runtime.model.client import (
     ModelRequestError,
 )
 from eidos_runtime.models import EidosFrozenStrictModel
-from eidos_runtime.runtime.cancellation import DeadlineCancellation
 from eidos_runtime.sandbox.sensitive import default_scanner
 
 REVIEW_POLICY = """You are Eidos's independent approval reviewer. Assess the exact
@@ -46,6 +45,10 @@ Runtime boundaries
 Respect the Runtime's reserved human-confirmation boundary for Eidos private and
 confidential data, and modifications to Runtime, system Skills, or managed
 resources. A general task does not authorize access to these protected scopes.
+Rate any plausible read or modification of the listed protected Eidos paths as
+at least high risk. When request.requiresHumanConfirmation is true, the Runtime
+asks the user whenever you allow it; deny it when the userMessages did not ask
+for that protected scope, so the user is not asked about an unrequested action.
 Apply supplied Workspace, ordinary user Skill, and verified resource exceptions
 only within their stated scope, never to the protected parent directory.
 For unsandboxed commands, the process and its children have the host user's file
@@ -65,16 +68,90 @@ effects; medium means bounded effects with manageable exposure; high means
 substantial data loss or disclosure, disruption of shared systems, or lasting
 security weakening; critical means severe, broad, hard-to-recover impact.
 Unknown means the evidence
-does not support a reliable assessment. Never allow an unknown risk.
+does not support a reliable assessment. Never allow an unknown risk. The Runtime
+sends allowed high or critical actions to the user instead of approving them.
 
 Output
 You cannot run tools, grant permissions, or ask a person to approve.
 Return one assessment with all fields:
 {"outcome":"allow"|"deny","risk":"low"|"medium"|"high"|"critical"|"unknown",
 "rationale":"a concise reason, in the user's language, at most 400 characters"}.
+For high or critical risk, state the concrete consequence in plain words, such
+as which data is deleted or which shared system changes. For unknown risk, name
+the missing evidence so the acting model can supply it.
 """
 MAX_REVIEW_INPUT_BYTES = 48 * 1024
 MAX_REVIEW_OUTPUT_BYTES = 8 * 1024
+AUTO_APPROVABLE_RISKS = frozenset({"low", "medium"})
+# User messages are authorization evidence, not the operation. Keep them inside
+# a fixed share of the review budget so long pasted text cannot crowd out the
+# request and force every later review to the manual path.
+MAX_USER_EVIDENCE_BYTES = 20 * 1024
+MAX_USER_MESSAGE_BYTES = 4 * 1024
+
+
+def bounded_user_evidence(messages: tuple[str, ...]) -> list[str]:
+    """Keep the newest messages, each as a head and tail preview."""
+    kept: list[str] = []
+    used = 0
+    for message in reversed(messages):
+        preview = text_preview(
+            message, MAX_USER_MESSAGE_BYTES,
+            continuation="Middle of this user message omitted for approval review.",
+        )
+        size = len(preview.encode())
+        if kept and used + size > MAX_USER_EVIDENCE_BYTES:
+            kept.append(f"[{len(messages) - len(kept)} earlier user messages omitted for approval review.]")
+            break
+        kept.append(preview)
+        used += size
+    return list(reversed(kept))
+
+
+def build_review_evidence(
+    *, user_messages: tuple[str, ...], tool: object, arguments: object,
+    request: dict[str, object], diff: str, base_sha256: str | None,
+) -> str:
+    """Fit the review input by previewing the operation text, not by asking a person."""
+    evidence = ""
+    for diff_limit, argument_limit in ((None, None), (16 * 1024, 8 * 1024), (6 * 1024, 3 * 1024)):
+        evidence = json.dumps({
+            "userMessages": bounded_user_evidence(user_messages),
+            "tool": tool,
+            "arguments": _review_preview(arguments, argument_limit),
+            "request": request,
+            "diff": _review_preview(diff, diff_limit),
+            "baseSha256": base_sha256,
+        }, ensure_ascii=False)
+        if len(model_result_json(evidence).encode()) <= MAX_REVIEW_INPUT_BYTES:
+            break
+    return evidence
+
+
+def _review_preview(value: object, limit: int | None) -> object:
+    if limit is None or not isinstance(value, str):
+        return value
+    return text_preview(
+        value, limit,
+        continuation="Middle omitted for approval review. Judge what is shown; name missing evidence if it matters.",
+    )
+
+
+def review_feedback(review: ApprovalReview) -> str:
+    """Tell the acting model whether to retry, supply evidence, or change course."""
+    if review.reason_code in {"auto_review_failed", "auto_review_unavailable", "auto_review_timeout", "auto_review_interrupted"}:
+        return review.rationale + " You may retry the same action, or use an approach that needs no approval."
+    if review.reason_code == "auto_review_input_too_large":
+        return review.rationale + " Split the action into smaller steps."
+    if review.reason_code == "auto_review_rejected" and review.risk == "unknown":
+        return review.rationale + (
+            " Supply the missing evidence in the justification or narrow the action, then retry."
+            " If the review still cannot decide, the user will be asked."
+        )
+    return review.rationale + (
+        " Do not retry the same action or circumvent this refusal."
+        " Choose a materially safer alternative or explain the blocker."
+    )
 
 
 class RiskAssessment(EidosFrozenStrictModel):
@@ -88,7 +165,6 @@ def review_approval(
 ) -> ApprovalReview:
     evidence = model_result_json(evidence)
     started = time.monotonic()
-    deadline = DeadlineCancellation(cancel, started + 60, time.monotonic)
     structured = model.profile_snapshot.supports_tools
     instructions = REVIEW_POLICY + (
         "\nReturn your result through submit_approval_assessment exactly once. Do not emit text."
@@ -106,8 +182,21 @@ def review_approval(
             **metadata,
             decision="reject",
             reason_code="auto_review_input_too_large",
-            rationale="自动审批未完成：操作或授权证据超过审查上限；请缩小操作范围。",
+            rationale="审批证据超过审查上限，操作没有执行。请把操作拆小后重试。",
         )
+    # The provider client keeps its own connect/read timeouts and the user can
+    # cancel. One more attempt covers a malformed or interrupted answer.
+    for attempt in range(2):
+        review = _review_once(model, evidence, cancel, instructions, structured, metadata, started)
+        if review.reason_code != "auto_review_failed" or cancel.is_set() or attempt:
+            return review
+    return review
+
+
+def _review_once(
+    model: ModelClient, evidence: str, cancel: threading.Event, instructions: str,
+    structured: bool, metadata: dict[str, str], started: float,
+) -> ApprovalReview:
     output_bytes = 0
 
     def receive(text: str) -> None:
@@ -126,7 +215,7 @@ def review_approval(
         # but supply an isolated context with no executable tools or history state.
         response = model.complete(
             ({"role": "user", "content": evidence},),
-            deadline,
+            cancel,
             receive,
             instructions=instructions,
             allow_tools=structured,
@@ -149,21 +238,26 @@ def review_approval(
             payload = response.text
         if len(payload.encode()) > MAX_REVIEW_OUTPUT_BYTES:
             raise ValueError("assessment exceeds limit")
-        if deadline.is_set():
-            raise TimeoutError("review deadline exceeded")
+        if cancel.is_set():
+            raise RuntimeError("review canceled")
         assessment = RiskAssessment.model_validate_json(payload)
         rationale = default_scanner().redact_for_presentation(assessment.rationale).text[:400]
         if not rationale.strip():
             raise ValueError("empty review rationale")
+        approved = assessment.outcome == "allow" and assessment.risk in AUTO_APPROVABLE_RISKS
+        # The model may judge that a severe effect is authorized. That
+        # judgement goes to the user; the model alone approves bounded risk.
+        escalated = assessment.outcome == "allow" and assessment.risk in {"high", "critical"}
         return ApprovalReview(
             **metadata,
-            decision="approve"
-            if assessment.outcome == "allow" and assessment.risk != "unknown"
-            else "reject",
-            reason_code="auto_review_approved"
-            if assessment.outcome == "allow" and assessment.risk != "unknown"
+            decision="approve" if approved else "reject",
+            reason_code="auto_review_approved" if approved
+            else "auto_review_requires_human" if escalated
             else "auto_review_rejected",
-            rationale=rationale,
+            rationale=(
+                rationale + f" 自动审查评估为 {assessment.risk} 风险，需要用户决定。"
+                if escalated else rationale
+            ),
             risk=assessment.risk,
             input_tokens=response.usage.input_tokens if response.usage else None,
             output_tokens=response.usage.output_tokens if response.usage else None,
@@ -173,15 +267,10 @@ def review_approval(
             duration_ms=int((time.monotonic() - started) * 1000),
         )
     except (ModelRequestError, ValidationError, ValueError, TimeoutError, RuntimeError):
-        timed_out = deadline.reason == "timeout"
         return ApprovalReview(
             **metadata,
             decision="reject",
-            reason_code="auto_review_timeout" if timed_out else "auto_review_failed",
-            rationale=(
-                "自动审批超时；操作未获批准。超时不表示操作有风险。"
-                if timed_out
-                else "自动审批未完成或返回了无效结果；操作未获批准。"
-            ),
+            reason_code="auto_review_failed",
+            rationale="自动审批暂时没有完成，操作没有执行。这不表示操作有风险。",
             duration_ms=int((time.monotonic() - started) * 1000),
         )
