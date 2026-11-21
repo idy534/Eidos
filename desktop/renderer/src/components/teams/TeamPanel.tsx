@@ -244,6 +244,7 @@ export function TeamPanel(input: TeamPanelProps) {
     highlightTimer.current = setTimeout(() => setHighlightedTaskKey(undefined), 1400);
   }, [isWide, member, props]);
 
+  const showStatusBadge = team.status !== "active" || busyMembers > 0;
   const statusTone: StatusTone = team.status === "active" ? "success" : team.status === "paused" ? "neutral" : "danger";
   const statusLabel = team.status === "active" && isWide && busyMembers > 0
     ? `${busyMembers}/${activeMembers.length} 运行中`
@@ -251,7 +252,7 @@ export function TeamPanel(input: TeamPanelProps) {
 
   const statusTooltipRows: TooltipRow[] = [
     ...(team.status === "active"
-      ? [{ label: "成员", value: `${busyMembers} / ${activeMembers.length} 运行中`, tone: busyMembers > 0 ? ("running" as const) : ("muted" as const) }]
+      ? [{ label: "成员", value: `${busyMembers} / ${activeMembers.length} 运行中`, tone: "running" as const }]
       : [{ label: "成员", value: `${activeMembers.length} 名` }]),
     { label: "自动续跑", value: team.autoWakeLead ? "开启" : "关闭" },
     ...(totalApprovals > 0 ? [{ label: "待审批", value: `${totalApprovals} 项`, tone: "waiting" as const }] : []),
@@ -306,17 +307,19 @@ export function TeamPanel(input: TeamPanelProps) {
           </div>
 
           <div className="team-panel__controls">
-            <Tooltip content={statusTooltip} placement="bottom" className="team-detail-tooltip">
-              <span className="team-panel__status-wrap">
-                <StatusBadge
-                  tone={statusTone}
-                  dot
-                  className={`team-panel__status team-panel__status--${team.status}${team.status === "active" && busyMembers > 0 ? " team-panel__status--live" : ""}`}
-                >
-                  {statusLabel}
-                </StatusBadge>
-              </span>
-            </Tooltip>
+            {showStatusBadge && (
+              <Tooltip content={statusTooltip} placement="bottom" className="team-detail-tooltip">
+                <span className="team-panel__status-wrap">
+                  <StatusBadge
+                    tone={statusTone}
+                    dot
+                    className={`team-panel__status team-panel__status--${team.status}${team.status === "active" && busyMembers > 0 ? " team-panel__status--live" : ""}`}
+                  >
+                    {statusLabel}
+                  </StatusBadge>
+                </span>
+              </Tooltip>
+            )}
 
             {!closed && !team.autoWakeLead && (
               <Tooltip content="已关闭自动续跑，成员汇报后不会自动唤醒 Lead" placement="bottom">

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { Item, Run } from "../contracts.js";
+import { ExecutionFeed } from "./ExecutionFeed.js";
 import {
   ConversationRunRail,
   buildRunAnchors,
@@ -84,6 +85,12 @@ describe("ConversationRunRail pure helpers", () => {
     expect(extractUserPreview(undefined)).toBe("查看提问");
     const itemWithRef = makeUserItem("u1", "r1", "请检查 [@main.ts](ref:1234567890ab) 和 [$git-commit](ref:abcdef123456) 的修改");
     expect(extractUserPreview(itemWithRef)).toBe("请检查 @main.ts 和 $git-commit 的修改");
+    expect(extractUserPreview(undefined, makeRun("r-team", { teamOrigin: { origin: "wake" } }))).toBe("团队续跑");
+    expect(extractUserPreview(undefined, makeRun("r-team-m", { teamOrigin: { origin: "wake", member: "verifier" } }))).toBe("团队续跑 · verifier");
+    expect(extractUserPreview(undefined, makeRun("r-team-u", { teamOrigin: { origin: "user_message" } }))).toBe("你的团队消息");
+    expect(extractUserPreview(undefined, makeRun("r-goal-c", { goalOrigin: { goalId: "g1", trigger: "continuation", sequence: 2 } }))).toBe("目标续跑 · 第 2 轮");
+    expect(extractUserPreview(undefined, makeRun("r-goal-s", { goalOrigin: { goalId: "g1", trigger: "goal_set", sequence: 1 } }))).toBe("目标执行 · 第 1 轮");
+    expect(extractUserPreview(undefined, makeRun("r-goal-u", { goalOrigin: { goalId: "g1", trigger: "user_input", sequence: 1 } }))).toBe("查看提问");
   });
 
   it("extracts assistant preview selecting the final response after tool calls", () => {
@@ -162,6 +169,62 @@ describe("ConversationRunRail pure helpers", () => {
     expect(anchors.map((a) => a.runId)).toEqual(["r1", "r2", "r3", "r4"]);
     expect(anchors[0]?.userPreview).toBe("问1");
     expect(anchors[0]?.isMounted).toBe(true);
+  });
+
+  it("tracks mounted state and earliest real item for team and goal automatic runs without user_message", () => {
+    const r0 = makeRun("r0");
+    const r1 = makeRun("r1", { teamOrigin: { origin: "wake" } });
+    const r2 = makeRun("r2", { teamOrigin: { origin: "user_message" } });
+    const r3 = makeRun("r3", { goalOrigin: { goalId: "g1", trigger: "continuation", sequence: 2 } });
+
+    const allItems = [
+      makeUserItem("u0", "r0", "团队模式，完成 PPT"),
+      makeAssistantItem("a0", "r0", "团队已经组建"),
+      makeAssistantItem("a1-draft", "r1", "先抽查一下文件", 1),
+      makeToolItem("t1", "r1", "run_shell", 2),
+      makeAssistantItem("a1-final", "r1", "完工检查：目录里已有 PPTX", 3),
+      makeToolItem("t2", "r2", "read_file", 1),
+      makeAssistantItem("a2-final", "r2", "已按你的团队消息调整", 2),
+      makeAssistantItem("a3-final", "r3", "目标第 2 轮已完成", 1),
+    ];
+
+    // r1 is mounted, r2 is not yet mounted in paginated history
+    const mountedItems = allItems.filter((item) => item.runId !== "r2");
+    const anchors = buildRunAnchors({
+      runs: [r0, r1, r2, r3],
+      items: mountedItems,
+      resultItems: allItems,
+    });
+
+    expect(anchors[0]).toMatchObject({
+      runId: "r0",
+      userItemId: "u0",
+      anchorItemId: "u0",
+      userPreview: "团队模式，完成 PPT",
+      isMounted: true,
+    });
+    expect(anchors[1]).toMatchObject({
+      runId: "r1",
+      userItemId: undefined,
+      anchorItemId: "a1-draft",
+      userPreview: "团队续跑",
+      assistantPreview: "完工检查：目录里已有 PPTX",
+      isMounted: true,
+    });
+    expect(anchors[2]).toMatchObject({
+      runId: "r2",
+      userItemId: undefined,
+      anchorItemId: "t2",
+      userPreview: "你的团队消息",
+      isMounted: false,
+    });
+    expect(anchors[3]).toMatchObject({
+      runId: "r3",
+      userItemId: undefined,
+      anchorItemId: "a3-final",
+      userPreview: "目标续跑 · 第 2 轮",
+      isMounted: true,
+    });
   });
 });
 
@@ -362,5 +425,173 @@ describe("ConversationRunRail component interaction", () => {
     // Escape closes preview
     fireEvent.keyDown(buttons[0]!, { key: "Escape" });
     expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
+  it("navigates team wake runs rendered inside ExecutionFeed even when process items are collapsed", () => {
+    const runs: Run[] = [
+      makeRun("r0", { modelStepCount: 1, updatedAt: 10 }),
+      makeRun("r1", { modelStepCount: 1, updatedAt: 20, teamOrigin: { origin: "wake" } }),
+      makeRun("r2", { modelStepCount: 1, updatedAt: 30, teamOrigin: { origin: "wake" } }),
+      makeRun("r3", { modelStepCount: 1, updatedAt: 40, teamOrigin: { origin: "wake" } }),
+    ];
+    const items: Item[] = [
+      makeUserItem("u0", "r0", "团队模式，完成 PPT", 1),
+      makeAssistantItem("a0", "r0", "团队已经组建", 2),
+      makeAssistantItem("a1-pre", "r1", "大纲已提交，先检查", 1),
+      makeToolItem("t1", "r1", "run_shell", 2),
+      makeAssistantItem("a1-fin", "r1", "大纲质量不错", 3),
+      makeAssistantItem("a2-pre", "r2", "视觉规范已交", 1),
+      makeToolItem("t2", "r2", "run_shell", 2),
+      makeAssistantItem("a2-fin", "r2", "封面样张已达到预期", 3),
+      makeAssistantItem("a3-pre", "r3", "成品已经生成了", 1),
+      makeToolItem("t3", "r3", "run_shell", 2),
+      makeAssistantItem("a3-fin", "r3", "完工检查：目录里已有 浩瀚星辰.pptx", 3),
+    ];
+
+    const { container } = render(
+      <ExecutionFeed
+        runs={runs}
+        allRuns={runs}
+        items={items}
+        resultItems={items}
+        approvals={[]}
+      />,
+    );
+
+    const feed = container.querySelector<HTMLElement>("section.feed")!;
+    const scrollToSpy = vi.fn();
+    feed.scrollTo = scrollToSpy;
+    vi.spyOn(feed, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 900, 600));
+
+    const anchor2 = feed.querySelector<HTMLElement>('[data-run-anchor="r2"]');
+    const anchor3 = feed.querySelector<HTMLElement>('[data-run-anchor="r3"]');
+    expect(anchor2).not.toBeNull();
+    expect(anchor3).not.toBeNull();
+    vi.spyOn(anchor2!, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 1200, 800, 0));
+    vi.spyOn(anchor3!, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 2100, 800, 0));
+
+    const buttons = screen.getAllByRole("button", { name: /^跳转到：/ });
+    expect(buttons).toHaveLength(4);
+
+    // Focus 4th tick (team wake run r3) and verify tooltip shows 团队续跑 instead of 查看提问
+    fireEvent.focus(buttons[3]!);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("团队续跑");
+    expect(screen.getByRole("tooltip")).toHaveTextContent("完工检查：目录里已有 浩瀚星辰.pptx");
+
+    // Click 3rd tick (r2) and 4th tick (r3) and verify smooth scroll targets each run anchor
+    fireEvent.click(buttons[2]!);
+    expect(scrollToSpy).toHaveBeenLastCalledWith({ top: 1180, behavior: "smooth" });
+
+    fireEvent.click(buttons[3]!);
+    expect(scrollToSpy).toHaveBeenLastCalledWith({ top: 2080, behavior: "smooth" });
+  });
+
+  it("loads an unmounted team wake run via its earliest real item id and scrolls to its run anchor", async () => {
+    const runs = [
+      makeRun("r0"),
+      makeRun("r1", { teamOrigin: { origin: "wake" } }),
+      makeRun("r2", { teamOrigin: { origin: "wake" } }),
+      makeRun("r3", { teamOrigin: { origin: "wake" } }),
+    ];
+    const resultItems = [
+      makeUserItem("u0", "r0", "问0"),
+      makeToolItem("t1", "r1", "run_shell", 1),
+      makeAssistantItem("a1", "r1", "团队续跑结果1", 2),
+      makeAssistantItem("a2", "r2", "团队续跑结果2", 1),
+      makeAssistantItem("a3", "r3", "团队续跑结果3", 1),
+    ];
+    const mountedItems = resultItems.filter((item) => item.runId !== "r1");
+
+    const onEnsureItemMounted = vi.fn().mockImplementation(async () => {
+      const anchorEl = document.createElement("div");
+      anchorEl.dataset.runAnchor = "r1";
+      vi.spyOn(anchorEl, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 420, 800, 0));
+      mockFeed.appendChild(anchorEl);
+      return true;
+    });
+    const scrollToSpy = vi.fn();
+    mockFeed.scrollTo = scrollToSpy;
+    vi.spyOn(mockFeed, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 900, 600));
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      cb(0);
+      return 1;
+    });
+
+    render(
+      <ConversationRunRail
+        runs={runs}
+        items={mountedItems}
+        resultItems={resultItems}
+        feedRef={{ current: mockFeed }}
+        pauseFollowing={vi.fn()}
+        onEnsureItemMounted={onEnsureItemMounted}
+      />,
+    );
+
+    const buttons = screen.getAllByRole("button");
+    await act(async () => {
+      fireEvent.click(buttons[1]!);
+    });
+
+    expect(onEnsureItemMounted).toHaveBeenCalledWith("t1");
+    expect(scrollToSpy).toHaveBeenCalledWith({ top: 400, behavior: "smooth" });
+  });
+
+  it("releases scroll lock when a clicked run has no mounted anchor element", () => {
+    const runs = [
+      makeRun("r0"),
+      makeRun("r1", { teamOrigin: { origin: "wake" } }),
+      makeRun("r2", { teamOrigin: { origin: "wake" } }),
+      makeRun("r3", { teamOrigin: { origin: "wake" } }),
+    ];
+    // r1 has no items yet (0-item run), so it has no DOM anchor and no ensureItemId
+    const items = [
+      makeUserItem("u0", "r0", "问0"),
+      makeAssistantItem("a2", "r2", "答2", 1),
+      makeAssistantItem("a3", "r3", "答3", 1),
+    ];
+
+    const a0 = document.createElement("div");
+    a0.dataset.runAnchor = "r0";
+    vi.spyOn(a0, "getBoundingClientRect").mockReturnValue(new DOMRect(0, -400, 800, 0));
+    mockFeed.appendChild(a0);
+
+    const a2 = document.createElement("div");
+    a2.dataset.runAnchor = "r2";
+    vi.spyOn(a2, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 10, 800, 0));
+    mockFeed.appendChild(a2);
+
+    const a3 = document.createElement("div");
+    a3.dataset.runAnchor = "r3";
+    vi.spyOn(a3, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 800, 800, 0));
+    mockFeed.appendChild(a3);
+
+    vi.spyOn(mockFeed, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 900, 600));
+    Object.defineProperty(mockFeed, "scrollHeight", { value: 2000, configurable: true });
+    Object.defineProperty(mockFeed, "clientHeight", { value: 600, configurable: true });
+    Object.defineProperty(mockFeed, "scrollTop", { value: 500, configurable: true });
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      cb(0);
+      return 1;
+    });
+
+    const onEnsureItemMounted = vi.fn().mockResolvedValue(false);
+    render(
+      <ConversationRunRail
+        runs={runs}
+        items={items}
+        feedRef={{ current: mockFeed }}
+        pauseFollowing={vi.fn()}
+        onEnsureItemMounted={onEnsureItemMounted}
+      />,
+    );
+
+    const buttons = screen.getAllByRole("button");
+    fireEvent.click(buttons[1]!);
+    expect(onEnsureItemMounted).not.toHaveBeenCalled();
+
+    // Scroll lock must be released immediately so subsequent scroll updates active marker to r2
+    fireEvent.scroll(mockFeed);
+    expect(buttons[2]).toHaveAttribute("aria-current", "step");
   });
 });
