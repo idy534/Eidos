@@ -7,8 +7,8 @@ from pydantic import Field, field_validator, model_validator
 
 from eidos_runtime.models import EidosFrozenStrictModel
 
-AgentRole = Literal["default", "explorer", "worker"]
-BUILTIN_AGENT_ROLES = ("default", "explorer", "worker")
+AgentRole = Literal["default", "explorer", "worker", "verifier"]
+BUILTIN_AGENT_ROLES = ("default", "explorer", "worker", "verifier")
 AgentTypeName = Annotated[
     str, Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_-]*$")
 ]

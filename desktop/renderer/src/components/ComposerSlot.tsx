@@ -7,6 +7,8 @@ export interface ComposerSlotProps extends Omit<ApprovalComposerProps, "run" | "
   run: ApprovalComposerProps["run"] | null | undefined;
   approval: ApprovalComposerProps["approval"] | undefined;
   pendingUserInput?: UserInputRequest | undefined;
+  /** A team proposal waiting for the user's roster decision. */
+  pendingRoster?: ReactNode;
   userInputReady?: boolean;
   onAnswerUserInput?: () => void;
   children: ReactNode;
@@ -16,6 +18,7 @@ export function ComposerSlot({
   run,
   approval,
   pendingUserInput,
+  pendingRoster,
   userInputReady = true,
   onAnswerUserInput,
   children,
@@ -54,6 +57,8 @@ export function ComposerSlot({
       />
     );
   }
+
+  if (pendingRoster) return pendingRoster;
 
   // 3. Waiting input but question details not yet loaded
   if (run?.status === "waiting_input") {

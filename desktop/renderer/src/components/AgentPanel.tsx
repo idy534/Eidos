@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentSummary, CollaborationState } from "../../../shared/collaboration.generated.js";
 import type { ApprovalRequest, Item, Run, SessionSnapshot, ModelOption } from "../contracts.js";
 import { ApprovalComposer } from "./ApprovalComposer.js";
@@ -10,6 +10,7 @@ import { mergeContextCompactions } from "../context-compaction.js";
 import { mergeModelRetries } from "../model-retry.js";
 import { EmptyState } from "./EmptyState.js";
 import { AlertBanner } from "./AlertBanner.js";
+import { AgentChangesView, AgentMessageComposer, formatAgentUsage } from "./AgentWorkspaceTools.js";
 
 const active = new Set([
   "queued",
@@ -270,7 +271,10 @@ export function AgentList({
   );
 }
 
-function AgentTranscript({
+/** The fields a transcript needs; team members supply them without a delegation. */
+export type TranscriptSubject = Pick<AgentSummary, "id" | "sessionId" | "runId" | "status" | "createdAt" | "task" | "taskName">;
+
+export function AgentTranscript({
   agent,
   approvals,
   respondingApprovalIds = new Set(),
@@ -283,8 +287,10 @@ function AgentTranscript({
   onOpenPlan,
   workspaceRoot,
   models,
+  showTeamRunMarkers = true,
+  refreshNonce = 0,
 }: {
-  agent: AgentSummary;
+  agent: TranscriptSubject;
   approvals: ApprovalRequest[];
   respondingApprovalIds?: ReadonlySet<string>;
   respondingKindByApprovalId?: Readonly<Record<string, "approve" | "reject">>;
@@ -296,9 +302,12 @@ function AgentTranscript({
   onOpenPlan?: (() => void) | undefined;
   workspaceRoot?: string | undefined;
   models?: readonly ModelOption[] | undefined;
+  showTeamRunMarkers?: boolean | undefined;
+  refreshNonce?: number | undefined;
 }) {
   const [snapshot, setSnapshot] = useState<SessionSnapshot>();
   const [error, setError] = useState("");
+  const reloadRef = useRef<(() => void) | undefined>(undefined);
 
   useEffect(() => {
     setSnapshot(undefined);
@@ -367,16 +376,22 @@ function AgentTranscript({
       }
     };
 
+    reloadRef.current = () => { void load(); };
     void load();
     const unsubscribe = window.eidosRuntime.onNotification((notification) => {
       if ("sessionId" in notification.params && notification.params.sessionId === agent.sessionId) scheduleLoad();
     });
     return () => {
       disposed = true;
+      reloadRef.current = undefined;
       clearTimeout(timer);
       unsubscribe();
     };
   }, [agent.sessionId, agent.runId]);
+
+  useEffect(() => {
+    if (refreshNonce > 0) reloadRef.current?.();
+  }, [refreshNonce]);
 
   const childApprovals = useMemo(
     () => approvals.filter((request) => request.sessionId === agent.sessionId),
@@ -408,7 +423,7 @@ function AgentTranscript({
     const items: Item[] = hasUserMsg
       ? rawItems.map((item) => {
           if (item.kind === "user_message" && item.content) {
-            const cleaned = item.content.replace(/^Delegated task from the parent agent\.[^\n]*\n\n/, "");
+            const cleaned = item.content.replace(/^(?:Delegated task from the parent agent|User instruction to this agent)[^\n]*\n\n/, "");
             return cleaned !== item.content ? { ...item, content: cleaned } : item;
           }
           return item;
@@ -469,6 +484,7 @@ function AgentTranscript({
           allowFeedback={false}
           allowRegenerate={false}
           allowEditResend={false}
+          showTeamRunMarkers={showTeamRunMarkers}
         />
       </div>
     </section>
@@ -677,6 +693,7 @@ export function AgentWorkspacePanel({
             </div>
 
             <div className="agent-heading__actions">
+              {formatAgentUsage(agent) && <span className="agent-usage">{formatAgentUsage(agent)}</span>}
               <span className={`agent-status-pill agent-status-pill--${statusBadgeTone(agent.status)}`}>
                 {labels[agent.status]}
               </span>
@@ -727,6 +744,8 @@ export function AgentWorkspacePanel({
             workspaceRoot={workspaceRoot}
             models={effectiveModels}
           />
+          <AgentChangesView agent={agent} />
+          <AgentMessageComposer key={agent.id} agent={agent} />
         </article>
       )}
     </section>

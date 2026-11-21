@@ -6,6 +6,7 @@ export interface ActiveRunProjection {
 export interface QuitFlowDependencies {
   hasRuntimeClient(): boolean;
   showQuitDialog(activeRunCount: number): Promise<"return_to_eidos" | "stop_and_exit">;
+  onQuitCommitted?(): void;
   cancelRun(runId: string): Promise<unknown>;
   shutdownRuntime(): Promise<unknown>;
   requestFinalQuit(): void;
@@ -19,13 +20,34 @@ export interface QuitFlowDependencies {
 export interface QuitFlowState {
   isQuitting: boolean;
   dialogOpen: boolean;
+  quitCommitted: boolean;
   shutdownStarted: boolean;
   quitCanContinue: boolean;
+}
+
+export function guardIpcHandlerForQuit<Event, Args extends unknown[], Result>(
+  isQuitCommitted: () => boolean,
+  handler: (event: Event, ...args: Args) => Result | Promise<Result>,
+): (event: Event, ...args: Args) => Promise<Result> {
+  return async (event, ...args) => {
+    if (isQuitCommitted()) {
+      return new Promise<Result>(() => {});
+    }
+    try {
+      return await handler(event, ...args);
+    } catch (error) {
+      if (isQuitCommitted()) {
+        return new Promise<Result>(() => {});
+      }
+      throw error;
+    }
+  };
 }
 
 export class QuitFlowController {
   private isQuitting = false;
   private dialogOpen = false;
+  private quitCommitted = false;
   private shutdownStarted = false;
   private quitCanContinue = false;
 
@@ -38,6 +60,7 @@ export class QuitFlowController {
     return {
       isQuitting: this.isQuitting,
       dialogOpen: this.dialogOpen,
+      quitCommitted: this.quitCommitted,
       shutdownStarted: this.shutdownStarted,
       quitCanContinue: this.quitCanContinue,
     };
@@ -51,13 +74,14 @@ export class QuitFlowController {
     event.preventDefault();
     this.isQuitting = true;
 
-    if (this.shutdownStarted || this.dialogOpen) {
+    if (this.quitCommitted || this.shutdownStarted || this.dialogOpen) {
       return;
     }
 
     const activeCount = this.activeRunProjection.count();
 
     if (activeCount === 0) {
+      this.commitQuit();
       this.executeShutdownAndQuit();
       return;
     }
@@ -75,6 +99,7 @@ export class QuitFlowController {
           this.deps.log("info", "User confirmed quit with active runs", {
             activeRunCount: activeCount,
           });
+          this.commitQuit();
 
           const runIdsToCancel = this.activeRunProjection.runIds();
           const cancelPromises = runIdsToCancel.map((id) =>
@@ -98,6 +123,20 @@ export class QuitFlowController {
         });
         this.isQuitting = false;
       });
+  }
+
+  private commitQuit(): void {
+    if (this.quitCommitted) {
+      return;
+    }
+    this.quitCommitted = true;
+    try {
+      this.deps.onQuitCommitted?.();
+    } catch (err: unknown) {
+      this.deps.log("warn", "Quit teardown hook failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   private executeShutdownAndQuit(): void {

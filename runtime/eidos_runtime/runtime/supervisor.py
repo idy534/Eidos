@@ -170,6 +170,11 @@ class RunSupervisor:
         from eidos_runtime.application.collaboration import CollaborationApplication
 
         self.collaboration = CollaborationApplication(store, self.schedule_next, self.cancel_agent, self.events.deliver_pending)
+        from eidos_runtime.application.teams import TeamApplication
+
+        self.teams = TeamApplication(store, workspaces=lambda: self.collaboration.workspaces, cancel=self.cancel_agent,
+                                     publish=self.events.deliver_pending, schedule=self.schedule_next)
+        self.collaboration.teams = self.teams
         self._agent_maintenance: RuntimeAsyncTask[None] | None = None
         self._channel_maintenance: RuntimeAsyncTask[None] | None = None
         self._automation_maintenance: RuntimeAsyncTask[None] | None = None

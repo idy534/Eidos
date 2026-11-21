@@ -15,7 +15,9 @@ export type Event =
   | "SubagentStart"
   | "SubagentStop"
   | "Stop"
-  | "Interrupt";
+  | "Interrupt"
+  | "TeamMemberIdle"
+  | "TeamTaskCompleted";
 export type Matcher = string | null;
 export type Handlertype = "command" | "mcp_tool" | "prompt" | "agent";
 export type Command = string;
@@ -66,7 +68,9 @@ export type Event1 =
   | "SubagentStart"
   | "SubagentStop"
   | "Stop"
-  | "Interrupt";
+  | "Interrupt"
+  | "TeamMemberIdle"
+  | "TeamTaskCompleted";
 export type Handlertype1 = "command" | "mcp_tool" | "prompt" | "agent";
 export type Background1 = boolean;
 export type Status1 = "intent" | "running" | "completed" | "failed" | "unknown" | "skipped";

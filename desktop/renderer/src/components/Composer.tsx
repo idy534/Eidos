@@ -2,7 +2,7 @@ import type { InputReference, InputPrepareRequest } from "../../../shared/input-
 import { canonicalizeInlineText } from "../../../shared/inline-references.js";
 import { InputReferenceCards, isInlineReference, isShelfReference, useInputContext, useReferenceActivation } from "./InputContext.js";
 import { InlineRichEditor } from "./InlineRichEditor.js";
-import { InputPicker, type InputPickerMode, LightbulbIcon, TargetGoalIcon } from "./InputPicker.js";
+import { InputPicker, type InputPickerMode, LightbulbIcon, TargetGoalIcon, TeamIcon } from "./InputPicker.js";
 import { forwardRef, useCallback, useState, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import type { ApprovalMode, ContextUsage, ModelId, ModelReasoningSelection, Run, Session } from "../contracts.js";
 import type { ComposerMode } from "../session-state.js";
@@ -23,7 +23,7 @@ import { Select } from "./Select.js";
 import type { DraftGitView } from "../app/useDraftGit.js";
 import { pathBasename } from "../platform.js";
 
-export type ComposerWorkMode = "execute" | "plan" | "goal";
+export type ComposerWorkMode = "execute" | "plan" | "goal" | "team";
 
 export interface ComposerProps {
   composerMode: ComposerMode;
@@ -37,6 +37,8 @@ export interface ComposerProps {
   reasoningSelection?: ModelReasoningSelection | undefined;
   workMode?: ComposerWorkMode;
   onWorkModeChange?: (mode: ComposerWorkMode) => void;
+  /** False while this Session already has a team or a pending roster. */
+  teamAvailable?: boolean;
   approvalMode?: ApprovalMode | undefined;
   onApprovalModeChange?: ((mode: ApprovalMode) => void) | undefined;
   contextUsage: ContextUsage | undefined;
@@ -80,6 +82,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   reasoningSelection,
   workMode = "execute",
   onWorkModeChange,
+  teamAvailable = true,
   approvalMode = "manual",
   onApprovalModeChange,
   contextUsage,
@@ -311,6 +314,8 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           ? "先把想法变成计划"
           : workMode === "goal"
           ? "输入目标，Eidos 会持续推进直到完成"
+          : workMode === "team"
+          ? "描述任务，Eidos 会先提议团队成员与分工"
           : "想做什么，从这里开始"
         : "请先在设置中添加模型";
 
@@ -494,13 +499,15 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           consumeMention();
           if (command === "plan") onWorkModeChange?.("plan");
           else if (command === "goal") onWorkModeChange?.("goal");
+          else if (command === "team") { if (teamAvailable) onWorkModeChange?.("team"); }
           else if (command === "status") setShowStatus((value) => !value);
           else if (command === "model") {
             composerRef.current?.querySelector<HTMLButtonElement>(".model-selector > button")?.click();
           } else context?.settings(command);
         }}
         onSelectPlanMode={() => onWorkModeChange?.("plan")}
-        onSelectGoalMode={() => onWorkModeChange?.("goal")} />}
+        onSelectGoalMode={() => onWorkModeChange?.("goal")}
+        {...(teamAvailable ? { onSelectTeamMode: () => onWorkModeChange?.("team") } : {})} />}
       {agentCreator && <AgentEditorDialog referenceAfterSave onClose={() => { setAgentCreator(undefined); focusActiveEditor(); }}
         onSaved={(saved) => {
           void agentCreator.add({ kind: "agent", source: saved.definition.name }, agentCreator.insertRange);
@@ -653,6 +660,18 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
                   <CloseIcon className="composer-plan-badge__close" />
                 </span>
                 <span className="composer-plan-badge__text">目标模式</span>
+              </button>
+            </Tooltip>
+          )}
+          {workMode === "team" && (
+            <Tooltip content="退出团队模式">
+              <button type="button" className="composer-plan-badge" disabled={isSubmitting}
+                onClick={() => onWorkModeChange?.("execute")} aria-label="退出团队模式">
+                <span className="composer-plan-badge__icon" aria-hidden="true">
+                  <TeamIcon className="composer-plan-badge__bulb" />
+                  <CloseIcon className="composer-plan-badge__close" />
+                </span>
+                <span className="composer-plan-badge__text">团队模式</span>
               </button>
             </Tooltip>
           )}

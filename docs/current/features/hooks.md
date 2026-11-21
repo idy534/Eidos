@@ -46,6 +46,8 @@ Run 开始时，Runtime 把已启用、已信任且本版支持的 Hook 定义�
 | `Stop` | 父 Run 正常完成前，包括提交待审阅计划的出口 | `decision: block` 要求模型在同一个 Run 继续。`continue: false` 明确停止。 |
 | `SubagentStop` | 子 Run 正常完成前 | Runtime 使用子 Agent 类型匹配，并执行与 Stop 相同的继续语义。 |
 | `Interrupt` | 用户取消正在执行的根 Run，资源关闭前 | Runtime 尝试执行清理。结果不能撤销取消或启动新 Run。 |
+| `TeamMemberIdle` | 团队成员 Run 正常完成前 | 替代该成员的 `Stop`。按成员名匹配，执行与 Stop 相同的继续语义。输入包含 `team_id` 和 `teammate_name`。 |
+| `TeamTaskCompleted` | 团队任务将要变为完成前（无需审查的提交，或审查者接受） | 按任务键匹配。拒绝（退出码 2 或 `decision: block`）时任务保持原状态，`team_task` 返回带 Hook 原因的错误。输入另含 `task_id`、`task_subject` 和 `task_description`。 |
 
 `write_stdin` 不产生新的 Pre/Post Hook。它属于原 Shell 的后续观察。长 Shell 的 reader 只提交最终结果和待触发记录。Run Worker 在安全边界执行 PostToolUse。它不会在 Shell reader 内运行用户脚本。最终 Shell 输出的反馈也作用于同一 Shell 的 `write_stdin` 模型投影。
 
@@ -75,7 +77,7 @@ PermissionRequest 使用 `hookSpecificOutput.decision.behavior: "allow" | "deny"
 
 UserPromptSubmit、Stop 和 SubagentStop 与 Codex 当前行为一致，接受但不实现 `suppressOutput`。Pre/Post 工具事件返回这个字段会记录为不支持的输出。
 
-退出码 2 使用 stderr 作为理由。Pre/UserPrompt 的含义是拒绝，Stop/SubagentStop 的含义是继续，Post 的含义是模型反馈。其他非零退出、超时、无效输出和不支持的输出字段会成为明确 Hook 错误。普通 Hook 错误不会自动结束 Run，也不会伪造成通过检查。只有明确的拒绝或停止结果才改变执行路径。UserPrompt 的拒绝和显式停止使用 `HOOK_REQUESTED_STOP`。Stop 的继续记录会使后续 `stop_hook_active` 为 true。
+退出码 2 使用 stderr 作为理由。Pre/UserPrompt/TeamTaskCompleted 的含义是拒绝，Stop/SubagentStop/TeamMemberIdle 的含义是继续，Post 的含义是模型反馈。其他非零退出、超时、无效输出和不支持的输出字段会成为明确 Hook 错误。普通 Hook 错误不会自动结束 Run，也不会伪造成通过检查。只有明确的拒绝或停止结果才改变执行路径。UserPrompt 的拒绝和显式停止使用 `HOOK_REQUESTED_STOP`。Stop 的继续记录会使后续 `stop_hook_active` 为 true。
 
 Runtime 使用现有 AnyIO 内核并行执行同一事件的匹配命令，每次分发最多占用 8 个受所有者管理的阻塞执行名额。没有异步内核时，Runtime 顺序执行。输出按配置顺序汇总。多个有效改写以最后完成的改写为准，任意拒绝优先于改写。这个限制不构成跨 Session 或跨 Run 配额。
 

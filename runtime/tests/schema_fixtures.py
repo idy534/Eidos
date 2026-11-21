@@ -4,8 +4,35 @@ from __future__ import annotations
 import sqlite3
 
 
+def remove_team_schema(connection: sqlite3.Connection) -> None:
+    """Drop the v56 team objects when constructing an older database."""
+    for table in ("team_runs", "team_wakes", "team_message_deliveries", "team_messages", "team_task_deps",
+                  "team_tasks", "team_members", "team_proposals", "teams"):
+        connection.execute(f"DROP TABLE IF EXISTS {table}")
+    connection.execute("DROP INDEX IF EXISTS sessions_internal_kind")
+    if "internal_kind" in {row[1] for row in connection.execute("PRAGMA table_info(sessions)")}:
+        connection.execute("ALTER TABLE sessions DROP COLUMN internal_kind")
+
+
+def remove_agent_workspace_schema(connection: sqlite3.Connection) -> None:
+    """Drop the v55 child workspace objects, and later ones, when constructing an older database."""
+    remove_team_schema(connection)
+    connection.execute("DROP TABLE IF EXISTS workspace_integrations")
+    connection.execute("DROP TABLE IF EXISTS workspace_deliveries")
+    connection.execute("DROP INDEX IF EXISTS agent_messages_operation")
+    for table, names in {
+        "agent_messages": ("sender_kind", "operation_id"),
+        "agent_delegations": ("workspace_mode", "worktree_id", "base_tree", "last_user_instruction"),
+    }.items():
+        columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+        for name in names:
+            if name in columns:
+                connection.execute(f"ALTER TABLE {table} DROP COLUMN {name}")
+
+
 def remove_memory_usage_schema(connection: sqlite3.Connection) -> None:
-    """Drop the v54 memory read columns when constructing an older database."""
+    """Drop the v54 memory read columns, and later ones, when constructing an older database."""
+    remove_agent_workspace_schema(connection)
     columns = {row[1] for row in connection.execute("PRAGMA table_info(memory_documents)")}
     for name in ("last_read_at", "read_count"):
         if name in columns:

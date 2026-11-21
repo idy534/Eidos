@@ -282,13 +282,25 @@ class RunResources:
         automatic_goal = isinstance(goal_origin, dict) and goal_origin.get("trigger") != "user_input"
         goal_tools = (goal_entry(goals),) if (not self.is_child and goal is not None
             and goal.status == "active" and self.store.read_run(self.run_id).get("workMode", "execute") == "execute") else ()
-        if self.store.automations is not None and not self.is_child and channel_origin is None:
+        from eidos_runtime.persistence.teams import TeamRepository
+        from eidos_runtime.tools.team import team_entries, tool_names_for
+        team_role = TeamRepository(self.store.database).role_for_run(self.run_id)
+        team_member = team_role is not None and team_role.role == "member"
+        team_app = getattr(self.collaboration, "teams", None) if self.collaboration else None
+        team_tools = team_entries(team_app, tool_names_for(team_role)) if team_app is not None else ()
+        if team_app is not None and team_role is not None and team_role.role == "lead" and self.collaboration.workspaces is not None:
+            from eidos_runtime.tools.agent_integration import team_integration_entry
+            team_tools = (*team_tools, team_integration_entry(self.tool_executor, self.collaboration.workspaces, self.run_id, team_app))
+        if team_member:
+            goal_tools = ()
+        if self.store.automations is not None and not self.is_child and not team_member and channel_origin is None:
             if automation_origin is None:
                 automation_tools = (automation_entry(self.store.automations),)
             else:
                 task = self.store.automations.repository.read(automation_origin.automation_id)
                 if task.status == "ACTIVE" and task.kind == "cron":
                     automation_tools = (automation_entry(self.store.automations, self_pause_only=True),)
+        from eidos_runtime.tools.agent_integration import agent_integration_entry
         from eidos_runtime.infrastructure.secret_files import SecretFiles
         from eidos_runtime.persistence.web_search import WebSearchRepository
         from eidos_runtime.tools.web_search import web_search_entry
@@ -307,6 +319,7 @@ class RunResources:
             builtin_entries=(
                 *automation_tools,
                 *goal_tools,
+                *team_tools,
                 *search_tools,
                 *self.tool_executor.registry.entries,
                 read_tool_output_entry(self.store, self.run_id, self.shell_process_manager),
@@ -316,9 +329,12 @@ class RunResources:
                 *memory_entries(
                     child=self.is_child,
                     read_enabled=memory_access.read_enabled,
-                    write_enabled=memory_access.writable and automation_origin is None and channel_origin is None and not automatic_goal,
+                    write_enabled=memory_access.writable and automation_origin is None and channel_origin is None and not automatic_goal
+                    and not team_member,
                 ),
                 *(collaboration_entries(self.collaboration, child=self.is_child) if self.collaboration else ()),
+                *((agent_integration_entry(self.tool_executor, self.collaboration.workspaces, self.run_id),)
+                  if self.collaboration and self.collaboration.workspaces is not None and not self.is_child else ()),
                 *planning_entries(include_plan=self.store.read_run(self.run_id).get("workMode") == "plan"),
                 *self.skills.tool_entries(
                     self.skill_catalog_snapshot,
@@ -328,6 +344,10 @@ class RunResources:
             ),
             external_entries=self._external_entries,
         )
+        if team_member:
+            # Members ask the user through the team board; the lead owns plans and permissions.
+            base = ToolRegistry(tuple(entry for entry in base.entries
+                                      if entry.spec.name not in {"request_permissions", "request_user_input", "write_plan"}))
         if self.is_child:
             # Built-in roles specialize the assignment, not the Run's authority.
             # Coordination and direct permission expansion stay with the parent.

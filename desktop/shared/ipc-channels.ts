@@ -7,6 +7,7 @@
 
 export const IPC = {
   GOAL_EXECUTE: "goal:execute",
+  TEAM_REQUEST: "team:request",
   SHELL_ENVIRONMENT_READ: "shell-environment:read",
   PERSONALIZATION_READ: "personalization:read",
   PERSONALIZATION_SAVE: "personalization:save",
@@ -117,6 +118,9 @@ export const IPC = {
   AGENT_DEFINITION_REMOVE: "agent:definition-remove",
   AGENT_READ: "agent:read",
   AGENT_STOP: "agent:stop",
+  AGENT_MESSAGE: "agent:message",
+  AGENT_CHANGES: "agent:changes",
+  AGENT_DISCARD_WORKSPACE: "agent:discardWorkspace",
   DATA_BACKUP: "data:backup",
   MEMORY_EXPORT: "memory:export",
   MEMORY_REQUEST: "memory:request",

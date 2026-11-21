@@ -47,7 +47,7 @@ class AutomationRepository(Repository):
         with self.lock:
             connection = self._connection()
             row = self.session_project_in(connection, session_id)
-            if row is None or connection.execute("SELECT 1 FROM agent_delegations WHERE child_session_id=?", (session_id,)).fetchone():
+            if row is None or connection.execute("SELECT 1 FROM sessions WHERE id=? AND internal_kind IS NOT NULL", (session_id,)).fetchone():
                 raise AutomationError("automation_target_unavailable", "目标会话不存在或不能执行定时任务。")
             return AutomationBinding(kind="existing_session", session_id=session_id, project_id=row[0])
 

@@ -235,7 +235,7 @@ Renderer → preload typed IPC → Main → RuntimeServer
 
 - 每条看板消息包含：作者（成员、Lead、用户或系统）、收件人（`@成员` 列表、`@all`、`@lead` 或 `@user`）、可选的关联任务、正文（最多 64 KiB）和单调递增的序号。
 - **投递**：成员的上下文只接收发给它或 `@all` 的未投递消息，以及有界的近期片段。更早的内容通过 `team_read` 分页读取。回执复用现有 `agent_message_receipts` 的做法。
-- **唤醒**：发给闲置成员的消息产生一个唤醒意图。每个成员最多保留一个待处理意图，多条消息合并为一次唤醒。发给运行中成员的消息在下一次构建上下文时送达，与现有子 Agent 证据的送达方式一致。
+- **唤醒**：点名发给闲置成员的消息产生一个唤醒意图，发给 `@all` 的消息不唤醒闲置成员。每个成员最多保留一个待处理意图，多条消息合并为一次唤醒。发给运行中成员的消息在下一次构建上下文时送达，与现有子 Agent 证据的送达方式一致。
 - **`@user`**：在团队面板中显示为需要处理的条目，同时发送通知，但不阻塞成员。用户的回复是一条用户作者的看板消息，只对被寻址的成员具有用户授权含义。
 - **系统消息**：记录成员加入或离开、任务状态变化、用户纠偏和等待审批等事件，正文保持简短。
 - 看板内容是数据，不是授权。沿用现有规则：Agent 消息中的指令不构成用户请求。
@@ -268,15 +268,15 @@ Renderer → preload typed IPC → Main → RuntimeServer
   - `worktree`：基于明确的基准提交新建 Managed Worktree，HEAD 为 detached。
 - **默认规则**：`explorer` 和 `verifier` 使用 `shared`。在 Git 项目中有两个及以上成员同时写入时，写入成员使用 `worktree`。Lead 逐个成员决定，编制确认卡片上会显示结果。
 - **基准**：创建成员时取 Lead 工作区的快照。复用 Session 分叉的独立 Worktree 路径后，快照包含 Lead 未提交的修改，见[详细设计 3.1 节](agent-team-p0-p1-design.md#31-spawn_agentworkspace)。
-- **交付**：成员把任务提交为 `in_review` 时，Runtime 记录该成员 Worktree 相对基准的 Diff 快照，并关联到任务的证据。这是 Runtime 自身的操作，不要求模型自己执行 `git commit`，因此不触碰项目 Git metadata 的写入保护。实施前需要核对现有 Snapshot 和 Review Diff 接口能否直接复用。
-- **集成**：由 Lead 或用户在 Review 中把快照应用到 Lead 工作区。应用时校验基准 Hash，冲突直接展示，不自动解决。集成本身是 Lead 工作区的文件写入，走现有工具和权限链路。
-- **清理**：成员移除后，Worktree 按现有保留策略处理，直到结果被集成或用户放弃。
+- **交付**：成员把任务提交为 `in_review` 时，Runtime 记录该成员 Worktree 相对基准的 Diff 快照，并关联到任务的证据。这是 Runtime 自身的操作，不要求模型自己执行 `git commit`，因此不触碰项目 Git metadata 的写入保护。基准提交与交付的做法见[详细设计 3.1、3.2 节](agent-team-p0-p1-design.md#31-spawn_agentworkspace)。
+- **集成**：由 Lead（`team_integrate`）或用户（团队面板）把交付整合到 Lead 工作区。逐个文件校验基准；没有冲突的文本修改用 `git merge-file` 三方合并，冲突直接展示，不写入冲突标记。整合是 Lead 工作区的受控文件写入，规则见[详细设计 3.3 节](agent-team-p0-p1-design.md#33-整合integration)。
+- **清理**：成员 Worktree 不参与自动保留清理，也不计入受管 Worktree 上限，由移除成员、解散团队和删除 Lead Session 的流程删除。
 - **非 Git 项目**：只能使用 `shared`。确认卡片会提示并发写入的成员共享同一份文件。
 - **Windows**：需要在 NTFS 上验证 Worktree 的创建、路径长度和清理。
 
 ### 8.6 权限与审批
 
-- Team 保存创建时用户确认的审批模式，即 Lead Session 当时的模式。成员的 Run 使用该模式；扩展快照和个性化设置在成员创建时冻结，与现有子 Agent 一致。
+- Team 保存创建时用户确认的审批模式，即发起编制的 Lead Run 的模式，同时冻结模型和思考档位，供自动续跑和成员使用（见[详细设计 4.8 节](agent-team-p0-p1-design.md#48-权限运行设置与内部-session)）。成员的 Run 使用该模式；扩展快照和个性化设置在成员创建时冻结，与现有子 Agent 一致。
 - 只有用户在 Desktop 创建团队时确认过 `full_access`，团队才使用该模式。模板和模型都不能设置它。
 - 成员的审批请求带有成员身份。团队面板汇总审批队列，并提供“下一个等待审批”的入口。Lead 不能代替用户批准。`auto_review` 照常评估每个请求，高危请求仍然需要人工确认。
 - **Run Grant**：现有子任务可以使用父 Run 仍然有效的 Grant。团队模式下 Lead 的 Run 会结束和更替，所以首期成员不继承 Lead 的 Grant，需要时自行通过审批获得。代价是审批次数会增加。团队级 Grant 放到 P2 评估。
@@ -286,7 +286,7 @@ Renderer → preload typed IPC → Main → RuntimeServer
 
 - **限额**：每个团队最多 16 个成员（沿用 `MAX_AGENTS`），最多 8 个成员 Run 同时处于 `running` 或 `finalizing`。等待审批和等待输入的成员不占名额，语义与现有实现一致，只是计数单位从父 Run 改为 Team。这不是 Runtime 的全局配额，Lead 自己的 Run 也不计入。该规则已确认，见第 12 节。
 - **唤醒意图**：新增 `team_wakes` 表。每个成员最多一条待处理意图。意图接纳时，在同一事务内创建成员 Run 并写入 Event/Outbox，只接纳一次。这一机制与目标模式的续跑意图相同。
-- **Lead 唤醒**：Lead 没有活动 Run 时，如果有消息发给 `@lead`，或有任务进入 `in_review` 或 `done`，系统生成 Lead 唤醒意图，接纳为一次自动 Lead Run，在 Feed 中标注为“团队续跑”。用户自己的输入在 Session FIFO 中优先处理。团队设置提供自动唤醒开关；暂停团队后不再接纳新的唤醒意图。
+- **Lead 唤醒**：Lead 没有活动 Run 时，如果有消息发给 `@lead`，或有任务进入 `in_review` 或 `done`，系统生成 Lead 唤醒意图，接纳为一次自动 Lead Run，在 Feed 中标注为“团队续跑”。用户自己的输入在 Session FIFO 中优先处理。团队设置提供自动唤醒开关；暂停团队后不再接纳新的唤醒意图。唤醒只由事件触发，不由状态条件触发，具体规则见[详细设计 4.6 节](agent-team-p0-p1-design.md#46-唤醒与调度)。
 - **闲置**：没有活动 Run 的成员不占用 Worker，也不消耗 token。
 - **Lead 在 Run 内等待**：`team_wait` 复用 `wait_agents` 的持久等待语义，支持 `any` 和 `all`，可以按任务或成员等待。发给 `@lead` 的消息、用户输入和超时都会结束等待。
 - **防止消息往返**：成员自己发的消息不会唤醒自己，多条消息合并为一次唤醒。如果两个成员持续互相唤醒而任务没有进展，系统向 Lead 和用户提示，但不自动暂停或结束 Run（AGENTS.md“自动恢复与模型上下文”）。
@@ -334,6 +334,7 @@ Renderer → preload typed IPC → Main → RuntimeServer
 | `team_post` | 全部 | 向指定收件人发送看板消息 |
 | `team_read` | 全部 | 分页读取看板、任务和成员的结果 |
 | `team_wait` | Lead | 持久等待任务或成员 |
+| `team_integrate` | Lead | 把成员的交付整合到 Lead 工作区 |
 
 所有有副作用的工具都走现有 ToolCall 流程，副作用类型为 `eidos_state`，需要 Durable Intent，并像 `spawn_agent` 一样按 Item ID 幂等重放。
 
@@ -368,7 +369,7 @@ Renderer → preload typed IPC → Main → RuntimeServer
 
 | 阶段 | 范围 | 验收要点 | 不包含 |
 | --- | --- | --- | --- |
-| P0：子 Agent 底座 | worker 可选独立 Worktree，结果以 Diff 快照进入 Review（[子 Agent 对照](../research/agent-delegation-alignment.md)已列为下一阶段）；新增 `verifier` 基础角色；子任务用量汇总 | 并发 worker 不互相覆盖；集成冲突可见；Worktree 创建失败时如实报错 | 跨轮存在、看板 |
+| P0：子 Agent 底座 | worker 可选独立 Worktree，结果以交付进入 Review 并支持三方文本合并（[子 Agent 对照](../research/agent-delegation-alignment.md)已列为下一阶段）；用户直接给子 Agent 发消息；新增 `verifier` 基础角色；子任务用量汇总 | 并发 worker 不互相覆盖；集成冲突可见；Worktree 创建失败时如实报错；删除父 Session 时清理子任务 Worktree | 跨轮存在、看板 |
 | P1：Team MVP | 第 8 节的全部内容；实验开关；每个 Session 一个团队；不嵌套 | 第 10 节的可靠性用例；真实窗口中的交互验收 | 模板、目标模式结合、常驻 |
 | P2：长程团队与模板 | `teams/*.toml` 模板（编制、角色、Verifier 比例、工作区策略）；团队与目标模式结合；里程碑计划产物；Critic 和 Challenger 关口；Lead 交接（压缩后由继任者接手）；Hook 事件 `TeamMemberIdle` 和 `TeamTaskCompleted`；成员上下文分叉；团队级 Grant；评估是否允许成员再派子 Agent | 持续数小时的任务可以跨重启推进；关口拒绝能退回任务 | 常驻触发 |
 | P3：常驻团队 | 渠道和定时任务的事件生成团队任务；Thread 订阅，后续消息直接投递给成员；规则化主动行为（观察、建议、执行，每级对应现有审批模式）；团队长期记忆 | 事件只被接纳一次；主动行为遵守规则和审批；用户能看到全部后台工作 | 跨机器、A2A |

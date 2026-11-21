@@ -38,6 +38,9 @@ import { SessionCanvas } from "../components/SessionCanvas.js";
 import { QueuedMessages } from "../components/QueuedMessages.js";
 import { GoalPanel } from "../components/goals/GoalPanel.js";
 import { useGoal } from "../components/goals/useGoal.js";
+import { useTeam } from "../components/teams/useTeam.js";
+import { TeamPanel } from "../components/teams/TeamPanel.js";
+import { TeamRoster } from "../components/teams/TeamRoster.js";
 import { TextReviewPanel } from "../components/TextReviewPanel.js";
 import { GitChangesPanel } from "../components/GitChangesPanel.js";
 import { GitWorkflowControls } from "../components/GitWorkflowControls.js";
@@ -184,11 +187,16 @@ export function AppShell({ runtime }: AppShellProps) {
   const approvalMode = (approvalSessionId ? approvalModes[approvalSessionId] : undefined)
     ?? sessionApprovalMode;
   const goals = useGoal(sessionState.snapshot?.session.id, runtimeStatus.state === "ready" && isStorageReady);
+  const teams = useTeam(sessionState.snapshot?.session.id, runtimeStatus.state === "ready" && isStorageReady);
+  // A Session holds one open team; team mode only starts one.
+  const teamAvailable = !teams.team && !teams.proposal;
+  const [teamMember, setTeamMember] = useState<string>();
   const [workModes, setWorkModes] = useState<Record<string, ComposerWorkMode>>({});
-  const latestUserRun = sessionState.snapshot?.runs.filter((run) => !run.inherited && !run.automationOrigin
+  const latestUserRun = sessionState.snapshot?.runs.filter((run) => !run.inherited && !run.automationOrigin && !run.teamOrigin
     && (!run.goalOrigin || run.goalOrigin.trigger === "user_input")).at(-1);
-  const workMode = (approvalSessionId ? workModes[approvalSessionId] : undefined)
+  const selectedWorkMode = (approvalSessionId ? workModes[approvalSessionId] : undefined)
     ?? (goals.view.goal?.status === "active" ? "goal" : latestUserRun?.workMode ?? "execute");
+  const workMode = selectedWorkMode === "team" && !teamAvailable ? "execute" : selectedWorkMode;
   const previousGoalStatus = useRef<{ id: string; status: string } | undefined>(undefined);
   useEffect(() => {
     const goal = goals.view.goal;
@@ -513,6 +521,7 @@ export function AppShell({ runtime }: AppShellProps) {
     setDockExpanded(false);
     setDockWidth(undefined);
     setOpenTabs([]);
+    setTeamMember(undefined);
     setBrowserRequest(undefined);
     setActiveTabId(undefined);
     terminalSequenceRef.current = 0;
@@ -1016,7 +1025,8 @@ export function AppShell({ runtime }: AppShellProps) {
       if (!refreshed) return false;
       goal = refreshed.goal;
     }
-    if (mode !== "goal" && goal?.status === "active") {
+    // Team mode works with an active goal: the goal keeps driving the lead and its team.
+    if (mode !== "goal" && mode !== "team" && goal?.status === "active") {
       if (!await goals.execute({ action: "pause", expectedRevision: goal.revision })) return false;
     }
     setWorkModes((previous) => ({ ...previous, [approvalSessionId]: mode }));
@@ -1036,12 +1046,14 @@ export function AppShell({ runtime }: AppShellProps) {
 
   async function handleSubmit(): Promise<void> {
     if (!modelState.selectedModelId) return;
-    const command = /^\/(goal|plan)(?:\s|$)/.exec(runState.input.trim());
-    const submissionMode = command?.[1] === "goal" ? "goal" : command?.[1] === "plan" ? "plan" : workMode;
+    const command = /^\/(goal|plan|team)(?:\s|$)/.exec(runState.input.trim());
+    if (command?.[1] === "team" && !teamAvailable) return;
+    const submissionMode: ComposerWorkMode = command?.[1] === "goal" ? "goal" : command?.[1] === "plan" ? "plan"
+      : command?.[1] === "team" ? "team" : workMode;
     if (command && !await changeWorkMode(submissionMode)) return;
-    if (!command && submissionMode !== "goal" && goals.view.goal?.status === "active"
+    if (!command && submissionMode !== "goal" && submissionMode !== "team" && goals.view.goal?.status === "active"
         && !await changeWorkMode(submissionMode)) return;
-    if (command?.[1] === "goal" && !runState.input.trim().replace(/^\/goal(?:\s+|$)/, "").trim()) {
+    if ((command?.[1] === "goal" || command?.[1] === "team") && !runState.input.trim().replace(/^\/(goal|team)(?:\s+|$)/, "").trim()) {
       runActions.setInput("");
       return;
     }
@@ -1054,7 +1066,12 @@ export function AppShell({ runtime }: AppShellProps) {
     const startsGoal = submissionMode === "goal" && currentGoal?.status !== "active";
     const submissionOptions: RunPlanningOptions = { workMode: submissionMode === "plan" ? "plan" : "execute",
       ...(startsGoal ? { goalMode: true } : {}),
-      ...(submissionMode === "goal" && currentGoal ? { goalRevision: currentGoal.revision } : {}) };
+      ...((submissionMode === "goal" && currentGoal) || (submissionMode === "team" && currentGoal?.status === "active")
+        ? { goalRevision: currentGoal.revision } : {}),
+      ...(submissionMode === "team" && teamAvailable ? { teamMode: true } : {}) };
+    // Team mode is one-shot: the proposal and the team carry it from here.
+    const projectedMode: ComposerWorkMode = submissionMode !== "team" ? submissionMode
+      : currentGoal?.status === "active" || startsGoal ? "goal" : "execute";
     const draftSnapshot = sessionState.draft;
     if (draftSnapshot && !sessionState.snapshot) {
       if (startingDraftId) return;
@@ -1085,7 +1102,7 @@ export function AppShell({ runtime }: AppShellProps) {
           referencesOverride: draftReferences,
           onRunProjected: (sessionId, run) => {
             sessionActions.projectRun(sessionId, run);
-            setWorkModes((previous) => ({ ...previous, [sessionId]: submissionMode }));
+            setWorkModes((previous) => ({ ...previous, [sessionId]: projectedMode }));
             if (draftSnapshot.runs.length === 0) {
               setRunDefaults(saveRunDefaults(run));
             }
@@ -1113,8 +1130,9 @@ export function AppShell({ runtime }: AppShellProps) {
       isStorageReady,
       onRunProjected: (sessionId, run) => {
         sessionActions.projectRun(sessionId, run);
-        setWorkModes((previous) => ({ ...previous, [sessionId]: submissionMode }));
+        setWorkModes((previous) => ({ ...previous, [sessionId]: projectedMode }));
         void goals.refresh();
+        if (submissionMode === "team") void teams.refresh();
       },
     });
     if (!submitted && submissionMode === "goal") void goals.refresh();
@@ -1308,11 +1326,12 @@ export function AppShell({ runtime }: AppShellProps) {
   const availableTools = useMemo<WorkspaceToolKind[]>(() => currentSnapshot
     ? [
         ...(agents.state?.agents?.length ? ["agent" as const] : []),
+        ...(teams.team ? ["team" as const] : []),
         ...(sessionHasGitRepositories ? ["review" as const] : []),
         ...(sessionHasProject ? ["terminal", "files"] as const : []),
         "browser",
       ]
-    : [], [currentSnapshot, agents.state?.agents?.length, sessionHasGitRepositories, sessionHasProject]);
+    : [], [currentSnapshot, agents.state?.agents?.length, teams.team, sessionHasGitRepositories, sessionHasProject]);
 
   useEffect(() => {
     setEnvironmentPopoverOpen(false);
@@ -1432,6 +1451,15 @@ export function AppShell({ runtime }: AppShellProps) {
     setDockOpen(true);
     return tab.id;
   }, [availableTools, openTabs]);
+
+  // The team appears only after the lead's resumed team_propose commits it; open
+  // its panel then, once, for the Session whose roster the user just confirmed.
+  const rosterConfirmed = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!teams.team || rosterConfirmed.current !== teams.team.leadSessionId || !availableTools.includes("team")) return;
+    rosterConfirmed.current = undefined;
+    openTool("team");
+  }, [teams.team, availableTools, openTool]);
 
   const openAgentList = useCallback((): void => {
     if (!currentSnapshot) return;
@@ -2006,6 +2034,19 @@ export function AppShell({ runtime }: AppShellProps) {
                   run={activeRun}
                   approval={approvals.find((a) => a.runId === activeRun?.id)}
                   pendingUserInput={planning.pendingQuestion}
+                  // The lead waits in waiting_input, or stays running when it keeps a background
+                  // shell; Runtime only reports a proposal while it is undecided and its Run active.
+                  pendingRoster={teams.proposal && activeRun?.id === teams.proposal.runId
+                    && (activeRun.status === "waiting_input" || activeRun.status === "running")
+                    ? <TeamRoster key={teams.proposal.id} proposal={teams.proposal}
+                        approvalMode={activeRun.approvalMode ?? approvalMode}
+                        modelLabel={feedModels.find((model) => model.id === activeRun.modelId)?.name ?? activeRun.modelId}
+                        worktreeAvailable={sessionHasGit} busy={teams.busy} error={teams.error}
+                        onDecide={(decision) => {
+                          rosterConfirmed.current = decision.confirmed ? teams.proposal!.sessionId : undefined;
+                          void teams.execute("team/confirmRoster", { proposalId: teams.proposal!.id, decision });
+                        }} />
+                    : undefined}
                   userInputReady={isStorageReady && runtimeStatus.state === "ready"}
                   onAnswerUserInput={planning.refresh}
                   respondingApprovalIds={respondingApprovalIds}
@@ -2026,6 +2067,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   modelList={modelState.list}
                   selectedModelId={modelState.selectedModelId}
                   workMode={workMode}
+                  teamAvailable={teamAvailable}
                   onWorkModeChange={(mode) => void changeWorkMode(mode)}
                   approvalMode={approvalMode}
                   onApprovalModeChange={(mode) => {
@@ -2131,6 +2173,26 @@ export function AppShell({ runtime }: AppShellProps) {
                     workspaceRoot={currentSnapshot.session.workspaceRoot}
                     onBackToList={openAgentList}
                     expanded={dockExpanded}
+                  />;
+                  if (tab.kind === "team" && teams.team) return <TeamPanel
+                    key={`${currentSnapshot.session.id}:team`}
+                    team={teams.team}
+                    usage={teams.usage}
+                    actions={teams}
+                    memberName={teamMember}
+                    onOpenMember={setTeamMember}
+                    onBack={() => setTeamMember(undefined)}
+                    onCancelRun={(runId, sessionId) => void runActions.cancelRun({ runId, sessionId })}
+                    approvals={approvals}
+                    respondingApprovalIds={respondingApprovalIds}
+                    respondingKindByApprovalId={respondingKindByApprovalId}
+                    expiredApprovalIds={approvalState.expiredApprovalIds}
+                    errorsByApprovalId={errorsByApprovalId}
+                    onApprove={(request) => void approvalActions.approve(request)}
+                    onReject={(request) => void approvalActions.reject(request)}
+                    onOpenFile={handleOpenFileInDock}
+                    workspaceRoot={currentSnapshot.session.workspaceRoot}
+                    models={feedModels}
                   />;
                   if (tab.kind === "text-review" && reviewRequest) return <TextReviewPanel
                     key={`${executionKey}:${reviewRequest.requestId}`} sessionId={currentSnapshot.session.id}

@@ -41,7 +41,9 @@ export const hookSchema = {
             "SubagentStart",
             "SubagentStop",
             "Stop",
-            "Interrupt"
+            "Interrupt",
+            "TeamMemberIdle",
+            "TeamTaskCompleted"
           ],
           "title": "Event",
           "type": "string"
@@ -374,7 +376,9 @@ export const hookSchema = {
             "SubagentStart",
             "SubagentStop",
             "Stop",
-            "Interrupt"
+            "Interrupt",
+            "TeamMemberIdle",
+            "TeamTaskCompleted"
           ],
           "title": "Event",
           "type": "string"

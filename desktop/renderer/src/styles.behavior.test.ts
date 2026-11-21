@@ -300,6 +300,17 @@ describe("interactive color tokens", () => {
   });
 });
 
+describe("clarification option alignment", () => {
+  it("keeps the recommended tag compact and aligns the option indicator with the label first line", () => {
+    expect(styles).toMatch(
+      /\.clarification-option-indicator\s*\{[^}]*height:\s*calc\(12\.5px \* 1\.35\);/s,
+    );
+    expect(styles).toMatch(
+      /\.clarification-recommended-tag\s*\{[^}]*display:\s*inline-flex;[^}]*align-items:\s*center;[^}]*flex-shrink:\s*0;[^}]*white-space:\s*nowrap;[^}]*line-height:\s*1\.25;/s,
+    );
+  });
+});
+
 describe("windows platform styles", () => {
   it("provides Windows font fallbacks and opaque, traffic-light-free overrides under data-platform=windows", () => {
     expect(styles).toMatch(/--font-ui:[^;]*"Segoe UI Variable Text"[^;]*"Microsoft YaHei UI"[^;]*sans-serif;/);

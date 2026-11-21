@@ -1,5 +1,13 @@
 # Eidos 当前限制
 
+## Agent 团队的验证边界（2026-11-20）
+
+- 定向验证覆盖：团队领域与 Repository（编制、唤醒、审查与证据、依赖、私聊、移除成员、里程碑关口与重新打开、模板冻结与默认值、用户模板读取、Lead 上下文分享、用量、目标续跑等待）、引擎内的提出到成员提交流程、Hook 事件映射、协议 Fixture 两端校验，以及通过真实 stdio 从提出、确认、成员运行到解散的 Desktop–Runtime 往返。团队面板、编制卡片和输入框入口有 Renderer 行为测试。
+- 上述 stdio 往返发现并修复了一个缺陷：由团队唤醒启动的 Run 没有用户消息，事件投递仍按普通 Run 查找，导致投影失败并阻塞其后的全部通知。
+- Electron smoke 通过。隔离 Electron 页面（`scripts/test-teams.cjs`）检查了入口、编制卡片、看板、成员、任务、成员详情，以及 320 到 1280 像素的窗口宽度；检查中修复了编制卡片在缺少内容宽度变量时溢出、复选框继承全局输入宽度和成员行居中的问题。该页面使用模拟数据，完整 Desktop 应用中的团队流程仍需用真实模型人工验收。
+- 尚未验证：真实模型下的团队效果评测、真实 Seatbelt 下成员只能写自己的 Worktree、Windows NTFS 上的成员 Worktree、大量空闲成员时的长时间运行，以及 Runtime 在团队运行中重启后的完整恢复。
+- 团队级 Grant、Lead 交接、常驻团队（事件到任务、Thread 订阅、主动行为）和非 Git 项目的隔离副本尚未实现。详见 [Agent 团队](features/teams.md)。
+
 ## CI 依赖与测试稳定性修复（2026-11-18）
 
 - OpenTelemetry 升级到 1.45.2（semantic conventions 0.66b2），修复 `opentelemetry-api` 1.45.1 的 CVE-2026-126360。`bash scripts/audit-python.sh` 对主依赖和隔离 Runtime 依赖均未报告已知漏洞；`test_telemetry.py` 通过 18 项。
@@ -490,7 +498,7 @@ Run `e277e61b`（`deepseek-v4-1-flash-261017`，reasoning high）共 10 步。�
 - Checkpoint create/list、Rewind 和 Checkpoint Fork 已移除。系统不提供把工作区回退到某个历史时刻的功能；`checkpoints` 与 `checkpoint_actions` 表保留但不再写入。
 - Worktree Session create、Session delete、Create Branch Here、retention cleanup 和 Restore 使用 durable lifecycle intent。Session Handoff 使用 durable operation、strict HandoffPlan 和 startup recovery。Create Branch Here 使用 attach 时冻结的 `expected_head`，不使用创建时的 `base_commit` 判断当前 branch HEAD。Runtime 仍会拒绝 dirty Worktree delete，并保留无法证明安全的目录和 legacy attached branch。Retention 只处理 managed Worktree，不处理 adopted Worktree、Permanent Worktree 或按 bytes 的 disk quota。User Branch handoff 给 Local 后只释放 Eidos Worktree metadata，不删除 Git ref；Session delete 仍会保留这个普通用户 branch。Local Session delete 不删除用户 workspace。当前已提供 Project / Session 置顶。系统仍不提供 Permanent Worktree、Archive Chat、multi-Session shared Worktree、dependency cache Snapshot 或 Pull Request UI。
 - Linked Worktree 的 Git metadata read 和获批后的精确 write 已在真实 macOS Seatbelt 中验证。默认 write、原始 repository working-tree access 和不匹配的 Worktree recovery 仍会被拒绝。Desktop dirty indicator 只使用 `project/gitContext` 和当前 Session status，不做所有 Thread 的持续轮询。Non-Git Local Workspace Checkpoint 仍不保存或恢复 filesystem state。
-- 子 Agent 第一阶段复用现有 Agent Loop、审批和扩展工具。每个父 Run 最多有 16 个子 Session，同时最多运行 8 个子 Run；名额只在该父 Run 内计数，不影响其他父 Run。独立 Worktree 交付与合并、跨 Worktree Repository Intelligence 共享尚未实现。完整回归与真实 macOS 验证结果见当前 PR。
+- 子 Agent 第一阶段复用现有 Agent Loop、审批和扩展工具。每个父 Run 最多有 16 个子 Session，同时最多运行 8 个子 Run；名额只在该父 Run 内计数，不影响其他父 Run。独立 Worktree 交付与整合已在后续阶段实现（见[当前能力](capabilities.md#子-agent-委派)）；跨 Worktree Repository Intelligence 共享尚未实现。完整回归与真实 macOS 验证结果见当前 PR。
 - Runtime 不恢复已消失的 Model request、Process 或 ToolCall。重启时，系统记录实际中断与未知结果，并禁止自动重放不确定操作。旧未知结果不再成为后续 Run、工具、正常完成或取消的核验门。
 
 ### Compaction 与 Context
@@ -614,7 +622,7 @@ Run `e277e61b`（`deepseek-v4-1-flash-261017`，reasoning high）共 10 步。�
 - 权限模式已通过组件单元与行为测试、协议校验和数据迁移测试。真实模型审查决策质量仍依赖于所配置模型的审查推理能力；静态检查不能证明所有外部第三方模型的审查决策稳定性。
 - 自动审批复用当前 Run 的模型和 Provider，没有单独的审查模型设置。模型可能误判；Runtime 将受保护路径和显式取消沙盒保护交给用户高危确认；模型审查不能保证识别所有风险或提示注入。
 - 自动审批只检查原本需要 Approval 的动作，默认 Workspace 操作不额外审查。证据包括最近 32 条用户消息及当前动作，仍受 48 KiB 总预算约束。超限、超时、错误、不可用、重启中断和未知风险交由人工决定，不自动批准或重放同一操作。明确风险拒绝继续生效；新用户授权可以触发重新审查。
-- 完全访问会失去 Eidos 自身路径的沙盒保护。用户可以通过 Shell 改动 Eidos 数据、系统 Skill 或 Git metadata。macOS 的系统权限仍然有效，内置文件工具的普通文件约束仍然有效。
+- 完全访问会失去 Eidos 自身路径的沙盒保护。用户可以通过 Shell 改动 Eidos 数据、系统 Skill 或 Git metadata。macOS 的系统权限仍然有效，内置文件工具的普通文件约束仍然有效。系统 Skill 未通过读取校验时（例如沙盒外的 Python 在脚本目录写入 `__pycache__`，或整个目录被删除），下一次读取 Skill Catalog 时 Runtime 会从随包副本整体恢复。权限合规且没有 `__pycache__` 的其他内容改动不会立即恢复，仍在下次启动时还原。恢复会替换整个目录，此时正在运行、按路径读取系统 Skill 文件的脚本可能读取失败。Shell 不会为未绑定 Runtime 依赖的 Python 关闭字节码缓存，因此重复执行这类命令会重复触发恢复。
 - 当前模式作用于单个 Run。用户不能在 Run 执行中切换模式。重新回答和编辑后重发会按 Composer 当前选择的模式创建新 Run。旧调用方没有传入模式时，完全访问仍回到人工模式；自动审批保留原模式。Runtime 拒绝缺少确认标记的显式完全访问请求。
 - 本期不实现自定义审批规则、`config.toml` 权限解析、域名代理或持久 allowlist。审批元数据保存可取得的审查 Token Usage，当前 UI 不提供独立的审查费用汇总。
 

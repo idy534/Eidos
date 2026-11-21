@@ -154,6 +154,8 @@ SESSION_WRITES = frozenset({
 
 # Run controls must not wait behind unrelated writes (Stop stays responsive).
 RUN_WRITES: Mapping[str, str] = {
+    "agent/discardWorkspace": "parentRunId",
+    "agent/message": "parentRunId",
     "agent/stop": "parentRunId",
     "context/compact": "runId",
     "run/cancel": "runId",

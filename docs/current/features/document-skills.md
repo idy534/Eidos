@@ -8,7 +8,7 @@ App 保留核心 Python、Runtime 生产依赖、ripgrep 和四个 Skill 的说�
 
 四个 Skill 的图标位于各自的 `assets/<skill-name>-small.svg`。现有设置页按文件名自动读取 SVG，无需新增前端逻辑或图标声明。
 
-源码内容位于 `runtime/eidos_runtime/resources/skills/.system/<name>/`。启动部署沿用系统 Skill 入口，将内容写入 `<data>/skills/.system/`。暂存目录、部署目录及中间层目录使用私有权限。依赖不放在 Skill 目录，也不写入已安装的 App。
+源码内容位于 `runtime/eidos_runtime/resources/skills/.system/<name>/`。启动部署沿用系统 Skill 入口，将内容写入 `<data>/skills/.system/`，不复制 `.DS_Store` 和 `__pycache__`。暂存目录、部署目录及中间层目录使用私有权限。依赖不放在 Skill 目录，也不写入已安装的 App。
 
 资源按用途、版本和平台分开：
 

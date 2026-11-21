@@ -476,8 +476,10 @@ class RuntimeEngine:
                 self.collaboration.repository.clear_wait(run.run_id)
                 agent_wait = None
         input_request = PlanningRepository(self.store.database).unfinished(run.run_id)
-        if input_request is not None or (agent_wait is not None and agent_wait.item_id is not None) or self.store.read_run(run.run_id)["status"] == "waiting_approval":
-            pending = input_request or agent_wait or self.store.typed_runtime_repository().read_pending_approval(run.run_id)
+        from eidos_runtime.persistence.teams import TeamRepository
+        team_proposal = TeamRepository(self.store.database).unfinished_proposal(run.run_id)
+        if input_request is not None or team_proposal is not None or (agent_wait is not None and agent_wait.item_id is not None) or self.store.read_run(run.run_id)["status"] == "waiting_approval":
+            pending = input_request or team_proposal or agent_wait or self.store.typed_runtime_repository().read_pending_approval(run.run_id)
             if pending is None or resources.dispatcher is None:
                 raise InvalidRunStateError("pending approval is unavailable")
             item = self.store.read_item(pending.item_id)
@@ -1109,6 +1111,8 @@ class RuntimeEngine:
                 )
                 if self.collaboration is not None:
                     self.collaboration.repository.record_model_delivery(run.run_id, step.model_attempt_id)
+                from eidos_runtime.persistence.teams import TeamRepository
+                TeamRepository(self.store.database).record_model_delivery(run.run_id, step.model_attempt_id)
                 break
 
             if context_recovered:
@@ -1367,6 +1371,14 @@ class RuntimeEngine:
             )
             return SampleBoundaryAction.RETURN
         if decision.action == LoopAction.COMPLETE:
+            from eidos_runtime.persistence.teams import TeamRepository
+            if TeamRepository(self.store.database).has_undelivered_for_run(run_id):
+                # Team messages arrived during this sample; read them first.
+                if sampled.assistant_item is not None:
+                    mutation = self.store.complete_assistant_item_committed(str(sampled.assistant_item['id']))
+                    self.events.publish(mutation, item=mutation.value)
+                self.store.complete_current_step(run_id, 'completed')
+                return SampleBoundaryAction.REBUILD_CONTEXT
             if self.collaboration:
                 self.collaboration.stop_optional(run_id)
                 if self.collaboration.repository.has_unread_messages(run_id):
@@ -1466,6 +1478,9 @@ class RuntimeEngine:
     def _emit_started(self, run_id: str, run: dict[str, object]) -> None:
         origin = run.get("goalOrigin")
         internal = isinstance(origin, dict) and origin.get("trigger") != "user_input"
+        if not internal:
+            from eidos_runtime.persistence.teams import TeamRepository
+            internal = TeamRepository(self.store.database).automatic_origin(run_id) is not None
         user_item = None if internal else self.store.get_user_item(run_id)
         self.events.publish_event(
             self.store.read_runtime_start_event(run_id),

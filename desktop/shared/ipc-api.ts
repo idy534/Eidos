@@ -10,8 +10,9 @@ import type { ChannelResponse, ChannelSaveRequest, ChannelReadRequest } from "./
 import type { SessionForkRequest } from "./session-fork.generated.js";
 import type { AutomationExecuteRequest, AutomationHistoryRequest, AutomationRunNowRequest, AutomationResponse } from "./automation.js";
 import type { GoalRequest, GoalView } from "./goals.js";
+import type { TeamMethods } from "./teams.js";
 import type { MemoryMethods } from "./memory.js";
-import type { AgentCatalogResponse, CollaborationState } from "./collaboration.generated.js";
+import type { AgentCatalogResponse, AgentChanges, AgentChangesRequest, AgentMessageFromUserRequest, CollaborationState } from "./collaboration.generated.js";
 import type { AgentDefinitionDocument, AgentDefinitionSaveRequest, AgentDefinitionRemoveRequest } from "./collaboration.generated.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "./planning.generated.js";
 import type { InputDraft, InputPrepareRequest, InputPreview, InputReference } from "./input-context.js";
@@ -107,6 +108,7 @@ export interface EidosRuntimeAPI {
   saveChannel(request: ChannelSaveRequest): Promise<ChannelResponse>;
   automation(request: AutomationExecuteRequest): Promise<AutomationResponse>;
   goal(request: GoalRequest): Promise<GoalView>;
+  team<K extends keyof TeamMethods>(method: K, request: TeamMethods[K]["request"]): Promise<TeamMethods[K]["response"]>;
   automationHistory(request: AutomationHistoryRequest): Promise<AutomationResponse>;
   automationRunNow(request: AutomationRunNowRequest): Promise<AutomationResponse>;
   backupData(): Promise<void>;
@@ -304,6 +306,9 @@ export interface EidosRuntimeAPI {
   removeAgentDefinition(request: AgentDefinitionRemoveRequest): Promise<AgentCatalogResponse>;
   readAgents(sessionId: string): Promise<CollaborationState>;
   stopAgent(parentRunId: string, agentId: string): Promise<CollaborationState>;
+  messageAgent(request: AgentMessageFromUserRequest): Promise<CollaborationState>;
+  readAgentChanges(request: AgentChangesRequest): Promise<AgentChanges>;
+  discardAgentWorkspace(parentRunId: string, agentId: string): Promise<CollaborationState>;
 
   readPlanning(sessionId: string): Promise<PlanningReadResponse>;
   answerUserInput(request: AnswerInputRequest): Promise<UserInputRequest>;

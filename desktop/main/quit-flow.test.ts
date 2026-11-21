@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  guardIpcHandlerForQuit,
   QuitFlowController,
   type ActiveRunProjection,
   type QuitFlowDependencies,
@@ -193,6 +194,150 @@ test("dialog rejection safely cancels quit", async () => {
   await new Promise((r) => setTimeout(r, 0));
 
   assert.equal(h.controller.getState().isQuitting, false);
+  assert.equal(h.controller.getState().quitCommitted, false);
   assert.equal(h.calls.shutdownCalls, 0);
   assert.equal(h.calls.finalQuitCalls, 0);
+});
+
+test("onQuitCommitted runs once before shutdown when idle and before cancelRun when confirmed", async () => {
+  const idleOrder: string[] = [];
+  const idleProjection: ActiveRunProjection = { runIds: () => [], count: () => 0 };
+  const idleController: QuitFlowController = new QuitFlowController(idleProjection, {
+    hasRuntimeClient: () => true,
+    showQuitDialog: async () => "stop_and_exit",
+    onQuitCommitted: () => idleOrder.push("commit"),
+    cancelRun: async () => idleOrder.push("cancel"),
+    shutdownRuntime: async (): Promise<void> => {
+      assert.equal(idleController.getState().quitCommitted, true);
+      idleOrder.push("shutdown");
+    },
+    requestFinalQuit: () => idleOrder.push("quit"),
+    log: () => {},
+  });
+
+  idleController.handleBeforeQuit({ preventDefault: () => {} });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(idleOrder, ["commit", "shutdown", "quit"]);
+
+  const activeOrder: string[] = [];
+  let releaseCancel: (() => void) | undefined;
+  let dialogCount = 0;
+  const activeProjection: ActiveRunProjection = { runIds: () => ["run-1"], count: () => 1 };
+  const activeController = new QuitFlowController(activeProjection, {
+    hasRuntimeClient: () => true,
+    showQuitDialog: async () => {
+      dialogCount++;
+      return "stop_and_exit";
+    },
+    onQuitCommitted: () => activeOrder.push("commit"),
+    cancelRun: async (id) => {
+      activeOrder.push(`cancel:${id}`);
+      await new Promise<void>((resolve) => { releaseCancel = resolve; });
+    },
+    shutdownRuntime: async () => { activeOrder.push("shutdown"); },
+    requestFinalQuit: () => { activeOrder.push("quit"); },
+    log: () => {},
+  });
+
+  activeController.handleBeforeQuit({ preventDefault: () => {} });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(activeController.getState().quitCommitted, true);
+  assert.deepEqual(activeOrder, ["commit", "cancel:run-1"]);
+
+  // A repeated before-quit during cancellation must not reopen the dialog or commit twice.
+  activeController.handleBeforeQuit({ preventDefault: () => {} });
+  assert.equal(dialogCount, 1);
+  assert.deepEqual(activeOrder, ["commit", "cancel:run-1"]);
+
+  releaseCancel?.();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(activeOrder, ["commit", "cancel:run-1", "shutdown", "quit"]);
+});
+
+test("onQuitCommitted is skipped when returning to Eidos and errors do not block shutdown", async () => {
+  let committed = 0;
+  const returnController = new QuitFlowController(
+    { runIds: () => ["run-1"], count: () => 1 },
+    {
+      hasRuntimeClient: () => true,
+      showQuitDialog: async () => "return_to_eidos",
+      onQuitCommitted: () => { committed++; },
+      cancelRun: async () => {},
+      shutdownRuntime: async () => {},
+      requestFinalQuit: () => {},
+      log: () => {},
+    },
+  );
+  returnController.handleBeforeQuit({ preventDefault: () => {} });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(committed, 0);
+  assert.equal(returnController.getState().quitCommitted, false);
+
+  let shutdownRan = false;
+  let finalQuitRan = false;
+  const failingHookController = new QuitFlowController(
+    { runIds: () => [], count: () => 0 },
+    {
+      hasRuntimeClient: () => true,
+      showQuitDialog: async () => "stop_and_exit",
+      onQuitCommitted: () => { throw new Error("teardown failure"); },
+      cancelRun: async () => {},
+      shutdownRuntime: async () => { shutdownRan = true; },
+      requestFinalQuit: () => { finalQuitRan = true; },
+      log: () => {},
+    },
+  );
+  failingHookController.handleBeforeQuit({ preventDefault: () => {} });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(shutdownRan, true);
+  assert.equal(finalQuitRan, true);
+});
+
+test("guardIpcHandlerForQuit suppresses late and in-flight errors only after quit is committed", async () => {
+  let quitCommitted = false;
+  let invocations = 0;
+
+  const okHandler = guardIpcHandlerForQuit(
+    () => quitCommitted,
+    async (_event: unknown, value: string) => {
+      invocations++;
+      return `ok:${value}`;
+    },
+  );
+  assert.equal(await okHandler({}, "a"), "ok:a");
+  assert.equal(invocations, 1);
+
+  const failingHandler = guardIpcHandlerForQuit(
+    () => quitCommitted,
+    async () => {
+      throw new Error("Runtime process exited");
+    },
+  );
+  await assert.rejects(failingHandler({}), /Runtime process exited/);
+
+  let rejectInFlight: ((error: Error) => void) | undefined;
+  const inFlightHandler = guardIpcHandlerForQuit(
+    () => quitCommitted,
+    () => new Promise<string>((_resolve, reject) => {
+      rejectInFlight = reject;
+    }),
+  );
+  let settled = false;
+  const inFlightPromise = inFlightHandler({}).then(
+    () => { settled = true; },
+    () => { settled = true; },
+  );
+
+  quitCommitted = true;
+  rejectInFlight?.(new Error("Runtime process exited"));
+  const latePromise = okHandler({}, "late").then(
+    () => { settled = true; },
+    () => { settled = true; },
+  );
+
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(invocations, 1, "late IPC call after quitCommitted must not invoke handler");
+  assert.equal(settled, false, "quit-time IPC promises stay silent instead of rejecting");
+  void inFlightPromise;
+  void latePromise;
 });

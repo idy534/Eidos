@@ -136,7 +136,9 @@ export const sessionForkSchema = {
             "SubagentStart",
             "SubagentStop",
             "Stop",
-            "Interrupt"
+            "Interrupt",
+            "TeamMemberIdle",
+            "TeamTaskCompleted"
           ],
           "title": "Event",
           "type": "string"
@@ -299,7 +301,9 @@ export const sessionForkSchema = {
             "SubagentStart",
             "SubagentStop",
             "Stop",
-            "Interrupt"
+            "Interrupt",
+            "TeamMemberIdle",
+            "TeamTaskCompleted"
           ],
           "title": "Event",
           "type": "string"
@@ -852,6 +856,17 @@ export const sessionForkSchema = {
           "anyOf": [
             {
               "$ref": "#/$defs/GoalRunOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "teamOrigin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TeamRunOrigin"
             },
             {
               "type": "null"
@@ -1761,6 +1776,37 @@ export const sessionForkSchema = {
         "state"
       ],
       "title": "SessionWorktreeDto",
+      "type": "object"
+    },
+    "TeamRunOrigin": {
+      "additionalProperties": false,
+      "description": "Why a team admitted this Run without a human input item.",
+      "properties": {
+        "origin": {
+          "enum": [
+            "wake",
+            "user_message"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "member": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Member"
+        }
+      },
+      "required": [
+        "origin"
+      ],
+      "title": "TeamRunOrigin",
       "type": "object"
     },
     "ToolCallDto": {

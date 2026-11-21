@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 import re
 import selectors
+import shutil
 import signal
 import stat
 import subprocess
@@ -67,6 +68,19 @@ class GitCliFileStat:
     additions: int
     deletions: int
     stats_incomplete: bool
+
+
+@dataclass(frozen=True)
+class GitTreeChange:
+    path: str
+    status: str
+    old_mode: int
+    new_mode: int
+    old_object: str | None
+    new_object: str | None
+    binary: bool
+    additions: int
+    deletions: int
 
 
 @dataclass(frozen=True)
@@ -1354,6 +1368,139 @@ class GitCli:
             incomplete = incomplete or untracked_incomplete
         return additions, deletions, incomplete, tuple(sorted(file_stats, key=lambda stat: stat.path))
 
+
+    def worktree_tree(self, cwd: Path) -> str:
+        """Write the current files of one worktree as a tree object.
+
+        A copy of the worktree index keeps unchanged files from being hashed
+        again; the worktree's own index, HEAD and files stay untouched. The
+        tree follows Git's ignore rules and includes untracked files.
+        """
+        located = self._runner.run(
+            ("rev-parse", "--git-path", "index"), cwd=cwd, operation="worktree-tree-index",
+        ).stdout.decode("utf-8").strip()
+        index = Path(located) if Path(located).is_absolute() else cwd / located
+        overrides = filter_config_overrides(self._runner, cwd)
+        with tempfile.TemporaryDirectory(prefix="eidos-tree-") as temporary:
+            scratch = Path(temporary) / "index"
+            if index.is_file():
+                # Keep the index mtime: Git re-reads entries modified in the
+                # same second as the index ("racily clean"). A fresh mtime
+                # would let a same-size rewrite look unchanged.
+                shutil.copy2(index, scratch)
+            self._runner.run(
+                ("add", "-A", "--", "."), cwd=cwd, operation="worktree-tree-add",
+                config_overrides=overrides, git_index_file=scratch,
+            )
+            written = self._runner.run(
+                ("write-tree",), cwd=cwd, operation="worktree-tree-write", git_index_file=scratch,
+            )
+        tree = written.stdout.decode("ascii").strip()
+        GitRefValidator.revision(tree)
+        return tree
+
+    def pin_object(self, cwd: Path, ref: str, object_id: str) -> None:
+        if not ref.startswith("refs/eidos/"):
+            raise ValueError("Runtime refs must stay under refs/eidos/")
+        GitRefValidator.revision(object_id)
+        self._runner.run(("update-ref", ref, object_id), cwd=cwd, operation="runtime-ref-update")
+
+    def unpin_ref(self, cwd: Path, ref: str) -> None:
+        if not ref.startswith("refs/eidos/"):
+            raise ValueError("Runtime refs must stay under refs/eidos/")
+        self._runner.run(("update-ref", "-d", ref), cwd=cwd, operation="runtime-ref-delete")
+
+    def tree_changes(self, cwd: Path, base: str, result: str) -> tuple[GitTreeChange, ...]:
+        """List per-path changes between two trees, with Git's binary judgement."""
+        GitRefValidator.revision(base)
+        GitRefValidator.revision(result)
+        overrides = filter_config_overrides(self._runner, cwd)
+        raw = self._runner.run(
+            ("diff-tree", "-r", "-z", "--no-renames", "--raw", base, result),
+            cwd=cwd, operation="tree-changes", config_overrides=overrides,
+            output_limit_bytes=DEFAULT_GIT_PATCH_BYTES,
+        ).stdout
+        numstat = self._runner.run(
+            ("diff-tree", "-r", "-z", "--no-renames", "--numstat", "--no-ext-diff", "--no-textconv", base, result),
+            cwd=cwd, operation="tree-changes-stats", config_overrides=overrides,
+            output_limit_bytes=DEFAULT_GIT_PATCH_BYTES,
+        ).stdout
+        stats = {stat.path: stat for stat in _numstat_file_stats(numstat)[0]}
+        records = raw.split(b"\0")
+        changes: list[GitTreeChange] = []
+        index = 0
+        while index + 1 < len(records):
+            header, path = records[index], records[index + 1]
+            index += 2
+            if not header:
+                break
+            fields = header.lstrip(b":").split(b" ")
+            if len(fields) != 5 or not path:
+                raise GitCommandFailedError("tree-changes", returncode=None, stderr="Git raw output is invalid")
+            old_mode, new_mode, old_object, new_object, status = (field.decode("ascii") for field in fields)
+            name = os.fsdecode(path)
+            stat_row = stats.get(name)
+            changes.append(GitTreeChange(
+                path=name, status=status[:1], old_mode=int(old_mode, 8), new_mode=int(new_mode, 8),
+                old_object=None if set(old_object) == {"0"} else old_object,
+                new_object=None if set(new_object) == {"0"} else new_object,
+                binary=stat_row.stats_incomplete if stat_row else False,
+                additions=stat_row.additions if stat_row else 0,
+                deletions=stat_row.deletions if stat_row else 0,
+            ))
+        return tuple(changes)
+
+    def show_prefix(self, cwd: Path) -> str:
+        """Return cwd relative to its worktree top level, with a trailing slash."""
+        return self._runner.run(
+            ("rev-parse", "--show-prefix"), cwd=cwd, operation="show-prefix",
+        ).stdout.decode("utf-8").strip()
+
+    def object_size(self, cwd: Path, object_id: str) -> int:
+        GitRefValidator.revision(object_id)
+        size = self._runner.run(("cat-file", "-s", object_id), cwd=cwd, operation="object-size").stdout.strip()
+        if not size.isdigit():
+            raise GitCommandFailedError("object-size", returncode=None, stderr="Git object size is invalid")
+        return int(size)
+
+    def read_blob(self, cwd: Path, object_id: str, *, output_limit_bytes: int) -> bytes:
+        GitRefValidator.revision(object_id)
+        return self._runner.run(
+            ("cat-file", "blob", object_id), cwd=cwd, operation="blob-read",
+            output_limit_bytes=output_limit_bytes,
+        ).stdout
+
+    def tree_diff(
+        self, cwd: Path, base: str, result: str, *, output_limit_bytes: int, path: str | None = None,
+    ) -> tuple[bytes, bool]:
+        GitRefValidator.revision(base)
+        GitRefValidator.revision(result)
+        output = self._runner.run(
+            ("diff", "--no-ext-diff", "--no-textconv", "--no-renames", base, result, "--",
+             *((path,) if path is not None else ())),
+            cwd=cwd, operation="tree-diff", config_overrides=filter_config_overrides(self._runner, cwd),
+            output_limit_bytes=output_limit_bytes, raise_on_truncation=False,
+        )
+        return output.stdout, output.stdout_truncated
+
+    def merge_file(self, cwd: Path, current: bytes, base: bytes, other: bytes) -> tuple[bytes, int]:
+        """Three-way merge one text file in a scratch directory.
+
+        Returns the merged bytes and Git's conflict count. Nothing is written
+        into any worktree; conflict markers stay in the returned bytes only.
+        """
+        with tempfile.TemporaryDirectory(prefix="eidos-merge-") as temporary:
+            root = Path(temporary)
+            for name, content in (("current", current), ("base", base), ("other", other)):
+                (root / name).write_bytes(content)
+            merged = self._runner.run(
+                ("merge-file", "-p", "-L", "current", "-L", "base", "-L", "agent",
+                 str(root / "current"), str(root / "base"), str(root / "other")),
+                cwd=cwd, operation="merge-file",
+                output_limit_bytes=max(len(current), len(other)) * 2 + 64 * 1024,
+                allow_returncodes=range(1, 128),
+            )
+        return merged.stdout, merged.returncode
 
 def _numstat_file_stats(output: bytes) -> tuple[tuple[GitCliFileStat, ...], bool]:
     if output and not output.endswith(b"\0"):

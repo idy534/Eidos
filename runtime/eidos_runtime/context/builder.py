@@ -133,6 +133,26 @@ class ContextBuilder:
                 agent_catalog = json.dumps([dict(name=value.name, description=value.description, baseRole=value.base_role,
                                                  model=value.model.to_wire_dict() if value.model else None)
                                             for value in definitions], ensure_ascii=False)
+        from eidos_runtime.persistence.teams import TeamRepository
+        from eidos_runtime.context.team_context import team_instruction, team_section
+        team_context = TeamRepository(self.store.database).context_for_run(run_id)
+        team_text: str | None = None
+        team_definition = None
+        if team_context is not None:
+            role_task = None
+            if team_context.role.role == "member" and team_context.member is not None:
+                from eidos_runtime.domain.agents import BUILTIN_AGENT_ROLES, AgentDefinition
+                from eidos_runtime.model.instructions import agent_role_task
+                row = TeamRepository(self.store.database).member_row(str(team_context.role.team_id), team_context.member.name)
+                if row["definition_json"]:
+                    team_definition = AgentDefinition.model_validate_json(row["definition_json"])
+                base = team_definition.base_role if team_definition else (team_context.member.role if team_context.member.role in BUILTIN_AGENT_ROLES else "default")
+                role_task = agent_role_task(base)  # type: ignore[arg-type]
+            templates = ()
+            if team_context.role.role == "lead_pending":
+                from eidos_runtime.infrastructure.team_templates import TeamTemplateCatalog
+                templates = tuple(TeamTemplateCatalog(self.store.database.data_directory).summaries())
+            team_text = team_instruction(team_context, role_task, templates)
         instructions = InstructionResolver().resolve(
             rule_snapshot=rule_resolution_snapshot,
             skill_catalog_context=catalog_context,
@@ -142,8 +162,9 @@ class ContextBuilder:
             memory_access=memory_access if memory_advertised else None,
             work_mode=str(run.get("workMode", "execute")),
             agent_role=collaboration.child_role_for_run(run_id),
-            agent_definition=collaboration.child_definition_for_run(run_id),
+            agent_definition=collaboration.child_definition_for_run(run_id) or team_definition,
             agent_catalog=agent_catalog,
+            team_guidance=team_text,
             has_project=has_project,
             git_repository=git_repository,
             personalization=personalization,
@@ -513,6 +534,10 @@ class ContextBuilder:
                 }, ensure_ascii=False)})
         if agent_evidence is not None:
             context.append(agent_evidence)
+        if team_context is not None:
+            section = team_section(team_context)
+            if section is not None:
+                context.append(section)
         if facts.reconciliation_required:
             context.append({
                 "type": "context", "sectionId": "runtime-state",
@@ -581,8 +606,9 @@ class ContextBuilder:
                     work_mode=str(self.store.read_run(run_id).get("workMode", "execute")),
                     memory_tools=memory_tools, memory_access=memory_access,
                     agent_role=collaboration.child_role_for_run(run_id),
-                    agent_definition=collaboration.child_definition_for_run(run_id),
+                    agent_definition=collaboration.child_definition_for_run(run_id) or team_definition,
                     agent_catalog=agent_catalog,
+                    team_guidance=team_text,
                     has_project=has_project,
                     git_repository=git_repository,
                     personalization=personalization,

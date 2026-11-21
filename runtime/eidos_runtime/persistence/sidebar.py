@@ -70,7 +70,7 @@ class SidebarRepository(Repository):
             ).fetchone() is None:
                 raise ResourceNotFoundError("sidebar target not found")
             if target.kind == "session" and connection.execute(
-                "SELECT 1 FROM agent_delegations WHERE child_session_id = ?",
+                "SELECT 1 FROM sessions WHERE id=? AND internal_kind IS NOT NULL",
                 (target.id,),
             ).fetchone() is not None:
                 raise ResourceNotFoundError("sidebar target not found")

@@ -6,7 +6,8 @@ import type { WebSearchReadRequest, WebSearchSaveRequest, WebSearchResponse, Web
 import type { CustomProviderRequest, CustomProviderResult } from "../shared/custom-models.js";
 import type { ChannelResponse, ChannelSaveRequest, ChannelReadRequest } from "../shared/channels.js";
 import type { MemoryMethods } from "../shared/memory.js";
-import type { AgentCatalogResponse, CollaborationState } from "../shared/collaboration.generated.js";
+import type { TeamMethods } from "../shared/teams.js";
+import type { AgentCatalogResponse, AgentChanges, AgentChangesRequest, AgentMessageFromUserRequest, CollaborationState } from "../shared/collaboration.generated.js";
 import type { AgentDefinitionSaveRequest, AgentDefinitionRemoveRequest } from "../shared/collaboration.generated.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "../shared/planning.generated.js";
 import type { InputDraft, InputPrepareRequest } from "../shared/input-context.js";
@@ -85,6 +86,7 @@ import type {
 
 const api: EidosRuntimeAPI = {
   goal: (request) => ipcRenderer.invoke(IPC.GOAL_EXECUTE, request),
+  team: <K extends keyof TeamMethods>(method: K, request: TeamMethods[K]["request"]): Promise<TeamMethods[K]["response"]> => ipcRenderer.invoke(IPC.TEAM_REQUEST, method, request),
   readWorkspaceFileForFind: (request) => ipcRenderer.invoke(IPC.WORKSPACE_READ_FOR_FIND, request),
   searchSessions: (request) => ipcRenderer.invoke(IPC.SEARCH_SESSIONS, request),
   readSessionAround: (request) => ipcRenderer.invoke(IPC.SESSION_READ_AROUND, request),
@@ -358,6 +360,9 @@ const api: EidosRuntimeAPI = {
   removeAgentDefinition: (request: AgentDefinitionRemoveRequest) => ipcRenderer.invoke(IPC.AGENT_DEFINITION_REMOVE, request),
   readAgents: (sessionId: string): Promise<CollaborationState> => ipcRenderer.invoke(IPC.AGENT_READ, sessionId),
   stopAgent: (parentRunId: string, agentId: string): Promise<CollaborationState> => ipcRenderer.invoke(IPC.AGENT_STOP, parentRunId, agentId),
+  messageAgent: (request: AgentMessageFromUserRequest): Promise<CollaborationState> => ipcRenderer.invoke(IPC.AGENT_MESSAGE, request),
+  readAgentChanges: (request: AgentChangesRequest): Promise<AgentChanges> => ipcRenderer.invoke(IPC.AGENT_CHANGES, request),
+  discardAgentWorkspace: (parentRunId: string, agentId: string): Promise<CollaborationState> => ipcRenderer.invoke(IPC.AGENT_DISCARD_WORKSPACE, parentRunId, agentId),
   backupData: (): Promise<void> => ipcRenderer.invoke(IPC.DATA_BACKUP),
   exportMemoryNotes: (request: import("../shared/memory.generated.js").MemoryExportRequest): Promise<void> => ipcRenderer.invoke(IPC.MEMORY_EXPORT, request),
   memory: <K extends keyof MemoryMethods>(method: K, request: MemoryMethods[K]["request"]): Promise<MemoryMethods[K]["response"]> => ipcRenderer.invoke(IPC.MEMORY_REQUEST, method, request),

@@ -42,7 +42,7 @@ _SESSION_JOIN = (
 )
 _SESSION_PROJECT = "COALESCE(s.project_id,w.project_id,p.id)"
 _OTHER_SESSION = (
-    "NOT EXISTS(SELECT 1 FROM agent_delegations a WHERE a.child_session_id=s.id) "
+    "s.internal_kind IS NULL "
     "AND NOT EXISTS(SELECT 1 FROM channel_sessions c WHERE c.session_id=s.id)"
 )
 
@@ -60,7 +60,7 @@ class HistorySearchRepository(Repository):
             session_id = str(run["session_id"])
             if connection.execute(
                 "SELECT 1 FROM channel_run_origins WHERE run_id=? UNION ALL "
-                "SELECT 1 FROM agent_delegations WHERE child_session_id=?",
+                "SELECT 1 FROM sessions WHERE id=? AND internal_kind IS NOT NULL",
                 (run_id, session_id),
             ).fetchone():
                 raise HistoryScopeError("history_scope_unavailable")

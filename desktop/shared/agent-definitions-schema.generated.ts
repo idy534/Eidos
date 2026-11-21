@@ -32,7 +32,8 @@ export const agentDefinitionsSchema = {
           "enum": [
             "default",
             "explorer",
-            "worker"
+            "worker",
+            "verifier"
           ],
           "title": "Baserole",
           "type": "string"

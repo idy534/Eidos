@@ -63,8 +63,9 @@ class MemoryRepository:
         ):
             raise MemoryRejected("memory_session_not_found")
         row = connection.execute(
-            "SELECT r.session_id FROM agent_delegations a JOIN runs r ON r.id=a.parent_run_id WHERE a.child_session_id=?",
-            (session_id,),
+            "SELECT r.session_id FROM agent_delegations a JOIN runs r ON r.id=a.parent_run_id WHERE a.child_session_id=? "
+            "UNION ALL SELECT t.lead_session_id FROM team_members m JOIN teams t ON t.id=m.team_id WHERE m.session_id=? LIMIT 1",
+            (session_id, session_id),
         ).fetchone()
         return row[0] if row else session_id
 

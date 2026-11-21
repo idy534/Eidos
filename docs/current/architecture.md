@@ -762,7 +762,7 @@ Discovery → Catalog Snapshot → Selection
           → active Skill root → Seatbelt Sandbox
 ```
 
-Discovery 读取 bundled system、用户和 Plugin Skill 目录。系统 Skill 的私有目录读取会忽略 Finder 生成的 `.DS_Store` 文件，但仍拒绝其他不符合所有者、类型或权限要求的文件。`SkillCatalog` 使用共享的 `parse_skill_manifest` 校验 `SKILL.md` 的 frontmatter。Catalog 只保留顶层 `name`、`description`、qualified ID、source、version、source hash 和 content hash。`license`、`compatibility`、`metadata`、`allowed-tools` 等其他 frontmatter 字段可以存在，但不会变成 Catalog、Tool Schema、Permission 或 Sandbox 权威。
+Discovery 读取 bundled system、用户和 Plugin Skill 目录。系统 Skill 的私有目录读取会忽略 Finder 生成的 `.DS_Store` 文件，但仍拒绝其他不符合所有者、类型或权限要求的文件。部署不复制 bundled 目录中的 `.DS_Store` 和 `__pycache__`，部署结果与来源一致时启动不再重写。系统 Skill 目录中出现 `__pycache__` 即视为损坏，与其权限是否合规无关。Catalog 读取或按已固定 Snapshot 读取系统 Skill 失败时，Runtime 在系统 Skill 锁内执行与启动相同的部署，从 bundled 副本恢复后重读一次。本进程部署过的 `.system` 整体缺失时也按损坏恢复。恢复用两次改名替换目录。Catalog 扫描和按未缓存 Snapshot 解析系统 Skill 时，读取方遇到正被替换的目录会等待这把锁，并先在锁内重读，不会得到空的系统 Skill 列表。锁外的其他读取（已缓存 Snapshot 的 Skill 与资源读取、Catalog 条目定位和 Skill 详情）在两次改名之间可能读取失败，并返回错误。实际重写目录或恢复失败时，Runtime 记录 warning 日志。恢复失败仍然 fail closed，`skill/list` 和 `run/start` 返回 `SKILL_CATALOG_UNAVAILABLE`。`SkillCatalog` 使用共享的 `parse_skill_manifest` 校验 `SKILL.md` 的 frontmatter。Catalog 只保留顶层 `name`、`description`、qualified ID、source、version、source hash 和 content hash。`license`、`compatibility`、`metadata`、`allowed-tools` 等其他 frontmatter 字段可以存在，但不会变成 Catalog、Tool Schema、Permission 或 Sandbox 权威。
 
 Turn 开始时，Catalog Snapshot 固化可用 Skill。Selection 当前支持用户输入中的 qualified `@source:name` 和唯一的 `@name`/`$name` 引用。SelectedSkillSet 固化本 Turn 的选中 ID。选中后，Runtime 才完整读取对应的 `SKILL.md`。Catalog 不把完整 Skill tree 注入 Context。
 

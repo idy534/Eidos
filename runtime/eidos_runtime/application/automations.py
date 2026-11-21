@@ -43,7 +43,7 @@ class AutomationApplication:
         origin = self.repository.origin(run_id) if run_id else None
         if run_id:
             from eidos_runtime.persistence.collaboration import CollaborationRepository
-            if CollaborationRepository(self.store.database).is_child(str(self.store.read_run(run_id)["sessionId"])):
+            if CollaborationRepository(self.store.database).is_internal(str(self.store.read_run(run_id)["sessionId"])):
                 raise AutomationError("automation_source_not_allowed", "子任务不能管理定时任务。")
         if origin is not None and not (
             request.mode == "update" and request.id == origin.automation_id

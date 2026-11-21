@@ -63,7 +63,7 @@ def attach_goal_run(connection: sqlite3.Connection, run_id: str) -> None:
     run = connection.execute("SELECT session_id,work_mode FROM runs WHERE id=?", (run_id,)).fetchone()
     if run is None or run["work_mode"] != "execute":
         return
-    if connection.execute("SELECT 1 FROM agent_delegations WHERE child_session_id=?", (run["session_id"],)).fetchone():
+    if connection.execute("SELECT 1 FROM sessions WHERE id=? AND internal_kind IS NOT NULL", (run["session_id"],)).fetchone():
         return
     if connection.execute("SELECT 1 FROM automation_run_origins WHERE run_id=? UNION ALL SELECT 1 FROM channel_run_origins WHERE run_id=? LIMIT 1", (run_id, run_id)).fetchone():
         return
@@ -229,7 +229,7 @@ class GoalRepository(Repository):
         def write(connection: sqlite3.Connection) -> GoalView:
             if connection.execute("SELECT 1 FROM sessions WHERE id=?", (request.session_id,)).fetchone() is None:
                 raise GoalError("goal_not_found", "会话不存在。")
-            if connection.execute("SELECT 1 FROM agent_delegations WHERE child_session_id=?", (request.session_id,)).fetchone():
+            if connection.execute("SELECT 1 FROM sessions WHERE id=? AND internal_kind IS NOT NULL", (request.session_id,)).fetchone():
                 raise GoalError("goal_source_not_allowed", "请在主会话中设置目标。")
             goal = _current(connection, request.session_id)
             if request.action == "get":
@@ -280,7 +280,7 @@ class GoalRepository(Repository):
         def write(connection: sqlite3.Connection) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
             if (not request.goal_mode and request.goal_revision is None) or request.work_mode != "execute":
                 raise GoalError("goal_invalid_state", "目标必须通过普通执行请求创建。")
-            if connection.execute("SELECT 1 FROM agent_delegations WHERE child_session_id=?", (request.session_id,)).fetchone():
+            if connection.execute("SELECT 1 FROM sessions WHERE id=? AND internal_kind IS NOT NULL", (request.session_id,)).fetchone():
                 raise GoalError("goal_source_not_allowed", "请在主会话中设置目标。")
             previous = _current(connection, request.session_id)
             if (previous.revision if previous else None) != request.goal_revision:

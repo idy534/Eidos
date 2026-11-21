@@ -142,7 +142,7 @@ def recovery_context(context: tuple[dict[str, object], ...], byte_limit: int, *,
     for item in messages:
         if (_protected_continuity(item) or (
             item.get("type") == "context" and str(item.get("sectionId", "")).startswith((
-                "project-rule:", "selected-skill:", "custom-agent", "memory-evidence", "workspace-environment", "channel-origin", "automation-origin", "input-origin:", "goal-current",
+                "project-rule:", "selected-skill:", "custom-agent", "memory-evidence", "workspace-environment", "channel-origin", "automation-origin", "input-origin:", "goal-current", "team-state",
             ))
         )) and item not in retained:
             retained.insert(0, item)

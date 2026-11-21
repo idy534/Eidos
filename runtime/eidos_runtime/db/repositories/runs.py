@@ -442,6 +442,7 @@ class RunRepository(Repository):
         segment_id = str(uuid.uuid4())
         with self.lock, self._connection() as connection:
             now = _now_ms()
+            from eidos_runtime.persistence.teams import TeamRepository
             row = connection.execute(
                 """
                 SELECT queued.id FROM runs AS queued
@@ -457,6 +458,7 @@ class RunRepository(Repository):
                           WHERE peers.parent_run_id=d.parent_run_id AND busy.status IN ('running','finalizing')) >= ?
                     )
                   )
+                  AND {team_clause}
                   AND NOT EXISTS (
                     SELECT 1 FROM runs AS active
                     WHERE active.session_id = queued.session_id
@@ -466,7 +468,7 @@ class RunRepository(Repository):
                   )
                 ORDER BY queued.enqueued_at ASC, queued.creation_seq ASC
                 LIMIT 1
-                """,
+                """.replace("{team_clause}", TeamRepository.scheduling_clause()),
                 (json.dumps(excluded_run_ids), MAX_ACTIVE_AGENTS),
             ).fetchone()
             if row is None:
@@ -521,7 +523,9 @@ class RunRepository(Repository):
         from eidos_runtime.persistence.automations import AutomationRepository
         from eidos_runtime.persistence.channels import ChannelRepository
         from eidos_runtime.persistence.goals import GoalRepository
-        result = _run_from_row(row, channel_origin=ChannelRepository(self.database).origin(run_id), automation_origin=AutomationRepository(self.database).origin(run_id), goal_origin=GoalRepository(self.database).origins_for_runs([run_id]).get(run_id))
+        from eidos_runtime.persistence.teams import TeamRepository
+        result = _run_from_row(row, channel_origin=ChannelRepository(self.database).origin(run_id), automation_origin=AutomationRepository(self.database).origin(run_id), goal_origin=GoalRepository(self.database).origins_for_runs([run_id]).get(run_id),
+            team_origin=TeamRepository(self.database).origins_for_runs([run_id]).get(run_id))
         from eidos_runtime.persistence.hooks import HookRepository
         activity = HookRepository(self.database).activities(run_id=run_id, limit=8, previews=False).items
         if activity:

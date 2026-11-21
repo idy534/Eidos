@@ -178,7 +178,7 @@ def test_shared_collaboration_fixture_accepts_builtin_roles_and_omitted_default(
     assert SpawnAgent.model_validate(fixture['spawnArguments']).role == 'default'
 
 
-@pytest.mark.parametrize('role', ['default', 'explorer', 'worker'])
+@pytest.mark.parametrize('role', ['default', 'explorer', 'worker', 'verifier'])
 def test_child_role_instructions_are_built_from_persisted_role(tmp_path: Path, role: AgentRole) -> None:
     store, _session, parent = _parent(tmp_path)
     try:
@@ -746,5 +746,75 @@ def test_failed_parent_requests_cancel_for_running_child(tmp_path: Path) -> None
 
         assert cancellation.is_set()
         assert store.read_run(child.run_id)["cancelRequestedAt"] is not None
+    finally:
+        store.close()
+
+
+def test_user_message_reaches_active_child_as_user_authored_and_is_idempotent(tmp_path):
+    from eidos_runtime.domain.collaboration import CollaborationRejected
+
+    store, _, parent = _parent(tmp_path)
+    try:
+        repository, child, _ = _spawn(store, parent, 0)
+        summary = repository.user_message(parent['id'], child.id, 'op-1', 'Focus on the parser.')
+        assert summary.run_id == child.run_id
+        assert summary.user_instruction == 'Focus on the parser.'
+        message = repository.model_state(child.run_id).messages[-1]
+        assert (message.sender_kind, message.content) == ('user', 'Focus on the parser.')
+        evidence = next(section for section in ContextBuilder(store).build(child.run_id).model_context
+                        if section.get('sectionId') == 'agent-evidence')
+        assert '"senderKind":"user"' in evidence['content']
+        assert repository.user_message(parent['id'], child.id, 'op-1', 'Focus on the parser.').run_id == child.run_id
+        assert store.connection.execute(
+            "SELECT COUNT(*) FROM agent_messages WHERE operation_id='op-1'").fetchone()[0] == 1
+        with pytest.raises(CollaborationRejected, match='agent_operation_conflict'):
+            repository.user_message(parent['id'], child.id, 'op-1', 'Different text')
+        assert repository.state(parent['id']).agents[0].user_instruction == 'Focus on the parser.'
+    finally:
+        store.close()
+
+
+def test_user_message_restarts_idle_child_and_rejects_inactive_parent(tmp_path):
+    from eidos_runtime.domain.collaboration import CollaborationRejected
+
+    store, _, parent = _parent(tmp_path)
+    try:
+        repository, child, _ = _spawn(store, parent, 0)
+        assert store.claim_next_run_committed().value['id'] == child.run_id
+        store.fail_run(child.run_id, 'fixture_done')
+        restarted = repository.user_message(parent['id'], child.id, 'op-idle', 'Now add tests.')
+        assert restarted.run_id != child.run_id
+        assert str(store.read_run(restarted.run_id)['userInput']).startswith('User instruction to this agent')
+        assert repository.user_message(parent['id'], child.id, 'op-idle', 'Now add tests.').run_id == restarted.run_id
+        assert store.connection.execute(
+            'SELECT COUNT(*) FROM runs WHERE session_id=?', (child.session_id,)).fetchone()[0] == 2
+        store.fail_run(parent['id'], 'fixture_done')
+        with pytest.raises(CollaborationRejected, match='agent_parent_inactive'):
+            repository.user_message(parent['id'], child.id, 'op-late', 'Too late')
+    finally:
+        store.close()
+
+
+def test_child_summary_totals_usage_across_runs_and_marks_missing_usage(tmp_path):
+    from eidos_runtime.model.client import ModelUsage
+
+    store, _, parent = _parent(tmp_path)
+    try:
+        repository, child, _ = _spawn(store, parent, 0)
+        assert store.claim_next_run_committed().value['id'] == child.run_id
+        model = ScriptedModel([ModelResponse(text='Counted.', usage=ModelUsage(
+            input_tokens=11, output_tokens=3, cache_read_tokens=5, cache_write_tokens=2))])
+        RuntimeEngine(store, model, lambda _event: None).run(child.run_id, threading.Event())
+        usage = repository.state(str(parent['id']), include_usage=True).agents[0].usage
+        assert (usage.input_tokens, usage.output_tokens, usage.cache_read_tokens, usage.cache_write_tokens) == (11, 3, 5, 2)
+        assert usage.incomplete is False
+        item = store.create_tool_item(parent['id'], 2, 0, 'followup-usage', 'followup_task', '{}')
+        followup = repository.followup(parent['id'], item['id'], child.id, 'Count again.')
+        assert store.claim_next_run_committed().value['id'] == followup.run_id
+        RuntimeEngine(store, ScriptedModel([ModelResponse(text='Counted again.')]), lambda _event: None).run(
+            followup.run_id, threading.Event())
+        usage = repository.state(str(parent['id']), include_usage=True).agents[0].usage
+        assert usage.input_tokens == 11
+        assert repository.state(str(parent['id'])).agents[0].usage is None and usage.incomplete is True
     finally:
         store.close()

@@ -330,6 +330,14 @@ class HookService:
             fields.update({"agent_id": str(self.store.read_run(self.run_id)["sessionId"]),
                 "agent_type": agent_type, "agent_transcript_path": None})
             names = (str(agent_type),)
+        if not child:
+            from eidos_runtime.persistence.teams import TeamRepository
+            role = TeamRepository(self.store.database).role_for_run(self.run_id)
+            if role is not None and role.role == "member":
+                # A member going idle replaces Stop, as SubagentStop does for children.
+                fields.update({"team_id": role.team_id, "teammate_name": role.member_name})
+                return self.dispatch("TeamMemberIdle", "stop:" + item_id, cancel,
+                    names=(str(role.member_name),), fields=fields)
         return self.dispatch("SubagentStop" if child else "Stop", "stop:" + item_id, cancel,
             names=names, fields=fields)
 

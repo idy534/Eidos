@@ -78,7 +78,7 @@ class QueuedRunRepository(Repository):
                     "SELECT 1 FROM execution_segments WHERE run_id = ?", (run_id,),
                 ).fetchone() is not None
                 or connection.execute(
-                    "SELECT 1 FROM agent_delegations WHERE child_session_id = ?", (session_id,),
+                    "SELECT 1 FROM sessions WHERE id=? AND internal_kind IS NOT NULL", (session_id,),
                 ).fetchone() is not None
             ):
                 raise InvalidRunStateError("queued message has already started")

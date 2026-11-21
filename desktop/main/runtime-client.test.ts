@@ -13,6 +13,8 @@ import {
   RuntimeClient,
   RuntimeRequestError,
 } from "./runtime-client.js";
+import { QuitFlowController } from "./quit-flow.js";
+import { shutdownRuntime } from "./runtime-shutdown.js";
 import type { RuntimeNotification } from "./runtime-client.js";
 import type { Session } from "../shared/domain-contracts.js";
 import { isGitWorkspaceRequest, isProjectGitContext, isProjectGitContextBinding } from "../shared/project-workspaces.js";
@@ -1334,6 +1336,181 @@ test("cancel while awaiting approval ignores a late approve response", async () 
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("quitting while a Run waits for approval cancels the approval instead of recording a user rejection", async () => {
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-quit-approval-data-"));
+  const workspaceRoot = await createGitRepository("eidos-quit-approval-repo-");
+  let client: RuntimeClient | undefined;
+  let verifier: RuntimeClient | undefined;
+  try {
+    let approvalStarted: (() => void) | undefined;
+    const approvalRequested = new Promise<void>((resolve) => {
+      approvalStarted = resolve;
+    });
+    const pendingApprovals = new Map<string, (decision: { decision: "approve" | "reject" }) => void>();
+    const approvalEvents: Array<{ method: string; status: string }> = [];
+    const activeRunIds = new Set<string>();
+    let finalQuitRequested: (() => void) | undefined;
+    const quitDone = new Promise<void>((resolve) => {
+      finalQuitRequested = resolve;
+    });
+
+    client = new RuntimeClient({
+      pythonExecutable,
+      runtimeRoot: path.join(projectRoot, "runtime"),
+      dataDirectory,
+      environment: { EIDOS_FAKE_MODEL: "network-shell" },
+      onApprovalRequest: (request) => new Promise((resolve) => {
+        pendingApprovals.set(request.id, resolve);
+        approvalStarted?.();
+      }),
+      onNotification: (notification) => {
+        if (notification.method === "run/started" || notification.method === "run/updated") {
+          activeRunIds.add(notification.params.run.id);
+        } else if (notification.method === "run/completed") {
+          activeRunIds.delete(notification.params.run.id);
+        } else if (
+          notification.method === "approval/requested"
+          || notification.method === "approval/resolved"
+          || notification.method === "approval/canceled"
+        ) {
+          approvalEvents.push({ method: notification.method, status: notification.params.status });
+        }
+      },
+    });
+
+    await client.initialize();
+    const session = await client.createSession(workspaceRoot, { executionMode: "worktree" });
+    await client.startRun(
+      session.id,
+      "Run a command with network access",
+      "deepseek-v4-flash",
+    );
+    await withTimeout(approvalRequested, 5_000);
+    assert.equal(pendingApprovals.size, 1);
+
+    const activeClient = client;
+    const controller = new QuitFlowController(
+      { runIds: () => Array.from(activeRunIds), count: () => activeRunIds.size },
+      {
+        hasRuntimeClient: () => true,
+        showQuitDialog: async () => "stop_and_exit",
+        onQuitCommitted: () => {
+          // Match main.ts: clear UI map without sending a synthetic reject decision.
+          pendingApprovals.clear();
+        },
+        cancelRun: (runId) => activeClient.cancelRun(runId),
+        shutdownRuntime: async () => {
+          await shutdownRuntime({
+            shutdown: () => activeClient.shutdown(),
+            waitForExit: () => activeClient.waitForExit(),
+            terminate: () => activeClient.terminate(),
+          });
+        },
+        requestFinalQuit: () => finalQuitRequested?.(),
+        log: () => {},
+      },
+    );
+
+    controller.handleBeforeQuit({ preventDefault: () => {} });
+    await withTimeout(quitDone, 10_000);
+    assert.equal(await client.waitForExit(), 0);
+
+    assert.ok(
+      approvalEvents.some((event) => event.method === "approval/canceled" && event.status === "canceled"),
+      `expected approval/canceled event, got ${JSON.stringify(approvalEvents)}`,
+    );
+    assert.equal(
+      approvalEvents.some((event) => event.status === "rejected"),
+      false,
+      `quit must not record approval rejection: ${JSON.stringify(approvalEvents)}`,
+    );
+
+    // Reopen Runtime against the same SQLite store to verify persisted facts.
+    verifier = new RuntimeClient({
+      pythonExecutable,
+      runtimeRoot: path.join(projectRoot, "runtime"),
+      dataDirectory,
+    });
+    await verifier.initialize();
+    const snapshot = await verifier.readSession(session.id);
+    assert.equal(snapshot.runs[0]?.status, "canceled");
+    const commandItem = snapshot.items.find((item) => item.kind === "command_execution");
+    assert.equal(commandItem?.status, "canceled");
+    assert.notEqual(commandItem?.toolCall?.approvalDecision, "reject");
+    await verifier.shutdown();
+    assert.equal(await verifier.waitForExit(), 0);
+  } finally {
+    client?.terminate();
+    verifier?.terminate();
+    await client?.waitForExit().catch(() => undefined);
+    await verifier?.waitForExit().catch(() => undefined);
+    await rm(dataDirectory, { recursive: true, force: true });
+    await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("late approval responses after shutdown begins are not written to stdin", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "eidos-late-approval-shutdown-"));
+  const runtimeRoot = path.join(temporary, "runtime");
+  await mkdir(path.join(runtimeRoot, "eidos_runtime"), { recursive: true });
+  await writeFile(path.join(runtimeRoot, "eidos_runtime/__init__.py"), "");
+  const receivedPath = path.join(temporary, "received.jsonl");
+  await writeFile(
+    path.join(runtimeRoot, "eidos_runtime/__main__.py"),
+    [
+      "import json, os, sys, time",
+      "for line in sys.stdin:",
+      "    message = json.loads(line)",
+      "    with open(os.environ['TEST_RECEIVED'], 'a') as output:",
+      "        output.write(json.dumps(message) + '\\n')",
+      "    if message.get('method') == 'initialize':",
+      "        print(json.dumps({'jsonrpc':'2.0','id':'server-approval-1','method':'item/requestApproval','params':{'sessionId':'s1','runId':'r1','itemId':'i1','toolCallId':'t1','kind':'command_execution','summary':'cmd','command':'echo hi','cwd':'/tmp','networkEnabled':False,'timeoutSeconds':10}}), flush=True)",
+      "        print(json.dumps({'jsonrpc':'2.0','id':message['id'],'result':{'protocolVersion':1,'runtimeVersion':'fixture','capabilities':{'runShell':True,'modelConfigured':False}}}), flush=True)",
+      "    elif message.get('method') == 'runtime/shutdown':",
+      "        print(json.dumps({'jsonrpc':'2.0','id':message['id'],'result':{}}), flush=True)",
+      "        time.sleep(0.05)",
+      "        break",
+    ].join("\n"),
+    "utf8",
+  );
+  let client: RuntimeClient | undefined;
+  try {
+    let resolveApproval: ((decision: { decision: "approve" | "reject" }) => void) | undefined;
+    let approvalArrived: (() => void) | undefined;
+    const waitingApproval = new Promise<void>((resolve) => {
+      approvalArrived = resolve;
+    });
+    client = new RuntimeClient({
+      pythonExecutable,
+      runtimeRoot,
+      environment: { TEST_RECEIVED: receivedPath },
+      onApprovalRequest: () => new Promise((resolve) => {
+        resolveApproval = resolve;
+        approvalArrived?.();
+      }),
+    });
+    await client.initialize();
+    await withTimeout(waitingApproval, 5_000);
+    const shutdown = client.shutdown();
+    resolveApproval?.({ decision: "reject" });
+    await shutdown;
+    assert.equal(await client.waitForExit(), 0);
+    const received = (await readFile(receivedPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { method?: string; id?: string });
+    assert.deepEqual(
+      received.map((entry) => entry.method ?? entry.id),
+      ["initialize", "runtime/shutdown"],
+    );
+  } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 

@@ -134,7 +134,7 @@ def test_edit_requires_version_and_preserves_identity(management):
 
 
 @pytest.mark.parametrize(
-    "name", ["../escape", "worker", "explorer", "default", "With-Caps"]
+    "name", ["../escape", "worker", "explorer", "default", "verifier", "With-Caps"]
 )
 def test_reserved_and_invalid_names_are_rejected(name):
     with pytest.raises(ValidationError):

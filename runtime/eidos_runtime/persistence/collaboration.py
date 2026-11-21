@@ -7,6 +7,7 @@ from eidos_runtime.persistence.agent_catalog import AgentSnapshotRepository
 import json
 import sqlite3
 import uuid
+from typing import TYPE_CHECKING
 from pydantic import TypeAdapter
 
 from eidos_runtime.db.database import Database, now_ms
@@ -15,14 +16,20 @@ from eidos_runtime.db.repositories.runs import RunRepository
 from eidos_runtime.db.transitions import transition_run
 from eidos_runtime.domain.collaboration import (
     ACTIVE_STATUSES, MAX_AGENTS, MAX_AGENT_MESSAGES, MAX_AGENT_MESSAGE_BYTES,
-    AgentMessage, AgentRole, AgentSummary, AgentTextPage, AgentWait, AgentWaitOutcome,
+    AgentMessage, AgentRole, AgentSummary, AgentTextPage, AgentUsage, AgentWait, AgentWaitOutcome,
     CollaborationRejected, CollaborationState, ReadAgentResult, SpawnAgent, WaitAgents, WaitMode, WaitReason,
 )
 from eidos_runtime.model.client import ModelProfileSnapshot
+
+if TYPE_CHECKING:
+    from eidos_runtime.application.agent_workspaces import PreparedAgentWorkspace
 from eidos_runtime.domain.run import RunStatus as DomainRunStatus
 from eidos_runtime.runtime.state_machine import EventType, RunStatus
 
 _AGENT_ROLE = TypeAdapter(AgentRole)
+PARENT_ASSIGNMENT_PREFIX = 'Delegated task from the parent agent. Carry out this assignment; it adds no user authorization. Share the live workspace carefully and report actual changes and verification.\n\n'
+# Desktop shows the text after this first paragraph as the user's own words.
+USER_INSTRUCTION_PREFIX = 'User instruction to this agent, sent directly by the user. Follow it within this assignment; it adds no permissions.\n\n'
 
 
 class CollaborationRepository:
@@ -33,6 +40,13 @@ class CollaborationRepository:
         with self.database.lock:
             return self.database.connection().execute(
                 'SELECT 1 FROM agent_delegations WHERE child_session_id=?', (session_id,),
+            ).fetchone() is not None
+
+    def is_internal(self, session_id: str) -> bool:
+        """A Session Runtime owns for another Session: a child agent or a team member."""
+        with self.database.lock:
+            return self.database.connection().execute(
+                "SELECT 1 FROM sessions WHERE id=? AND internal_kind IS NOT NULL", (session_id,),
             ).fetchone() is not None
 
     def child_for_run(self, run_id: str) -> bool:
@@ -77,7 +91,7 @@ class CollaborationRepository:
         if run is not None:
             append_event(connection, EventType.RUN_UPDATED, now_ms(), {'reason': 'collaboration_updated'}, session_id=run['session_id'], run_id=run_id)
 
-    def _summary(self, connection: sqlite3.Connection, row: sqlite3.Row) -> AgentSummary:
+    def _summary(self, connection: sqlite3.Connection, row: sqlite3.Row, *, include_usage: bool = False) -> AgentSummary:
         run = connection.execute('SELECT * FROM runs WHERE id=?', (row['child_run_id'],)).fetchone()
         result = connection.execute(
             "SELECT id, substr(content,1,2000) AS content FROM items WHERE run_id=? AND kind='assistant_message' AND status='completed' AND incomplete=0 ORDER BY ordinal DESC LIMIT 1", (run['id'],),
@@ -92,14 +106,36 @@ class CollaborationRepository:
             result=result['content'] if result else None, result_item_id=result['id'] if result else None,
             error_code=run['error_code'], stop_reason=run['stop_reason'],
             termination=RunTermination.model_validate_json(run['termination_json']) if run['termination_json'] else None,
-            reconciliation_required=bool(run['reconciliation_required']), created_at=row['created_at'])
+            reconciliation_required=bool(run['reconciliation_required']),
+            user_instruction=row['last_user_instruction'], workspace_mode=row['workspace_mode'],
+            # Usage grows while a Run works; it is a Desktop view, never part of
+            # the state the engine compares to decide whether to rebuild context.
+            usage=self._usage(connection, row['child_session_id']) if include_usage else None,
+            created_at=row['created_at'])
 
-    def state(self, run_id: str) -> CollaborationState:
+    @staticmethod
+    def _usage(connection: sqlite3.Connection, session_id: str) -> AgentUsage:
+        tokens = connection.execute(
+            "SELECT coalesce(sum(json_extract(a.usage_json,'$.input_tokens')),0),"
+            "coalesce(sum(json_extract(a.usage_json,'$.output_tokens')),0),"
+            "coalesce(sum(json_extract(a.usage_json,'$.cache_read_tokens')),0),"
+            "coalesce(sum(json_extract(a.usage_json,'$.cache_write_tokens')),0),"
+            "coalesce(max(a.usage_json IS NULL OR json_extract(a.usage_json,'$.input_tokens') IS NULL "
+            "OR json_extract(a.usage_json,'$.output_tokens') IS NULL),0) "
+            "FROM model_attempts a JOIN steps s ON s.id=a.step_id JOIN runs r ON r.id=s.run_id WHERE r.session_id=?",
+            (session_id,)).fetchone()
+        effective = connection.execute(
+            'SELECT coalesce(sum(total_effective_ms),0) FROM runs WHERE session_id=?', (session_id,)).fetchone()[0]
+        return AgentUsage(input_tokens=tokens[0], output_tokens=tokens[1], cache_read_tokens=tokens[2],
+            cache_write_tokens=tokens[3], incomplete=bool(tokens[4]), effective_ms=effective)
+
+    def state(self, run_id: str, *, include_usage: bool = False) -> CollaborationState:
         with self.database.lock:
-            return self.state_in_connection(self.database.connection(), run_id)
+            return self.state_in_connection(self.database.connection(), run_id, include_usage=include_usage)
 
     def state_in_connection(
         self, connection: sqlite3.Connection, run_id: str, *, unread_first: bool = False,
+        include_usage: bool = False,
     ) -> CollaborationState:
         """Read the same projection inside the caller's completion transaction."""
         run = connection.execute('SELECT session_id FROM runs WHERE id=?', (run_id,)).fetchone()
@@ -111,15 +147,15 @@ class CollaborationRepository:
         messages = []
         if unread_first:
             messages = connection.execute(
-                'SELECT m.id,m.sender_session_id,m.recipient_session_id,m.content,m.created_at FROM agent_messages m '
+                'SELECT m.id,m.sender_kind,m.sender_session_id,m.recipient_session_id,m.content,m.created_at FROM agent_messages m '
                 'WHERE m.parent_run_id=? AND m.recipient_session_id=? AND NOT EXISTS '
                 '(SELECT 1 FROM agent_message_receipts a WHERE a.message_id=m.id) '
                 'ORDER BY m.sequence LIMIT ?', (parent_id, run['session_id'], MAX_AGENT_MESSAGES),
             ).fetchall()
         if not messages and not unread_first:
-            messages = connection.execute("SELECT id,sender_session_id,recipient_session_id,CASE WHEN length(content)>2000 THEN substr(content,1,2000)||' …[message preview]' ELSE content END AS content,created_at FROM (SELECT id,sender_session_id,recipient_session_id,content,created_at,sequence FROM agent_messages WHERE parent_run_id=? AND recipient_session_id=? ORDER BY sequence DESC LIMIT 16) ORDER BY sequence", (parent_id, run['session_id'])).fetchall()
+            messages = connection.execute("SELECT id,sender_kind,sender_session_id,recipient_session_id,CASE WHEN length(content)>2000 THEN substr(content,1,2000)||' …[message preview]' ELSE content END AS content,created_at FROM (SELECT id,sender_kind,sender_session_id,recipient_session_id,content,created_at,sequence FROM agent_messages WHERE parent_run_id=? AND recipient_session_id=? ORDER BY sequence DESC LIMIT 16) ORDER BY sequence", (parent_id, run['session_id'])).fetchall()
         return CollaborationState(parent_run_id=parent_id if rows else None,
-            agents=[self._summary(connection, row) for row in rows if child is None or row["id"] == child["id"]], messages=[AgentMessage(**dict(row)) for row in messages])
+            agents=[self._summary(connection, row, include_usage=include_usage) for row in rows if child is None or row["id"] == child["id"]], messages=[AgentMessage(**dict(row)) for row in messages])
 
     def read_result(self, run_id: str, request: ReadAgentResult) -> AgentTextPage:
         """Page a completed answer owned by this parent; never load a tool transcript."""
@@ -237,57 +273,90 @@ class CollaborationRepository:
     def read_session(self, session_id: str) -> CollaborationState:
         with self.database.lock:
             row = self.database.connection().execute('SELECT r.id FROM runs r WHERE r.session_id=? AND (EXISTS (SELECT 1 FROM agent_delegations d WHERE d.parent_run_id=r.id) OR EXISTS (SELECT 1 FROM agent_delegations d WHERE d.child_session_id=r.session_id)) ORDER BY r.creation_seq DESC LIMIT 1', (session_id,)).fetchone()
-            return self.state(row['id']) if row else CollaborationState()
+            return self.state(row['id'], include_usage=True) if row else CollaborationState()
 
     def replay_spawn(self, run_id: str, item_id: str, request: SpawnAgent) -> AgentSummary | None:
-        with self.database.lock:
-            existing = self.database.connection().execute('SELECT 1 FROM agent_delegations WHERE spawn_item_id=?', (item_id,)).fetchone()
-            return self.spawn(run_id, item_id, request) if existing else None
+        return self.replayed_spawn(run_id, item_id, request)
 
-    def spawn(self, run_id: str, item_id: str, request: SpawnAgent, *, model_profile: ModelProfileSnapshot | None = None) -> AgentSummary:
-        with self.database.transaction() as connection:
+    def replayed_spawn(self, run_id: str, item_id: str, request: SpawnAgent) -> AgentSummary | None:
+        """Return the committed result of this spawn ToolCall, if any."""
+        with self.database.lock:
+            connection = self.database.connection()
             existing = connection.execute('SELECT * FROM agent_delegations WHERE spawn_item_id=?', (item_id,)).fetchone()
-            if existing is not None:
-                saved = SpawnAgent.model_validate_json(existing['spawn_request_json']) if existing['spawn_request_json'] else None
-                matches = saved == request if saved else (existing['task_name'] == request.task_name and existing['task'] == request.message and existing['role'] == request.role and bool(existing['required_for_completion']) == request.required_for_completion)
-                if existing['parent_run_id'] != run_id or not matches:
-                    raise CollaborationRejected('agent_operation_conflict')
-                return self._summary(connection, existing)
-            parent = self._active(connection, run_id)
+            if existing is None:
+                return None
+            saved = SpawnAgent.model_validate_json(existing['spawn_request_json']) if existing['spawn_request_json'] else None
+            matches = saved == request if saved else (existing['task_name'] == request.task_name and existing['task'] == request.message and existing['role'] == request.role and bool(existing['required_for_completion']) == request.required_for_completion)
+            if existing['parent_run_id'] != run_id or not matches:
+                raise CollaborationRejected('agent_operation_conflict')
+            return self._summary(connection, existing)
+
+    def check_spawn(self, run_id: str, request: SpawnAgent) -> str:
+        """Reject a spawn before any Worktree side effect; return the parent Session."""
+        with self.database.lock:
+            connection = self.database.connection()
+            parent = self._check_spawn(connection, run_id, request)
+            return str(parent['session_id'])
+
+    def _check_spawn(self, connection: sqlite3.Connection, run_id: str, request: SpawnAgent) -> sqlite3.Row:
+        parent = self._active(connection, run_id)
+        if self.is_child(parent['session_id']):
+            raise CollaborationRejected('nested_delegation_not_supported')
+        if connection.execute('SELECT COUNT(*) FROM agent_delegations WHERE parent_run_id=?', (run_id,)).fetchone()[0] >= MAX_AGENTS:
+            raise CollaborationRejected('agent_task_limit')
+        if connection.execute('SELECT 1 FROM agent_delegations WHERE parent_run_id=? AND task_name=?', (run_id, request.task_name)).fetchone():
+            raise CollaborationRejected('agent_task_name_exists')
+        return parent
+
+    def spawn(self, run_id: str, item_id: str, request: SpawnAgent, *, model_profile: ModelProfileSnapshot | None = None,
+              workspace: PreparedAgentWorkspace | None = None) -> AgentSummary:
+        replay = self.replayed_spawn(run_id, item_id, request)
+        if replay is not None:
+            return replay
+        if (request.workspace == 'worktree') != (workspace is not None):
+            raise CollaborationRejected('agent_worktree_unavailable')
+        with self.database.transaction() as connection:
             definition = self.definition_for_spawn(run_id, request.role)
             if definition is not None and definition.model is not None and model_profile is None:
                 raise CollaborationRejected('agent_model_unavailable')
-            if self.is_child(parent['session_id']):
-                raise CollaborationRejected('nested_delegation_not_supported')
-            if connection.execute('SELECT COUNT(*) FROM agent_delegations WHERE parent_run_id=?', (run_id,)).fetchone()[0] >= MAX_AGENTS:
-                raise CollaborationRejected('agent_task_limit')
-            if connection.execute('SELECT 1 FROM agent_delegations WHERE parent_run_id=? AND task_name=?', (run_id, request.task_name)).fetchone():
-                raise CollaborationRejected('agent_task_name_exists')
-            session_id, child_run_id, agent_id = (str(uuid.uuid4()) for _ in range(3))
+            parent = self._check_spawn(connection, run_id, request)
+            child_run_id, agent_id = (str(uuid.uuid4()) for _ in range(2))
+            session_id = workspace.session_id if workspace else str(uuid.uuid4())
             now = now_ms()
-            # Borrow the execution binding. A worker shares the live workspace
-            # until isolated coding worktrees are implemented. The child never
-            # owns or deletes the parent's worktree.
-            connection.execute('INSERT INTO sessions (id,workspace_root,workspace_dev,workspace_inode,workspace_uid,title,created_at,updated_at,worktree_id,execution_mode,project_id,workspace_roots_json) SELECT ?,workspace_root,workspace_dev,workspace_inode,workspace_uid,?,?,?,worktree_id,execution_mode,project_id,workspace_roots_json FROM sessions WHERE id=?',
-                (session_id, request.task_name, now, now, parent['session_id']))
+            # A shared child borrows the execution binding and never owns or
+            # deletes the parent's worktree. An isolated child binds the
+            # managed Worktree created for this spawn.
+            connection.execute("INSERT INTO sessions (id,workspace_root,workspace_dev,workspace_inode,workspace_uid,title,created_at,updated_at,worktree_id,execution_mode,associated_worktree_id,project_id,workspace_roots_json,internal_kind) SELECT ?,workspace_root,workspace_dev,workspace_inode,workspace_uid,?,?,?,coalesce(?,worktree_id),CASE WHEN ? IS NULL THEN execution_mode ELSE 'worktree' END,?,project_id,workspace_roots_json,'agent_child' FROM sessions WHERE id=?",
+                (session_id, request.task_name, now, now, workspace.worktree_id if workspace else None,
+                 workspace.worktree_id if workspace else None, workspace.worktree_id if workspace else None,
+                 parent['session_id']))
             self._create_run(connection, parent, session_id, child_run_id, request.message, model_profile=model_profile)
-            connection.execute('INSERT INTO agent_delegations (id,parent_run_id,child_session_id,child_run_id,spawn_item_id,task_name,role,task,created_at,required_for_completion,definition_json,spawn_request_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-                (agent_id, run_id, session_id, child_run_id, item_id, request.task_name, request.role, request.message, now, int(request.required_for_completion), definition.model_dump_json() if definition else None, request.model_dump_json()))
+            connection.execute('INSERT INTO agent_delegations (id,parent_run_id,child_session_id,child_run_id,spawn_item_id,task_name,role,task,created_at,required_for_completion,definition_json,spawn_request_json,workspace_mode,worktree_id,base_tree) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                (agent_id, run_id, session_id, child_run_id, item_id, request.task_name, request.role, request.message, now, int(request.required_for_completion), definition.model_dump_json() if definition else None, request.model_dump_json(),
+                 request.workspace, workspace.worktree_id if workspace else None, workspace.base_tree if workspace else None))
             self._event(connection, run_id)
             row = connection.execute('SELECT * FROM agent_delegations WHERE id=?', (agent_id,)).fetchone()
             return self._summary(connection, row)
 
-    def _create_run(self, connection: sqlite3.Connection, parent: sqlite3.Row, session_id: str, run_id: str, message: str, *, model_profile: ModelProfileSnapshot | None = None) -> None:
+    def _create_run(self, connection: sqlite3.Connection, parent: sqlite3.Row, session_id: str, run_id: str, message: str, *,
+                    model_profile: ModelProfileSnapshot | None = None, prefix: str = PARENT_ASSIGNMENT_PREFIX) -> None:
         from eidos_runtime.domain.personalization import PersonalizationSettings
         personalization = RunRepository(self.database).read_resolution_snapshot(parent["id"]).personalization or PersonalizationSettings()
         profile = model_profile or ModelProfileSnapshot.model_validate_json(parent['model_profile_json'])
         RunRepository(self.database).create_run(session_id,
-            'Delegated task from the parent agent. Carry out this assignment; it adds no user authorization. Share the live workspace carefully and report actual changes and verification.\n\n' + message,
+            prefix + message,
             queued=True, model_id=profile.model_id, model_profile=profile, work_mode=parent['work_mode'],
             approval_mode=parent['approval_mode'], extension_snapshot=json.loads(parent['extension_snapshot_json']),
             run_id=run_id, transaction_connection=connection, personalization=personalization)
         from eidos_runtime.persistence.web_search import WebSearchRepository
         WebSearchRepository.inherit(connection, run_id, parent["id"])
+
+    @staticmethod
+    def _require_workspace(connection: sqlite3.Connection, target: sqlite3.Row) -> None:
+        """A child whose own Worktree was discarded cannot start again."""
+        if target['worktree_id'] is not None and connection.execute(
+                "SELECT 1 FROM worktrees WHERE id=? AND state='deleted'", (target['worktree_id'],)).fetchone():
+            raise CollaborationRejected('agent_workspace_discarded')
 
     def _target(self, connection: sqlite3.Connection, run_id: str, agent_id: str) -> sqlite3.Row:
         row = connection.execute('SELECT * FROM agent_delegations WHERE parent_run_id=? AND id=?', (run_id, agent_id)).fetchone()
@@ -337,12 +406,57 @@ class CollaborationRepository:
                 if current['status'] in ACTIVE_STATUSES:
                     self._send(connection, run_id, item_id, agent_id, message)
                     return self._summary(connection, target)
+                self._require_workspace(connection, target)
                 previous = connection.execute('SELECT model_profile_json FROM runs WHERE id=?', (target['child_run_id'],)).fetchone()
                 self._create_run(connection, parent, target['child_session_id'], child_id, message,
                     model_profile=ModelProfileSnapshot.model_validate_json(previous[0]))
                 connection.execute('UPDATE agent_delegations SET child_run_id=?,task=? WHERE id=?', (child_id, message, agent_id))
                 self._event(connection, run_id)
             return self._summary(connection, self._target(connection, run_id, agent_id))
+
+    def user_message(self, parent_run_id: str, agent_id: str, operation_id: str, text: str) -> AgentSummary:
+        """Deliver a user's direct instruction to one child of an active parent Run.
+
+        An active child receives it as a user-authored message. An idle child
+        starts a new Run with the instruction, like followup_task. The same
+        operation id always returns the first outcome.
+        """
+        if not text.strip() or len(text.encode('utf-8')) > MAX_AGENT_MESSAGE_BYTES:
+            raise CollaborationRejected('agent_message_empty_or_too_large')
+        follow_run_id = str(uuid.uuid5(uuid.NAMESPACE_URL, 'eidos:agent-user-instruction:' + operation_id))
+        with self.database.transaction() as connection:
+            target = connection.execute('SELECT * FROM agent_delegations WHERE parent_run_id=? AND id=?', (parent_run_id, agent_id)).fetchone()
+            existing = connection.execute('SELECT recipient_session_id,content FROM agent_messages WHERE operation_id=?', (operation_id,)).fetchone()
+            replayed_run = connection.execute('SELECT session_id,user_input FROM runs WHERE id=?', (follow_run_id,)).fetchone()
+            if existing is not None or replayed_run is not None:
+                same = target is not None and (
+                    (existing is not None and existing['recipient_session_id'] == target['child_session_id'] and existing['content'] == text)
+                    or (replayed_run is not None and replayed_run['session_id'] == target['child_session_id']
+                        and replayed_run['user_input'] == USER_INSTRUCTION_PREFIX + text))
+                if not same:
+                    raise CollaborationRejected('agent_operation_conflict')
+                return self._summary(connection, target)
+            parent = connection.execute('SELECT * FROM runs WHERE id=?', (parent_run_id,)).fetchone()
+            if parent is None or parent['status'] not in ACTIVE_STATUSES or parent['cancel_requested_at'] is not None:
+                raise CollaborationRejected('agent_parent_inactive')
+            if target is None:
+                raise CollaborationRejected('agent_not_owned_by_run')
+            now = now_ms()
+            current = connection.execute('SELECT status FROM runs WHERE id=?', (target['child_run_id'],)).fetchone()
+            if current['status'] in ACTIVE_STATUSES:
+                connection.execute(
+                    'INSERT INTO agent_messages (id,parent_run_id,sender_session_id,recipient_session_id,content,created_at,sender_kind,operation_id) VALUES (?,?,?,?,?,?,?,?)',
+                    (str(uuid.uuid5(uuid.NAMESPACE_URL, 'eidos:agent-user-message:' + operation_id)), parent_run_id,
+                     parent['session_id'], target['child_session_id'], text, now, 'user', operation_id))
+            else:
+                self._require_workspace(connection, target)
+                previous = connection.execute('SELECT model_profile_json FROM runs WHERE id=?', (target['child_run_id'],)).fetchone()
+                self._create_run(connection, parent, target['child_session_id'], follow_run_id, text,
+                    model_profile=ModelProfileSnapshot.model_validate_json(previous[0]), prefix=USER_INSTRUCTION_PREFIX)
+                connection.execute('UPDATE agent_delegations SET child_run_id=?,task=? WHERE id=?', (follow_run_id, text, agent_id))
+            connection.execute('UPDATE agent_delegations SET last_user_instruction=? WHERE id=?', (text[:500], agent_id))
+            self._event(connection, parent_run_id)
+            return self._summary(connection, self._target(connection, parent_run_id, agent_id))
 
     def target_run(self, run_id: str, agent_id: str) -> str:
         with self.database.lock:

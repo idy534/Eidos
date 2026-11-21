@@ -389,7 +389,7 @@ class SessionRepository(Repository):
                 high_water, before_sequence = cursor_state
             rows = connection.execute(
                 sql
-                + " WHERE s.creation_seq <= ? AND s.creation_seq < ? AND NOT EXISTS (SELECT 1 FROM agent_delegations d WHERE d.child_session_id=s.id)"
+                + " WHERE s.creation_seq <= ? AND s.creation_seq < ? AND s.internal_kind IS NULL"
                 + " ORDER BY s.creation_seq DESC LIMIT ?",
                 (high_water, before_sequence, limit + 1),
             ).fetchall()
@@ -769,11 +769,24 @@ class SessionRepository(Repository):
                 'SELECT child_session_id FROM agent_delegations WHERE parent_run_id IN (SELECT id FROM runs WHERE session_id=?)',
                 (session_id,),
             ).fetchall()
+            # Delivery entries name files of child Worktrees; they go with the delegation.
+            connection.execute("DELETE FROM workspace_deliveries WHERE owner_kind='agent' AND owner_id IN "
+                               '(SELECT id FROM agent_delegations WHERE parent_run_id IN (SELECT id FROM runs WHERE session_id=?))', (session_id,))
             connection.execute('DELETE FROM agent_messages WHERE parent_run_id IN (SELECT id FROM runs WHERE session_id=?)', (session_id,))
             connection.execute('DELETE FROM agent_delegations WHERE parent_run_id IN (SELECT id FROM runs WHERE session_id=?)', (session_id,))
             for child in children:
                 # Delete borrowed Session facts only; never remove its workspace.
                 write(connection, child['child_session_id'])
+            # Team rows go first: members reference their Sessions. Member
+            # Worktrees were released by the application before this point.
+            members = connection.execute(
+                'SELECT m.session_id FROM team_members m JOIN teams t ON t.id=m.team_id WHERE t.lead_session_id=?',
+                (session_id,)).fetchall()
+            connection.execute("DELETE FROM workspace_deliveries WHERE owner_kind='team_member' AND owner_id IN "
+                               '(SELECT m.id FROM team_members m JOIN teams t ON t.id=m.team_id WHERE t.lead_session_id=?)', (session_id,))
+            connection.execute('DELETE FROM teams WHERE lead_session_id=?', (session_id,))
+            for member in members:
+                write(connection, member['session_id'])
             connection.execute('DELETE FROM agent_waits WHERE run_id IN (SELECT id FROM runs WHERE session_id=?)', (session_id,))
             run_ids = "SELECT id FROM runs WHERE session_id = ?"
             connection.execute(
@@ -965,7 +978,7 @@ class SessionRepository(Repository):
         ).fetchone()
         if session is None:
             raise ResourceNotFoundError("session not found")
-        if connection.execute('SELECT 1 FROM agent_delegations WHERE child_session_id=?', (session_id,)).fetchone():
+        if connection.execute('SELECT 1 FROM agent_delegations WHERE child_session_id=? UNION ALL SELECT 1 FROM team_members WHERE session_id=?', (session_id, session_id)).fetchone():
             raise SessionActiveError("child sessions are managed by their parent")
         if connection.execute(
             "SELECT 1 FROM agent_delegations d JOIN runs p ON p.id=d.parent_run_id JOIN runs c ON c.session_id=d.child_session_id WHERE p.session_id=? AND c.status IN ('queued','running','waiting_approval','waiting_input','waiting_agents','finalizing') LIMIT 1",
@@ -1184,13 +1197,15 @@ class SessionRepository(Repository):
         channel_origins = ChannelRepository(self.database).origins_for_runs([row["id"] for row in run_rows])
         from eidos_runtime.persistence.goals import GoalRepository
         goal_origins = GoalRepository(self.database).origins_for_runs([row["id"] for row in run_rows])
+        from eidos_runtime.persistence.teams import TeamRepository
+        team_origins = TeamRepository(self.database).origins_for_runs([row["id"] for row in run_rows])
         selected_runs = [
-            _run_from_row(row, include_user_input=False, automation_origin=automation_origins.get(row["id"]), channel_origin=channel_origins.get(row["id"]), goal_origin=goal_origins.get(row["id"]))
+            _run_from_row(row, include_user_input=False, automation_origin=automation_origins.get(row["id"]), channel_origin=channel_origins.get(row["id"]), goal_origin=goal_origins.get(row["id"]), team_origin=team_origins.get(row["id"]))
             for row in reversed(run_rows)
             if row["id"] in known_run_ids
         ]
         remaining_runs = {
-            row["id"]: _run_from_row(row, include_user_input=False, automation_origin=automation_origins.get(row["id"]), channel_origin=channel_origins.get(row["id"]), goal_origin=goal_origins.get(row["id"]))
+            row["id"]: _run_from_row(row, include_user_input=False, automation_origin=automation_origins.get(row["id"]), channel_origin=channel_origins.get(row["id"]), goal_origin=goal_origins.get(row["id"]), team_origin=team_origins.get(row["id"]))
             for row in run_rows
             if row["id"] not in known_run_ids
         }
