@@ -335,4 +335,3 @@ def tool_names_for(role: RunTeamRole | None) -> tuple[str, ...]:
     if role.role == "lead":
         return LEAD_TOOLS
     return MEMBER_TOOLS
-

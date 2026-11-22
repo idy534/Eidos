@@ -9,12 +9,46 @@ from pathlib import Path
 import shutil
 import stat
 import sys
+import urllib.parse
 
 
 WINDOWS = sys.platform == "win32"
 
 if WINDOWS:
     from eidos_runtime.infrastructure import windows_files
+
+
+def file_uri_to_path(uri: str) -> Path:
+    """Convert a local file:// URI produced by Path.as_uri() to a local Path."""
+    return Path(_file_uri_path_text(uri, windows=WINDOWS))
+
+
+def _file_uri_path_text(uri: str, *, windows: bool) -> str:
+    parsed = urllib.parse.urlsplit(uri)
+    if parsed.scheme != "file" or parsed.netloc or parsed.query or parsed.fragment:
+        raise ValueError("invalid file URI")
+    try:
+        raw_path = urllib.parse.unquote(parsed.path, errors="strict")
+    except UnicodeDecodeError:
+        raise ValueError("invalid file URI") from None
+    if "\x00" in raw_path:
+        raise ValueError("invalid file URI")
+    if windows:
+        # Path.as_uri() encodes local Windows drives as file:///C:/... so
+        # parsed.path starts with a leading slash before the drive letter.
+        if (
+            len(raw_path) < 4
+            or raw_path[0] != "/"
+            or not (raw_path[1].isascii() and raw_path[1].isalpha())
+            or raw_path[2] != ":"
+            or raw_path[3] != "/"
+            or "\\" in raw_path
+        ):
+            raise ValueError("invalid Windows file URI")
+        return raw_path[1:]
+    if not raw_path.startswith("/") or raw_path.startswith("//"):
+        raise ValueError("invalid POSIX file URI")
+    return raw_path
 
 
 def valid_relative_parts(parts: tuple[str, ...]) -> bool:

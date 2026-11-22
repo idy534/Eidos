@@ -648,10 +648,13 @@ class SkillCatalog:
         if isinstance(snapshot, SkillCatalogSnapshot):
             entry = next((entry for entry in snapshot.entries if entry.qualified_id == qualified_id), None)
             if entry is not None:
-                locator = urllib.parse.urlparse(entry.main_resource_locator)
-                if locator.scheme != 'file' or locator.netloc:
+                try:
+                    document = local_files.file_uri_to_path(entry.main_resource_locator)
+                except ValueError:
+                    raise SkillReadError('skill_snapshot_invalid') from None
+                if document.name != 'SKILL.md':
                     raise SkillReadError('skill_snapshot_invalid')
-                root = Path(urllib.parse.unquote(locator.path)).parent
+                root = document.parent
                 if entry.source_kind == 'plugin':
                     self._manifest_for_snapshot({
                         'id': entry.source_identity, 'version': entry.source_version,

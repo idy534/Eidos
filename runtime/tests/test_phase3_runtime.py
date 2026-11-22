@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -19,6 +20,7 @@ from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
 from eidos_runtime.runtime.approval import ApprovalDecision  # noqa: E402
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 from eidos_runtime.runtime.resource_registry import ResourceRegistry  # noqa: E402
+from eidos_runtime.tools.registry import ToolRegistry  # noqa: E402
 from eidos_runtime.workspace.projectless import projectless_root  # noqa: E402
 
 
@@ -129,7 +131,7 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             self.assertEqual(script.stat().st_mode & 0o777, 0o600)
             store.close()
 
-    def test_skill_install_requires_network_then_state_approval_and_preserves_tree(self) -> None:
+    def test_skill_install_requires_state_approval_and_preserves_tree(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-p3-skill-install-") as directory:
             root = Path(directory)
             data, workspace = root / "data", root / "workspace"
@@ -170,17 +172,25 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
 
             self.assertEqual(
                 [approval["kind"] for approval in approvals],
-                ["network_access", "file_change"],
+                ["file_change"],
             )
             self.assertEqual(
                 store.connection.execute(
                     "SELECT COUNT(*) FROM approvals WHERE item_id = ("
                     "SELECT item_id FROM tool_calls WHERE tool_name = 'skill_install')"
                 ).fetchone()[0],
-                2,
+                1,
             )
-            self.assertEqual(approvals[0]["hosts"], ["codeload.github.com:443"])
-            self.assertIn("scripts/check.py", str(approvals[1]["diff"]))
+            intents = [
+                json.loads(row[0])
+                for row in store.connection.execute(
+                    "SELECT preconditions_json FROM durable_intents WHERE tool_call_id = ("
+                    "SELECT id FROM tool_calls WHERE tool_name = 'skill_install') ORDER BY id"
+                ).fetchall()
+            ]
+            self.assertEqual(intents[0]["authorization"], "skill_review_download")
+            self.assertEqual(intents[0]["hosts"], ["codeload.github.com:443"])
+            self.assertIn("scripts/check.py", str(approvals[0]["diff"]))
             self.assertEqual(
                 (data / "skills" / "grilling" / "scripts" / "check.py").read_bytes(),
                 downloaded["scripts/check.py"],
@@ -196,7 +206,7 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             )
             store.close()
 
-    def test_skill_install_rejection_stops_before_download_or_write(self) -> None:
+    def test_skill_install_legacy_pending_network_rejection_stops_before_download_or_write(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-p3-skill-install-reject-") as directory:
             root = Path(directory)
             data, workspace = root / "data", root / "workspace"
@@ -210,14 +220,39 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
                 session["id"], "Install grilling",
                 extension_snapshot=skills.extension_snapshot(),
             )
-            model = ScriptedModel([
-                ModelResponse(tool_calls=(ModelToolCall(
-                    "install-skill", "skill_install", {
-                        "url": "https://github.com/mattpocock/skills/tree/main/skills/productivity/grilling"
-                    }
-                ),)),
-                ModelResponse(text="done"),
-            ])
+            url = "https://github.com/mattpocock/skills/tree/main/skills/productivity/grilling"
+            tool_snapshot = ToolRegistry(
+                skills.tool_entries(skills.catalog_snapshot(run["extensionSnapshot"]))
+            ).snapshot().as_dict()
+            step = store.increment_model_step(str(run["id"]), tool_snapshot=tool_snapshot)
+            arguments_json = json.dumps({"url": url})
+            item = store.create_tool_item(
+                str(run["id"]), step, 0, "install-skill", "skill_install",
+                arguments_json,
+            )
+            legacy_description = {
+                "kind": "network_access",
+                "toolName": "skill_install",
+                "hosts": ["codeload.github.com:443"],
+                "target": "mattpocock/skills@main:skills/productivity/grilling",
+            }
+            fingerprint = hashlib.sha256(json.dumps({
+                "tool": "skill_install",
+                "arguments": arguments_json,
+                "description": legacy_description,
+                "diff": "",
+                "baseSha256": None,
+                "userEvidence": store.approval_user_evidence(run["id"]),
+            }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            store.begin_approval_committed(
+                str(item["id"]), "", None,
+                request={
+                    **legacy_description,
+                    "summary": "Download a public GitHub skill",
+                    "permissionBlockFingerprint": fingerprint,
+                },
+            )
+            model = ScriptedModel([ModelResponse(text="done")])
 
             with patch(
                 "eidos_runtime.extensions.skills._download_github_skill",
@@ -230,6 +265,12 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
 
             download.assert_not_called()
             self.assertFalse((data / "skills" / "grilling").exists())
+            result = json.loads(store.connection.execute(
+                "SELECT result_json FROM tool_calls WHERE tool_name = ?",
+                ("skill_install",),
+            ).fetchone()[0])
+            self.assertEqual(result["code"], "user_rejected_network")
+            self.assertFalse(result["sideEffectsMayExist"])
             store.close()
 
     def test_skill_install_state_rejection_keeps_downloaded_skill_out_of_store(self) -> None:
@@ -254,7 +295,7 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
                 ),)),
                 ModelResponse(text="done"),
             ])
-            decisions = iter(("approve", "reject"))
+            approvals: list[dict[str, object]] = []
 
             with patch(
                 "eidos_runtime.extensions.skills._download_github_skill",
@@ -265,11 +306,20 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             ) as download:
                 RuntimeEngine(
                     store, model, lambda _message: None,
-                    request_approval=lambda _params, _cancel: ApprovalDecision(next(decisions)),
+                    request_approval=lambda params, _cancel: (
+                        approvals.append(params) or ApprovalDecision("reject")
+                    ),
                 ).run(run["id"], threading.Event())
 
             download.assert_called_once()
+            self.assertEqual([approval["kind"] for approval in approvals], ["file_change"])
             self.assertFalse((data / "skills" / "grilling").exists())
+            result = json.loads(store.connection.execute(
+                "SELECT result_json FROM tool_calls WHERE tool_name = ?",
+                ("skill_install",),
+            ).fetchone()[0])
+            self.assertEqual(result["code"], "user_rejected")
+            self.assertFalse(result["sideEffectsMayExist"])
             store.close()
 
     def test_skill_create_rejection_has_no_side_effect(self) -> None:

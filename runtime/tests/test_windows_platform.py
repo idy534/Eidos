@@ -266,7 +266,7 @@ def test_windows_chrome_owns_its_profile_and_releases_the_debug_port(tmp_path: P
 
     if find_chrome() is None:
         pytest.skip("Google Chrome is not installed")
-    host = BrowserHost(tmp_path / "Chrome profile", extra_arguments=("--headless=new",))
+    host = BrowserHost(tmp_path / "Chrome profile", extra_arguments=("--headless=new", "--disable-gpu"))
     try:
         endpoint = host.ensure(threading.Event())
         assert endpoint == host.endpoint()
@@ -351,6 +351,17 @@ def test_memory_hooks_skill_removal_and_backup_use_ntfs_handles(tmp_path: Path) 
 
         plugins = PluginCatalog(store)
         deploy_system_skills(data)
+        catalog = SkillCatalog(plugins)
+        snapshot = catalog.catalog_snapshot(catalog.extension_snapshot())
+        assert any(entry.qualified_id == "system:docx" for entry in snapshot.entries)
+        assert "docx" in catalog.read_skill(snapshot, "system:docx")["content"].lower()
+        from eidos_runtime.extensions.skill_access import SkillAccess
+
+        access = SkillAccess.from_snapshot(snapshot)
+        assert access.activate_explicit("system:docx").canonical_root == (data / "skills" / ".system" / "docx").resolve()
+        run_script = data / "skills" / ".system" / "docx" / "scripts" / "run.py"
+        implicit = access.activate_implicit(f"& $env:RUNTIME_PYTHON '{run_script}' 'python' 'demo.py'", tmp_path)
+        assert implicit is not None and implicit.qualified_id == "system:docx"
         skill = data / "skills" / "personal"
         skill.mkdir(mode=0o700)
         (skill / "SKILL.md").write_bytes(

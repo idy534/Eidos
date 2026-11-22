@@ -300,12 +300,14 @@ def _trusted_skill_root(entry: object) -> tuple[Path, str]:
 def _locator_path(locator: str) -> Path | None:
     if not locator:
         return None
-    parsed = urllib.parse.urlparse(locator)
-    if parsed.scheme:
-        if parsed.scheme != "file" or parsed.netloc:
+    parsed = urllib.parse.urlsplit(locator)
+    if parsed.scheme == "file":
+        try:
+            path = local_files.file_uri_to_path(locator)
+        except ValueError:
             return None
-        raw_path = urllib.parse.unquote(parsed.path)
-        path = Path(raw_path)
+    elif parsed.scheme and not (local_files.WINDOWS and len(parsed.scheme) == 1 and Path(locator).is_absolute()):
+        return None
     else:
         path = Path(locator)
     if not path.is_absolute() or path.name != "SKILL.md":
