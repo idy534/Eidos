@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 import errno
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import shutil
 import stat
 import sys
@@ -31,7 +31,7 @@ def _file_uri_path_text(uri: str, *, windows: bool) -> str:
         raw_path = urllib.parse.unquote(parsed.path, errors="strict")
     except UnicodeDecodeError:
         raise ValueError("invalid file URI") from None
-    if "\x00" in raw_path:
+    if "\x00" in raw_path or ".." in raw_path.split("/"):
         raise ValueError("invalid file URI")
     if windows:
         # Path.as_uri() encodes local Windows drives as file:///C:/... so
@@ -43,12 +43,22 @@ def _file_uri_path_text(uri: str, *, windows: bool) -> str:
             or raw_path[2] != ":"
             or raw_path[3] != "/"
             or "\\" in raw_path
+            # A later colon names an NTFS stream, never a plain file.
+            or ":" in raw_path[3:]
         ):
             raise ValueError("invalid Windows file URI")
-        return raw_path[1:]
-    if not raw_path.startswith("/") or raw_path.startswith("//"):
-        raise ValueError("invalid POSIX file URI")
-    return raw_path
+        text = raw_path[1:]
+        canonical = PureWindowsPath(text).as_uri()
+    else:
+        if not raw_path.startswith("/") or raw_path.startswith("//"):
+            raise ValueError("invalid POSIX file URI")
+        text = raw_path
+        canonical = PurePosixPath(text).as_uri()
+    # Only the exact Path.as_uri() spelling is accepted: no "file:/" form,
+    # dot segments, stripped control characters or alternate escapes.
+    if canonical != uri:
+        raise ValueError("non-canonical file URI")
+    return text
 
 
 def valid_relative_parts(parts: tuple[str, ...]) -> bool:

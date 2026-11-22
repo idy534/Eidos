@@ -47,6 +47,10 @@ import { isBuiltinPluginsResponse, isMcpConnectionState, isRemoteMcpInfo, type B
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const WINDOWS_INITIALIZE_TIMEOUT_MS = 60_000;
+// Windows Chrome may take 45 s to answer CDP and its Job Object stop waits for
+// the whole tree. These methods wait for that work, or for the host lock it holds.
+const WINDOWS_BROWSER_HOST_TIMEOUT_MS = 90_000;
+const WINDOWS_BROWSER_HOST_METHODS = new Set(["browser/open", "browser/status", "browser/close", "browser/clearProfile"]);
 const RUNTIME_BUSINESS_CODES = new Set([
   "GOAL_NOT_FOUND", "GOAL_REVISION_CONFLICT", "GOAL_INVALID_STATE",
   "GOAL_SOURCE_NOT_ALLOWED", "GOAL_SESSION_BUSY",
@@ -346,6 +350,17 @@ export interface RuntimeEnvironmentOptions {
   baseEnvironment: NodeJS.ProcessEnv;
   overrides?: NodeJS.ProcessEnv | undefined;
   policy: RuntimeEnvironmentPolicy;
+}
+
+export function runtimeRequestTimeoutMs(method: string, platform: NodeJS.Platform = process.platform): number {
+  if (platform !== "win32") {
+    return REQUEST_TIMEOUT_MS;
+  }
+  // Windows startup also covers NTFS validation and first-launch Skill deployment.
+  if (method === "initialize") {
+    return WINDOWS_INITIALIZE_TIMEOUT_MS;
+  }
+  return WINDOWS_BROWSER_HOST_METHODS.has(method) ? WINDOWS_BROWSER_HOST_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
 }
 
 export function buildRuntimeEnvironment(
@@ -1423,10 +1438,7 @@ export class RuntimeClient {
     }
 
     return new Promise<T>((resolve, reject) => {
-      // Windows startup also covers NTFS validation and first-launch Skill deployment.
-      const timeoutMs = method === "initialize" && process.platform === "win32"
-        ? WINDOWS_INITIALIZE_TIMEOUT_MS
-        : REQUEST_TIMEOUT_MS;
+      const timeoutMs = runtimeRequestTimeoutMs(method);
       const timeout = setTimeout(() => {
         const pending = this.pending.get(id);
         if (!pending) return;

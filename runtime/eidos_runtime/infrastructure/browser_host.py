@@ -38,6 +38,7 @@ CHROME_APPLICATIONS = (
 )
 DEFAULT_IDLE_SECONDS = 30 * 60
 START_TIMEOUT_SECONDS = 45.0 if local_files.WINDOWS else 20.0
+PROBE_TIMEOUT_SECONDS = 2.0 if local_files.WINDOWS else 1.0
 STOP_TIMEOUT_SECONDS = 10.0
 GRACEFUL_STOP_SECONDS = 5.0
 _MAX_PLIST_BYTES = 256 * 1024
@@ -112,7 +113,7 @@ def _probe_cdp(port: int) -> bool:
     # Never route the loopback endpoint through a configured HTTP proxy.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with opener.open(f"http://127.0.0.1:{port}/json/version", timeout=2) as response:
+        with opener.open(f"http://127.0.0.1:{port}/json/version", timeout=PROBE_TIMEOUT_SECONDS) as response:
             body = response.read(64 * 1024)
         value = json.loads(body)
     except (OSError, urllib.error.URLError, ValueError):

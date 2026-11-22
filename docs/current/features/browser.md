@@ -22,7 +22,7 @@ Model → ToolCallRuntime → ExternalToolHandler（浏览器授权）
      Chrome：Eidos 专用 profile（BrowserHost 启动）或用户自己的 Chrome（用户开启远程调试）
 ```
 
-- `BrowserHost`（`infrastructure/browser_host.py`）由 RuntimeServer 创建，作为持久受管任务运行，所有 Session 共用。Chrome 保留自身的渲染沙盒，使用私有的 `<数据目录>/browser/profiles/default`。CDP 端口在 MCP 启动前分配，Chrome 运行期间固定。Chrome 只在第一次浏览器操作时启动，30 分钟无调用、用户关闭或 Runtime 退出时停止。macOS 用私有状态文件和 `SingletonLock` 接管仍在运行的 Chrome。Windows 用 Job Object 管理专用 Chrome，Runtime 进程退出时系统会关闭该进程树。
+- `BrowserHost`（`infrastructure/browser_host.py`）由 RuntimeServer 创建，作为持久受管任务运行，所有 Session 共用。Chrome 保留自身的渲染沙盒，使用私有的 `<数据目录>/browser/profiles/default`。CDP 端口在 MCP 启动前分配，Chrome 运行期间固定。Chrome 只在第一次浏览器操作时启动，30 分钟无调用、用户关闭或 Runtime 退出时停止。Runtime 等待 Chrome 应答 CDP 的上限在 macOS 为 20 秒、Windows 为 45 秒；单次 CDP 探测在 macOS 为 1 秒、Windows 为 2 秒。macOS 用私有状态文件和 `SingletonLock` 接管仍在运行的 Chrome。Windows 用 Job Object 管理专用 Chrome，Runtime 进程退出时系统会关闭该进程树。
 - Windows 的标签组 helper 只访问绑定到 `127.0.0.1` 的本次连接 broker。broker 校验临时凭据和固定的扩展连接页，再打开 Chrome。日志只记录拒绝原因，避免保存连接令牌。
 - BrowserHost 为每个 Chrome 保持一条控制用的 CDP 连接，并设置 `Browser.setDownloadBehavior: deny`。Chrome 在设置方断开后会恢复默认，所以连接必须保持打开；断开后，下一次工具调用前会重建。无法设置拒绝下载时，Chrome 会被停止，并返回 `browser_start_failed`。
 - MCP 进程按 Run 启动。Run 结束只关闭 MCP，不关闭 Chrome，后续 Run 可以继续使用已打开的页面。启动参数固定 `--no-webmcp`，网页不能注册工具；参数还固定 `--ignore-roots`，上传根目录为 Workspace。
