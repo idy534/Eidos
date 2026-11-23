@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { RuntimeClient } from "./runtime-client.js";
+import { RuntimeClient, runtimeRequestTimeoutMs } from "./runtime-client.js";
 import {
   isBrowserCloseResponse, isBrowserGrantRevokeRequest, isBrowserGrantRevokeResponse, isBrowserStatus, isBrowserStatusRequest,
   isBrowserExtensionTokenRequest, isBrowserExtensionTokenResponse, isBrowserTargetRequest, isBrowserTargetResponse,
@@ -97,4 +97,15 @@ void test("browser status, revoke and close round-trip through the real Runtime"
     await client.waitForExit().catch(() => undefined);
     await rm(temp, { recursive: true, force: true });
   }
+});
+
+void test("Windows browser host requests wait longer than a slow Chrome start", () => {
+  for (const method of ["browser/open", "browser/status", "browser/close", "browser/clearProfile"]) {
+    assert.equal(runtimeRequestTimeoutMs(method, "win32"), 90_000);
+    assert.equal(runtimeRequestTimeoutMs(method, "darwin"), 30_000);
+  }
+  assert.equal(runtimeRequestTimeoutMs("initialize", "win32"), 60_000);
+  assert.equal(runtimeRequestTimeoutMs("initialize", "darwin"), 30_000);
+  assert.equal(runtimeRequestTimeoutMs("browser/revokeGrant", "win32"), 30_000);
+  assert.equal(runtimeRequestTimeoutMs("session/read", "win32"), 30_000);
 });

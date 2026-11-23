@@ -5,16 +5,60 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 import errno
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import shutil
 import stat
 import sys
+import urllib.parse
 
 
 WINDOWS = sys.platform == "win32"
 
 if WINDOWS:
     from eidos_runtime.infrastructure import windows_files
+
+
+def file_uri_to_path(uri: str) -> Path:
+    """Convert a local file:// URI produced by Path.as_uri() to a local Path."""
+    return Path(_file_uri_path_text(uri, windows=WINDOWS))
+
+
+def _file_uri_path_text(uri: str, *, windows: bool) -> str:
+    parsed = urllib.parse.urlsplit(uri)
+    if parsed.scheme != "file" or parsed.netloc or parsed.query or parsed.fragment:
+        raise ValueError("invalid file URI")
+    try:
+        raw_path = urllib.parse.unquote(parsed.path, errors="strict")
+    except UnicodeDecodeError:
+        raise ValueError("invalid file URI") from None
+    if "\x00" in raw_path or ".." in raw_path.split("/"):
+        raise ValueError("invalid file URI")
+    if windows:
+        # Path.as_uri() encodes local Windows drives as file:///C:/... so
+        # parsed.path starts with a leading slash before the drive letter.
+        if (
+            len(raw_path) < 4
+            or raw_path[0] != "/"
+            or not (raw_path[1].isascii() and raw_path[1].isalpha())
+            or raw_path[2] != ":"
+            or raw_path[3] != "/"
+            or "\\" in raw_path
+            # A later colon names an NTFS stream, never a plain file.
+            or ":" in raw_path[3:]
+        ):
+            raise ValueError("invalid Windows file URI")
+        text = raw_path[1:]
+        canonical = PureWindowsPath(text).as_uri()
+    else:
+        if not raw_path.startswith("/") or raw_path.startswith("//"):
+            raise ValueError("invalid POSIX file URI")
+        text = raw_path
+        canonical = PurePosixPath(text).as_uri()
+    # Only the exact Path.as_uri() spelling is accepted: no "file:/" form,
+    # dot segments, stripped control characters or alternate escapes.
+    if canonical != uri:
+        raise ValueError("non-canonical file URI")
+    return text
 
 
 def valid_relative_parts(parts: tuple[str, ...]) -> bool:

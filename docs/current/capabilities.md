@@ -362,7 +362,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `SkillCatalog` 为每个 filesystem Skill 固化 canonical `file:` locator、source kind、content hash 和 implicit policy。`SkillAccess` 只从该 snapshot 激活 root。显式选择、成功的 `skill_read` 和已知 Skill script invocation 共用 Run-scoped activation state，并通过 ToolCallRuntime 进入 Shell 和 Seatbelt。模型只能把 Catalog 给出的 canonical absolute root 用于已激活 Skill 的只读文件 Tool；任意 absolute path 不能扩大读写或 Shell 权限。Skill consumer 应使用 Catalog 给出的 canonical absolute root 作为脚本路径，使用 Workspace-relative 或 Workspace 内 canonical absolute cwd，并从 active binding 集合选择对应 Skill 的 binding。它不能使用顶层默认 binding。
 - MCP 支持 stdio 和插件声明的 Streamable HTTP Tools。Settings 的手动 MCP 编辑器仍只配置本地进程。保存或编辑后的本地 Server 默认未授权，需要重新审阅。远程账号连接会验证初始化和工具目录；后台工具请求不触发浏览器登录。两种 transport 共用 Server consent、Tool discovery、Tool call、timeout、结果 schema 和 Tool List Changed。令牌不进入服务列表、事件或日志。
 - 已经审阅启用的 MCP Server，其工具明确声明 `readOnlyHint=true` 时免逐次审批。缺失或非只读声明仍走原审批流程。系统信任该服务的声明，不根据名称、非破坏性或幂等声明猜测只读。进程权限、外部 Tool 的 Durable Intent、提交窗口、结果校验和未知结果记录继续保留。
-- Skill 安装下载可以复用已有的当前 Run 网络权限，最终安装仍需审批。Shell 申请默认已允许的普通宿主文件读取时直接返回已有权限，受保护读取和其他扩权仍按原规则处理。审批 UI、记忆逻辑和 Run Grant 的作用域不变。
+- Skill 安装的下载阶段只取回公开内容供审阅，不单独审批；已有当前 Run 网络权限时记录为复用该权限。最终安装仍需审批。Shell 申请默认已允许的普通宿主文件读取时直接返回已有权限，受保护读取和其他扩权仍按原规则处理。审批 UI、记忆逻辑和 Run Grant 的作用域不变。
 - MCP Connection 由唯一 RuntimeAsyncKernel 持有，不为每个连接创建专用 Event Loop。
 - MCP Connection 的默认 HOME、TMPDIR 和 PID 文件使用 `/private/tmp/eidos-mcp-<随机值>/` 下的短路径，不随数据目录或服务工作目录变长。连接在进程和异步资源停止后核对身份并清理自身目录。显式 HOME、TMPDIR 配置继续优先。
 - 手动 MCP 的工作目录留空时，Runtime 创建并使用 `~/Eidos/eidos-mcp/<服务 ID>/`，不同服务分开保存，初始权限为 `0700`。已有配置不自动迁移。cwd 控制相对参数和产物路径，HOME 仍单独配置，原有沙盒权限继续生效。工具描述和文件名参数不追加或改写。

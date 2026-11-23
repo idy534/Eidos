@@ -119,4 +119,3 @@ class TeamTemplateCatalog:
         for value in values:
             unique.setdefault(value.name, value)
         return list(unique.values())
-

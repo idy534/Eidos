@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import sys
 import tempfile
 import threading
@@ -20,6 +20,7 @@ from eidos_runtime.extensions.skills import (  # noqa: E402
     SkillCatalogEntry,
     SkillCatalogSnapshot,
 )
+from eidos_runtime.infrastructure import local_files  # noqa: E402
 
 
 class SkillAccessTests(unittest.TestCase):
@@ -148,17 +149,77 @@ class SkillAccessTests(unittest.TestCase):
 
     def test_invalid_snapshot_locator_cannot_create_an_active_root(self) -> None:
         snapshot = self._snapshot("review")
-        entry = snapshot.entries[0].model_copy(
-            update={"main_resource_locator": "skill://user:review/SKILL.md"}
-        )
-        invalid = snapshot.model_copy(
-            update={"entries": (entry,)}
-        )
-        invalid = invalid.model_copy(update={"catalog_hash": invalid.canonical_hash()})
-        access = SkillAccess.from_snapshot(invalid)
+        document = (self.root / "review" / "SKILL.md").resolve()
+        canonical = document.as_uri()
+        for locator in (
+            "skill://user:review/SKILL.md",
+            str(document),
+            canonical.replace("file:///", "file:/", 1),
+            canonical.replace("/review/", "/review/../review/", 1),
+        ):
+            with self.subTest(locator=locator):
+                entry = snapshot.entries[0].model_copy(
+                    update={"main_resource_locator": locator}
+                )
+                invalid = snapshot.model_copy(
+                    update={"entries": (entry,)}
+                )
+                invalid = invalid.model_copy(update={"catalog_hash": invalid.canonical_hash()})
+                access = SkillAccess.from_snapshot(invalid)
 
-        with self.assertRaisesRegex(ValueError, "has no trusted filesystem root"):
-            access.activate_explicit("user:review")
+                with self.assertRaisesRegex(ValueError, "has no trusted filesystem root"):
+                    access.activate_explicit("user:review")
+
+    def test_file_uri_conversion_handles_windows_and_posix_paths_strictly(self) -> None:
+        win_path = PureWindowsPath(r"C:\Users\runner admin\Eidos 数据\skills\.system\docx\SKILL.md")
+        self.assertEqual(
+            PureWindowsPath(local_files._file_uri_path_text(win_path.as_uri(), windows=True)),
+            win_path,
+        )
+        self.assertEqual(
+            local_files._file_uri_path_text("file:///tmp/a%20b/%E4%B8%AD/SKILL.md", windows=False),
+            "/tmp/a b/中/SKILL.md",
+        )
+        for bad_windows in (
+            "file://server/share/SKILL.md",
+            "file:////server/share/SKILL.md",
+            "file:///relative/SKILL.md",
+            "file:///C:relative/SKILL.md",
+            "file:///C:/skills/SKILL.md?x=1",
+            "file:///C:/skills/SKILL.md#frag",
+            "file:///C:/skills%5C..%5CSKILL.md",
+            "file:///C:/skills/%00/SKILL.md",
+            "file:///C:/skills/%FF/SKILL.md",
+            "file:/C:/skills/SKILL.md",
+            "file:///C:/skills/../SKILL.md",
+            "file:///C:/skills/./SKILL.md",
+            "file:///C:/skills/SKILL.md:stream",
+            "file:///C:/skills/x%3Astream/SKILL.md",
+            "file:///C:/skills/a\tb/SKILL.md",
+            "file:///C:/skills/a%2fb/SKILL.md",
+            "skill://user:review/SKILL.md",
+        ):
+            with self.subTest(bad_windows=bad_windows):
+                with self.assertRaises(ValueError):
+                    local_files._file_uri_path_text(bad_windows, windows=True)
+        for bad_posix in (
+            "file://localhost/tmp/SKILL.md",
+            "file:////tmp/SKILL.md",
+            "file:///tmp/SKILL.md?x=1",
+            "file:///tmp/SKILL.md#frag",
+            "file:///tmp/%00/SKILL.md",
+            "file:///tmp/%FF/SKILL.md",
+            "file:/tmp/SKILL.md",
+            "file:///tmp/../etc/SKILL.md",
+            "file:///tmp/./SKILL.md",
+            "file:///tmp/a\tb/SKILL.md",
+            " file:///tmp/SKILL.md",
+            "file:///tmp/a%2fb/SKILL.md",
+            "https://example.com/SKILL.md",
+        ):
+            with self.subTest(bad_posix=bad_posix):
+                with self.assertRaises(ValueError):
+                    local_files._file_uri_path_text(bad_posix, windows=False)
 
 
 if __name__ == "__main__":

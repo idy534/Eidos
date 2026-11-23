@@ -12,7 +12,6 @@ import stat
 import threading
 from types import MappingProxyType
 from typing import Mapping
-import urllib.parse
 
 from eidos_runtime.extensions.skill_invocation import (
     parse_skill_script_invocation,
@@ -300,14 +299,11 @@ def _trusted_skill_root(entry: object) -> tuple[Path, str]:
 def _locator_path(locator: str) -> Path | None:
     if not locator:
         return None
-    parsed = urllib.parse.urlparse(locator)
-    if parsed.scheme:
-        if parsed.scheme != "file" or parsed.netloc:
-            return None
-        raw_path = urllib.parse.unquote(parsed.path)
-        path = Path(raw_path)
-    else:
-        path = Path(locator)
+    # The catalog only writes Path.as_uri() locators; bare paths are not trusted.
+    try:
+        path = local_files.file_uri_to_path(locator)
+    except ValueError:
+        return None
     if not path.is_absolute() or path.name != "SKILL.md":
         return None
     return path

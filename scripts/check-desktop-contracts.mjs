@@ -167,8 +167,8 @@ if (runtimeClientText) {
 
   if (approvalRequest) {
     const expected = {
-      file_change: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "requiresHumanConfirmation", "riskWarning", "diff", "diffBytes", "diffHash", "sandboxPermissions", "additionalFileSystemAccess"],
-      external_tool: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "requiresHumanConfirmation", "riskWarning", "toolName", "arguments", "provenance", "permissionProfile", "timeoutSeconds", "envNames"],
+      file_change: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "requiresHumanConfirmation", "riskWarning", "diff", "diffBytes", "diffHash", "sandboxPermissions", "additionalFileSystemAccess", "grantScope"],
+      external_tool: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "requiresHumanConfirmation", "riskWarning", "toolName", "arguments", "provenance", "permissionProfile", "timeoutSeconds", "envNames", "grantScope"],
       browser_access: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "requiresHumanConfirmation", "riskWarning", "toolName", "arguments", "grantScope", "profile", "access", "provenance", "permissionProfile", "timeoutSeconds"],
       permission_request: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "requiresHumanConfirmation", "riskWarning", "grantScope", "permissions", "reason", "command", "cwd"],
       network_access: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "requiresHumanConfirmation", "riskWarning", "toolName", "hosts", "target"],
@@ -176,7 +176,7 @@ if (runtimeClientText) {
         "id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "requiresHumanConfirmation", "riskWarning",
         "command", "cwd", "networkEnabled", "timeoutSeconds", "executionMode", "displayIntent",
         "sandboxPermissions", "additionalReadAccess", "additionalWriteAccess",
-        "additionalExecutableAccess", "additionalFileSystemAccess", "reason", "escalationReason", "attemptOrdinal",
+        "additionalExecutableAccess", "additionalFileSystemAccess", "reason", "escalationReason", "attemptOrdinal", "grantScope",
       ],
     };
     const returns = descendants(

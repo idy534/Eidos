@@ -170,7 +170,7 @@ Python Runtime 的 stdout 只输出有界的 JSON-RPC 行。Runtime 日志写入
 
 启动时，Runtime 读取当前平台的依赖清单。每次构建依赖快照时，只读取一次清单中位于 Python 根目录下的各份 `.dist-info/METADATA`，并按规范化包名检查声明的版本和唯一性。启动受管依赖进程前会重新构建快照并读取当前元数据，保留路径、文件类型和所有者校验。
 
-Windows 的 `initialize` 请求限时 60 秒，覆盖 Runtime 进程启动、NTFS 文件校验和首次部署内置 Skill。macOS 初始化及其他 RPC 请求继续使用 30 秒限时。
+Windows 的 `initialize` 请求限时 60 秒，覆盖 Runtime 进程启动、NTFS 文件校验和首次部署内置 Skill。Windows 的 `browser/open`、`browser/status`、`browser/close` 和 `browser/clearProfile` 限时 90 秒，覆盖最长 45 秒的 Chrome 启动和 Job Object 停止；`browser/status` 会等待启动中的 Chrome 持有的 BrowserHost 锁。macOS 的这些请求及其他 RPC 请求继续使用 30 秒限时。
 
 `RunSupervisor.start_managed_task()` 在 AnyIO worker 中完成登记等待、目标执行、错误记录和资源清理。任务清理不再在 AnyIO 事件循环中获取 Supervisor 的同步锁。提交线程仍在锁内通过 BlockingPortal 登记任务；worker 中的清理等待不会挡住 portal 的调度。受保护的等待保留已接纳任务的资源所有权，取消继续通过 `threading.Event` 协作传播，系统不会丢弃仍在执行的线程来冒充资源静止。这项死锁修订尚未进入测试阶段。
 
@@ -780,7 +780,7 @@ Skill binary assets 会在安装和目录读取中按 bytes 保留。`skill_read
 
 Skill MCP dependency 不是 Skill 安装器。RunResources 会收集 active Skill 的 `type: mcp` 声明，并与本 Run extension snapshot 中已配置且 available 的 Plugin 或手动 MCP server 比较。Runtime 保存 installed、missing 或 unsupported 的结构化诊断。Runtime 也会把未满足项作为低权限 user context warning 提供给后续 Step。这个检查不会安装、启用或启动新的 MCP server。Plugin 和手动 MCP 都由独立的 MCP 配置、consent、官方 Python MCP SDK transport、Tool Registry、Approval 和 Sandbox 链路管理。Runtime 不负责 pip、npm、系统包或 MCP server 的自动安装。
 
-`SkillCatalog` 管理 bundled system skills、用户和 Plugin Skill。Turn 开始时，Catalog Snapshot 和 SelectedSkillSet 固化 qualified ID、source、version、source kind、content hash、canonical `file:` locator 和 implicit policy。`SkillAccess` 只从该可信 snapshot locator 激活 canonical root。模型不能通过传入任意 absolute path 扩大 Shell 权限。显式选择、成功的 `skill_read` 和已知 `scripts/` Shell invocation 都会沿 RunResources → ToolCallRuntime → Shell → Seatbelt 使用同一份 Run-scoped activation state。
+`SkillCatalog` 管理 bundled system skills、用户和 Plugin Skill。Turn 开始时，Catalog Snapshot 和 SelectedSkillSet 固化 qualified ID、source、version、source kind、content hash、canonical `file:` locator 和 implicit policy。`SkillAccess` 只从该可信 snapshot locator 激活 canonical root。locator 必须与当前平台 `Path.as_uri()` 的写法完全一致：裸路径、`file:/` 简写、带主机名或 UNC 的 URI、`..` 段、query、fragment 和 Windows 盘符后的冒号都会被拒绝。模型不能通过传入任意 absolute path 扩大 Shell 权限。显式选择、成功的 `skill_read` 和已知 `scripts/` Shell invocation 都会沿 RunResources → ToolCallRuntime → Shell → Seatbelt 使用同一份 Run-scoped activation state。
 
 内置浏览器插件运行固定版本的 Playwright MCP，使用 `browser` Seatbelt 配置，并通过本机 CDP 连接由 Runtime 级 `BrowserHost` 管理的共用 Chrome。浏览器工具的分类、Session 授权（SQLite v48 `session_browser_grants`）和上传审批位于 `ExternalToolHandler`，仍沿用 Durable Intent 和结果核验。MCP 结果中的 PNG/JPEG 图片会经过校验，并作为模型内容传递。详见[浏览器操作](features/browser.md)。
 
