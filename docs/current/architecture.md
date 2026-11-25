@@ -362,7 +362,7 @@ Compactor 只向验证层提供摘要覆盖的 ToolCall 与工作区变更来源
 
 ## 7. Model Gateway
 
-Runtime 锁定 `pydantic-ai-slim[openai,retries]==2.57.0` 和 `openai==3.26.0`。OpenAI SDK 版本满足 Pydantic AI 的最低要求。锁文件只同步升级必需的 `pydantic-graph` 与 `genai-prices`。新建 `ModelProfileSnapshot` 记录 Pydantic AI 2.57.0；读取历史快照时，Runtime 保留其中已记录的版本。该升级不修改 SQLite Schema、模型配置格式或 Eidos Loop。
+Runtime 锁定 `pydantic-ai-slim[openai,anthropic,retries]==2.57.0`、`openai==3.26.0` 和 `anthropic==1.17.0`。OpenAI 与 Anthropic SDK 版本满足 Pydantic AI 的最低要求。锁文件只同步升级必需的 `pydantic-graph`、`genai-prices` 与 `anthropic` 传递依赖。新建 `ModelProfileSnapshot` 记录 Pydantic AI 2.57.0；读取历史快照时，Runtime 保留其中已记录的版本。该升级不修改 SQLite Schema、模型配置格式或 Eidos Loop。
 
 ModelConfigStore 使用受保护的 `models.json` 保存本地配置。默认位置是 `~/.eidos/models.json`，显式数据目录会改变 Runtime-owned 数据位置。文件按 owner-only 权限保存。
 
@@ -377,6 +377,9 @@ kimi:    kimi-k3, kimi-k2.7-code-highspeed
 volcengine: deepseek-v4.1-flash,
             deepseek-v4-pro-ga-260813, deepseek-v4-flash-ga-260731,
             glm-5.3, glm-5.3-flash, kimi-k3.1-pro, minimax-m3
+openai:   gpt-6.2-astra, gpt-6.2-sol, gpt-6-luna
+anthropic: claude-fable-5-2, claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5
+gemini:   gemini-4-carbon, gemini-4-neon, gemini-4-hydrogen
 ```
 
 Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启用 thinking；`思考`表示启用 thinking，但不提供强度档位。表中的档位是 Eidos 的选择项，不代表不同 Provider 使用相同的请求字段。
@@ -394,6 +397,18 @@ Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启�
 | Volcengine Agent Plan | `glm-5.3` | 固定思考，无强度选择 | 思考 |
 | Volcengine Agent Plan | `kimi-k3.1-pro` | Low、High、Max；固定思考 | Max |
 | Volcengine Agent Plan | `minimax-m3` | 不提供 Eidos 控制 | Provider 默认值 |
+| OpenAI | `gpt-6.2-astra` | Low、Medium、High、XHigh、Max | High |
+| OpenAI | `gpt-6.2-sol` | Low、Medium、High、XHigh、Max | Medium |
+| OpenAI | `gpt-6-luna` | 关闭、Low、Medium、High、XHigh、Max | Medium |
+| Anthropic | `claude-fable-5-2` | Low、Medium、High、XHigh、Max | High |
+| Anthropic | `claude-opus-5-5` | Low、Medium、High、XHigh、Max | Medium |
+| Anthropic | `claude-sonnet-5-5` | Low、Medium、High、XHigh、Max | High |
+| Anthropic | `claude-haiku-5-5` | Low、Medium、High、XHigh、Max | Medium |
+| Google Gemini | `gemini-4-carbon` | Low、Medium、High | Medium |
+| Google Gemini | `gemini-4-neon` | Low、Medium、High、XHigh | High |
+| Google Gemini | `gemini-4-hydrogen` | Low、Medium、High、XHigh | High |
+
+内置海外 Provider 分别通过各自对应协议接入：OpenAI 经 Responses API（`wire_api="openai_responses"`）发送 `reasoning.effort` 并启用 `supports_custom_tools` / `supports_tool_grammar`；Anthropic 经 Pydantic AI 原生 `AnthropicModel` / `AnthropicProvider` 调用 `/v1/messages`（`wire_api="anthropic_messages"`），原生启用 `anthropic_thinking={"type": "adaptive"}`、`output_config.effort`、Prompt Caching 及带签名的思考块回放；Google Gemini 经 OpenAI 兼容 Chat Completions 端点发送 `reasoning_effort`（支持 `low`–`xhigh`）。
 
 直连 Provider 的公开文档分别说明了不同能力。DeepSeek 使用 `thinking` 开关和 `reasoning_effort`；Low、High、Max 是有效档位，`minimal`、`medium`、`xhigh`、`ultra` 会映射到重复的实际档位。Kimi K3 使用顶层 `reasoning_effort`，可选 Low、High、Max，默认 Max，并且不能关闭思考。Kimi K2.7 Code HighSpeed 固定开启思考，没有公开的强度档位。MiniMax M3 使用 `thinking.type` 开关，`adaptive` 表示启用，`disabled` 表示关闭，省略时默认启用；没有离散 effort 档位。MiniMax 的 `reasoning_split` 只控制思考内容的返回格式，不控制思考开关。参考：[DeepSeek Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/)、[Kimi Reasoning Effort](https://platform.kimi.ai/docs/guide/use-reasoning-effort)、[Kimi K2.7 Code](https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart)、[MiniMax OpenAI SDK](https://platform.minimax.io/docs/api-reference/text-openai-api)。
 

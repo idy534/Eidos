@@ -244,7 +244,7 @@ class ModelPublicConfig(EidosFrozenStrictModel):
 class ModelProfileSpec(EidosFrozenStrictModel):
     provider_id: str
     model_id: str
-    wire_api: Literal["chat_completions", "openai_responses", "qoder_sdk"] = "chat_completions"
+    wire_api: Literal["chat_completions", "openai_responses", "anthropic_messages", "qoder_sdk"] = "chat_completions"
     context_window_tokens: int = Field(gt=0)
     max_output_tokens: int = Field(gt=0)
     request_timeout_seconds: float = Field(gt=0)
@@ -320,7 +320,7 @@ class CatalogModel(EidosFrozenStrictModel):
     supports_images: bool = False
     supports_reasoning: bool
     reasoning: ModelReasoningConfig | None = None
-    wire_api: Literal["chat_completions", "openai_responses", "qoder_sdk"] = "chat_completions"
+    wire_api: Literal["chat_completions", "openai_responses", "anthropic_messages", "qoder_sdk"] = "chat_completions"
     supports_custom_tools: bool = False
     supports_tool_grammar: bool = False
     context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS
@@ -524,38 +524,56 @@ MODEL_PROVIDERS = (
         vendor="OpenAI",
         models=(
             CatalogModel(
-                id="gpt-5.2-codex",
-                name="GPT-5.2 Codex",
+                id="gpt-6.2-astra",
+                name="GPT-6.2 Astra",
                 url="https://api.openai.com/v1/responses",
                 supportsToolCall=True,
                 supportsImages=True,
                 supportsReasoning=True,
                 reasoning=ModelReasoningConfig(
                     defaultSelection="high",
-                    selections=("low", "medium", "high", "xhigh"),
+                    selections=("low", "medium", "high", "xhigh", "max"),
                 ),
                 wire_api="openai_responses",
                 supports_custom_tools=True,
                 supports_tool_grammar=True,
-                contextWindowTokens=400_000,
+                contextWindowTokens=1_050_000,
                 maxOutputTokens=128_000,
                 inputModalities=("text", "image"),
             ),
             CatalogModel(
-                id="gpt-5.2",
-                name="GPT-5.2",
+                id="gpt-6.2-sol",
+                name="GPT-6.2 Sol",
                 url="https://api.openai.com/v1/responses",
                 supportsToolCall=True,
                 supportsImages=True,
                 supportsReasoning=True,
                 reasoning=ModelReasoningConfig(
                     defaultSelection="medium",
-                    selections=("none", "low", "medium", "high", "xhigh"),
+                    selections=("low", "medium", "high", "xhigh", "max"),
                 ),
                 wire_api="openai_responses",
                 supports_custom_tools=True,
                 supports_tool_grammar=True,
-                contextWindowTokens=400_000,
+                contextWindowTokens=1_050_000,
+                maxOutputTokens=128_000,
+                inputModalities=("text", "image"),
+            ),
+            CatalogModel(
+                id="gpt-6-luna",
+                name="GPT-6 Luna",
+                url="https://api.openai.com/v1/responses",
+                supportsToolCall=True,
+                supportsImages=True,
+                supportsReasoning=True,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="medium",
+                    selections=("none", "low", "medium", "high", "xhigh", "max"),
+                ),
+                wire_api="openai_responses",
+                supports_custom_tools=True,
+                supports_tool_grammar=True,
+                contextWindowTokens=1_050_000,
                 maxOutputTokens=128_000,
                 inputModalities=("text", "image"),
             ),
@@ -567,33 +585,67 @@ MODEL_PROVIDERS = (
         vendor="Anthropic",
         models=(
             CatalogModel(
-                id="claude-sonnet-4-6",
-                name="Claude Sonnet 4.6",
-                url="https://api.anthropic.com/v1/chat/completions",
-                supportsToolCall=True,
-                supportsImages=True,
-                supportsReasoning=True,
-                reasoning=ModelReasoningConfig(
-                    defaultSelection="medium",
-                    selections=("none", "low", "medium", "high"),
-                ),
-                contextWindowTokens=200_000,
-                maxOutputTokens=64_000,
-                inputModalities=("text", "image"),
-            ),
-            CatalogModel(
-                id="claude-opus-4-6",
-                name="Claude Opus 4.6",
-                url="https://api.anthropic.com/v1/chat/completions",
+                id="claude-fable-5-2",
+                name="Claude Fable 5.2",
+                url="https://api.anthropic.com/v1/messages",
                 supportsToolCall=True,
                 supportsImages=True,
                 supportsReasoning=True,
                 reasoning=ModelReasoningConfig(
                     defaultSelection="high",
-                    selections=("none", "low", "medium", "high"),
+                    selections=("low", "medium", "high", "xhigh", "max"),
                 ),
-                contextWindowTokens=200_000,
-                maxOutputTokens=64_000,
+                wire_api="anthropic_messages",
+                contextWindowTokens=1_000_000,
+                maxOutputTokens=128_000,
+                inputModalities=("text", "image"),
+            ),
+            CatalogModel(
+                id="claude-opus-5-5",
+                name="Claude Opus 5.5",
+                url="https://api.anthropic.com/v1/messages",
+                supportsToolCall=True,
+                supportsImages=True,
+                supportsReasoning=True,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="medium",
+                    selections=("low", "medium", "high", "xhigh", "max"),
+                ),
+                wire_api="anthropic_messages",
+                contextWindowTokens=1_000_000,
+                maxOutputTokens=128_000,
+                inputModalities=("text", "image"),
+            ),
+            CatalogModel(
+                id="claude-sonnet-5-5",
+                name="Claude Sonnet 5.5",
+                url="https://api.anthropic.com/v1/messages",
+                supportsToolCall=True,
+                supportsImages=True,
+                supportsReasoning=True,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="high",
+                    selections=("low", "medium", "high", "xhigh", "max"),
+                ),
+                wire_api="anthropic_messages",
+                contextWindowTokens=1_000_000,
+                maxOutputTokens=128_000,
+                inputModalities=("text", "image"),
+            ),
+            CatalogModel(
+                id="claude-haiku-5-5",
+                name="Claude Haiku 5.5",
+                url="https://api.anthropic.com/v1/messages",
+                supportsToolCall=True,
+                supportsImages=True,
+                supportsReasoning=True,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="medium",
+                    selections=("low", "medium", "high", "xhigh", "max"),
+                ),
+                wire_api="anthropic_messages",
+                contextWindowTokens=1_000_000,
+                maxOutputTokens=128_000,
                 inputModalities=("text", "image"),
             ),
         ),
@@ -604,30 +656,45 @@ MODEL_PROVIDERS = (
         vendor="Google",
         models=(
             CatalogModel(
-                id="gemini-2.5-pro",
-                name="Gemini 2.5 Pro",
-                url="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-                supportsToolCall=True,
-                supportsImages=True,
-                supportsReasoning=True,
-                reasoning=ModelReasoningConfig(
-                    defaultSelection="high",
-                    selections=("none", "low", "medium", "high"),
-                ),
-                contextWindowTokens=1_048_576,
-                maxOutputTokens=65_536,
-                inputModalities=("text", "image", "audio", "video"),
-            ),
-            CatalogModel(
-                id="gemini-2.5-flash",
-                name="Gemini 2.5 Flash",
+                id="gemini-4-carbon",
+                name="Gemini 4 Carbon",
                 url="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
                 supportsToolCall=True,
                 supportsImages=True,
                 supportsReasoning=True,
                 reasoning=ModelReasoningConfig(
                     defaultSelection="medium",
-                    selections=("none", "low", "medium", "high"),
+                    selections=("low", "medium", "high"),
+                ),
+                contextWindowTokens=1_048_576,
+                maxOutputTokens=65_536,
+                inputModalities=("text", "image", "audio", "video"),
+            ),
+            CatalogModel(
+                id="gemini-4-neon",
+                name="Gemini 4 Neon",
+                url="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                supportsToolCall=True,
+                supportsImages=True,
+                supportsReasoning=True,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="high",
+                    selections=("low", "medium", "high", "xhigh"),
+                ),
+                contextWindowTokens=1_048_576,
+                maxOutputTokens=65_536,
+                inputModalities=("text", "image", "audio", "video"),
+            ),
+            CatalogModel(
+                id="gemini-4-hydrogen",
+                name="Gemini 4 Hydrogen",
+                url="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                supportsToolCall=True,
+                supportsImages=True,
+                supportsReasoning=True,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="high",
+                    selections=("low", "medium", "high", "xhigh"),
                 ),
                 contextWindowTokens=1_048_576,
                 maxOutputTokens=65_536,

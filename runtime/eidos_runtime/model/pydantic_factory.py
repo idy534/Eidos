@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from anthropic import AsyncAnthropic
 import httpx2 as httpx
 from openai import AsyncOpenAI
 from pydantic_ai.models import Model
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.profiles.openai import OpenAIModelProfile
+from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.deepseek import DeepSeekProvider
 from pydantic_ai.providers.moonshotai import MoonshotAIProvider
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -21,16 +24,16 @@ from eidos_runtime.model.retry_transport import (
     build_retrying_http_client,
 )
 from eidos_runtime.model.gateway_types import RetryPolicy
-from eidos_runtime.model.prompt_cache import inject_anthropic_prompt_cache
 
 
 OpenAICompatibleProvider = OpenAIProvider | DeepSeekProvider | MoonshotAIProvider
+ModelProvider = OpenAICompatibleProvider | AnthropicProvider
 
 
 @dataclass(frozen=True)
 class BuiltPydanticModel:
     model: Model
-    provider_client: AsyncOpenAI
+    provider_client: AsyncOpenAI | AsyncAnthropic
     retry_client: RetryTransportClient
 
 
@@ -40,17 +43,24 @@ def build_provider(
     timeout: httpx.Timeout,
     wire_api: str = "chat_completions",
     retry_policy: RetryPolicy | None = None,
-) -> tuple[OpenAICompatibleProvider, AsyncOpenAI, RetryTransportClient]:
+) -> tuple[ModelProvider, AsyncOpenAI | AsyncAnthropic, RetryTransportClient]:
     provider_id = "custom" if config.custom else MODEL_CATALOG.provider_id_for(config.id, vendor=config.vendor)
     retry_client = build_retrying_http_client(
         config, timeout=timeout, wire_api=wire_api, retry_policy=retry_policy
     )
+    if wire_api == "anthropic_messages":
+        anthropic_client = AsyncAnthropic(
+            api_key=config.api_key,
+            base_url=_anthropic_base_url(config.url),
+            max_retries=0,
+            timeout=timeout,
+            http_client=retry_client.http_client,
+        )
+        return AnthropicProvider(anthropic_client=anthropic_client), anthropic_client, retry_client
     if config.custom is not None and not config.api_key:
         # The SDK requires an internal key. The mature HTTP client's request hook
         # removes its placeholder before every network attempt, including titles.
         retry_client.http_client.event_hooks["request"].append(_omit_authentication)
-    if provider_id == "anthropic":
-        retry_client.http_client.event_hooks["request"].append(inject_anthropic_prompt_cache)
     client = AsyncOpenAI(
         api_key=config.api_key or "unused-no-auth",
         **({"organization": "", "project": "", "admin_api_key": ""}
@@ -75,7 +85,9 @@ async def _omit_authentication(request: httpx.Request) -> None:
     request.headers.pop("Authorization", None)
 
 
-def build_model(config: ModelConfig, provider: OpenAICompatibleProvider) -> Model:
+def build_model(config: ModelConfig, provider: ModelProvider) -> Model:
+    if isinstance(provider, AnthropicProvider):
+        return AnthropicModel(config.model_id or config.id, provider=provider)
     if config.custom:
         profile = OpenAIModelProfile({
             **(provider.model_profile(config.model_id or config.id) or {}),
@@ -106,6 +118,12 @@ def build_pydantic_model(
         provider_client=provider_client,
         retry_client=retry_client,
     )
+
+
+def _anthropic_base_url(endpoint: str | None) -> str:
+    if isinstance(endpoint, str) and endpoint.endswith("/v1/messages"):
+        return endpoint[: -len("/v1/messages")].rstrip("/")
+    raise ValueError("Anthropic model URL must be a /v1/messages endpoint")
 
 
 def _client_base_url(endpoint: str) -> str:

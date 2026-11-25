@@ -4,6 +4,8 @@ import logging
 import uuid
 from pathlib import Path
 
+from openai import AsyncOpenAI
+
 from eidos_runtime.infrastructure.managed_resources import ManagedResourceManager, ResourceError
 from eidos_runtime.infrastructure.qoder_model_driver import QoderModelDriver, QoderWorkerBinding
 from eidos_runtime.model.qoder_client import QoderModelClient
@@ -126,7 +128,7 @@ class ModelGateway:
             client = PydanticAIModelClient(
                 built.model,
                 spec,
-                openai_client=built.provider_client,
+                openai_client=built.provider_client if isinstance(built.provider_client, AsyncOpenAI) else None,
                 provider_client=built.provider_client,
                 retry_transport=built.retry_client,
                 profile_snapshot=profile_snapshot,

@@ -14,9 +14,14 @@ import logging
 import re
 import threading
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from uuid import uuid4
 
+from anthropic import (
+    APIConnectionError as AnthropicAPIConnectionError,
+    APIStatusError as AnthropicAPIStatusError,
+    APITimeoutError as AnthropicAPITimeoutError,
+)
 import anyio
 import httpx2 as httpx
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
@@ -204,8 +209,8 @@ class PydanticAIModelClient:
             and profile_spec.model_id == "kimi-k3"
             and reasoning_selection in ("low", "high", "max")
         ) or (
-            profile_spec.provider_id in {"anthropic", "gemini"}
-            and reasoning_selection in ("low", "medium", "high")
+            profile_spec.provider_id == "gemini"
+            and reasoning_selection in ("low", "medium", "high", "xhigh")
         ):
             self._reasoning_effort = reasoning_selection
         # Other Volcengine selections remain snapshot-only until verified.
@@ -332,6 +337,9 @@ class PydanticAIModelClient:
             APITimeoutError,
             APIConnectionError,
             APIStatusError,
+            AnthropicAPITimeoutError,
+            AnthropicAPIConnectionError,
+            AnthropicAPIStatusError,
         ) as error:
             failure = _cancelled_failure() if cancel.is_set() else map_model_error(error)
             if failure.provider_name is None:
@@ -376,6 +384,13 @@ class PydanticAIModelClient:
             settings_values["extra_body"] = self._settings_extra_body
         if self._reasoning_effort is not None:
             settings_values["openai_reasoning_effort"] = self._reasoning_effort
+        if self._profile_spec.wire_api == "anthropic_messages":
+            settings_values["anthropic_cache"] = True
+            settings_values["anthropic_cache_instructions"] = True
+            settings_values["anthropic_cache_tool_definitions"] = True
+            if self._reasoning_selection in ("low", "medium", "high", "xhigh", "max"):
+                settings_values["anthropic_thinking"] = {"type": "adaptive"}
+                settings_values["anthropic_effort"] = self._reasoning_selection
         if required_tool is not None:
             # Pydantic AI handles provider support and wire tool_choice mapping.
             settings_values["tool_choice"] = [required_tool]
@@ -404,6 +419,7 @@ class PydanticAIModelClient:
                             supports_images=self._profile_snapshot.supports_images,
                             reasoning_required=self._reasoning_selection_active(),
                             thinking_field=self._model.profile.get("openai_chat_thinking_field"),
+                            wire_api=self._profile_spec.wire_api,
                         ),
                         instructions,
                     ),
@@ -453,7 +469,11 @@ class PydanticAIModelClient:
                     await cancel_task
         if cancel.is_set():
             raise ModelRequestError(_cancelled_failure())
-        return map_model_response(response, retry_tracker=retry_tracker)
+        return map_model_response(
+            response,
+            retry_tracker=retry_tracker,
+            wire_api=self._profile_spec.wire_api,
+        )
 
     def close(self) -> None:
         with self._lock:
@@ -570,6 +590,7 @@ def encode_context(
     supports_images: bool = False,
     reasoning_required: bool = False,
     thinking_field: str | None = None,
+    wire_api: Literal["chat_completions", "openai_responses", "anthropic_messages", "qoder_sdk"] = "chat_completions",
 ) -> list[ModelMessage]:
     messages: list[ModelMessage] = []
     historical_calls: set[str] = set()
@@ -590,7 +611,7 @@ def encode_context(
             partial = replay is not None and (
                 retained_ids != replay.tool_call_ids
                 or (replay.response_text_present and not item.get("content"))
-                or replay.wire_api != "chat_completions"
+                or replay.wire_api != wire_api
             )
             if partial or (reasoning_required and replay is None):
                 historical_calls.update(retained_ids)
@@ -928,6 +949,7 @@ def map_model_response(
     response: PAIModelResponse,
     *,
     retry_tracker: RetryTracker | None = None,
+    wire_api: Literal["chat_completions", "openai_responses", "anthropic_messages", "qoder_sdk"] = "chat_completions",
 ) -> ModelResponse:
     calls: list[ModelToolCall] = []
     invalid_completion = (
@@ -975,7 +997,11 @@ def map_model_response(
         content=part.content, id=part.id, signature=part.signature,
         provider_name=part.provider_name, provider_details=part.provider_details,
     ) for part in response.parts if isinstance(part, ThinkingPart))
-    reasoning_parts = ModelResponseReplay(reasoning_parts=reasoning_parts, tool_call_ids=tuple(call.provider_call_id for call in calls)).reasoning_parts
+    reasoning_parts = ModelResponseReplay(
+        wire_api=wire_api,
+        reasoning_parts=reasoning_parts,
+        tool_call_ids=tuple(call.provider_call_id for call in calls),
+    ).reasoning_parts
     finish_reason = response.finish_reason or ("tool_call" if calls else "unknown")
     phase, phase_source = resolve_response_phase(
         ((part.provider_details or {}).get("phase") for part in response.parts if isinstance(part, TextPart)),
@@ -989,6 +1015,7 @@ def map_model_response(
         text=text,
         tool_calls=tuple(calls),
         reasoning_parts=reasoning_parts,
+        wire_api=wire_api,
         phase=phase,
         phase_source=phase_source,
         end_turn=end_turn,
@@ -1039,9 +1066,9 @@ def _map_usage(usage: RequestUsage) -> ModelUsage:
 
 
 def map_model_error(error: BaseException) -> ModelRequestFailure:
-    if isinstance(error, APITimeoutError | httpx.TimeoutException):
+    if isinstance(error, APITimeoutError | AnthropicAPITimeoutError | httpx.TimeoutException):
         return ModelRequestFailure(code="provider_timeout", retryable=True)
-    if isinstance(error, APIConnectionError | httpx.NetworkError | httpx.RemoteProtocolError):
+    if isinstance(error, APIConnectionError | AnthropicAPIConnectionError | httpx.NetworkError | httpx.RemoteProtocolError):
         return ModelRequestFailure(code="provider_unavailable", retryable=True)
     if isinstance(error, httpx.HTTPStatusError):
         _log_provider_request_rejection(error, error.response.status_code)
@@ -1050,7 +1077,7 @@ def map_model_error(error: BaseException) -> ModelRequestFailure:
         except (ValueError, httpx.ResponseNotRead):
             body = None
         return _http_failure(error.response.status_code, body=body, headers=error.response.headers)
-    if isinstance(error, APIStatusError):
+    if isinstance(error, APIStatusError | AnthropicAPIStatusError):
         _log_provider_request_rejection(error, error.status_code)
         return _http_failure(error.status_code, body=error.body, headers=error.response.headers)
     if isinstance(error, ModelHTTPError):
@@ -1117,13 +1144,13 @@ def _exception_chain(error: BaseException) -> str:
 
 
 def _log_provider_request_rejection(
-    error: ModelHTTPError | APIStatusError | httpx.HTTPStatusError,
+    error: ModelHTTPError | APIStatusError | AnthropicAPIStatusError | httpx.HTTPStatusError,
     status_code: int,
 ) -> None:
     if status_code not in {400, 404, 422}:
         return
     body = (
-        error.body if isinstance(error, ModelHTTPError | APIStatusError) else None
+        error.body if isinstance(error, ModelHTTPError | APIStatusError | AnthropicAPIStatusError) else None
     )
     if isinstance(body, dict):
         nested = body.get("error")
@@ -1161,7 +1188,7 @@ def _log_provider_request_rejection(
     candidate: object = None
     if isinstance(error, ModelHTTPError):
         candidate = (error.headers or {}).get("x-request-id")
-    elif isinstance(error, APIStatusError):
+    elif isinstance(error, APIStatusError | AnthropicAPIStatusError):
         candidate = error.request_id
     else:
         candidate = error.response.headers.get("x-request-id")
@@ -1212,6 +1239,7 @@ def _http_failure(
         "credit_balance_exhausted", "organization_spend_limit_exceeded",
         "project_spend_limit_exceeded", "organization_usage_limit_exceeded",
         "billing_hard_limit_reached", "account_deactivated", "account_disabled",
+        "billing_error",
     })
     reason = None
     if quota or status_code == 402:
@@ -1222,7 +1250,7 @@ def _http_failure(
         code, retryable = "authentication_failed", False
     elif status_code == 429:
         code, retryable = "rate_limited", True
-    elif status_code in {408, 425, 500, 502, 503, 504}:
+    elif status_code in {408, 425, 500, 502, 503, 504, 529}:
         code, retryable = "provider_unavailable", True
     elif status_code in {400, 404, 422}:
         code, retryable = "invalid_request", False
@@ -1244,6 +1272,7 @@ def _looks_like_context_error(body: object) -> bool:
         "context_length",
         "maximum context",
         "too many tokens",
+        "prompt is too long",
     ))
 
 
@@ -1275,7 +1304,7 @@ def _has_transport_error_in_chain(error: BaseException) -> bool:
         if current is None or id(current) in seen:
             return False
         seen.add(id(current))
-        if isinstance(current, (APIConnectionError, httpx.TransportError)):
+        if isinstance(current, (APIConnectionError, AnthropicAPIConnectionError, httpx.TransportError)):
             return True
         current = current.__cause__ or current.__context__
     return False

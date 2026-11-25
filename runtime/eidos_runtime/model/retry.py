@@ -10,7 +10,7 @@ from eidos_runtime.model.errors import EidosModelError
 from eidos_runtime.model.gateway_types import RetryPolicy
 
 
-RETRYABLE_HTTP_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
+RETRYABLE_HTTP_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504, 529})
 RETRYABLE_TRANSPORT_EXCEPTIONS = (
     httpx.ConnectError,
     httpx.ConnectTimeout,

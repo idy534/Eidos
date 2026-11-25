@@ -50,15 +50,19 @@ def test_model_presets_only_expose_the_supported_catalog() -> None:
         "glm-5.3-flash",
         "kimi-k3.1-pro",
         "minimax-m3",
-        "gpt-5.2-codex",
-        "gpt-5.2",
-        "claude-sonnet-4-6",
-        "claude-opus-4-6",
-        "gemini-2.5-pro",
-        "gemini-2.5-flash",
+        "gpt-6.2-astra",
+        "gpt-6.2-sol",
+        "gpt-6-luna",
+        "claude-fable-5-2",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
+        "gemini-4-carbon",
+        "gemini-4-neon",
+        "gemini-4-hydrogen",
     ]
     assert all(
-        model["url"].endswith(("/chat/completions", "/responses"))
+        model["url"].endswith(("/chat/completions", "/responses", "/v1/messages"))
         for provider in presets["providers"]
         for model in provider["models"]
     )
@@ -83,12 +87,16 @@ def test_model_catalog_declares_each_model_reasoning_choices_and_default() -> No
         "glm-5.3-flash": (True, "max", ["low", "high", "max"]),
         "kimi-k3.1-pro": (True, "max", ["low", "high", "max"]),
         "minimax-m3": (False, None, None),
-        "gpt-5.2-codex": (True, "high", ["low", "medium", "high", "xhigh"]),
-        "gpt-5.2": (True, "medium", ["none", "low", "medium", "high", "xhigh"]),
-        "claude-sonnet-4-6": (True, "medium", ["none", "low", "medium", "high"]),
-        "claude-opus-4-6": (True, "high", ["none", "low", "medium", "high"]),
-        "gemini-2.5-pro": (True, "high", ["none", "low", "medium", "high"]),
-        "gemini-2.5-flash": (True, "medium", ["none", "low", "medium", "high"]),
+        "gpt-6.2-astra": (True, "high", ["low", "medium", "high", "xhigh", "max"]),
+        "gpt-6.2-sol": (True, "medium", ["low", "medium", "high", "xhigh", "max"]),
+        "gpt-6-luna": (True, "medium", ["none", "low", "medium", "high", "xhigh", "max"]),
+        "claude-fable-5-2": (True, "high", ["low", "medium", "high", "xhigh", "max"]),
+        "claude-opus-5-5": (True, "medium", ["low", "medium", "high", "xhigh", "max"]),
+        "claude-sonnet-5-5": (True, "high", ["low", "medium", "high", "xhigh", "max"]),
+        "claude-haiku-5-5": (True, "medium", ["low", "medium", "high", "xhigh", "max"]),
+        "gemini-4-carbon": (True, "medium", ["low", "medium", "high"]),
+        "gemini-4-neon": (True, "high", ["low", "medium", "high", "xhigh"]),
+        "gemini-4-hydrogen": (True, "high", ["low", "medium", "high", "xhigh"]),
     }
 
     assert set(models) == set(expected)
@@ -382,12 +390,18 @@ def test_duplicate_or_unknown_model_ids_are_rejected_without_changing_the_file(
             model_id="MiniMax-M3",
             api_key="another-secret-value",
         )
-    with pytest.raises(ModelConfigError, match="unsupported"):
-        store.create(
-            provider_id="openai",
-            model_id="gpt-5",
-            api_key="openai-secret-value",
-        )
+    for legacy_provider, legacy_model in (
+        ("openai", "gpt-5"),
+        ("openai", "gpt-5.2-codex"),
+        ("anthropic", "claude-sonnet-4-6"),
+        ("gemini", "gemini-2.5-pro"),
+    ):
+        with pytest.raises(ModelConfigError, match="unsupported"):
+            store.create(
+                provider_id=legacy_provider,
+                model_id=legacy_model,
+                api_key="legacy-secret-value",
+            )
     with pytest.raises(ModelConfigError, match="API key"):
         store.update(
             "MiniMax-M3",

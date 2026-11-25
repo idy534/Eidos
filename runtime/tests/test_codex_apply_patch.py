@@ -723,7 +723,7 @@ def test_openai_codex_profile_enables_custom_patch_grammar(tmp_path: Path) -> No
     from eidos_runtime.model.config import MODEL_CATALOG
     from eidos_runtime.tools.workspace import builtin_tool_registry
 
-    profile = MODEL_CATALOG.profile("gpt-5.2-codex")
+    profile = MODEL_CATALOG.profile("gpt-6.2-astra")
     assert profile.wire_api == "openai_responses"
     assert profile.supports_custom_tools is True
     assert profile.supports_tool_grammar is True
