@@ -1,7 +1,6 @@
 from contextlib import contextmanager
 from collections.abc import Iterator
 import hashlib
-import os
 import tomllib
 
 from pydantic import ValidationError
@@ -13,6 +12,7 @@ from eidos_runtime.domain.agents import (
     AgentDefinition,
     MAX_AGENT_FILES,
 )
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.infrastructure.agent_definition_files import (
     AgentDefinitionFiles,
     AgentDefinitionFileError,
@@ -91,7 +91,7 @@ class AgentDefinitionsApplication:
                         "智能体名称不能修改，请复制后使用新名称。",
                     )
             names: list[str] = []
-            with os.scandir(directory) as entries:
+            with local_files.scan_directory(directory) as entries:
                 for entry in entries:
                     if entry.name.endswith(".toml"):
                         names.append(entry.name)

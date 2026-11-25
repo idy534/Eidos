@@ -1,8 +1,8 @@
 import hashlib
-import fcntl
 import json
 import os
 from pathlib import Path
+import time
 import tomllib
 
 import pytest
@@ -12,6 +12,7 @@ from eidos_runtime.application.agent_catalog import AgentCatalog
 from eidos_runtime.application.agent_definitions import AgentDefinitionsApplication
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.domain.agents import AgentDefinition, AgentModelSelection
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.infrastructure.agent_definition_files import (
     encode_definition,
     AgentDefinitionFileError,
@@ -23,6 +24,16 @@ from eidos_runtime.protocol.collaboration import (
     AgentDefinitionRemoveRequest,
     AgentDefinitionSaveRequest,
 )
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _runtime_file_owner() -> None:
+    if local_files.WINDOWS:
+        from eidos_runtime.infrastructure.windows_files import (
+            configure_process_file_owner,
+        )
+
+        configure_process_file_owner()
 
 
 @pytest.fixture
@@ -61,15 +72,26 @@ def test_create_read_edit_remove_and_reload_share_manual_toml(management):
     document = save(app)
     path = Path(document.source)
     assert path.parent == app.catalog.root
-    assert path.stat().st_mode & 0o777 == 0o600
+    assert local_files.has_private_access(path, path.stat(), 0o600)
     assert (
-        tomllib.loads(path.read_text())["instructions"]
+        tomllib.loads(path.read_text(encoding="utf-8"))["instructions"]
         == document.definition.instructions
     )
     assert app.read(AgentDefinitionReadRequest(source=document.source)) == document
+    second = save(app, definition().model_copy(update={"name": "luna-two"}))
+    assert Path(second.source).exists()
+    app.remove(
+        AgentDefinitionRemoveRequest(
+            source=second.source, expected_version=second.version
+        )
+    )
     path.rename(path.with_name("manual-file.toml"))
     path = path.with_name("manual-file.toml")
-    path.write_text(path.read_text() + "# 手工编辑的注释\n")
+    path.write_text(
+        path.read_text(encoding="utf-8") + "# 手工编辑的注释\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     original = app.read(AgentDefinitionReadRequest(source=str(path)))
     changed = save(
         app,
@@ -93,7 +115,9 @@ def test_create_read_edit_remove_and_reload_share_manual_toml(management):
 def test_edit_and_remove_reject_external_changes_even_comments(management):
     document = save(management)
     path = Path(document.source)
-    path.write_text(document.text + "# 外部变化\n")
+    path.write_text(
+        document.text + "# 外部变化\n", encoding="utf-8", newline="\n"
+    )
     raw = path.read_bytes()
     with pytest.raises(ApplicationError, match="已经变化") as failure:
         save(management, original=document)
@@ -130,7 +154,7 @@ def test_edit_requires_version_and_preserves_identity(management):
             original.definition.model_copy(update={"name": "renamed"}),
             original,
         )
-    assert Path(original.source).read_text() == original.text
+    assert Path(original.source).read_text(encoding="utf-8") == original.text
 
 
 @pytest.mark.parametrize(
@@ -168,31 +192,38 @@ def test_provider_and_reasoning_validation_and_disabled_repair(management):
 
 
 @pytest.mark.parametrize("operation", ["read", "edit", "remove"])
+@pytest.mark.parametrize("kind", ["symlink", "hardlink"])
 def test_symlink_hardlink_and_outside_sources_never_modify_targets(
-    management, tmp_path, operation
+    management, tmp_path, operation, kind
 ):
     original = save(management)
     target = tmp_path / "outside.toml"
-    target.write_text(original.text)
+    target.write_text(original.text, encoding="utf-8", newline="\n")
     path = Path(original.source)
-    for kind in ["symlink", "hardlink"]:
-        path.unlink()
-        if kind == "symlink":
+    path.unlink()
+    if kind == "symlink":
+        try:
             path.symlink_to(target)
-        else:
-            os.link(target, path)
-        with pytest.raises(ApplicationError):
-            if operation == "read":
-                management.read(AgentDefinitionReadRequest(source=str(path)))
-            elif operation == "edit":
-                save(management, original=original)
-            else:
-                management.remove(
-                    AgentDefinitionRemoveRequest(
-                        source=str(path), expected_version=original.version
-                    )
+        except OSError as error:
+            if local_files.WINDOWS and getattr(error, "winerror", None) == 1314:
+                pytest.skip(
+                    "Windows requires SeCreateSymbolicLinkPrivilege or Developer Mode for file symlinks"
                 )
-        assert target.read_text() == original.text
+            raise
+    else:
+        os.link(target, path)
+    with pytest.raises(ApplicationError):
+        if operation == "read":
+            management.read(AgentDefinitionReadRequest(source=str(path)))
+        elif operation == "edit":
+            save(management, original=original)
+        else:
+            management.remove(
+                AgentDefinitionRemoveRequest(
+                    source=str(path), expected_version=original.version
+                )
+            )
+    assert target.read_text(encoding="utf-8") == original.text
     with pytest.raises(ApplicationError, match="路径无效"):
         management.read(AgentDefinitionReadRequest(source=str(target)))
 
@@ -202,7 +233,12 @@ def test_directory_symlink_and_large_encoded_configuration_fail_closed(
 ):
     external = tmp_path / "external"
     external.mkdir()
-    management.catalog.root.symlink_to(external)
+    if local_files.WINDOWS:
+        import _winapi
+
+        _winapi.CreateJunction(str(external), str(management.catalog.root))
+    else:
+        management.catalog.root.symlink_to(external)
     with pytest.raises(ApplicationError):
         save(management)
     assert list(external.iterdir()) == []
@@ -229,15 +265,22 @@ def test_management_keeps_previous_catalog_snapshot_unchanged(management):
 
 def test_locked_directory_does_not_block_runtime(management):
     original = save(management)
-    descriptor = os.open(management.catalog.root, os.O_RDONLY | os.O_DIRECTORY)
+    descriptor = (
+        local_files.open_file(
+            management.catalog.root.parent / ".agent-definitions.lock",
+            os.O_CREAT | os.O_RDWR,
+        )
+        if local_files.WINDOWS
+        else local_files.open_directory(management.catalog.root)
+    )
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        local_files.lock_exclusive(descriptor)
         with pytest.raises(ApplicationError) as failure:
             save(management, original=original)
         assert failure.value.code == "AGENT_DEFINITION_BUSY"
     finally:
         os.close(descriptor)
-    assert Path(original.source).read_text() == original.text
+    assert Path(original.source).read_text(encoding="utf-8") == original.text
 
 
 def test_failed_fsync_reports_possible_write_without_retry(management, monkeypatch):
@@ -255,7 +298,43 @@ def test_failed_fsync_reports_possible_write_without_retry(management, monkeypat
         )
     assert failure.value.code == "AGENT_DEFINITION_WRITE_UNCERTAIN"
     assert (
-        tomllib.loads(Path(original.source).read_text())["instructions"] == "已实际写入"
+        tomllib.loads(Path(original.source).read_text(encoding="utf-8"))["instructions"]
+        == "已实际写入"
+    )
+
+
+def test_edit_succeeds_after_delay_and_rejects_external_replacement(
+    management, tmp_path, monkeypatch
+):
+    created = save(management)
+    time.sleep(0.05)
+    edited = save(
+        management,
+        created.definition.model_copy(update={"description": "延时后编辑"}),
+        created,
+    )
+    assert edited.definition.description == "延时后编辑"
+    time.sleep(0.05)
+    edited_again = save(
+        management,
+        edited.definition.model_copy(update={"instructions": "再次更新指令"}),
+        edited,
+    )
+    assert edited_again.definition.instructions == "再次更新指令"
+
+    replacement = tmp_path / "replacement.toml"
+    replacement.write_text(edited_again.text, encoding="utf-8", newline="\n")
+    replacement_stat = replacement.lstat()
+    monkeypatch.setattr(local_files, "lstat_at", lambda *_args: replacement_stat)
+    with pytest.raises(ApplicationError) as failure:
+        save(
+            management,
+            edited_again.definition.model_copy(update={"description": "并发替换冲突"}),
+            edited_again,
+        )
+    assert failure.value.code == "AGENT_DEFINITION_CONFLICT"
+    assert (
+        Path(edited_again.source).read_text(encoding="utf-8") == edited_again.text
     )
 
 
@@ -263,7 +342,7 @@ def test_management_fixture_uses_same_strict_wire_contract():
     fixture = json.loads(
         (
             Path(__file__).resolve().parents[2] / "protocol/fixtures/custom-agents.json"
-        ).read_text()
+        ).read_text(encoding="utf-8")
     )
     request = AgentDefinitionSaveRequest.model_validate(fixture["management"]["save"])
     document = AgentDefinitionDocument.model_validate(fixture["management"]["document"])

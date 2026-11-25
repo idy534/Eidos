@@ -19,6 +19,31 @@ class AgentDefinitionFileError(RuntimeError):
         super().__init__(message)
 
 
+def _same_file_entry(opened: os.stat_result, entry: os.stat_result) -> bool:
+    """Confirm an open descriptor matches the current directory entry across platforms."""
+    if (
+        opened.st_dev,
+        opened.st_ino,
+        opened.st_size,
+        opened.st_mtime_ns,
+    ) != (
+        entry.st_dev,
+        entry.st_ino,
+        entry.st_size,
+        entry.st_mtime_ns,
+    ):
+        return False
+    if local_files.WINDOWS:
+        # On Windows, os.fstat().st_ctime_ns tracks NTFS ChangeTime while
+        # lstat().st_ctime_ns tracks CreationTime (st_birthtime_ns).
+        return (
+            not local_files.is_link(entry)
+            and getattr(opened, "st_birthtime_ns", None)
+            == getattr(entry, "st_birthtime_ns", None)
+        )
+    return opened.st_ctime_ns == entry.st_ctime_ns
+
+
 def read_definition_bytes(directory: int, name: str) -> bytes:
     descriptor = local_files.open_file(name, dir_fd=directory)
     with os.fdopen(descriptor, "rb") as stream:
@@ -166,18 +191,21 @@ class AgentDefinitionFiles:
                 raise ValueError("unsafe_file")
             if expected is not None:
                 self.check_version(self.read(directory, filename), expected)
+            opened_now = os.fstat(stream.fileno())
             current = local_files.lstat_at(filename, directory)
             if (
                 before.st_dev,
                 before.st_ino,
+                before.st_size,
                 before.st_mtime_ns,
                 before.st_ctime_ns,
             ) != (
-                current.st_dev,
-                current.st_ino,
-                current.st_mtime_ns,
-                current.st_ctime_ns,
-            ):
+                opened_now.st_dev,
+                opened_now.st_ino,
+                opened_now.st_size,
+                opened_now.st_mtime_ns,
+                opened_now.st_ctime_ns,
+            ) or not _same_file_entry(opened_now, current):
                 raise AgentDefinitionFileError(
                     "AGENT_DEFINITION_CONFLICT",
                     "智能体配置已经变化，请重新打开后再修改。",
