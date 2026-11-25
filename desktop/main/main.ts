@@ -2,6 +2,7 @@ import { isQoderConnectionRequest } from "../shared/qoder.js";
 import { validateSessionCreateOptions } from "./session-create-options.js";
 import { isGitWorkspaceRequest, isProjectCreateFoldersRequest, isProjectGitContextBinding, isProjectReadRequest, isProjectUpdateRequest } from "../shared/project-workspaces.js";
 import { isShellEnvironmentReadRequest, isShellEnvironmentRefreshRequest, isShellEnvironmentSaveRequest } from "../shared/shell-environment.js";
+import { isGuardrailsReadRequest, isGuardrailsSaveRequest } from "../shared/guardrails.js";
 import { isPersonalizationReadRequest, isPersonalizationSaveRequest } from "../shared/personalization.js";
 import { isHookConfigurationRequest, isHookHistoryRequest } from "../shared/hooks.js";
 import { webSearchOfficialUrl } from "./web-search-links.js";
@@ -16,7 +17,9 @@ import { isSearchRequest, isReadAroundRequest, isFileFindRequest } from "../shar
 import { isSidebarSetPinnedRequest } from "../shared/sidebar.js";
 import { isQueuedRunSteerRequest, isQueuedRunDeleteRequest, isQueuedRunUpdateRequest, isQueuedRunListRequest } from "../shared/queued-runs.js";
 import type { RunPlanningOptions } from "../shared/planning.generated.js";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, powerMonitor, shell as electronShell } from "electron";
+import { app, BrowserWindow, clipboard, crashReporter, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, screen, shell as electronShell, Tray } from "electron";
+import { existsSync } from "node:fs";
+import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { realpath, stat, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { clipboardFilePaths, MAX_PASTED_IMAGE_BYTES, readPastedImageFile, windowsClipboardFilePaths } from "./clipboard-image.js";
@@ -24,9 +27,13 @@ import os from "node:os";
 import { isInputPrepareRequest, isInputDraft } from "../shared/input-context.js";
 import { isAgentDefinitionSaveRequest, isAgentDefinitionRemoveRequest } from "../shared/agent-definitions.js";
 import path from "node:path";
+import { promisify } from "node:util";
 import * as nodePty from "node-pty";
 
-import { RuntimeClient } from "./runtime-client.js";
+import { buildRuntimeEnvironment, RuntimeClient } from "./runtime-client.js";
+import { clearRuntimeState } from "./runtime-process-state.js";
+import { exportDiagnosticBundle, RotatingFileLogger } from "./app-logger.js";
+import { restoreDataBackup } from "./data-restore.js";
 import { isMcpToolsRequest } from "../shared/mcp-details.js";
 import {
   PLAYWRIGHT_EXTENSION_STORE_URL, isBrowserExtensionTokenRequest, isBrowserGrantRevokeRequest, isBrowserStatusRequest,
@@ -51,6 +58,14 @@ import { resolveWorkspaceFileForOpen } from "./workspace-open.js";
 import { ArtifactPreviewManager } from "./artifact-preview.js";
 import { workspacePreviewUrl } from "./workspace-preview.js";
 import { TerminalManager } from "./terminal-manager.js";
+import {
+  buildApprovalNotification,
+  buildRunCompletedNotification,
+  buildViewMenuSubmenu,
+  loadWindowState,
+  saveWindowStateSync,
+  shouldHideWindowToTray,
+} from "./desktop-shell.js";
 import type {
   ApprovalMode,
   ApprovalDecision,
@@ -73,6 +88,14 @@ import { isAgentChangesRequest, isAgentMessageFromUserRequest } from "../shared/
 // Logging helpers — never log API keys, full prompts, or sensitive env vars
 // ---------------------------------------------------------------------------
 
+const execFileAsync = promisify(execFile);
+let appLogger: RotatingFileLogger | undefined;
+
+function getAppLogger(): RotatingFileLogger {
+  appLogger ??= new RotatingFileLogger(path.join(runtimeDataDirectory(), "logs"));
+  return appLogger;
+}
+
 function log(level: "info" | "warn" | "error", context: string, message: string, meta?: Record<string, unknown>): void {
   const ts = new Date().toISOString();
   const entry = {
@@ -82,10 +105,12 @@ function log(level: "info" | "warn" | "error", context: string, message: string,
     msg: redactLogLine(message),
     ...(meta ? (sanitizeLogValue(meta) as Record<string, unknown>) : {}),
   };
+  const serialized = JSON.stringify(entry);
+  getAppLogger().append("desktop.log", serialized);
   if (level === "error") {
-    console.error(JSON.stringify(entry));
+    console.error(serialized);
   } else {
-    console.log(JSON.stringify(entry));
+    console.log(serialized);
   }
 }
 
@@ -108,6 +133,10 @@ function terminateRuntimeOnce(): void {
   if (runtimeTerminated) return;
   runtimeTerminated = true;
   runtimeClient?.terminate();
+}
+
+function clearRuntimeProcessState(): void {
+  clearRuntimeState(activeRunProjectionMap, pendingApprovals);
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -181,6 +210,7 @@ const quitFlowDeps: QuitFlowDependencies = {
     // Drop UI-side pending approval entries without sending synthetic reject
     // decisions; Runtime's run/cancel and supervisor.shutdown settle them as canceled.
     pendingApprovals.clear();
+    destroySystemTray();
     artifactPreview.closeAll();
     terminalManager.closeAll();
     for (const window of BrowserWindow.getAllWindows()) {
@@ -239,6 +269,14 @@ function publishNotification(notification: RuntimeNotification): void {
         pending.resolve({ decision: "reject" });
       }
     }
+    if (!quitFlowController.getState().quitCommitted && isMainWindowUnfocused() && Notification.isSupported()) {
+      const payload = buildRunCompletedNotification(notification.params.run.status);
+      if (payload) {
+        const nativeNotice = new Notification(payload);
+        nativeNotice.on("click", showMainWindow);
+        nativeNotice.show();
+      }
+    }
   }
 }
 
@@ -253,6 +291,11 @@ function requestApproval(request: ApprovalRequest): Promise<ApprovalDecision> {
       if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
         window.webContents.send(IPC.APPROVAL_REQUESTED_EVENT, request);
       }
+    }
+    if (isMainWindowUnfocused() && Notification.isSupported()) {
+      const nativeNotice = new Notification(buildApprovalNotification(request));
+      nativeNotice.on("click", showMainWindow);
+      nativeNotice.show();
     }
   });
 }
@@ -305,11 +348,83 @@ function isReviewCommentCreateInput(value: unknown): value is ReviewCommentCreat
 // Window creation & command dispatch
 // ---------------------------------------------------------------------------
 
+let systemTray: Tray | null = null;
+
+function resolveTrayImage(): Electron.NativeImage {
+  const candidates = [
+    path.join(process.resourcesPath ?? "", "eidos-app-icon.png"),
+    path.join(currentDirectory, "../../assets/branding/eidos-logo/preview/eidos-app-icon.png"),
+    path.join(app.getAppPath(), "assets/branding/eidos-logo/preview/eidos-app-icon.png"),
+  ];
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) {
+      const image = nativeImage.createFromPath(candidate);
+      if (!image.isEmpty()) {
+        return image.resize({ width: 16, height: 16 });
+      }
+    }
+  }
+  return nativeImage.createEmpty();
+}
+
+function isMainWindowUnfocused(): boolean {
+  const window = BrowserWindow.getAllWindows()[0];
+  return !window || window.isDestroyed() || !window.isVisible() || window.isMinimized() || !window.isFocused();
+}
+
+function showMainWindow(): void {
+  if (quitFlowController.getState().quitCommitted) return;
+  const existing = BrowserWindow.getAllWindows()[0];
+  if (!existing || existing.isDestroyed()) {
+    const created = createWindow();
+    created.focus();
+    return;
+  }
+  if (existing.isMinimized()) existing.restore();
+  existing.show();
+  existing.focus();
+}
+
+function ensureSystemTray(): void {
+  if (systemTray || process.env.EIDOS_DISABLE_TRAY === "1") return;
+  try {
+    const tray = new Tray(resolveTrayImage());
+    tray.setToolTip("Eidos");
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: "显示 Eidos", click: showMainWindow },
+      { type: "separator" },
+      { label: "退出 Eidos", click: () => app.quit() },
+    ]));
+    tray.on("click", showMainWindow);
+    tray.on("double-click", showMainWindow);
+    systemTray = tray;
+  } catch (error) {
+    log("warn", "tray", "Failed to initialize system tray", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function destroySystemTray(): void {
+  if (systemTray && !systemTray.isDestroyed()) {
+    systemTray.destroy();
+  }
+  systemTray = null;
+}
+
 function createWindow(): BrowserWindow {
   const isMac = process.platform === "darwin";
+  const windowStatePath = path.join(runtimeDataDirectory(), "window-state.json");
+  const initialBounds = loadWindowState(
+    windowStatePath,
+    screen.getAllDisplays().map((display) => display.workArea),
+  );
   const window = new BrowserWindow({
-    width: 1180,
-    height: 800,
+    width: initialBounds.width,
+    height: initialBounds.height,
+    ...(initialBounds.x !== undefined && initialBounds.y !== undefined
+      ? { x: initialBounds.x, y: initialBounds.y }
+      : {}),
     minWidth: 800,
     minHeight: 600,
     show: false,
@@ -361,7 +476,47 @@ function createWindow(): BrowserWindow {
     Menu.buildFromTemplate(template).popup({ window });
   });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  window.once("ready-to-show", () => window.show());
+  let saveBoundsTimer: ReturnType<typeof setTimeout> | undefined;
+  const captureAndSaveWindowState = () => {
+    if (window.isDestroyed()) return;
+    const isMaximized = window.isMaximized();
+    const bounds = isMaximized ? window.getNormalBounds() : window.getBounds();
+    saveWindowStateSync(windowStatePath, {
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+      isMaximized,
+    });
+  };
+  const scheduleSaveWindowState = () => {
+    if (saveBoundsTimer) clearTimeout(saveBoundsTimer);
+    saveBoundsTimer = setTimeout(captureAndSaveWindowState, 300);
+  };
+  window.on("resize", scheduleSaveWindowState);
+  window.on("move", scheduleSaveWindowState);
+  window.on("maximize", scheduleSaveWindowState);
+  window.on("unmaximize", scheduleSaveWindowState);
+  window.once("ready-to-show", () => {
+    if (initialBounds.isMaximized) window.maximize();
+    window.show();
+  });
+  window.on("close", (event) => {
+    if (saveBoundsTimer) {
+      clearTimeout(saveBoundsTimer);
+      saveBoundsTimer = undefined;
+    }
+    captureAndSaveWindowState();
+    if (shouldHideWindowToTray({
+      platform: process.platform,
+      hasTray: Boolean(systemTray),
+      quitCommitted: quitFlowController.getState().quitCommitted,
+      disableTrayEnv: process.env.EIDOS_DISABLE_TRAY === "1",
+    })) {
+      event.preventDefault();
+      window.hide();
+    }
+  });
   const ownerId = window.webContents.id;
   const previewContents = window.webContents;
   window.on("closed", () => artifactPreview.closeOwner(previewContents));
@@ -441,17 +596,7 @@ function buildMenu(): void {
     },
     {
       label: "视图",
-      submenu: [
-        { role: "reload" as const },
-        { role: "forceReload" as const },
-        { role: "toggleDevTools" as const },
-        { type: "separator" as const },
-        { role: "resetZoom" as const },
-        { role: "zoomIn" as const },
-        { role: "zoomOut" as const },
-        { type: "separator" as const },
-        { role: "togglefullscreen" as const },
-      ],
+      submenu: buildViewMenuSubmenu(app.isPackaged),
     },
     {
       label: "窗口",
@@ -490,11 +635,14 @@ async function startRuntime(): Promise<void> {
       pythonExecutable: runtimePaths.pythonExecutable,
       runtimeRoot: runtimePaths.runtimeRoot,
       dataDirectory: runtimeDataDirectory(),
+      clientVersion: app.getVersion(),
       environmentPolicy: app.isPackaged ? "packaged" : "development",
       onNotification: publishNotification,
       onApprovalRequest: requestApproval,
       onStderr: (line) => {
-        console.error(`[runtime] ${redactLogLine(line)}`);
+        const clean = redactLogLine(line);
+        getAppLogger().append("runtime.log", clean);
+        console.error(`[runtime] ${clean}`);
       },
     });
     if (startGeneration !== runtimeStartGeneration) {
@@ -511,6 +659,7 @@ async function startRuntime(): Promise<void> {
         && runtimeStatus.state !== "error"
       ) {
         runtimeClient = undefined;
+        clearRuntimeProcessState();
         log("error", "runtime", "Runtime exited unexpectedly", { code });
         publishStatus({
           state: "error",
@@ -563,7 +712,7 @@ async function startRuntime(): Promise<void> {
     });
     publishStatus({
       state: "error",
-      message: "Python Runtime 无法启动，请查看启动终端中的诊断日志。",
+      message: "Python Runtime 无法启动，请导出诊断包或查看本地数据目录下的 logs/ 日志文件。",
     });
   }
 }
@@ -590,6 +739,7 @@ function restartRuntime(): Promise<RuntimeStatus> {
     const previous = runtimeClient;
     runtimeClient = undefined;
     runtimeStartGeneration += 1;
+    clearRuntimeProcessState();
     publishStatus({ state: "starting" });
     if (previous) {
       previous.terminate();
@@ -623,6 +773,31 @@ function handleIpc<Args extends unknown[], Result>(
 handleIpc(IPC.RUNTIME_GET_STATUS, () => runtimeStatus);
 handleIpc(IPC.RUNTIME_HEALTH, () => clientOrThrow().health());
 handleIpc(IPC.RUNTIME_RESTART, () => restartRuntime());
+handleIpc(IPC.DIAGNOSTICS_EXPORT, async (event) => {
+  inputOwner(event);
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  if (!owner) throw new Error("无法打开诊断包保存窗口。");
+  const result = await dialog.showSaveDialog(owner, {
+    title: "导出脱敏诊断包",
+    defaultPath: `eidos-diagnostics-${app.getVersion()}.zip`,
+    filters: [{ name: "ZIP", extensions: ["zip"] }],
+  });
+  if (result.canceled || !result.filePath) return false;
+  const dataDir = runtimeDataDirectory();
+  exportDiagnosticBundle({
+    destinationPath: result.filePath,
+    logDirectory: path.join(dataDir, "logs"),
+    crashDumpsDirectory: path.join(dataDir, "crash-dumps"),
+    summary: {
+      appVersion: app.getVersion(),
+      platform: process.platform,
+      arch: process.arch,
+      electronVersion: process.versions.electron,
+      runtimeStatus,
+    },
+  });
+  return true;
+});
 
 handleIpc(IPC.WORKSPACE_SELECT, async () => {
   const result = await dialog.showOpenDialog({
@@ -671,6 +846,15 @@ handleIpc(IPC.SHELL_ENVIRONMENT_REFRESH, (_event, request: unknown) => {
   const value = request ?? {};
   if (!isShellEnvironmentRefreshRequest(value)) throw new Error("沙盒环境刷新参数无效。");
   return clientOrThrow().refreshShellEnvironment(value);
+});
+handleIpc(IPC.GUARDRAILS_READ, (_event, request: unknown) => {
+  const value = request ?? {};
+  if (!isGuardrailsReadRequest(value)) throw new Error("后台护栏读取参数无效。");
+  return clientOrThrow().readGuardrails(value);
+});
+handleIpc(IPC.GUARDRAILS_SAVE, (_event, request: unknown) => {
+  if (!isGuardrailsSaveRequest(request)) throw new Error("后台护栏配置无效，请检查数值范围。");
+  return clientOrThrow().saveGuardrails(request);
 });
 
 handleIpc(IPC.WEB_SEARCH_READ, (_event, request: unknown) => {
@@ -910,6 +1094,33 @@ handleIpc(IPC.WORKSPACE_LIST_DIRECTORY, (
   );
 });
 
+handleIpc(IPC.WORKSPACE_FIND_FILES, (
+  _event,
+  sessionId: unknown,
+  query: unknown,
+  limit: unknown,
+  workspaceRoot: unknown,
+  projectId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof query !== "string"
+    || query.length > 256
+    || (limit !== undefined && (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 500))
+    || (workspaceRoot !== undefined && typeof workspaceRoot !== "string")
+    || (projectId !== undefined && typeof projectId !== "string")
+  ) {
+    throw new Error("Workspace 文件搜索参数无效。");
+  }
+  return clientOrThrow().findWorkspaceFiles(
+    sessionId,
+    query,
+    limit === undefined ? undefined : Number(limit),
+    typeof workspaceRoot === "string" ? workspaceRoot : undefined,
+    typeof projectId === "string" ? projectId : undefined,
+  );
+});
+
 handleIpc(IPC.WORKSPACE_READ_FILE_PREVIEW, (
   _event,
   sessionId: unknown,
@@ -981,6 +1192,8 @@ handleIpc(IPC.BROWSER_OPEN, (
 handleIpc(IPC.BROWSER_CLOSE, (event, id: unknown, browserId: unknown) => artifactPreview.close(previewOwner(event), previewString(id), previewString(browserId)));
 handleIpc(IPC.BROWSER_STOP, (event, id: unknown, browserId: unknown) => artifactPreview.stop(previewOwner(event), previewString(id), previewString(browserId)));
 handleIpc(IPC.BROWSER_STATE, (event, id: unknown, browserId: unknown) => artifactPreview.state(previewOwner(event), previewString(id), previewString(browserId)));
+handleIpc(IPC.BROWSER_GO_BACK, (event, id: unknown, browserId: unknown) => artifactPreview.goBack(previewOwner(event), previewString(id), previewString(browserId)));
+handleIpc(IPC.BROWSER_GO_FORWARD, (event, id: unknown, browserId: unknown) => artifactPreview.goForward(previewOwner(event), previewString(id), previewString(browserId)));
 handleIpc(IPC.BROWSER_ANNOTATE, (event, id: unknown, browserId: unknown) => artifactPreview.annotate(previewOwner(event), previewString(id), previewString(browserId)));
 handleIpc(IPC.BROWSER_BOUNDS, (event, id: unknown, browserId: unknown, bounds: unknown) => {
   if (bounds !== null && (typeof bounds !== "object" || !bounds || !["x", "y", "width", "height"].every((key) => typeof Reflect.get(bounds, key) === "number" && Number.isFinite(Reflect.get(bounds, key))))) throw new Error("页面位置无效。");
@@ -1038,17 +1251,20 @@ handleIpc(IPC.TERMINAL_CREATE, (
   sessionId: unknown,
   workspaceRoot: unknown,
   projectId: unknown,
+  preferredShell: unknown,
 ) => {
   if (
     typeof sessionId !== "string"
     || (workspaceRoot !== undefined && typeof workspaceRoot !== "string")
     || (projectId !== undefined && typeof projectId !== "string")
+    || (preferredShell !== undefined && typeof preferredShell !== "string")
   ) throw new Error("Terminal 参数无效。");
   return terminalManager.create(
     event.sender,
     sessionId,
     typeof workspaceRoot === "string" ? workspaceRoot : undefined,
     typeof projectId === "string" ? projectId : undefined,
+    typeof preferredShell === "string" ? preferredShell : undefined,
   );
 });
 handleIpc(IPC.TERMINAL_WRITE, (event, terminalId: unknown, data: unknown) => {
@@ -1142,6 +1358,96 @@ handleIpc(IPC.SESSION_GIT_STAGE, (
     throw new Error("Git Stage 参数无效。");
   }
   return clientOrThrow().stageSessionGit(sessionId, paths, operationId);
+});
+handleIpc(IPC.SESSION_GIT_UNSTAGE, (
+  _event,
+  sessionId: unknown,
+  paths: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || !isNonEmptyStringArray(paths)
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Git Unstage 参数无效。");
+  }
+  return clientOrThrow().unstageSessionGit(sessionId, paths, operationId);
+});
+handleIpc(IPC.SESSION_GIT_DISCARD, (
+  _event,
+  sessionId: unknown,
+  paths: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || !isNonEmptyStringArray(paths)
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Git Discard 参数无效。");
+  }
+  return clientOrThrow().discardSessionGit(sessionId, paths, operationId);
+});
+handleIpc(IPC.SESSION_GIT_STAGE_HUNK, (
+  _event,
+  sessionId: unknown,
+  patch: unknown,
+  reverse: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof patch !== "string"
+    || !patch.trim()
+    || typeof reverse !== "boolean"
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Git Stage Hunk 参数无效。");
+  }
+  return clientOrThrow().stageSessionGitHunk(sessionId, patch, reverse, operationId);
+});
+handleIpc(IPC.SESSION_GIT_SUGGEST_COMMIT_MESSAGE, (
+  _event,
+  sessionId: unknown,
+  includeUnstaged: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || (includeUnstaged !== undefined && typeof includeUnstaged !== "boolean")
+  ) {
+    throw new Error("Git Suggest Commit Message 参数无效。");
+  }
+  return clientOrThrow().suggestSessionGitCommitMessage(
+    sessionId,
+    includeUnstaged === undefined ? true : includeUnstaged,
+  );
+});
+handleIpc(IPC.CHECKPOINT_LIST, (_event, sessionId: unknown) => {
+  if (typeof sessionId !== "string" || !sessionId.trim()) {
+    throw new Error("Checkpoint 列表参数无效。");
+  }
+  return clientOrThrow().listCheckpoints(sessionId);
+});
+handleIpc(IPC.CHECKPOINT_REWIND, (
+  _event,
+  sessionId: unknown,
+  checkpointId: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof checkpointId !== "string"
+    || !checkpointId.trim()
+    || (operationId !== undefined && typeof operationId !== "string")
+  ) {
+    throw new Error("Checkpoint 回退参数无效。");
+  }
+  return clientOrThrow().rewindCheckpoint(
+    sessionId,
+    checkpointId,
+    operationId as string | undefined,
+  );
 });
 handleIpc(IPC.SESSION_GIT_COMMIT, (
   _event,
@@ -1450,6 +1756,67 @@ handleIpc(IPC.DATA_BACKUP, async (event) => {
   const result = await dialog.showSaveDialog(owner, {title: "备份本地数据（明文）", defaultPath: "eidos-data-backup.zip", filters: [{name: "ZIP", extensions: ["zip"]}]});
   if (!result.canceled && result.filePath) await clientOrThrow().memory("data/backup", {destination: result.filePath});
 });
+handleIpc(IPC.DATA_RESTORE, async (event) => {
+  inputOwner(event);
+  if (activeRunProjectionMap.size > 0) {
+    throw new Error("当前仍有活动任务正在执行，请先停止任务后再恢复备份。");
+  }
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  if (!owner) throw new Error("无法打开备份文件选择窗口。");
+  const picked = await dialog.showOpenDialog(owner, {
+    title: "选择备份压缩包恢复数据",
+    properties: ["openFile"],
+    filters: [{ name: "ZIP", extensions: ["zip"] }],
+  });
+  const archivePath = picked.filePaths[0];
+  if (picked.canceled || !archivePath) {
+    return runtimeStatus;
+  }
+  const runtimePaths = resolveRuntimePaths({
+    isPackaged: app.isPackaged,
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath,
+    environment: process.env,
+  });
+  return restoreDataBackup({
+    archivePath,
+    dataDirectory: runtimeDataDirectory(),
+    activeRunCount: activeRunProjectionMap.size,
+    runOfflineRestore: async (archive, destination) => {
+      const environment = buildRuntimeEnvironment({
+        runtimeRoot: runtimePaths.runtimeRoot,
+        baseEnvironment: process.env,
+        overrides: {},
+        policy: app.isPackaged ? "packaged" : "development",
+      });
+      await execFileAsync(
+        runtimePaths.pythonExecutable,
+        ["-m", "eidos_runtime.db.backup", archive, destination],
+        { env: environment, maxBuffer: 2 * 1024 * 1024 },
+      );
+    },
+    shutdownRuntime: async () => {
+      const previous = runtimeClient;
+      runtimeClient = undefined;
+      runtimeStartGeneration += 1;
+      clearRuntimeProcessState();
+      publishStatus({ state: "starting" });
+      if (previous) {
+        try {
+          await previous.shutdown();
+        } catch {
+          previous.terminate();
+        }
+        await waitForRuntimeExit(previous);
+      }
+    },
+    startRuntime: async () => {
+      await startRuntime();
+      return runtimeStatus;
+    },
+    isStorageReady: (status) => status.state === "ready" && status.storageHealth.state === "ready",
+  });
+});
 handleIpc(IPC.MEMORY_REQUEST, (event, method: unknown, request: unknown) => {
   inputOwner(event);
   if (!isMemoryMethod(method) || method === "data/backup" || !isMemoryRequest(method, request)) throw new Error("记忆请求无效。");
@@ -1688,6 +2055,7 @@ handleIpc(IPC.RESOURCE_RETRY, (_event, request: unknown) => {
   if (!isResourceRetryRequest(request)) throw new Error("资源参数无效。");
   return clientOrThrow().retryResource(request);
 });
+handleIpc(IPC.RESOURCE_CLEANUP, () => clientOrThrow().cleanupResources());
 function skillId(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.length > 256) {
     throw new Error("技能参数无效。");
@@ -1802,12 +2170,21 @@ if (!hasSingleInstanceLock) {
   });
 
   app.whenReady().then(() => {
+    try {
+      app.setPath("crashDumps", path.join(runtimeDataDirectory(), "crash-dumps"));
+      crashReporter.start({ uploadToServer: false, compress: false });
+    } catch (error) {
+      log("warn", "crash", "Failed to start local crashReporter", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
     powerMonitor.on("resume", () => {
       if (quitFlowController.getState().quitCommitted) return;
       void runtimeClient?.refreshAutomationSchedule().catch(() => undefined);
     });
     artifactPreview.install();
     buildMenu();
+    ensureSystemTray();
     createWindow();
     void startRuntime();
 
@@ -1828,13 +2205,15 @@ app.on("before-quit", (event) => {
 });
 
 app.on("will-quit", () => {
+  destroySystemTray();
   artifactPreview.closeAll();
   terminalManager.closeAll();
   terminateRuntimeOnce();
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin" && !quitFlowController.getState().quitCommitted) {
+  const keepAliveForTray = Boolean(systemTray) && process.env.EIDOS_DISABLE_TRAY !== "1";
+  if (process.platform !== "darwin" && !keepAliveForTray && !quitFlowController.getState().quitCommitted) {
     app.quit();
   }
 });

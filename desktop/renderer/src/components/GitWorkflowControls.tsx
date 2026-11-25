@@ -11,6 +11,7 @@ import type {
   SessionGitCommitResult,
   SessionGitMutationResult,
   SessionGitStatus,
+  SessionGitSuggestCommitMessageResult,
 } from "../contracts.js";
 import { runtimeBusinessCode, userFacingError } from "../session-state.js";
 import { Button } from "./Button.js";
@@ -42,6 +43,9 @@ interface GitWorkflowControlsProps {
   commit?: (
     sessionId: string, message: string, operationId: string,
   ) => Promise<SessionGitCommitResult>;
+  suggestCommitMessage?: (
+    sessionId: string, includeUnstaged?: boolean,
+  ) => Promise<SessionGitSuggestCommitMessageResult>;
   stage?: (sessionId: string, paths: string[], operationId: string) => Promise<unknown>;
   fetch?: (sessionId: string, operationId: string) => Promise<GitFetchResult>;
   pull?: (sessionId: string, operationId: string) => Promise<GitPullResult>;
@@ -64,6 +68,9 @@ const defaults = {
   ),
   commit: (sessionId: string, message: string, operationId: string) => (
     window.eidosRuntime.commitSessionGit(sessionId, message, operationId)
+  ),
+  suggestCommitMessage: (sessionId: string, includeUnstaged = true) => (
+    window.eidosRuntime.suggestSessionGitCommitMessage(sessionId, includeUnstaged)
   ),
   stage: (sessionId: string, paths: string[], operationId: string) => (
     window.eidosRuntime.stageSessionGit(sessionId, paths, operationId)
@@ -114,6 +121,7 @@ export function GitWorkflowControls({
   readRemoteStatus = defaults.readRemoteStatus,
   readProjectGitContext = defaults.readProjectGitContext,
   commit = defaults.commit,
+  suggestCommitMessage = defaults.suggestCommitMessage,
   stage = defaults.stage,
   fetch = defaults.fetch,
   pull = defaults.pull,
@@ -349,7 +357,7 @@ export function GitWorkflowControls({
         <div className="modal-header git-workflow-dialog-header">
           <div>
             <h3 id="git-workflow-dialog-title">提交和推送</h3>
-            <p className="modal-subtitle">{status.branch ?? "Detached HEAD"}</p>
+            <p className="modal-subtitle">{status.branch ?? "分离头指针"}</p>
           </div>
           <button
             type="button"
@@ -378,14 +386,36 @@ export function GitWorkflowControls({
               maxLength={16_384}
               disabled={controlsDisabled || status.branch === null}
             />
-            <label className="git-include-unstaged">
-              <input
-                type="checkbox"
-                checked={includeUnstaged}
-                onChange={(event) => setIncludeUnstaged(event.target.checked)}
-              />
-              包含未暂存的更改
-            </label>
+            <div className="git-commit-meta-row">
+              <label className="git-include-unstaged">
+                <input
+                  type="checkbox"
+                  checked={includeUnstaged}
+                  onChange={(event) => setIncludeUnstaged(event.target.checked)}
+                />
+                包含未暂存的更改
+              </label>
+              <Button
+                type="button"
+                size="small"
+                variant="ghost"
+                loading={busy === "suggest-commit"}
+                disabled={controlsDisabled || !canCommit}
+                onClick={() => {
+                  setBusy("suggest-commit");
+                  setError(undefined);
+                  void suggestCommitMessage(sessionId, includeUnstaged)
+                    .then((result) => {
+                      setMessage(result.message);
+                      messageRef.current?.focus();
+                    })
+                    .catch((cause: unknown) => setError(userFacingError(cause)))
+                    .finally(() => setBusy(undefined));
+                }}
+              >
+                生成提交信息
+              </Button>
+            </div>
             <div className="git-commit-actions">
               <Button type="submit" size="small" variant="primary"
                 loading={busy === "commit"}
@@ -424,7 +454,7 @@ export function GitWorkflowControls({
             <summary>高级 Git</summary>
             <div>
               <Select
-                aria-label="Git target"
+                aria-label="合并或变基目标分支"
                 value={target}
                 disabled={treeChangesDisabled || status.branch === null || targets.length === 0}
                 onChange={(event) => setTarget(event.target.value)}
@@ -436,28 +466,28 @@ export function GitWorkflowControls({
                 onClick={() => void runOperation(
                   "merge", `merge:${target}:${status.head}`, (id) => merge(sessionId, target, id),
                 )}>
-                Merge
+                合并
               </Button>
               <Button size="small" disabled={treeChangesDisabled || !target || status.branch === null}
                 loading={busy === "rebase"}
                 onClick={() => void runOperation(
                   "rebase", `rebase:${target}:${status.head}`, (id) => rebase(sessionId, target, id),
                 )}>
-                Rebase
+                变基
               </Button>
             </div>
           </details>
 
           {operation?.operationState !== undefined && operation.operationState !== "none" && (
-            <aside className="git-operation-conflict" aria-label="Git conflict operation">
-              <strong>{operation.operationState === "merge" ? "Merge conflicts" : "Rebase conflicts"}</strong>
+            <aside className="git-operation-conflict" aria-label="Git 冲突处理">
+              <strong>{operation.operationState === "merge" ? "合并冲突" : "变基冲突"}</strong>
               <ul>{operation.conflictFiles.map((path) => <li key={path}>{path}</li>)}</ul>
               {operation.operationState === "merge" ? (
                 <Button size="small" variant="danger" disabled={treeChangesDisabled}
                   onClick={() => void runOperation(
                     "merge-abort", "merge-abort", (id) => mergeAbort(sessionId, id),
                   )}>
-                  Abort Merge
+                  中止合并
                 </Button>
               ) : (
                 <div>
@@ -465,13 +495,13 @@ export function GitWorkflowControls({
                     onClick={() => void runOperation(
                       "rebase-continue", "rebase-continue", (id) => rebaseContinue(sessionId, id),
                     )}>
-                    Continue Rebase
+                    继续变基
                   </Button>
                   <Button size="small" variant="danger" disabled={treeChangesDisabled}
                     onClick={() => void runOperation(
                       "rebase-abort", "rebase-abort", (id) => rebaseAbort(sessionId, id),
                     )}>
-                    Abort Rebase
+                    中止变基
                   </Button>
                 </div>
               )}

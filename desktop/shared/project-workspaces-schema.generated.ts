@@ -212,6 +212,18 @@ export const projectWorkspacesSchema = {
               "$ref": "#/$defs/SessionGitStageResponseDto"
             },
             {
+              "$ref": "#/$defs/SessionGitUnstageResponseDto"
+            },
+            {
+              "$ref": "#/$defs/SessionGitDiscardResponseDto"
+            },
+            {
+              "$ref": "#/$defs/SessionGitStageHunkResponseDto"
+            },
+            {
+              "$ref": "#/$defs/SessionGitSuggestCommitMessageResponseDto"
+            },
+            {
               "$ref": "#/$defs/SessionGitCommitResponseDto"
             },
             {
@@ -275,6 +287,10 @@ export const projectWorkspacesSchema = {
             "session/gitStatus",
             "session/gitDiff",
             "session/gitStage",
+            "session/gitUnstage",
+            "session/gitDiscard",
+            "session/gitStageHunk",
+            "session/gitSuggestCommitMessage",
             "session/gitCommit",
             "session/gitSwitchBranch",
             "session/gitCreateBranch",
@@ -310,6 +326,18 @@ export const projectWorkspacesSchema = {
             },
             {
               "$ref": "#/$defs/SessionGitStageRequestDto"
+            },
+            {
+              "$ref": "#/$defs/SessionGitUnstageRequestDto"
+            },
+            {
+              "$ref": "#/$defs/SessionGitDiscardRequestDto"
+            },
+            {
+              "$ref": "#/$defs/SessionGitStageHunkRequestDto"
+            },
+            {
+              "$ref": "#/$defs/SessionGitSuggestCommitMessageRequestDto"
             },
             {
               "$ref": "#/$defs/SessionGitCommitRequestDto"
@@ -1261,6 +1289,86 @@ export const projectWorkspacesSchema = {
       "title": "SessionGitDiffResponseDto",
       "type": "object"
     },
+    "SessionGitDiscardRequestDto": {
+      "additionalProperties": false,
+      "properties": {
+        "operationId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Operationid"
+        },
+        "rootId": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rootid"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 512,
+          "minItems": 1,
+          "title": "Paths",
+          "type": "array"
+        }
+      },
+      "required": [
+        "sessionId",
+        "paths"
+      ],
+      "title": "SessionGitDiscardRequestDto",
+      "type": "object"
+    },
+    "SessionGitDiscardResponseDto": {
+      "additionalProperties": false,
+      "properties": {
+        "head": {
+          "title": "Head",
+          "type": "string"
+        },
+        "branch": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Branch"
+        },
+        "status": {
+          "$ref": "#/$defs/SessionGitStatusResponseDto"
+        }
+      },
+      "required": [
+        "head",
+        "status"
+      ],
+      "title": "SessionGitDiscardResponseDto",
+      "type": "object"
+    },
     "SessionGitFetchRequestDto": {
       "additionalProperties": false,
       "properties": {
@@ -2168,6 +2276,88 @@ export const projectWorkspacesSchema = {
       "title": "SessionGitRemoteStatusResponseDto",
       "type": "object"
     },
+    "SessionGitStageHunkRequestDto": {
+      "additionalProperties": false,
+      "properties": {
+        "operationId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Operationid"
+        },
+        "rootId": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rootid"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "patch": {
+          "maxLength": 262144,
+          "minLength": 1,
+          "title": "Patch",
+          "type": "string"
+        },
+        "reverse": {
+          "default": false,
+          "title": "Reverse",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sessionId",
+        "patch"
+      ],
+      "title": "SessionGitStageHunkRequestDto",
+      "type": "object"
+    },
+    "SessionGitStageHunkResponseDto": {
+      "additionalProperties": false,
+      "properties": {
+        "head": {
+          "title": "Head",
+          "type": "string"
+        },
+        "branch": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Branch"
+        },
+        "status": {
+          "$ref": "#/$defs/SessionGitStatusResponseDto"
+        }
+      },
+      "required": [
+        "head",
+        "status"
+      ],
+      "title": "SessionGitStageHunkResponseDto",
+      "type": "object"
+    },
     "SessionGitStageRequestDto": {
       "additionalProperties": false,
       "properties": {
@@ -2419,6 +2609,62 @@ export const projectWorkspacesSchema = {
       "title": "SessionGitStatusResponseDto",
       "type": "object"
     },
+    "SessionGitSuggestCommitMessageRequestDto": {
+      "additionalProperties": false,
+      "properties": {
+        "rootId": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rootid"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "includeUnstaged": {
+          "default": true,
+          "title": "Includeunstaged",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "title": "SessionGitSuggestCommitMessageRequestDto",
+      "type": "object"
+    },
+    "SessionGitSuggestCommitMessageResponseDto": {
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "source": {
+          "default": "heuristic",
+          "enum": [
+            "heuristic",
+            "model"
+          ],
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "title": "SessionGitSuggestCommitMessageResponseDto",
+      "type": "object"
+    },
     "SessionGitSwitchBranchRequestDto": {
       "additionalProperties": false,
       "properties": {
@@ -2529,6 +2775,86 @@ export const projectWorkspacesSchema = {
         "status"
       ],
       "title": "SessionGitSwitchBranchResponseDto",
+      "type": "object"
+    },
+    "SessionGitUnstageRequestDto": {
+      "additionalProperties": false,
+      "properties": {
+        "operationId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Operationid"
+        },
+        "rootId": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rootid"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 512,
+          "minItems": 1,
+          "title": "Paths",
+          "type": "array"
+        }
+      },
+      "required": [
+        "sessionId",
+        "paths"
+      ],
+      "title": "SessionGitUnstageRequestDto",
+      "type": "object"
+    },
+    "SessionGitUnstageResponseDto": {
+      "additionalProperties": false,
+      "properties": {
+        "head": {
+          "title": "Head",
+          "type": "string"
+        },
+        "branch": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Branch"
+        },
+        "status": {
+          "$ref": "#/$defs/SessionGitStatusResponseDto"
+        }
+      },
+      "required": [
+        "head",
+        "status"
+      ],
+      "title": "SessionGitUnstageResponseDto",
       "type": "object"
     }
   },

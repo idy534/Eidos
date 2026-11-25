@@ -68,6 +68,9 @@ export interface ComposerProps {
   onSelectProject?: (() => void) | undefined;
   onLeaveProject?: (() => void) | undefined;
   onExecutionModeChange?: ((mode: "local" | "worktree") => void) | undefined;
+  onCompactContext?: (() => void) | undefined;
+  onForkSession?: (() => void) | undefined;
+  onOpenReview?: (() => void) | undefined;
 }
 
 export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function Composer({
@@ -112,6 +115,9 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   onSelectProject,
   onLeaveProject,
   onExecutionModeChange,
+  onCompactContext,
+  onForkSession,
+  onOpenReview,
 }, forwardedRef) {
   const context = useInputContext();
   const {
@@ -484,6 +490,12 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       {showStatus && <p className="input-reference-hint">{context?.sessionId} · {contextUsage ? formatContextUsage(contextUsage) : "暂无上下文统计"}</p>}
       {picker && <InputPicker mode={picker.mode} query={picker.query} inline={picker.start !== undefined}
         anchor={composerRef}
+        commandAvailability={{
+          team: teamAvailable,
+          compact: Boolean(onCompactContext),
+          fork: Boolean(onForkSession),
+          review: Boolean(onOpenReview),
+        }}
         onCreateAgent={context ? () => {
           const insertRange = picker.insertRange ?? getEffectiveSelectionRange();
           setAgentCreator({ owner: context.sessionId, add: context.add, insertRange });
@@ -500,6 +512,9 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           if (command === "plan") onWorkModeChange?.("plan");
           else if (command === "goal") onWorkModeChange?.("goal");
           else if (command === "team") { if (teamAvailable) onWorkModeChange?.("team"); }
+          else if (command === "compact") onCompactContext?.();
+          else if (command === "fork") onForkSession?.();
+          else if (command === "review") onOpenReview?.();
           else if (command === "status") setShowStatus((value) => !value);
           else if (command === "model") {
             composerRef.current?.querySelector<HTMLButtonElement>(".model-selector > button")?.click();

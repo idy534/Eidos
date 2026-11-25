@@ -48,6 +48,9 @@ from eidos_runtime.persistence.personalization import PersonalizationRepository
 from eidos_runtime.protocol.personalization import PersonalizationReadRequest, PersonalizationSaveRequest, PersonalizationResponse
 from eidos_runtime.persistence.shell_environment import ShellEnvironmentRepository
 from eidos_runtime.protocol.shell_environment import ShellEnvironmentReadRequest, ShellEnvironmentRefreshRequest, ShellEnvironmentSaveRequest, ShellEnvironmentResponse
+from eidos_runtime.application.guardrails import GuardrailsApplication
+from eidos_runtime.persistence.guardrails import GuardrailSettingsRepository
+from eidos_runtime.protocol.guardrails import GuardrailsReadRequest, GuardrailsResponse, GuardrailsSaveRequest
 from eidos_runtime.application.web_search import WebSearchApplication
 from eidos_runtime.infrastructure.secret_files import SecretFiles
 from eidos_runtime.persistence.web_search import WebSearchRepository
@@ -101,6 +104,7 @@ from eidos_runtime.application.repository import (
     RepositoryWorkspaceRuntime,
 )
 from eidos_runtime.application.review import ReviewApplication
+from eidos_runtime.application.checkpoints import CheckpointApplication
 from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
 from eidos_runtime.application.session_fork import SessionForkApplication
 from eidos_runtime.persistence.session_history import SessionHistoryRepository
@@ -177,6 +181,7 @@ from eidos_runtime.application.qoder import QoderApplication
 from eidos_runtime.models.qoder import QoderConnectionRequest, QoderConnectionState
 from eidos_runtime.application.managed_resources import ManagedResourceApplication
 from eidos_runtime.models.managed_resources import (
+    ResourceCleanupRequest, ResourceCleanupResponse,
     ResourceStatusRequest, ResourceStatus, ResourceRetryRequest, ResourceRetryResponse,
 )
 from eidos_runtime.runtime.resource_registry import ResourceRegistryError
@@ -751,6 +756,7 @@ class _RuntimeApplications:
     task_lifecycle: TaskLifecycleApplication
     workspace: WorkspaceExplorerApplication
     review: ReviewApplication
+    checkpoints: CheckpointApplication
 
 
 class _ServerRunEnvironment:
@@ -1089,6 +1095,8 @@ class RuntimeServer:
             ("shellEnvironment/read", ShellEnvironmentReadRequest, ShellEnvironmentResponse, lambda _id, _request: self._shell_environment_application().read()),
             ("shellEnvironment/save", ShellEnvironmentSaveRequest, ShellEnvironmentResponse, lambda _id, request: self._shell_environment_save(request)),
             ("shellEnvironment/refresh", ShellEnvironmentRefreshRequest, ShellEnvironmentResponse, lambda _id, _request: self._shell_environment_application().refresh()),
+            ("guardrails/read", GuardrailsReadRequest, GuardrailsResponse, lambda _id, _request: self._guardrails_application().read()),
+            ("guardrails/save", GuardrailsSaveRequest, GuardrailsResponse, lambda _id, request: self._guardrails_save(request)),
             ("webSearch/read", WebSearchReadRequest, WebSearchResponse, lambda _id, _request: self._web_search_application().read()),
             ("webSearch/save", WebSearchSaveRequest, WebSearchResponse, lambda _id, request: self._web_search_save(request)),
             ("channel/read", ChannelReadRequest, ChannelResponse, lambda _id, request: self._channel_read(request)),
@@ -1261,6 +1269,14 @@ class RuntimeServer:
                 request: self._applications_or_error().sessions.read_snapshot(request),
             ),
             (
+                "workspace/findFiles",
+                method_dtos.WorkspaceFindFilesRequestDto,
+                method_dtos.WorkspaceFindFilesResponseDto,
+                lambda _id, request: self._applications_or_error().workspace.find_files(
+                    request
+                ),
+            ),
+            (
                 "workspace/listDirectory",
                 method_dtos.WorkspaceListDirectoryRequestDto,
                 method_dtos.WorkspaceListDirectoryResponseDto,
@@ -1315,6 +1331,38 @@ class RuntimeServer:
                 method_dtos.SessionGitStageRequestDto,
                 method_dtos.SessionGitStageResponseDto,
                 lambda _id, request: self._applications_or_error().sessions.for_git_request(request).git_stage(
+                    request
+                ),
+            ),
+            (
+                "session/gitUnstage",
+                method_dtos.SessionGitUnstageRequestDto,
+                method_dtos.SessionGitUnstageResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.for_git_request(request).git_unstage(
+                    request
+                ),
+            ),
+            (
+                "session/gitDiscard",
+                method_dtos.SessionGitDiscardRequestDto,
+                method_dtos.SessionGitDiscardResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.for_git_request(request).git_discard(
+                    request
+                ),
+            ),
+            (
+                "session/gitStageHunk",
+                method_dtos.SessionGitStageHunkRequestDto,
+                method_dtos.SessionGitStageHunkResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.for_git_request(request).git_stage_hunk(
+                    request
+                ),
+            ),
+            (
+                "session/gitSuggestCommitMessage",
+                method_dtos.SessionGitSuggestCommitMessageRequestDto,
+                method_dtos.SessionGitSuggestCommitMessageResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.for_git_request(request).git_suggest_commit_message(
                     request
                 ),
             ),
@@ -1405,6 +1453,24 @@ class RuntimeServer:
                 method_dtos.SessionRestoreWorktreeResponseDto,
                 lambda _id, request: self._applications_or_error().sessions.restore_worktree(
                     request
+                ),
+            ),
+            (
+                "checkpoint/list",
+                method_dtos.CheckpointListRequestDto,
+                method_dtos.CheckpointListResponseDto,
+                lambda _id, request: self._applications_or_error().checkpoints.list_checkpoints(
+                    request.session_id
+                ),
+            ),
+            (
+                "checkpoint/rewind",
+                method_dtos.CheckpointRewindRequestDto,
+                method_dtos.CheckpointRewindResponseDto,
+                lambda _id, request: self._applications_or_error().checkpoints.rewind_checkpoint(
+                    request.session_id,
+                    request.checkpoint_id,
+                    operation_id=request.operation_id,
                 ),
             ),
             (
@@ -1601,6 +1667,10 @@ class RuntimeServer:
             (
                 "resource/retry", ResourceRetryRequest, ResourceRetryResponse,
                 lambda _id, request: self.managed_resources.retry(request),
+            ),
+            (
+                "resource/cleanup", ResourceCleanupRequest, ResourceCleanupResponse,
+                lambda _id, _request: self.managed_resources.cleanup(),
             ),
             (
                 "skill/detail",
@@ -1950,6 +2020,14 @@ class RuntimeServer:
     def _shell_environment_application(self) -> ShellEnvironmentApplication:
         return ShellEnvironmentApplication(ShellEnvironmentRepository(self.store.database))
 
+    def _guardrails_application(self) -> GuardrailsApplication:
+        return GuardrailsApplication(GuardrailSettingsRepository(self.store.database))
+
+    def _guardrails_save(self, request: GuardrailsSaveRequest) -> GuardrailsResponse:
+        response = self._guardrails_application().save(request)
+        self.supervisor.events.deliver_pending()
+        return response
+
     def _personalization_application(self) -> PersonalizationApplication:
         return PersonalizationApplication(PersonalizationRepository(self.store.database), self._scan_text)
 
@@ -1986,7 +2064,12 @@ class RuntimeServer:
             self.channel_service.application.save(request)
         except (ChannelError, OSError) as error:
             raise ApplicationError("INVALID_PARAMS", "渠道保存失败，请检查配置、模型、项目及凭证文件权限。") from error
-        return self.channel_service.read(request.channel)
+        response = self.channel_service.read(request.channel)
+        self.supervisor.events.publish_transient(
+            "channel/updated",
+            {"channel": response.connection.channel if response.connection else request.channel},
+        )
+        return response
 
     def _automation_application(self) -> AutomationApplication:
         if self.store.automations is None:
@@ -2320,7 +2403,17 @@ class RuntimeServer:
                 git=sessions,
                 scan_text=self._scan_text,
             ),
+            checkpoints=self._build_checkpoints_application(),
         )
+
+    def _build_checkpoints_application(self) -> CheckpointApplication:
+        app = CheckpointApplication(
+            self.store.database,
+            self.worktree_manager,
+            self.worktree_retention.snapshot_service if self.worktree_retention else None,
+        )
+        self.supervisor.checkpoint_capture = app.capture_run_checkpoint
+        return app
 
     def initialize(self, request_id: str, params: object) -> None:
         if not valid_initialize_params(params):
@@ -2408,7 +2501,8 @@ class RuntimeServer:
                     ChannelSecrets(self.store.data_directory), applications.sessions, applications.runs, self.model_config),
                     lambda: self.initialized and self.supervisor.control_state is RuntimeControlState.RUNNING,
                     self.supervisor.events.deliver_pending,
-                    lambda target: self.supervisor.start_managed_task("channel-prepare", target))
+                    lambda target: self.supervisor.start_managed_task("channel-prepare", target),
+                    on_change=lambda ch: self.supervisor.events.publish_transient("channel/updated", {"channel": ch}))
                 self.supervisor.start_channel_service(self.channel_service.run)
                 application = self._automation_application()
                 self.automation_scheduler = AutomationScheduler(application.repository, self._launch_automation,

@@ -338,6 +338,19 @@ export const sessionForkSchema = {
           "title": "Command",
           "type": "string"
         },
+        "commandWindows": {
+          "anyOf": [
+            {
+              "maxLength": 32768,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Commandwindows"
+        },
         "timeoutSeconds": {
           "default": 600,
           "maximum": 600,

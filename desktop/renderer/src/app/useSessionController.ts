@@ -731,6 +731,13 @@ export function useSessionController(): [SessionControllerState, SessionControll
           await selectSession(remaining[0]);
         }
       }
+      try {
+        if (window.localStorage.getItem("eidos.lastActiveSessionId") === deleted.deletedSessionId) {
+          window.localStorage.removeItem("eidos.lastActiveSessionId");
+        }
+      } catch {
+        // Ignore storage access failures.
+      }
       return { confirmed: true };
     } catch (cause) {
       const errMsg = userFacingError(cause);

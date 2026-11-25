@@ -77,6 +77,16 @@ class GitBackend(Protocol):
 
     def stage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation: ...
 
+    def unstage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation: ...
+
+    def discard(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation: ...
+
+    def apply_cached_patch(
+        self, cwd: Path, patch: str, *, reverse: bool = False
+    ) -> GitStatusObservation: ...
+
+    def cached_diff_stat(self, cwd: Path) -> str: ...
+
     def commit(self, cwd: Path, message: str) -> str: ...
 
     def remote_status(self, cwd: Path) -> GitRemoteObservation: ...
@@ -326,6 +336,41 @@ class DulwichGitBackend:
         self._open_repository(cwd, "stage")
         self._git_cli.stage(cwd, paths)
         return self.status(cwd)
+
+    def unstage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation:
+        for path in paths:
+            _validate_relative_path(path)
+        self._open_repository(cwd, "unstage")
+        self._git_cli.unstage(cwd, paths)
+        return self.status(cwd)
+
+    def discard(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation:
+        for path in paths:
+            _validate_relative_path(path)
+        self._open_repository(cwd, "discard")
+        current = self.status(cwd)
+        untracked_set = set(current.untracked_paths)
+        tracked = tuple(path for path in paths if path not in untracked_set)
+        untracked = tuple(path for path in paths if path in untracked_set)
+        self._git_cli.discard(
+            cwd,
+            tracked_paths=tracked,
+            untracked_paths=untracked,
+        )
+        return self.status(cwd)
+
+    def apply_cached_patch(
+        self, cwd: Path, patch: str, *, reverse: bool = False
+    ) -> GitStatusObservation:
+        self._open_repository(cwd, "stage-hunk")
+        self._git_cli.apply_cached_patch(
+            cwd, patch.encode("utf-8"), reverse=reverse
+        )
+        return self.status(cwd)
+
+    def cached_diff_stat(self, cwd: Path) -> str:
+        self._open_repository(cwd, "diff-stat")
+        return self._git_cli.cached_diff_stat(cwd)
 
     def commit(self, cwd: Path, message: str) -> str:
         self._open_repository(cwd, "commit")

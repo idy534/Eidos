@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { ApprovalFileSystemAccess, ApprovalRequest, CommandApprovalRequest, Run } from "../../../shared/domain-contracts.js";
 import { Button } from "./Button.js";
 import { ToastContainer } from "./ToastContainer.js";
@@ -12,7 +12,7 @@ export interface ApprovalComposerProps {
   expiredApprovalIds?: ReadonlySet<string> | undefined;
   errorsByApprovalId?: Readonly<Record<string, string>> | undefined;
   onApprove: (approval: ApprovalRequest) => void;
-  onReject: (approval: ApprovalRequest) => void;
+  onReject: (approval: ApprovalRequest, feedback?: string) => void;
 }
 
 function ShieldIcon({ className = "" }: { className?: string }) {
@@ -46,6 +46,8 @@ export function ApprovalComposer({
   respondingKindByApprovalId, expiredApprovalIds, errorsByApprovalId,
   onApprove, onReject,
 }: ApprovalComposerProps) {
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedback, setFeedback] = useState("");
   const isExpired = Boolean(expiredApprovalIds?.has(approval.id));
   const localError = errorsByApprovalId?.[approval.id];
   const isResponding = Boolean(respondingApprovalIds && respondingApprovalIds.has(approval.id));
@@ -57,6 +59,28 @@ export function ApprovalComposer({
   const isUnsandboxed = (approval.kind === "command_execution" && approval.executionMode === "unsandboxed")
     || (approval.kind === "file_change" && approval.sandboxPermissions === "require_escalated");
   const warning = approvalWarning(approval);
+
+  useEffect(() => {
+    setFeedback("");
+    setShowFeedback(false);
+  }, [approval.id]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target?.closest('[role="dialog"], [role="alertdialog"]')) return;
+      if (event.key === "Enter" && canApprove && !isDangerous) {
+        event.preventDefault();
+        onApprove(approval);
+      } else if (event.key === "Backspace" && canReject) {
+        event.preventDefault();
+        onReject(approval, feedback.trim() || undefined);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [approval, canApprove, canReject, feedback, isDangerous, onApprove, onReject]);
 
   return (
     <article
@@ -109,14 +133,40 @@ export function ApprovalComposer({
           <ShieldIcon className="approval-actions-hint-icon" />
           <span>核对命令及授权范围后再行决定</span>
         </div>
+        <details
+          className="approval-feedback-details"
+          open={showFeedback}
+          onToggle={(event) => setShowFeedback(event.currentTarget.open)}
+        >
+          <summary className="approval-feedback-summary">附带拒绝原因</summary>
+          {showFeedback && (
+            <input
+              type="text"
+              className="approval-feedback-input"
+              aria-label="拒绝原因（可选）"
+              placeholder="输入拒绝原因或替代要求，按 Enter 提交拒绝…"
+              maxLength={4000}
+              disabled={!canReject}
+              value={feedback}
+              onChange={(event) => setFeedback(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && canReject) {
+                  event.preventDefault();
+                  onReject(approval, feedback.trim() || undefined);
+                }
+              }}
+            />
+          )}
+        </details>
         <div className="approval-actions-buttons">
           <Button
             variant="secondary"
             size="medium"
             className="btn-approval-reject"
+            title="拒绝 (Ctrl/Cmd + Backspace)"
             disabled={!canReject}
             loading={isRejecting}
-            onClick={() => onReject(approval)}
+            onClick={() => onReject(approval, feedback.trim() || undefined)}
           >
             拒绝
           </Button>
@@ -124,6 +174,7 @@ export function ApprovalComposer({
             variant={isDangerous ? "danger" : "primary"}
             size="medium"
             className="btn-approval-approve"
+            title={isDangerous ? undefined : "批准 (Ctrl/Cmd + Enter)"}
             disabled={!canApprove}
             loading={isApproving}
             onClick={() => onApprove(approval)}
@@ -158,6 +209,7 @@ function approvalTitle(approval: ApprovalRequest): string {
     "Run shell command": "批准命令执行",
     "Run shell command with expanded sandbox permissions": "批准命令所需权限",
     "Run shell command without the macOS sandbox": "批准命令在沙盒外执行",
+    "Run shell command without the Windows sandbox": "批准命令在沙盒外执行",
     "Write files without the sandbox": "批准文件在沙盒外写入",
     "Write files in the requested permission scope": "批准文件写入",
     "Allow additional permissions for this run": "批准当前任务所需权限",

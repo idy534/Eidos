@@ -30,9 +30,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
       - run: uv sync --locked --python 3.12
+      - run: uv run --locked ruff check runtime/eidos_runtime runtime/tests
+      - run: pnpm test:main:fast
+      - run: node --test dist/main/approval-path-validation.test.js dist/main/app-logger.test.js dist/main/data-restore.test.js
+      - run: node --test scripts/packaging-config.test.mjs scripts/macos-sign.test.mjs scripts/clean-renderer-assets.test.mjs
+      - run: pnpm exec tsc -p tsconfig.renderer.json --noEmit
+      - run: pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/BackgroundGuardrailSettings.behavior.test.tsx desktop/renderer/src/components/settings/DataSettings.behavior.test.tsx desktop/renderer/src/components/settings/McpConnectionPanel.behavior.test.tsx desktop/renderer/src/components/settings/ShellEnvironmentSettings.behavior.test.tsx desktop/renderer/src/components/settings/ManagedResourceSettings.behavior.test.tsx
+      - run: uv run --locked --python 3.12 pytest -q runtime/tests/test_windows_platform.py runtime/tests/test_hooks_windows.py runtime/tests/test_windows_git_ssh.py runtime/tests/test_tool_runtime_platform_wording.py runtime/tests/test_managed_resources_cleanup.py runtime/tests/test_guardrails.py runtime/tests/test_context_capacity_recovery.py
       - run: pnpm package:win
       - run: pnpm test:electron-smoke
-      - run: uv run --locked --python 3.12 pytest -q runtime/tests/test_windows_platform.py
+      - run: pnpm test:electron-packaged
       - name: Exercise bundled document Skills in PowerShell
         shell: pwsh
         run: |

@@ -21,6 +21,7 @@ from eidos_runtime.model.retry_transport import (
     build_retrying_http_client,
 )
 from eidos_runtime.model.gateway_types import RetryPolicy
+from eidos_runtime.model.prompt_cache import inject_anthropic_prompt_cache
 
 
 OpenAICompatibleProvider = OpenAIProvider | DeepSeekProvider | MoonshotAIProvider
@@ -48,6 +49,8 @@ def build_provider(
         # The SDK requires an internal key. The mature HTTP client's request hook
         # removes its placeholder before every network attempt, including titles.
         retry_client.http_client.event_hooks["request"].append(_omit_authentication)
+    if provider_id == "anthropic":
+        retry_client.http_client.event_hooks["request"].append(inject_anthropic_prompt_cache)
     client = AsyncOpenAI(
         api_key=config.api_key or "unused-no-auth",
         **({"organization": "", "project": "", "admin_api_key": ""}

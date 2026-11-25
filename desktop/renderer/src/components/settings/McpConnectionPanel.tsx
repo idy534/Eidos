@@ -25,6 +25,16 @@ const errors: Record<string, string> = {
   mcp_connection_failed: "Eidos 无法连接服务，请检查网络、令牌和账号权限。",
 };
 
+const GITHUB_CLIENT_ID_STORAGE_KEY = "eidos.mcp.github_client_id";
+
+function readStoredClientId(): string {
+  try {
+    return localStorage.getItem(GITHUB_CLIENT_ID_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export function McpConnectionPanel({
   server,
   enabled,
@@ -36,6 +46,7 @@ export function McpConnectionPanel({
 }) {
   const [state, setState] = useState<McpConnectionState>();
   const [token, setToken] = useState("");
+  const [customClientId, setCustomClientId] = useState(readStoredClientId);
   const [showToken, setShowToken] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -102,19 +113,30 @@ export function McpConnectionPanel({
     void window.eidosRuntime.openMcpLogin(readRequest).catch(() => setError("浏览器未能打开，请点击“打开授权页面”。"));
   }, [state?.authorizationUrl]);
 
-  async function act(action: "connect" | "cancel" | "disconnect", method: "browser" | "token" = "browser") {
+  async function act(
+    action: "connect" | "cancel" | "disconnect",
+    method: "browser" | "token" = "browser",
+    clientId?: string,
+  ) {
     const identity = resourceKey;
     setBusy(true);
     setError(undefined);
     autoOpen.current = action === "connect" && method === "browser";
     openedUrl.current = undefined;
     try {
+      const trimmedClientId = clientId?.trim();
+      if (trimmedClientId) {
+        try {
+          localStorage.setItem(GITHUB_CLIENT_ID_STORAGE_KEY, trimmedClientId);
+        } catch {}
+      }
       const next = await window.eidosRuntime.mcpConnection({
         ...readRequest,
         action,
         method,
         ...(action === "connect" ? { operationId: crypto.randomUUID() } : {}),
         ...(method === "token" ? { token } : {}),
+        ...(method === "browser" && trimmedClientId ? { clientId: trimmedClientId } : {}),
       });
       if (!mounted.current || currentResource.current !== identity) return;
       setToken("");
@@ -296,7 +318,42 @@ export function McpConnectionPanel({
               {tokenForm}
             </details>
           ) : (
-            tokenForm
+            <>
+              {tokenForm}
+              {server.remote?.authType === "github-device" && (
+                <details>
+                  <summary>使用 GitHub OAuth Client ID 浏览器登录</summary>
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void act("connect", "browser", customClientId);
+                    }}
+                  >
+                    <label htmlFor={`mcp-client-id-${server.serverId}`}>GitHub OAuth Client ID</label>
+                    <input
+                      id={`mcp-client-id-${server.serverId}`}
+                      type="text"
+                      value={customClientId}
+                      autoComplete="off"
+                      spellCheck={false}
+                      disabled={busy || !enabled || connecting}
+                      maxLength={256}
+                      onChange={(event) => setCustomClientId(event.target.value)}
+                    />
+                    <div className="mcp-token-actions">
+                      <Button
+                        type="submit"
+                        variant="secondary"
+                        size="small"
+                        disabled={busy || !enabled || connecting || !customClientId.trim()}
+                      >
+                        使用 Client ID 浏览器登录
+                      </Button>
+                    </div>
+                  </form>
+                </details>
+              )}
+            </>
           )}
         </div>
       )}

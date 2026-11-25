@@ -169,7 +169,7 @@ export interface TeamPanelProps {
   expiredApprovalIds?: ReadonlySet<string>;
   errorsByApprovalId?: Readonly<Record<string, string>>;
   onApprove: (request: ApprovalRequest) => void;
-  onReject: (request: ApprovalRequest) => void;
+  onReject: (request: ApprovalRequest, feedback?: string) => void;
   onOpenFile?: ((path: string) => void) | undefined;
   workspaceRoot?: string | undefined;
   models?: readonly ModelOption[] | undefined;

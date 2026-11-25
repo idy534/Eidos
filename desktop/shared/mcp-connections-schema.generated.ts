@@ -127,6 +127,19 @@ export const mcpConnectionsSchema = {
           "default": null,
           "title": "Token"
         },
+        "clientId": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clientid"
+        },
         "operationId": {
           "anyOf": [
             {

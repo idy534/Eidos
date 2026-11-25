@@ -30,6 +30,9 @@ def test_model_presets_only_expose_the_supported_catalog() -> None:
         "minimax",
         "kimi",
         "volcengine",
+        "openai",
+        "anthropic",
+        "gemini",
     ]
     assert [
         model["id"]
@@ -47,9 +50,15 @@ def test_model_presets_only_expose_the_supported_catalog() -> None:
         "glm-5.3-flash",
         "kimi-k3.1-pro",
         "minimax-m3",
+        "gpt-5.2-codex",
+        "gpt-5.2",
+        "claude-sonnet-4-6",
+        "claude-opus-4-6",
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
     ]
     assert all(
-        model["url"].endswith("/chat/completions")
+        model["url"].endswith(("/chat/completions", "/responses"))
         for provider in presets["providers"]
         for model in provider["models"]
     )
@@ -74,6 +83,12 @@ def test_model_catalog_declares_each_model_reasoning_choices_and_default() -> No
         "glm-5.3-flash": (True, "max", ["low", "high", "max"]),
         "kimi-k3.1-pro": (True, "max", ["low", "high", "max"]),
         "minimax-m3": (False, None, None),
+        "gpt-5.2-codex": (True, "high", ["low", "medium", "high", "xhigh"]),
+        "gpt-5.2": (True, "medium", ["none", "low", "medium", "high", "xhigh"]),
+        "claude-sonnet-4-6": (True, "medium", ["none", "low", "medium", "high"]),
+        "claude-opus-4-6": (True, "high", ["none", "low", "medium", "high"]),
+        "gemini-2.5-pro": (True, "high", ["none", "low", "medium", "high"]),
+        "gemini-2.5-flash": (True, "medium", ["none", "low", "medium", "high"]),
     }
 
     assert set(models) == set(expected)

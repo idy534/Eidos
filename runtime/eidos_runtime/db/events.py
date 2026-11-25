@@ -215,6 +215,7 @@ class MemoryChangedPayload(ClosedModel):
 
 EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.HOOK_SOURCES_CHANGED: AutomationChangedPayload,
+    EventType.GUARDRAILS_CHANGED: AutomationChangedPayload,
     EventType.SHELL_ENVIRONMENT_CHANGED: AutomationChangedPayload,
     EventType.PERSONALIZATION_CHANGED: AutomationChangedPayload,
     EventType.WEB_SEARCH_CHANGED: AutomationChangedPayload,

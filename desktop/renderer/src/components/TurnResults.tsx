@@ -1,7 +1,7 @@
 import { pathBasename, revealFileLabel } from "../platform.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseDiff } from "react-diff-view";
-import type { Item, Run } from "../contracts.js";
+import type { DeclaredOutputSummary, Item, Run } from "../contracts.js";
 import { committedFileDiff, projectNetFileDiff, type ParsedFileDiff } from "../persisted-file-diff.js";
 import { displayFilePath, useArtifacts, usePreviewUrl } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
@@ -285,8 +285,36 @@ export function projectTurnResults(items: Item[], runId: string): TurnResultProj
   };
 }
 
+const EMPTY_RUNS: Run[] = [];
+
 export function collectOutputArtifacts(items: Item[]): TurnArtifact[] {
   const latest = new Map<string, TurnArtifact>();
+  for (const item of items) {
+    for (const artifact of itemDeclaredOutputs(item)) {
+      latest.set(artifactKey(artifact), artifact);
+    }
+  }
+  return [...latest.values()];
+}
+
+export function mergeOutputArtifacts(
+  declaredOutputs: readonly DeclaredOutputSummary[] | undefined,
+  items: Item[],
+): TurnArtifact[] {
+  const latest = new Map<string, TurnArtifact>();
+  for (const summary of declaredOutputs ?? []) {
+    const artifact: TurnArtifact = {
+      path: summary.path,
+      kind: artifactKind(summary.path) ?? "file",
+      executionRoot: summary.executionRoot,
+      version: summary.version,
+      sizeBytes: summary.sizeBytes,
+      runId: summary.runId,
+      itemId: summary.itemId,
+      ...(summary.title !== undefined ? { title: summary.title } : {}),
+    };
+    latest.set(artifactKey(artifact), artifact);
+  }
   for (const item of items) {
     for (const artifact of itemDeclaredOutputs(item)) {
       latest.set(artifactKey(artifact), artifact);
@@ -300,10 +328,11 @@ export function useCompleteSessionItems(
   currentItems: Item[],
   previousItemId: string | undefined,
   currentRuns?: Run[],
+  enabled = true,
 ): { items: Item[]; runs: Run[]; loading: boolean; error?: string } {
   const [olderItems, setOlderItems] = useState<Item[]>([]);
   const [olderRuns, setOlderRuns] = useState<Run[]>([]);
-  const [loading, setLoading] = useState(Boolean(previousItemId));
+  const [loading, setLoading] = useState(Boolean(previousItemId && enabled));
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -311,7 +340,7 @@ export function useCompleteSessionItems(
     setOlderItems([]);
     setOlderRuns([]);
     setError(undefined);
-    if (!sessionId || !previousItemId) {
+    if (!enabled || !sessionId || !previousItemId) {
       setLoading(false);
       return () => { active = false; };
     }
@@ -341,15 +370,18 @@ export function useCompleteSessionItems(
       }
     })();
     return () => { active = false; };
-  }, [previousItemId, sessionId]);
+  }, [enabled, previousItemId, sessionId]);
 
   const items = useMemo(() => {
+    if (olderItems.length === 0) return currentItems;
     const merged = new Map([...olderItems, ...currentItems].map((item) => [item.id, item]));
     return [...merged.values()];
   }, [currentItems, olderItems]);
 
   const runs = useMemo(() => {
-    const merged = new Map([...olderRuns, ...(currentRuns ?? [])].map((run) => [run.id, run]));
+    const base = currentRuns ?? EMPTY_RUNS;
+    if (olderRuns.length === 0) return base;
+    const merged = new Map([...olderRuns, ...base].map((run) => [run.id, run]));
     return [...merged.values()];
   }, [currentRuns, olderRuns]);
 

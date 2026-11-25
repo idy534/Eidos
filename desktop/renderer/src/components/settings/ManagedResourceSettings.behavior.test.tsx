@@ -120,4 +120,22 @@ describe("managed document resources", () => {
     expect(screen.getByText("1/3 已就绪")).toBeInTheDocument();
   });
 
+  it("stops idle polling once all resource packs are settled", async () => {
+    vi.useFakeTimers();
+    const settledStatus: ResourceStatus = {
+      available: true,
+      directory: "/Users/test/Eidos/Resource",
+      packs: [
+        { id: "document-python", title: "基础文档处理", version: "1", phase: "ready" },
+        { id: "ocr", title: "OCR 引擎", version: "1", phase: "failed", errorCode: "resource_disk_full" },
+      ],
+    };
+    const read = vi.fn().mockResolvedValue(settledStatus);
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { getResourceStatus: read } });
+    render(<ManagedResourceSettings />);
+    await act(async () => {});
+    expect(read).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+    expect(read).toHaveBeenCalledTimes(1);
+  });
 });

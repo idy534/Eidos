@@ -7,7 +7,8 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import standaloneCode from "ajv/dist/standalone/index.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const schema = JSON.parse(execFileSync(path.join(root, ".venv/bin/python"), ["-c", `
+const pythonBin = path.join(root, process.platform === "win32" ? ".venv/Scripts/python.exe" : ".venv/bin/python");
+const schema = JSON.parse(execFileSync(pythonBin, ["-c", `
 import json
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.domain.context_management import ContextDetails, ContextCompactionRecord, ContextCompactionActivity

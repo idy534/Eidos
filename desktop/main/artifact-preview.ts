@@ -1,7 +1,7 @@
 import { BrowserWindow, WebContentsView, protocol, session, webContents, type WebContents, type Session } from "electron";
 import { randomUUID } from "node:crypto";
 import type { RuntimeClient } from "./runtime-client.js";
-import type { BrowserAnnotation, BrowserBounds, BrowserPageState } from "../shared/index.js";
+import { IPC, type BrowserAnnotation, type BrowserBounds, type BrowserPageState } from "../shared/index.js";
 
 protocol.registerSchemesAsPrivileged([{ scheme: "eidos-preview", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
 
@@ -287,8 +287,26 @@ export class ArtifactPreviewManager {
         const next = new URL(url);
         if (current.token ? next.protocol !== "eidos-preview:" || next.hostname !== current.token : !["http:", "https:"].includes(next.protocol)) event.preventDefault();
       });
+      view.webContents.on("did-start-loading", () => {
+        current.error = undefined;
+        this.emitState(current);
+      });
+      view.webContents.on("did-stop-loading", () => {
+        this.emitState(current);
+      });
+      view.webContents.on("did-navigate", () => {
+        current.error = undefined;
+        this.emitState(current);
+      });
+      view.webContents.on("did-navigate-in-page", () => {
+        this.emitState(current);
+      });
+      view.webContents.on("page-title-updated", () => {
+        this.emitState(current);
+      });
       view.webContents.on("did-fail-load", (_event, code, _description, _url, mainFrame) => {
         if (mainFrame && code !== -3) current.error = "页面未能加载，请确认地址和开发服务状态。";
+        this.emitState(current);
       });
       window.contentView.addChildView(view);
       view.setVisible(false);
@@ -323,10 +341,55 @@ export class ArtifactPreviewManager {
     return this.state(owner, sessionId, browserId);
   }
 
+  private buildState(entry: BrowserEntry): BrowserPageState {
+    const wc = entry.view.webContents;
+    const history = wc.navigationHistory as { canGoBack?: () => boolean; canGoForward?: () => boolean } | undefined;
+    return {
+      url: wc.getURL(),
+      title: wc.getTitle(),
+      loading: wc.isLoading(),
+      canGoBack: history?.canGoBack?.() ?? false,
+      canGoForward: history?.canGoForward?.() ?? false,
+      ...(entry.error ? { error: entry.error } : {}),
+    };
+  }
+
+  private emitState(entry: BrowserEntry): void {
+    const owner = webContents.fromId(entry.owner);
+    if (!owner || owner.isDestroyed()) return;
+    owner.send(IPC.BROWSER_STATE_EVENT, {
+      sessionId: entry.sessionId,
+      browserId: entry.browserId,
+      state: this.buildState(entry),
+    });
+  }
+
   state(owner: WebContents, sessionId: string, browserId: string): BrowserPageState {
     const entry = this.browsers.get(this.key(owner, sessionId, browserId));
-    if (!entry) return { url: "", title: "", loading: false };
-    return { url: entry.view.webContents.getURL(), title: entry.view.webContents.getTitle(), loading: entry.view.webContents.isLoading(), ...(entry.error ? { error: entry.error } : {}) };
+    if (!entry) return { url: "", title: "", loading: false, canGoBack: false, canGoForward: false };
+    return this.buildState(entry);
+  }
+
+  goBack(owner: WebContents, sessionId: string, browserId: string): BrowserPageState {
+    const entry = this.browsers.get(this.key(owner, sessionId, browserId));
+    if (!entry) return { url: "", title: "", loading: false, canGoBack: false, canGoForward: false };
+    const history = entry.view.webContents.navigationHistory as { canGoBack?: () => boolean; goBack?: () => void } | undefined;
+    if (history?.canGoBack?.()) {
+      history.goBack?.();
+    }
+    this.emitState(entry);
+    return this.buildState(entry);
+  }
+
+  goForward(owner: WebContents, sessionId: string, browserId: string): BrowserPageState {
+    const entry = this.browsers.get(this.key(owner, sessionId, browserId));
+    if (!entry) return { url: "", title: "", loading: false, canGoBack: false, canGoForward: false };
+    const history = entry.view.webContents.navigationHistory as { canGoForward?: () => boolean; goForward?: () => void } | undefined;
+    if (history?.canGoForward?.()) {
+      history.goForward?.();
+    }
+    this.emitState(entry);
+    return this.buildState(entry);
   }
 
   bounds(owner: WebContents, sessionId: string, browserId: string, bounds: BrowserBounds | null): void {

@@ -221,7 +221,7 @@ export interface ApprovalControllerActions {
   loadPending: () => Promise<boolean>;
   clearApprovalsForRun: (runId: string) => void;
   approve: (request: ApprovalRequest) => Promise<void>;
-  reject: (request: ApprovalRequest) => Promise<void>;
+  reject: (request: ApprovalRequest, feedback?: string) => Promise<void>;
 }
 
 export function useApprovalController(): [ApprovalControllerState, ApprovalControllerActions] {
@@ -300,7 +300,7 @@ export function useApprovalController(): [ApprovalControllerState, ApprovalContr
     }
   }, [state.expiredApprovalIds]);
 
-  const reject = useCallback(async (request: ApprovalRequest): Promise<void> => {
+  const reject = useCallback(async (request: ApprovalRequest, feedback?: string): Promise<void> => {
     if (activeLockRef.current.has(request.id) || state.expiredApprovalIds.has(request.id)) {
       return;
     }
@@ -309,7 +309,8 @@ export function useApprovalController(): [ApprovalControllerState, ApprovalContr
     dispatch({ type: "response_started", approvalId: request.id, kind: "reject" });
 
     try {
-      const accepted = await window.eidosRuntime.respondApproval(request.id, "reject");
+      const trimmed = feedback?.trim();
+      const accepted = await window.eidosRuntime.respondApproval(request.id, "reject", trimmed || undefined);
       if (!accepted) {
         dispatch({
           type: "response_expired",

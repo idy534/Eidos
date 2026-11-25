@@ -16,7 +16,7 @@
 
 用户可以通过 `/goal` 设定持续目标。Runtime 在每轮正常结束后接纳新的普通 Run，直到模型按要求声明完成、系统记录受阻或用户暂停、清除目标。Desktop 通过输入框的“＋”菜单和 `/goal` 开启目标模式。目标标签位于访问模式右边，并与 Plan 互斥。用户在输入框中直接填写目标，状态区域展示完成证据。目标的权限、取消、工具执行、未知结果和恢复继续使用现有链路。当前 P0 边界见[目标模式](features/goals.md)。
 
-Eidos 支持多目录项目、一个主要文件夹和侧栏项目编辑。会话固定创建时的目录绑定。Files 和 Review 分别选择文件夹与 Git checkout。主仓库 Worktree 映射其源 checkout 内的目录，其他目录继续共享。系统的 Checkpoint 仍只覆盖主仓库的现有范围。具体行为和限制见 [多目录项目](features/projects.md)。
+Eidos 支持多目录项目、一个主要文件夹和侧栏项目编辑。会话固定创建时的目录绑定。Files 和 Review 分别选择文件夹与 Git checkout。主仓库 Worktree 映射其源 checkout 内的目录，其他目录继续共享。系统在 Git 会话每轮 Run 启动前自动保存轻量级工作区 Checkpoint，支持在对话流通过 `checkpoint/rewind` 回退主工作区或受管 Worktree 文件与 HEAD；多目录次级文件夹的快照回退尚未纳入。具体行为和限制见 [多目录项目](features/projects.md)。
 
 用户可以在“设置 → 网页搜索”配置 DeepSeek Search、LangSearch 和豆包搜索 Custom 版，并手动勾选默认服务。三家可以同时保存，用户也可以全部取消。没有默认服务或可用本地 Key 时，新 Run 不发布 `web_search`。系统不会自动切换服务。Run 固定创建时的配置。用户选择默认服务后，搜索不再逐次审批，仍保留 Durable Intent、取消和有界结果投影；请求可能计费。实现已接入，真实账户 Key 验证仍未进行。配置、持久化和验证边界见[当前网页搜索](features/web-search.md)。
 
@@ -101,7 +101,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - `session/restoreWorktree` 只恢复 Session 的 `associatedWorktreeId`。Deleted Worktree 会返回 `WORKTREE_RESTORE_REQUIRED`，invalid Worktree 会返回 `WORKTREE_RECOVERY_REQUIRED`。Restore 成功后，Run admission 可以重新使用原 Worktree；Runtime 不创建第二个 Worktree。
 - Runtime 可以创建、排队、执行、取消、暂停、恢复和查询 Run。
 - 运行中发送默认排队，当前 Run 不读取后续 queued 输入。队列行的箭头可以把单条消息转为当前 Run 的引导，其余消息继续按 FIFO 执行。“正在处理”会显示引导内容、等待读取和已加入状态。
-- Git 观察、标题生成和其他 Managed Task 共用的入口已把执行与清理统一放到 AnyIO worker。该修订移除了任务清理在事件循环上等待 Supervisor 锁的路径，保留资源登记、协作取消和异常传播。该修订尚未通过回归测试，不能据此宣称 Runtime 无响应问题已完成验收。
+- Git 观察、标题生成和其他 Managed Task 共用的入口已把执行与清理统一放到 AnyIO worker。该修订移除了任务清理在事件循环上等待 Supervisor 锁的路径，保留资源登记、协作取消和异常传播，并发提交/取消防死锁已通过 `runtime/tests/test_async_kernel_deadlock.py` 定向回归验证。
 - Run 按 Session 分别使用持久 FIFO。同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run。不同 Session 的 Run 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。普通 Run 没有并发上限。每个 Run 有独立的 `ToolConcurrencyGate` 和 `ShellProcessManager`，所以不同 Session 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。同一 Run 的长 Shell 不再占有执行门控，其他文件变更、命令和协作调用可以继续；`write_stdin` 继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
 - Run 状态、Item、Step、ToolCall、Approval 和终态写入 SQLite，并通过 Event/Outbox 投影到 Desktop。
 - 取消会传播到 Model、Tool、Shell、Approval 和 Async Task。取消会停止执行，并将可取消的 Run 置为 `canceled`；历史未知结果继续保留，不改变该取消状态。Worker 已退出时，取消 RPC 正常返回。`sideEffectsMayExist` 只是历史证据。已取消 Run 不会被迟到模型结果改成成功。
@@ -156,7 +156,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - 确定的 Tool Error 会作为 ToolResult 进入 Context，并触发下一次模型决策。模型可以修正参数或选择替代 Tool。一次失败不会单独终止 Run。
 - 已明确 `termination = exit` 且有 `exitCode` 的 Shell 会把退出事实、stdout 和 stderr 返回给模型。非 0 退出会让 Item 为 `failed`，但会让 ToolCall 为 `completed`。Workspace manifest 或 index observation 不完整只会标记 observation metadata，不会建立只读 reconciliation barrier，也不会阻止后续 Shell 或其他 ToolCall。Runtime 不自动重放原 Shell。
 - Cancellation、Approval、Reconciliation 和 operational segment rollover 都在安全点处理。
-- LoopGuard 使用 ToolCall、Workspace version、reconciliation epoch、Context fact frontier 和 active error 的 semantic fingerprint。普通 Run 没有固定步数限制。首次重复会注入恢复信息，恢复后再次回到同一状态才会以 `repeated_tool_call` 或 `no_progress` 停止。未解除对账不另设固定恢复轮数；有新事实时可以继续，未知副作用仍不会被记成成功。
+- LoopGuard 使用 ToolCall、Workspace version、reconciliation epoch、Context fact frontier 和 active error 的 semantic fingerprint。普通 Run 没有固定步数限制。首次重复会注入恢复提示；后续若再次回到同一未推进状态或协议恢复耗尽，Runtime 保持普通交互 Run 可取消并执行指数退避恢复循环（`1s`～`30s`），不直接强停整个 Run。未解除对账不另设固定恢复轮数；有新事实时可以继续，未知副作用仍不会被记成成功。
 - Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。Runtime 没有固定的模型步数、Run 时长或 repeated-call counter 生命周期规则。
 
 ## Context
@@ -369,7 +369,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Persistence
 
-- 当前 state schema 是 v54。v54 为记忆笔记增加上次读取时间和读取次数。v42 移除临时记忆模式，v43 新增记忆归档并移除普通聊天来源的连带撤销。v40 重建文档记忆并清除旧记忆，v41 修复历史自动版本的来源撤销。v37 保存插件版本身份，v38 保存远程连接状态和凭据引用，v39 保存 Hook 配置来源和后台接收记录。v32 → v33 增加可重建的聊天搜索正文、FTS5 trigram、待处理队列和索引版本。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
+- 当前 state schema 是 v57。v56 → v57 新增后台执行护栏配置与周期计数表，v55 → v56 新增 Agent 团队与协作表，v54 → v55 增加目标与计划相关字段，v53 → v54 为记忆笔记增加上次读取时间和读取次数。v42 移除临时记忆模式，v43 新增记忆归档并移除普通聊天来源的连带撤销。v40 重建文档记忆并清除旧记忆，v41 修复历史自动版本的来源撤销。v37 保存插件版本身份，v38 保存远程连接状态和凭据引用，v39 保存 Hook 配置来源和后台接收记录。v32 → v33 增加可重建的聊天搜索正文、FTS5 trigram、待处理队列和索引版本。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
 - `state.sqlite` 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context lineage、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 使用独立 schema v2 索引有总量上限的日志 JSONL。Runtime 会兼容迁移使用 `content_sha256` 或 `chain_sha256` 的两种 v1 日志表。记忆正文使用私有 Markdown 文件，作用域、版本与撤销状态由 `state.sqlite` 管理；旧 `memories.sqlite` 在 v40 升级后删除。
 - ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。新 ContextSnapshot 将重复的模型上下文项和工具定义保存为共享块，顶层清单保留顺序和快照元数据；旧版完整快照仍可读取。主库保存带 checksum 和大小的顶层引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。

@@ -2972,4 +2972,59 @@ describe("Targeted tool feed improvements", () => {
     fireEvent.click(screen.getByRole("button", { name: "index.ts" }));
     expect(onOpenFile).toHaveBeenCalledWith("src/index.ts", { line: 10 });
   });
+
+  it("virtualizes offscreen run groups when session exceeds 24 runs while keeping search targets mounted", () => {
+    const runs: Run[] = Array.from({ length: 30 }, (_, index) => ({
+      id: `run-v-${index}`,
+      sessionId: "session-virtual",
+      status: "succeeded",
+      modelId: "deepseek-v4-flash",
+      modelStepCount: 1,
+      createdAt: index + 1,
+      startedAt: index + 1,
+      updatedAt: index + 1,
+      completedAt: index + 1,
+    }));
+    const items: Item[] = runs.flatMap((run, index) => [
+      {
+        id: `user-v-${index}`,
+        sessionId: "session-virtual",
+        runId: run.id,
+        ordinal: 1,
+        kind: "user_message" as const,
+        status: "completed" as const,
+        createdAt: index + 1,
+        content: `Question ${index}`,
+      },
+      {
+        id: `answer-v-${index}`,
+        sessionId: "session-virtual",
+        runId: run.id,
+        ordinal: 2,
+        kind: "assistant_message" as const,
+        status: "completed" as const,
+        createdAt: index + 2,
+        content: `Answer ${index}`,
+      },
+    ]);
+
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 400 });
+    try {
+      const { container } = render(
+        <ExecutionFeed
+          items={items}
+          runs={runs}
+          approvals={[]}
+          searchTarget={{ itemId: "answer-v-10", query: "Answer", occurrence: 0, revision: 1 }}
+        />,
+      );
+      expect(container.querySelectorAll('[data-virtualized="true"]').length).toBeGreaterThan(0);
+      expect(document.getElementById("item-answer-v-10")).toBeInTheDocument();
+      expect(container.querySelectorAll('[data-run-anchor]').length).toBe(30);
+    } finally {
+      if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      else Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
+    }
+  });
 });

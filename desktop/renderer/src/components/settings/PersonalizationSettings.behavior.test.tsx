@@ -299,4 +299,18 @@ describe("Personalization settings", () => {
     await user.click(screen.getByRole("button", { name: "丢弃并离开" }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("updates and persists theme preference independently of personalization storage", async () => {
+    install();
+    const user = userEvent.setup();
+    render(<PersonalizationSettings />);
+    const themeSelect = await screen.findByLabelText("主题");
+    expect(themeSelect).toHaveValue("system");
+    await user.selectOptions(themeSelect, "dark");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(window.localStorage.getItem("eidos.themePreference")).toBe("dark");
+    await user.selectOptions(themeSelect, "system");
+    expect(document.documentElement.dataset.theme).toBeUndefined();
+    expect(window.localStorage.getItem("eidos.themePreference")).toBe("system");
+  });
 });

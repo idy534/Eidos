@@ -101,6 +101,8 @@ def transition_run(
     if target_status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.STOPPED, RunStatus.CANCELED, RunStatus.INTERRUPTED}:
         from eidos_runtime.persistence.goals import settle_goal_run
         settle_goal_run(connection, run_id, target_status.value, reason)
+        from eidos_runtime.persistence.automations import settle_automation_run
+        settle_automation_run(connection, run_id, target_status.value)
         from eidos_runtime.persistence.teams import TeamRepository
         TeamRepository.settle_run_in_connection(connection, run_id, target_status.value)
         connection.execute("UPDATE agent_waits SET status='canceled' WHERE run_id=? AND status='pending'", (run_id,))

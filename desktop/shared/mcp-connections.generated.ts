@@ -5,6 +5,7 @@ export type Serverid = string;
 export type Action = "read" | "connect" | "cancel" | "disconnect";
 export type Method = "browser" | "token";
 export type Token = string | null;
+export type Clientid = string | null;
 export type Operationid = string | null;
 export type Pluginid1 = string;
 export type Serverid1 = string;
@@ -42,6 +43,7 @@ export interface McpConnectionRequest {
   action?: Action;
   method?: Method;
   token?: Token;
+  clientId?: Clientid;
   operationId?: Operationid;
 }
 export interface McpConnectionState {

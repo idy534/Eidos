@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from eidos_runtime.infrastructure import local_files
 
+from collections import deque
 from dataclasses import dataclass
 import heapq
 import hashlib
@@ -13,6 +14,8 @@ import threading
 import time
 from typing import Iterator, Literal
 
+from rapidfuzz import fuzz
+
 from eidos_runtime.db.database import WorkspaceIdentity
 from eidos_runtime.workspace.discovery_policy import (
     HARD_DISCOVERY_DIRECTORIES,
@@ -23,6 +26,9 @@ from eidos_runtime.workspace.discovery_scope import WorkspaceDiscoveryScope
 
 DEFAULT_DIRECTORY_LIMIT = 500
 MAX_DIRECTORY_LIMIT = 2_000
+MAX_FIND_FILES_LIMIT = 500
+MAX_SEARCH_DEPTH = 16
+MAX_SEARCH_VISITED = 12_000
 MAX_PREVIEW_BYTES = 512 * 1024
 DIRECTORY_READ_TIMEOUT_SECONDS = 5.0
 
@@ -44,6 +50,12 @@ class WorkspaceDirectoryEntry:
 @dataclass(frozen=True)
 class WorkspaceDirectoryListing:
     path: str
+    entries: tuple[WorkspaceDirectoryEntry, ...]
+    truncated: bool
+
+
+@dataclass(frozen=True)
+class WorkspaceFileSearchResult:
     entries: tuple[WorkspaceDirectoryEntry, ...]
     truncated: bool
 
@@ -274,6 +286,101 @@ class WorkspaceReader:
             path=normalized,
             entries=tuple(entries[:limit]),
             truncated=len(entries) > limit,
+        )
+
+    def find_files(
+        self,
+        query: str = "",
+        *,
+        limit: int = 100,
+        cancel: threading.Event | None = None,
+    ) -> WorkspaceFileSearchResult:
+        if limit < 1 or limit > MAX_FIND_FILES_LIMIT:
+            raise WorkspacePathError("invalid_directory_limit")
+        self._verify_root()
+        cancel = cancel or threading.Event()
+        scope = WorkspaceDiscoveryScope.load(self.root_fd)
+        deadline = time.monotonic() + DIRECTORY_READ_TIMEOUT_SECONDS
+        needle = query.strip().lower()
+        collected: list[tuple[int, WorkspaceDirectoryEntry]] = []
+        visited = 0
+        truncated_scan = False
+        queue: deque[tuple[int, str, int]] = deque([(os.dup(self.root_fd), ".", 0)])
+        try:
+            while queue and not truncated_scan:
+                directory_fd, directory, depth = queue.popleft()
+                allow_metadata = is_readable_metadata_path(directory)
+                try:
+                    with local_files.scan_directory(directory_fd) as entries:
+                        for entry in entries:
+                            if cancel.is_set():
+                                raise WorkspacePathError("canceled")
+                            if time.monotonic() > deadline:
+                                raise WorkspacePathError("workspace_read_timeout")
+                            name = entry.name
+                            if name in HARD_DISCOVERY_DIRECTORIES and not allow_metadata:
+                                continue
+                            try:
+                                metadata = local_files.lstat_at(name, directory_fd)
+                            except OSError:
+                                continue
+                            if local_files.is_link(metadata):
+                                continue
+                            relative = name if directory == "." else f"{directory}/{name}"
+                            if stat.S_ISDIR(metadata.st_mode):
+                                if scope.is_ignored(relative, is_directory=True):
+                                    continue
+                                collected.append((depth, WorkspaceDirectoryEntry(name, relative, "directory")))
+                                visited += 1
+                                if depth + 1 < MAX_SEARCH_DEPTH:
+                                    try:
+                                        child_fd = local_files.open_directory(name, dir_fd=directory_fd)
+                                    except OSError:
+                                        child_fd = -1
+                                    if child_fd >= 0:
+                                        queue.append((child_fd, relative, depth + 1))
+                            elif stat.S_ISREG(metadata.st_mode):
+                                if scope.is_ignored(relative, is_directory=False):
+                                    continue
+                                collected.append((depth, WorkspaceDirectoryEntry(name, relative, "file", metadata.st_size)))
+                                visited += 1
+                            if visited >= MAX_SEARCH_VISITED:
+                                truncated_scan = True
+                                break
+                except OSError:
+                    if directory == ".":
+                        raise WorkspacePathError("workspace_unavailable") from None
+                    continue
+                finally:
+                    os.close(directory_fd)
+        finally:
+            while queue:
+                leftover_fd, _, _ = queue.popleft()
+                try:
+                    os.close(leftover_fd)
+                except OSError:
+                    pass
+
+        if not needle:
+            collected.sort(
+                key=lambda item: (item[0], 0 if item[1].kind == "directory" else 1, item[1].relative_path.lower())
+            )
+            selected = tuple(entry for _, entry in collected[:limit])
+            return WorkspaceFileSearchResult(
+                entries=selected,
+                truncated=truncated_scan or len(collected) > limit,
+            )
+
+        scored: list[tuple[tuple[int, float, int, str], WorkspaceDirectoryEntry]] = []
+        for depth, item in collected:
+            key = _score_find_entry(needle, item, depth)
+            if key is not None:
+                scored.append((key, item))
+        scored.sort(key=lambda pair: pair[0])
+        selected = tuple(entry for _, entry in scored[:limit])
+        return WorkspaceFileSearchResult(
+            entries=selected,
+            truncated=truncated_scan or len(scored) > limit,
         )
 
     def read_file_bytes(
@@ -549,10 +656,33 @@ def is_workspace_discoverable_path(value: str) -> bool:
     )
 
 
+def _score_find_entry(
+    needle: str,
+    entry: WorkspaceDirectoryEntry,
+    depth: int,
+) -> tuple[int, float, int, str] | None:
+    name_l = entry.name.lower()
+    rel_l = entry.relative_path.lower()
+    if name_l == needle or rel_l == needle:
+        return (0, 0.0, depth, rel_l)
+    if name_l.startswith(needle):
+        return (1, float(len(name_l) - len(needle)), depth, rel_l)
+    name_pos = name_l.find(needle)
+    if name_pos >= 0:
+        return (2, float(name_pos), depth, rel_l)
+    rel_pos = rel_l.find(needle)
+    if rel_pos >= 0:
+        return (3, float(rel_pos), depth, rel_l)
+    ratio = max(fuzz.WRatio(needle, name_l), fuzz.WRatio(needle, rel_l))
+    if ratio >= 65.0:
+        return (4, -float(ratio), depth, rel_l)
+    return None
+
+
 __all__ = [
     "DEFAULT_DIRECTORY_LIMIT", "MAX_DIRECTORY_LIMIT", "WorkspaceDirectoryEntry",
-    "WorkspaceDirectoryListing", "WorkspaceFilePreview", "WorkspacePathError",
-    "WorkspaceReader", "capture_workspace_identity", "validate_workspace_relative_path",
-    "capture_directory_identity",
+    "WorkspaceDirectoryListing", "WorkspaceFilePreview", "WorkspaceFileSearchResult",
+    "WorkspacePathError", "WorkspaceReader", "capture_workspace_identity",
+    "validate_workspace_relative_path", "capture_directory_identity",
     "is_workspace_discoverable_path",
 ]

@@ -78,13 +78,14 @@ def parse_hooks(value: object, source: str) -> tuple[HookDefinition, ...]:
                 except Exception as error:
                     raise ValueError("hook_matcher_invalid") from error
             for index, handler in enumerate(group.hooks):
-                if handler.type == "command" and not handler.command:
+                if handler.type == "command" and not (handler.command or handler.commandWindows):
                     raise ValueError("hook_command_missing")
                 if handler.type == "mcp_tool" and not (handler.server and handler.tool):
                     raise ValueError("hook_mcp_tool_missing")
                 definitions.append(HookDefinition(
                     key=f"{source}:{event}:{group_index}:{index}", event=event,
-                    matcher=group.matcher, handler_type=handler.type, command=handler.command,
+                    matcher=group.matcher, handler_type=handler.type,
+                    command=handler.command, command_windows=handler.commandWindows,
                     timeout_seconds=min(handler.timeout or 1, 3) if event in {"Interrupt", "SessionEnd"} else handler.timeout or 600,
                     background=handler.asynchronous and event != "SessionEnd", status_message=handler.statusMessage,
                     additional_context_limit=handler.additionalContextLimit,

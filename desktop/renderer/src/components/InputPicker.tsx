@@ -6,16 +6,19 @@ import { useInputContext } from "./InputContext.js";
 import { userFacingError } from "../session-state.js";
 import { pathBasename } from "../platform.js";
 import { Tooltip } from "./Tooltip.js";
+import { SLASH_COMMANDS, type SlashCommandId } from "./slash-commands.js";
 
 export type InputPickerMode = "all" | "skill" | "commands";
-interface Candidate { id: string; label: string; detail: string; request?: InputPrepareRequest; action?: string; unavailable?: boolean }
-const commands: Candidate[] = [
-  { id: "plan", label: "/plan", detail: "开始 Plan 模式", action: "plan" },
-  { id: "goal", label: "/goal", detail: "设定持续推进的目标", action: "goal" },
-  { id: "team", label: "/team", detail: "组建 Agent 团队", action: "team" },
-  { id: "mcp", label: "/mcp", detail: "查看与管理 MCP", action: "mcp" },
-  { id: "plugins", label: "/plugins", detail: "管理 Plugin", action: "plugins" },
-];
+interface Candidate {
+  id: string;
+  label: string;
+  detail: string;
+  keywords?: readonly string[] | undefined;
+  request?: InputPrepareRequest;
+  action?: string;
+  unavailable?: boolean;
+  matchedRemotely?: boolean;
+}
 const CATEGORIES = [
   { id: "all", label: "全部" },
   { id: "file", label: "文件" },
@@ -78,16 +81,26 @@ function measurePickerLayout(surface: HTMLElement, boundary: HTMLElement | null)
   return { top: placement === "above" ? aboveBottom - height : belowTop, left, width, height, placement };
 }
 
-export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, onListId, onSelectPlanMode, onSelectGoalMode, onSelectTeamMode, onCreateAgent, anchor }: {
+export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, commandAvailability, onListId, onSelectPlanMode, onSelectGoalMode, onSelectTeamMode, onCreateAgent, anchor }: {
   mode: InputPickerMode; query: string; inline: boolean;
   onQuery(value: string): void; onChoose(request: InputPrepareRequest): void; onClose(): void;
-  onCommand(command: string): void; onListId?(id: string, active: string | undefined): void;
+  onCommand(command: string): void;
+  commandAvailability?: Partial<Record<SlashCommandId, boolean>> | undefined;
+  onListId?(id: string, active: string | undefined): void;
   onSelectPlanMode?(): void;
   onSelectGoalMode?(): void;
   onSelectTeamMode?(): void;
   onCreateAgent?: (() => void) | undefined;
   anchor?: RefObject<HTMLElement | null> | undefined;
 }) {
+  const commandCandidates: Candidate[] = SLASH_COMMANDS.map((cmd) => ({
+    id: cmd.id,
+    label: cmd.label,
+    detail: cmd.detail,
+    keywords: cmd.keywords,
+    action: cmd.id,
+    unavailable: commandAvailability?.[cmd.id] === false,
+  }));
   const context = useInputContext();
   const [catalog, setCatalog] = useState<Candidate[]>([]);
   const [files, setFiles] = useState<Candidate[]>([]);
@@ -143,11 +156,11 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
     let active = true;
     setLoading(true);
     if (mode === "commands") {
-      setCatalog(commands);
+      setCatalog(commandCandidates);
       void window.eidosRuntime.listSkills().then(
         (skills) => {
           if (!active) return;
-          const rows: Candidate[] = [...commands];
+          const rows: Candidate[] = [...commandCandidates];
           for (const value of skills.skills) {
             const source = value.sourceKind === "system" ? "系统" : value.sourceKind === "user" ? "个人" : value.pluginId || "插件";
             rows.push({
@@ -160,7 +173,7 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
         },
         () => {
           if (!active) return;
-          setCatalog(commands);
+          setCatalog(commandCandidates);
           setLoading(false);
         },
       );
@@ -218,28 +231,64 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
       || (context.sessionId.startsWith("draft-") && !context.projectId)) { setFiles([]); return; }
     const roots = context.workspaceRoots;
     const perRoot = Math.max(1, Math.floor(200 / roots.length));
+    const findFilesFn = window.eidosRuntime.findWorkspaceFiles;
+    const trimmedQuery = query.trim();
+
+    const toCandidate = (root: string, entry: { name: string; relativePath: string; kind: "file" | "directory" }, remoteMatch: boolean): Candidate => {
+      const slash = entry.relativePath.lastIndexOf("/");
+      const parentDir = slash > 0 ? entry.relativePath.slice(0, slash) : "";
+      const kindLabel = entry.kind === "directory" ? "文件夹" : "文件";
+      const pathDetail = parentDir ? `${parentDir} · ${kindLabel}` : kindLabel;
+      return {
+        id: `file:${root}/${entry.relativePath}`,
+        label: entry.name,
+        detail: roots.length > 1 ? `${root} · ${pathDetail}` : pathDetail,
+        request: { kind: entry.kind === "directory" ? "directory" as const : "file" as const, source: `${root}/${entry.relativePath}` },
+        matchedRemotely: remoteMatch,
+      };
+    };
+
+    if (typeof findFilesFn === "function") {
+      const timer = setTimeout(() => {
+        void Promise.all(roots.map(async (root) => ({
+          root,
+          result: await findFilesFn(context.sessionId, trimmedQuery, perRoot, root, context.projectId),
+        }))).then((results) => {
+          if (!active) return;
+          setFiles(results.flatMap(({ root, result }) =>
+            result.entries.map((entry) => toCandidate(root, entry, trimmedQuery.length > 0))
+          ).slice(0, 200));
+          if (results.some(({ result }) => result.truncated)) setError("当前目录结果较多。");
+        }, (cause) => { if (active) { setFiles([]); setError(userFacingError(cause)); } });
+      }, trimmedQuery ? 120 : 0);
+      return () => {
+        active = false;
+        clearTimeout(timer);
+      };
+    }
+
     void Promise.all(roots.map(async root => ({ root, result: await window.eidosRuntime.listWorkspaceDirectory(
       context.sessionId, ".", perRoot, root, context.projectId,
     ) }))).then((results) => {
       if (!active) return;
-      setFiles(results.flatMap(({ root, result }) => result.entries.map((entry) => ({
-        id: `file:${root}/${entry.relativePath}`, label: entry.name,
-        detail: roots.length > 1 ? `${root} · ${entry.kind === "directory" ? "文件夹" : "文件"}` : entry.kind === "directory" ? "文件夹" : "文件",
-        request: { kind: entry.kind === "directory" ? "directory" as const : "file" as const, source: `${root}/${entry.relativePath}` },
-      }))).slice(0, 200));
+      setFiles(results.flatMap(({ root, result }) => result.entries.map((entry) => toCandidate(root, entry, false))).slice(0, 200));
       if (results.some(({ result }) => result.truncated)) setError("当前目录结果较多。");
     }, (cause) => { if (active) { setFiles([]); setError(userFacingError(cause)); } });
     return () => { active = false; };
-  }, [mode, context?.sessionId, JSON.stringify(context?.workspaceRoots), context?.projectId, context?.workspaceRevision]);
+  }, [mode, query, context?.sessionId, JSON.stringify(context?.workspaceRoots), context?.projectId, context?.workspaceRevision]);
 
   const needle = query.toLocaleLowerCase();
   const cleanNeedle = (mode === "commands" && needle.startsWith("/")) ? needle.slice(1) : needle;
-  const candidates = (history ?? [...files, ...catalog]).filter((value) =>
-    (mode !== "skill" || value.request?.kind === "skill")
-    && (category === "all" || value.request?.kind === category || (category === "file" && ["file", "directory"].includes(value.request?.kind ?? "")))
-    && (`${value.label} ${value.detail} ${value.request?.source ?? ""}`.toLocaleLowerCase().includes(needle)
-      || (cleanNeedle ? `${value.label} ${value.detail} ${value.request?.source ?? ""}`.toLocaleLowerCase().includes(cleanNeedle) : false)),
-  ).slice(0, 80);
+  const candidates = (history ?? [...files, ...catalog]).filter((value) => {
+    if (mode === "skill" && value.request?.kind !== "skill") return false;
+    if (!(category === "all" || value.request?.kind === category || (category === "file" && ["file", "directory"].includes(value.request?.kind ?? "")))) {
+      return false;
+    }
+    if (!needle) return true;
+    if (value.matchedRemotely) return true;
+    const haystack = `${value.label} ${value.detail} ${value.request?.source ?? ""} ${(value.keywords ?? []).join(" ")}`.toLocaleLowerCase();
+    return haystack.includes(needle) || (cleanNeedle ? haystack.includes(cleanNeedle) : false);
+  }).slice(0, 80);
   const choose = (candidate: Candidate | undefined) => {
     if (!candidate || candidate.unavailable) return;
     if (candidate.action) onCommand(candidate.action);

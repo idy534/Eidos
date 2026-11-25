@@ -128,7 +128,7 @@ def test_v46_backup_restore_pins_existing_worktree_gitdir_identity(tmp_path):
         restored.close()
 
 
-@pytest.mark.parametrize("schema_version", [40, 41, 42, 43, 44, 45, 46, 47, 50, 51, 52, 53, 54, SCHEMA_VERSION])
+@pytest.mark.parametrize("schema_version", [40, 41, 42, 43, 44, 45, 46, 47, 50, 51, 52, 53, 54, 55, 56, SCHEMA_VERSION])
 def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(
     tmp_path, schema_version, downgrade_project_workspaces_schema
 ):
@@ -160,10 +160,16 @@ def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(
             from schema_fixtures import (
                 remove_agent_workspace_schema,
                 remove_goal_schema,
+                remove_guardrails_schema,
                 remove_memory_usage_schema,
                 remove_shell_display_schema,
+                remove_team_schema,
             )
-            if schema_version == 54:
+            if schema_version == 56:
+                remove_guardrails_schema(connection)
+            elif schema_version == 55:
+                remove_team_schema(connection)
+            elif schema_version == 54:
                 remove_agent_workspace_schema(connection)
             elif schema_version == 53:
                 remove_memory_usage_schema(connection)

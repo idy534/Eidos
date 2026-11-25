@@ -116,7 +116,14 @@ class McpConnections:
                 raise ApplicationError("MCP_NOT_AUTHORIZED")
             if request.method == "browser" and auth.type not in {"oauth", "github-device", "none"}:
                 raise ApplicationError("MCP_TOKEN_REQUIRED")
-            if request.method == "browser" and auth.type == "github-device" and not self._github_client(auth):
+            effective_client_id = (
+                (request.client_id or self._github_client(auth))
+                if auth.type == "github-device"
+                else (request.client_id or auth.client_id)
+                if auth.type == "oauth"
+                else None
+            )
+            if request.method == "browser" and auth.type == "github-device" and not effective_client_id:
                 raise ApplicationError("GITHUB_CLIENT_ID_REQUIRED")
             if request.method == "token" and auth.type == "none":
                 raise ApplicationError("MCP_AUTH_INVALID")
@@ -129,7 +136,8 @@ class McpConnections:
                 if previous:
                     previous.cancel()
                 token = request.token.get_secret_value() if request.token else None
-                self._tasks[key] = kernel.start_task(self._login, record, config, token,
+                self._tasks[key] = kernel.start_task(
+                    self._login, record, config, token, effective_client_id,
                     owner_id=f"mcp-login:{key[0]}:{key[1]}", deadline=time.monotonic() + 600)
             except Exception:
                 self.repository.save(record.model_copy(update={"status": "error", "error_code": "mcp_connection_failed",
@@ -137,7 +145,13 @@ class McpConnections:
                 raise ApplicationError("RUNTIME_DRAINING") from None
             return self.read(*key)
 
-    async def _login(self, record: StoredMcpConnection, config: "McpServerConfigV1", token: str | None) -> None:
+    async def _login(
+        self,
+        record: StoredMcpConnection,
+        config: "McpServerConfigV1",
+        token: str | None,
+        client_id: str | None = None,
+    ) -> None:
         auth = config.auth or RemoteMcpAuth()
         credentials = Credentials(token=OAuthToken(access_token=token)) if token else Credentials()
 
@@ -158,12 +172,14 @@ class McpConnections:
 
         try:
             if not token and auth.type == "github-device":
-                credentials = await github_device_login(str(self._github_client(auth)), auth.scopes, present)
+                resolved_github_client = client_id or self._github_client(auth)
+                credentials = await github_device_login(str(resolved_github_client), auth.scopes, present)
             if not token and auth.type == "oauth":
                 async with oauth_callback() as (redirect_uri, callback):
-                    if auth.client_id:
+                    resolved_oauth_client = client_id or auth.client_id
+                    if resolved_oauth_client:
                         credentials = credentials.model_copy(update={"client_info": OAuthClientInformationFull(
-                            client_id=auth.client_id, redirect_uris=[redirect_uri], token_endpoint_auth_method="none")})
+                            client_id=resolved_oauth_client, redirect_uris=[redirect_uri], token_endpoint_auth_method="none")})
                     provider = oauth_provider(str(config.url), auth, OAuthStorage(load, save),
                                               redirect_uri=redirect_uri, redirect=present, callback=callback)
                     await verify_remote(str(config.url), auth=provider)

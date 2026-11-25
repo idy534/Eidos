@@ -129,7 +129,7 @@ class ModelGatewayProtocolTests(unittest.TestCase):
             results = messages(output)
             self.assertEqual(
                 [provider["id"] for provider in results["presets"]["result"]["providers"]],
-                ["deepseek", "minimax", "kimi", "volcengine"],
+                ["deepseek", "minimax", "kimi", "volcengine", "openai", "anthropic", "gemini"],
             )
             self.assertEqual(
                 [model["id"] for model in results["list"]["result"]["models"]],

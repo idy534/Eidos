@@ -285,4 +285,46 @@ describe("InputPicker behavior", () => {
     expect(onChoose).toHaveBeenCalledWith({ kind: "file", source: "/work/second/README.md" });
   });
 
+  it("uses findWorkspaceFiles for recursive nested search and respects slash commandAvailability", async () => {
+    const findWorkspaceFiles = vi.fn(async (_session: string, query: string) => ({
+      truncated: false,
+      entries: query
+        ? [{ name: "AppShell.tsx", relativePath: "src/app/AppShell.tsx", kind: "file" as const }]
+        : [{ name: "src", relativePath: "src", kind: "directory" as const }],
+    }));
+    setupRuntime({ findWorkspaceFiles });
+    const onCommand = vi.fn();
+
+    const { rerender } = render(
+      <InputContextProvider sessionId="session-1" workspaceRoot="/work/main" ready onAdd={vi.fn()} onSettings={vi.fn()}>
+        <InputPicker {...pickerProps} mode="all" query="app" onCommand={onCommand} />
+      </InputContextProvider>,
+    );
+
+    const nestedFile = await screen.findByRole("option", { name: /AppShell\.tsx/ });
+    expect(nestedFile).toHaveTextContent("src/app · 文件");
+    expect(findWorkspaceFiles).toHaveBeenCalledWith("session-1", "app", 200, "/work/main", undefined);
+
+    rerender(
+      <InputContextProvider sessionId="session-1" workspaceRoot="/work/main" ready onAdd={vi.fn()} onSettings={vi.fn()}>
+        <InputPicker
+          {...pickerProps}
+          mode="commands"
+          query=""
+          onCommand={onCommand}
+          commandAvailability={{ compact: false, fork: true, review: true }}
+        />
+      </InputContextProvider>,
+    );
+
+    const compactOption = await screen.findByRole("option", { name: /\/compact/ });
+    expect(compactOption).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(compactOption);
+    expect(onCommand).not.toHaveBeenCalled();
+
+    const reviewOption = screen.getByRole("option", { name: /\/review/ });
+    fireEvent.click(reviewOption);
+    expect(onCommand).toHaveBeenCalledWith("review");
+  });
+
 });

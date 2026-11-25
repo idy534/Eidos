@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 from pathlib import Path
+import re
 import sqlite3
 import uuid
 from typing import Literal
@@ -54,6 +55,10 @@ from eidos_runtime.workspace.projectless import projectless_root
 DEFAULT_LIST_LIMIT = 50
 SESSION_CURSOR_PREFIX = "session-v2:"
 MAX_SNAPSHOT_BYTES = 768 * 1024
+MAX_DECLARED_OUTPUT_SUMMARIES = 200
+_DRIVE_ABS_RE = re.compile(r"^[A-Za-z]:[\\/]")
+_HEX64_RE = re.compile(r"^[a-f0-9]{64}$")
+_CTRL_OR_BACKSLASH_RE = re.compile(r"[\x00-\x1f\x7f\\]")
 
 SESSION_SELECT = """
     SELECT s.creation_seq, s.id, s.workspace_root, s.worktree_id, s.project_id, s.workspace_roots_json,
@@ -1190,6 +1195,11 @@ class SessionRepository(Repository):
                 "SELECT COALESCE(MAX(id), 0) FROM events WHERE session_id = ?",
                 (session_id,),
             ).fetchone()[0]
+            declared_outputs = (
+                _read_declared_outputs(connection, session_id)
+                if before_item_id is None
+                else []
+            )
         session = session_to_legacy_dict(session_from_row(session_row))
         from eidos_runtime.persistence.automations import AutomationRepository
         automation_origins = AutomationRepository(self.database).origins_for_runs([row["id"] for row in run_rows])
@@ -1242,6 +1252,8 @@ class SessionRepository(Repository):
             "stepResolutions": [],
             "throughEventId": through_event_id,
         }
+        if declared_outputs:
+            snapshot["declaredOutputs"] = declared_outputs
         if has_more and selected_items:
             snapshot["previousItemId"] = selected_items[0]["id"]
         if not has_more:
@@ -1308,6 +1320,156 @@ class SessionRepository(Repository):
             "hasMore": len(rows) > limit,
             "throughEventId": rows[min(len(rows), limit) - 1]["id"] if rows else after_event_id,
         }
+
+
+def _collect_declared_batch(
+    latest: dict[tuple[str, str], dict[str, object]],
+    *,
+    item_id: str,
+    run_id: str,
+    provenance_raw: object,
+    result_raw: object,
+) -> None:
+    if isinstance(provenance_raw, str):
+        try:
+            provenance_raw = json.loads(provenance_raw)
+        except ValueError:
+            return
+    if (
+        not isinstance(provenance_raw, dict)
+        or provenance_raw.get("kind") != "builtin"
+        or provenance_raw.get("sourceId") != "eidos.declare-outputs"
+    ):
+        return
+    if isinstance(result_raw, str):
+        try:
+            result_raw = json.loads(result_raw)
+        except ValueError:
+            return
+    if (
+        not isinstance(result_raw, dict)
+        or result_raw.get("outcome") != "success"
+        or result_raw.get("code") != "ok"
+        or result_raw.get("reconciliationRequired") is True
+    ):
+        return
+    data = result_raw.get("data")
+    if not isinstance(data, dict):
+        return
+    execution_root = data.get("executionRoot")
+    outputs = data.get("outputs")
+    if (
+        not isinstance(execution_root, str)
+        or not (execution_root.startswith("/") or _DRIVE_ABS_RE.match(execution_root))
+        or len(execution_root) > 4096
+        or not isinstance(outputs, list)
+        or not (1 <= len(outputs) <= 20)
+    ):
+        return
+    batch: list[dict[str, object]] = []
+    for entry in outputs:
+        if not isinstance(entry, dict):
+            return
+        output_path = entry.get("path")
+        version = entry.get("version")
+        size_bytes = entry.get("sizeBytes")
+        title = entry.get("title")
+        if (
+            not isinstance(output_path, str)
+            or not output_path
+            or len(output_path) > 512
+            or _CTRL_OR_BACKSLASH_RE.search(output_path) is not None
+            or any(part in {"", ".", ".."} for part in output_path.split("/"))
+            or not isinstance(version, str)
+            or _HEX64_RE.match(version) is None
+            or isinstance(size_bytes, bool)
+            or not isinstance(size_bytes, int)
+            or not (0 <= size_bytes <= 9_007_199_254_740_991)
+        ):
+            return
+        if title is not None and (
+            not isinstance(title, str) or not title.strip() or len(title) > 120
+        ):
+            return
+        item: dict[str, object] = {
+            "path": output_path,
+            "executionRoot": execution_root,
+            "version": version,
+            "sizeBytes": size_bytes,
+            "runId": run_id,
+            "itemId": item_id,
+        }
+        if title is not None:
+            item["title"] = title
+        batch.append(item)
+    for item in batch:
+        latest[(str(item["executionRoot"]), str(item["path"]))] = item
+
+
+def _read_declared_outputs(
+    connection: sqlite3.Connection,
+    session_id: str,
+) -> list[dict[str, object]]:
+    latest: dict[tuple[str, str], dict[str, object]] = {}
+    has_history = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_history_entries'"
+    ).fetchone() is not None
+    if has_history:
+        history_rows = connection.execute(
+            """
+            SELECT item_id, run_id, record_json
+            FROM session_history_entries
+            WHERE session_id = ?
+              AND json_extract(record_json, '$.item.status') = 'completed'
+              AND json_extract(record_json, '$.item.toolCall.toolName') = 'declare_outputs'
+              AND json_extract(record_json, '$.item.toolCall.status') = 'completed'
+            ORDER BY sequence ASC
+            """,
+            (session_id,),
+        ).fetchall()
+        for row in history_rows:
+            try:
+                record = json.loads(row["record_json"])
+            except ValueError:
+                continue
+            item_obj = record.get("item") if isinstance(record, dict) else None
+            tool_call = item_obj.get("toolCall") if isinstance(item_obj, dict) else None
+            if not isinstance(tool_call, dict):
+                continue
+            _collect_declared_batch(
+                latest,
+                item_id=str(row["item_id"]),
+                run_id=str(row["run_id"]),
+                provenance_raw=tool_call.get("provenance"),
+                result_raw=tool_call.get("resultJson"),
+            )
+    rows = connection.execute(
+        """
+        SELECT i.id AS item_id, i.run_id AS run_id,
+               tc.provenance_json,
+               COALESCE(tc.ui_result_json, tc.result_json) AS result_json
+        FROM items i
+        JOIN tool_calls tc ON tc.item_id = i.id
+        WHERE i.session_id = ?
+          AND i.status = 'completed'
+          AND tc.tool_name = 'declare_outputs'
+          AND tc.status = 'completed'
+        ORDER BY i.creation_seq ASC
+        """,
+        (session_id,),
+    ).fetchall()
+    for row in rows:
+        _collect_declared_batch(
+            latest,
+            item_id=str(row["item_id"]),
+            run_id=str(row["run_id"]),
+            provenance_raw=row["provenance_json"],
+            result_raw=row["result_json"],
+        )
+    values = list(latest.values())
+    if len(values) > MAX_DECLARED_OUTPUT_SUMMARIES:
+        values = values[-MAX_DECLARED_OUTPUT_SUMMARIES:]
+    return values
 
 
 def _canonical_workspace(value: str) -> Path:

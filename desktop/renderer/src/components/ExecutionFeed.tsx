@@ -18,7 +18,7 @@ import type { LiveThinking, LiveThinkingMap } from "../live-thinking.js";
 import { BrowserToolBody, McpPluginNamesContext, McpToolBody, browserPageHost, mcpToolTitle, toolAttachments, useToolContentPreview } from "./McpToolDetails.js";
 import { ImageLightbox, type LightboxImage } from "./ImageLightbox.js";
 import { toolFilePaths } from "./ResultFiles.js";
-import { createContext, Fragment, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, SyntheticEvent } from "react";
 import type { ReactNode } from "react";
 import stripAnsi from "strip-ansi";
@@ -39,8 +39,10 @@ import type {
   ResponseActionState,
   ResponseFeedbackValue,
   Run,
+  SessionCheckpoint,
   ToolCall,
 } from "../contracts.js";
+import { parseStructuredReviewFindings, type StructuredReviewFinding } from "./review-findings.js";
 import type { AgentSummary } from "../../../shared/collaboration.generated.js";
 import { terminalRunPresentation } from "../session-state.js";
 import { MarkdownContent } from "./MarkdownContent.js";
@@ -56,6 +58,7 @@ import { Tooltip } from "./Tooltip.js";
 import { SkillIcon, AgentIcon as SubagentToolIcon, MemoryIcon, ChatHistoryIcon } from "./InputPicker.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 import { useFeedScroll } from "./useFeedScroll.js";
+import { useFeedVirtualization } from "./useFeedVirtualization.js";
 import { ContextCompactionRow } from "./ContextCompactionRow.js";
 import { ModelFailureNotice, ModelRetryRow } from "./ModelRetryRow.js";
 import { modelFailurePresentation, totalModelRetries } from "../model-retry.js";
@@ -114,6 +117,10 @@ interface Props {
   onRetryLoadPending?: (() => void) | undefined;
   onFeedback?: FeedbackHandler;
   onFork?: ((item: Item) => void) | undefined;
+  checkpointsByRunId?: ReadonlyMap<string, SessionCheckpoint> | undefined;
+  onRewindCheckpoint?: ((checkpoint: SessionCheckpoint) => void) | undefined;
+  onAdoptReviewFinding?: ((finding: StructuredReviewFinding) => void) | undefined;
+  onAddReviewFindingComment?: ((finding: StructuredReviewFinding) => void) | undefined;
   onLoadOlder?: (() => void) | undefined;
   loadingOlder?: boolean;
   onRegenerate?: RegenerateHandler;
@@ -142,6 +149,8 @@ type ProcessEntry =
   | { kind: "retry"; activity: ModelRetryActivity };
 const EMPTY_COMPACTIONS: readonly ContextCompactionActivity[] = [];
 const EMPTY_RETRIES: readonly ModelRetryActivity[] = [];
+const EMPTY_GOAL_ACTIVITIES: readonly GoalActivity[] = [];
+const EMPTY_MODELS: readonly ModelOption[] = [];
 const EMPTY_ITEMS: Item[] = [];
 
 function shallowEqualArray<T>(left: readonly T[], right: readonly T[]): boolean {
@@ -176,7 +185,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   searchTarget,
   contextCompactions = EMPTY_COMPACTIONS,
   modelRetries = EMPTY_RETRIES,
-  goalActivities = [],
+  goalActivities = EMPTY_GOAL_ACTIVITIES,
   liveThinking,
   onOpenModelSettings,
   items,
@@ -184,7 +193,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   runs,
   allRuns,
   onEnsureItemMounted,
-  models = [],
+  models = EMPTY_MODELS,
   workspaceRoot = "",
   responseActionState = EMPTY_RESPONSE_ACTION_STATE,
   pendingFeedbackItemIds = EMPTY_PENDING_FEEDBACK,
@@ -195,6 +204,10 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   onRetryLoadPending,
   onFeedback = NOOP_FEEDBACK,
   onFork,
+  checkpointsByRunId,
+  onRewindCheckpoint,
+  onAdoptReviewFinding,
+  onAddReviewFindingComment,
   onLoadOlder,
   loadingOlder = false,
   onRegenerate = NOOP_REGENERATE,
@@ -228,8 +241,14 @@ export const ExecutionFeed = memo(function ExecutionFeed({
     () => new Map(responseActionState.feedback.map((entry) => [entry.itemId, entry.value])),
     [responseActionState.feedback],
   );
-  const latestVisibleRun = [...runs].reverse().find((run) => !supersededRunIds.has(run.id));
-  const hasActiveRun = runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status));
+  const latestVisibleRun = useMemo(
+    () => [...runs].reverse().find((run) => !supersededRunIds.has(run.id)),
+    [runs, supersededRunIds],
+  );
+  const hasActiveRun = useMemo(
+    () => runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status)),
+    [runs],
+  );
   const searchQueries = useSearchTextQueries(items);
 
   useEffect(() => {
@@ -248,8 +267,57 @@ export const ExecutionFeed = memo(function ExecutionFeed({
     return () => clearHighlights("eidos-chat-find");
   }, [searchTarget, items]);
 
-  const runsById = new Map(runs.map((run) => [run.id, run]));
-  const itemGroups = groupItemsByRun(items).filter(({ runId }) => (!supersededRunIds.has(runId) || items.some((item) => item.runId === runId && item.id === searchTarget?.itemId)));
+  const runsById = useMemo(() => new Map(runs.map((run) => [run.id, run])), [runs]);
+  const itemGroups = useMemo(
+    () => groupItemsByRun(items).filter(({ runId }) => (
+      !supersededRunIds.has(runId)
+      || items.some((item) => item.runId === runId && item.id === searchTarget?.itemId)
+    )),
+    [items, supersededRunIds, searchTarget?.itemId],
+  );
+  const forcedVirtualRunIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const run of runs) {
+      if (ACTIVE_RUN_STATUSES.has(run.status)) ids.add(run.id);
+    }
+    for (const approval of approvals) {
+      ids.add(approval.runId);
+    }
+    if (searchTarget?.itemId) {
+      const hit = items.find((item) => item.id === searchTarget.itemId);
+      if (hit) ids.add(hit.runId);
+    }
+    return ids;
+  }, [runs, approvals, items, searchTarget?.itemId]);
+  const virtualization = useFeedVirtualization(feedRef, itemGroups, following, forcedVirtualRunIds);
+  const compactionsByRunId = useMemo(() => {
+    const grouped = new Map<string, ContextCompactionActivity[]>();
+    for (const activity of contextCompactions) {
+      const bucket = grouped.get(activity.runId);
+      if (bucket) bucket.push(activity);
+      else grouped.set(activity.runId, [activity]);
+    }
+    return grouped;
+  }, [contextCompactions]);
+  const retriesByRunId = useMemo(() => {
+    const grouped = new Map<string, ModelRetryActivity[]>();
+    for (const activity of modelRetries) {
+      const bucket = grouped.get(activity.runId);
+      if (bucket) bucket.push(activity);
+      else grouped.set(activity.runId, [activity]);
+    }
+    return grouped;
+  }, [modelRetries]);
+  const goalActivitiesByRunId = useMemo(() => {
+    const grouped = new Map<string, GoalActivity[]>();
+    for (const activity of goalActivities) {
+      if (!activity.runId) continue;
+      const bucket = grouped.get(activity.runId);
+      if (bucket) bucket.push(activity);
+      else grouped.set(activity.runId, [activity]);
+    }
+    return grouped;
+  }, [goalActivities]);
   const segmentCacheRef = useRef(
     new Map<string, { items: Item[]; compactions: readonly ContextCompactionActivity[]; retries: readonly ModelRetryActivity[]; segments: Segment[] }>(),
   );
@@ -318,11 +386,24 @@ export const ExecutionFeed = memo(function ExecutionFeed({
               <span>正在读取历史…</span>
             </div>
           )}
-          {itemGroups.map(({ runId, items: runItems }) => {
+          {itemGroups.map(({ runId, items: runItems }, groupIndex) => {
             const run = runsById.get(runId);
             if (!run) return null;
-            const runCompactions = contextCompactions.filter((activity) => activity.runId === runId);
-            const runRetries = modelRetries.filter((activity) => activity.runId === runId);
+            if (!virtualization.isMounted(groupIndex, runId)) {
+              return (
+                <div
+                  key={runId}
+                  className="feed-run-placeholder"
+                  data-run-anchor={runId}
+                  data-virtualized="true"
+                  style={{ height: `${virtualization.heightFor(runId)}px` }}
+                  aria-hidden="true"
+                />
+              );
+            }
+            const runCompactions = compactionsByRunId.get(runId) ?? EMPTY_COMPACTIONS;
+            const runRetries = retriesByRunId.get(runId) ?? EMPTY_RETRIES;
+            const runGoalActivities = goalActivitiesByRunId.get(runId) ?? EMPTY_GOAL_ACTIVITIES;
             const cachedSegmentEntry = segmentCacheRef.current.get(runId);
             let segments: Segment[];
             if (
@@ -344,7 +425,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
               && !revisionSubmitting;
             const modelName = models.find((model) => model.id === run.modelId)?.name ?? run.remoteModelId ?? run.modelId;
             return (
-              <Fragment key={runId}>
+              <div key={runId} className="feed-run-group" data-run-group={runId} ref={virtualization.measureRef(runId)}>
                 <div className="feed-run-anchor" data-run-anchor={runId} aria-hidden="true" />
                 <GoalRunMarker origin={run.goalOrigin} />
                 {showTeamRunMarkers && <TeamRunMarker origin={run.teamOrigin} />}
@@ -365,6 +446,11 @@ export const ExecutionFeed = memo(function ExecutionFeed({
                     approvals={approvals}
                     onFeedback={onFeedback}
                     onFork={onFork}
+                    checkpoint={checkpointsByRunId?.get(run.id)}
+                    rewindDisabled={hasActiveRun}
+                    onRewindCheckpoint={onRewindCheckpoint}
+                    onAdoptReviewFinding={onAdoptReviewFinding}
+                    onAddReviewFindingComment={onAddReviewFindingComment}
                     onRegenerate={onRegenerate}
                     onEditResend={onEditResend}
                     onOpenFile={onOpenFile}
@@ -381,9 +467,9 @@ export const ExecutionFeed = memo(function ExecutionFeed({
                   />
                 ))}
                 <RunNotice run={run} retry={runRetries.at(-1)} onOpenModelSettings={onOpenModelSettings} />
-                <GoalActivityMarkers activities={goalActivities.filter((activity) => activity.runId === runId)} />
+                <GoalActivityMarkers activities={runGoalActivities} />
                 <HookActivityRows run={run} />
-              </Fragment>
+              </div>
             );
           })}
         </div>
@@ -417,6 +503,11 @@ const RunSegment = memo(function RunSegment({
   approvals,
   onFeedback,
   onFork,
+  checkpoint,
+  rewindDisabled = false,
+  onRewindCheckpoint,
+  onAdoptReviewFinding,
+  onAddReviewFindingComment,
   onRegenerate,
   onEditResend,
   onOpenFile,
@@ -445,6 +536,11 @@ const RunSegment = memo(function RunSegment({
   approvals: ApprovalRequest[];
   onFeedback: FeedbackHandler;
   onFork?: ((item: Item) => void) | undefined;
+  checkpoint?: SessionCheckpoint | undefined;
+  rewindDisabled?: boolean | undefined;
+  onRewindCheckpoint?: ((checkpoint: SessionCheckpoint) => void) | undefined;
+  onAdoptReviewFinding?: ((finding: StructuredReviewFinding) => void) | undefined;
+  onAddReviewFindingComment?: ((finding: StructuredReviewFinding) => void) | undefined;
   onRegenerate: RegenerateHandler;
   onEditResend: EditResendHandler;
   onOpenFile?: ((path: string, position?: WorkspaceFilePosition) => void) | undefined;
@@ -590,6 +686,11 @@ const RunSegment = memo(function RunSegment({
             revisionSubmitting={revisionSubmitting}
             onFeedback={onFeedback}
             onFork={onFork}
+            checkpoint={checkpoint}
+            rewindDisabled={rewindDisabled}
+            onRewindCheckpoint={onRewindCheckpoint}
+            onAdoptReviewFinding={onAdoptReviewFinding}
+            onAddReviewFindingComment={onAddReviewFindingComment}
             onRegenerate={onRegenerate}
           />
         );
@@ -1203,6 +1304,11 @@ function AssistantMessage({
   revisionSubmitting = false,
   onFeedback,
   onFork,
+  checkpoint,
+  rewindDisabled = false,
+  onRewindCheckpoint,
+  onAdoptReviewFinding,
+  onAddReviewFindingComment,
   onRegenerate,
 }: {
   item: Item;
@@ -1220,12 +1326,23 @@ function AssistantMessage({
   revisionSubmitting?: boolean | undefined;
   onFeedback: FeedbackHandler;
   onFork?: ((item: Item) => void) | undefined;
+  checkpoint?: SessionCheckpoint | undefined;
+  rewindDisabled?: boolean | undefined;
+  onRewindCheckpoint?: ((checkpoint: SessionCheckpoint) => void) | undefined;
+  onAdoptReviewFinding?: ((finding: StructuredReviewFinding) => void) | undefined;
+  onAddReviewFindingComment?: ((finding: StructuredReviewFinding) => void) | undefined;
   onRegenerate: RegenerateHandler;
 }) {
   const [confirmRegenerateOpen, setConfirmRegenerateOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const formattedTime = formatItemTime(item.completedAt ?? item.createdAt);
   const isStreaming = item.status === "in_progress";
+  const reviewFindings = useMemo(
+    () => (!isStreaming && item.status === "completed" && item.content
+      ? parseStructuredReviewFindings(item.content)
+      : []),
+    [isStreaming, item.status, item.content],
+  );
 
   const canFeedback = allowFeedback && item.status === "completed" && Boolean(item.content);
 
@@ -1238,6 +1355,42 @@ function AssistantMessage({
   return (
     <article id={`item-${item.id}`} className="feed-item feed-item--assistant" ref={contentRef}>
       <MarkdownContent className="eidos-chat-prose" content={item.content || ""} isStreaming={isStreaming} />
+      {reviewFindings.length > 0 && (onAdoptReviewFinding || onAddReviewFindingComment) && (
+        <div className="review-findings-list" aria-label="结构化代码审阅发现">
+          {reviewFindings.map((finding) => (
+            <div className="review-finding-card" key={finding.id}>
+              <div className="review-finding-meta">
+                <span className={`review-finding-severity review-finding-severity--${finding.severity.toLowerCase()}`}>
+                  {finding.severity}
+                </span>
+                <strong>{finding.title}</strong>
+                <code>{`${finding.path}:${finding.line}`}</code>
+              </div>
+              <div className="review-finding-actions">
+                {onAdoptReviewFinding && (
+                  <button
+                    type="button"
+                    className="btn btn--secondary btn--small"
+                    disabled={rewindDisabled}
+                    onClick={() => onAdoptReviewFinding(finding)}
+                  >
+                    一键采纳修复
+                  </button>
+                )}
+                {onAddReviewFindingComment && (
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--small"
+                    onClick={() => onAddReviewFindingComment(finding)}
+                  >
+                    加入评论
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       {!isStreaming && item.contentBytes !== undefined && item.contentHash && <ToolTextView
         sessionId={item.sessionId} toolCallId={item.id} field="content"
         sha256={item.contentHash} totalBytes={item.contentBytes} />}
@@ -1252,6 +1405,11 @@ function AssistantMessage({
             {onFork && item.status === "completed" && !item.incomplete && (
               <ActionButton label="从这里分叉" onClick={() => onFork(item)}>
                 <ForkIcon />
+              </ActionButton>
+            )}
+            {onRewindCheckpoint && checkpoint && !rewindDisabled && (
+              <ActionButton label="回退工作区到此轮之前" onClick={() => onRewindCheckpoint(checkpoint)}>
+                <RewindCheckpointIcon />
               </ActionButton>
             )}
             {allowFeedback && (
@@ -4108,6 +4266,15 @@ function WaitingDotsIcon() {
       <circle cx="5" cy="10.5" r="1.3" />
       <circle cx="11" cy="5.5" r="1.3" />
       <circle cx="11" cy="10.5" r="1.3" />
+    </svg>
+  );
+}
+
+function RewindCheckpointIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3.5 6.5H10a3.5 3.5 0 1 1 0 7H6" />
+      <path d="M6 4 3.5 6.5 6 9" />
     </svg>
   );
 }

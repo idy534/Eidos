@@ -142,3 +142,12 @@ class ResourceRetryRequest(EidosFrozenStrictModel):
 
 class ResourceRetryResponse(EidosFrozenStrictModel):
     accepted: bool
+
+
+class ResourceCleanupRequest(EidosFrozenStrictModel):
+    pass
+
+
+class ResourceCleanupResponse(EidosFrozenStrictModel):
+    removed_count: int = Field(ge=0)
+    freed_bytes: int = Field(ge=0)

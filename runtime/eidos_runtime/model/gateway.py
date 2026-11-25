@@ -115,7 +115,11 @@ class ModelGateway:
                 retry_transport=built.retry_client,
                 profile_snapshot=profile_snapshot,
                 parallel_tool_calls=config.supports_tool_call,
-                reasoning_effort=reasoning_selection if config.custom else None,
+                reasoning_effort=(
+                    reasoning_selection
+                    if (config.custom or spec.provider_id == "openai")
+                    else None
+                ),
                 async_kernel=self.async_kernel,
             )
         else:

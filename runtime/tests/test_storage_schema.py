@@ -68,6 +68,7 @@ EXPECTED_TABLES = {
     "plugin_versions",
     "plugin_hook_trust", "hook_invocations", "hook_pending_events",
     "shell_environment_settings", "web_search_settings", "run_web_search_snapshots",
+    "background_guardrail_settings", "automation_guardrail_state",
     "search_documents", "search_pending", "search_index_state", "search_fts",
     "channel_connections", "channel_sessions", "channel_inbound", "channel_run_origins", "channel_deliveries",
     "scheduled_tasks", "scheduled_occurrences", "automation_run_origins",
@@ -611,10 +612,10 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 56)
+        self.assertEqual(SCHEMA_VERSION, 57)
         self.assertEqual(V47_SCHEMA_VERSION, 47)
         self.assertEqual(V46_SCHEMA_VERSION, 46)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 55)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 56)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")

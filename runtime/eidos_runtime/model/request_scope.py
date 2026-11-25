@@ -18,19 +18,32 @@ _foreground = ContextVar("eidos_foreground_model_request", default=False)
 _deadline: ContextVar[int | None] = ContextVar(
     "eidos_model_retry_deadline", default=None
 )
+_prompt_cache_key: ContextVar[str | None] = ContextVar(
+    "eidos_prompt_cache_key", default=None
+)
 
 
 def foreground_request_active() -> bool:
     return _foreground.get()
 
 
+def current_prompt_cache_key() -> str | None:
+    return _prompt_cache_key.get()
+
+
 @contextmanager
-def foreground_request(deadline_at: int | None) -> Iterator[None]:
+def foreground_request(
+    deadline_at: int | None,
+    *,
+    prompt_cache_key: str | None = None,
+) -> Iterator[None]:
     owner = _foreground.set(True)
     deadline = _deadline.set(deadline_at)
+    cache_token = _prompt_cache_key.set(prompt_cache_key)
     try:
         yield
     finally:
+        _prompt_cache_key.reset(cache_token)
         _deadline.reset(deadline)
         _foreground.reset(owner)
 

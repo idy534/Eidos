@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NoReturn
+from typing import Callable, NoReturn
 
 from lark import Lark, Token, Tree
 from lark.exceptions import LarkError, UnexpectedInput
+from rapidfuzz import fuzz
 
 from eidos_runtime.file_limits import MAX_PATCH_BYTES
 
@@ -41,6 +42,7 @@ class PatchError(ValueError):
     message: str
     line_number: int | None = None
     target_path: str | None = None
+    hint: str | None = None
 
     def __post_init__(self) -> None:
         ValueError.__init__(self, self.message)
@@ -64,6 +66,8 @@ def format_patch_error(error: PatchError) -> str:
             "Read the current target lines and correct the Patch context."
         )
         summary += f" No files were changed by this call. {recovery}"
+    if error.hint:
+        summary += f"\n{error.hint}"
     return summary
 
 
@@ -494,22 +498,30 @@ def apply_update(original: str, action: UpdateFile) -> str:
 
     for chunk in action.chunks:
         if chunk.context is not None:
-            context_match = _find_line_sequence(
+            context_match, context_reason = _find_line_sequence_tiered(
                 original_lines,
                 (chunk.context,),
                 search_start,
             )
             if context_match is None:
+                detail = (
+                    "Multiple tolerant matches found; include more surrounding context."
+                    if context_reason == "ambiguous"
+                    else None
+                )
+                snippet = _nearby_snippet(original_lines, (chunk.context,), search_start)
+                hint = "\n".join(part for part in (detail, snippet) if part) or None
                 raise PatchError(
                     "patch_context_mismatch",
                     f"Failed to find context '{chunk.context}' in {action.path}",
                     line_number=chunk.line_number or action.line_number,
                     target_path=action.path,
+                    hint=hint,
                 )
             search_start = context_match + 1
 
         if chunk.old_lines:
-            match = _find_line_sequence(
+            match, reason = _find_line_sequence_tiered(
                 original_lines,
                 chunk.old_lines,
                 search_start,
@@ -517,11 +529,19 @@ def apply_update(original: str, action: UpdateFile) -> str:
             )
             if match is None:
                 expected = "\n".join(chunk.old_lines)
+                detail = (
+                    "Multiple tolerant matches found; include more surrounding context."
+                    if reason == "ambiguous"
+                    else None
+                )
+                snippet = _nearby_snippet(original_lines, chunk.old_lines, search_start)
+                hint = "\n".join(part for part in (detail, snippet) if part) or None
                 raise PatchError(
                     "patch_context_mismatch",
                     f"Failed to find expected lines in {action.path}:\n{expected}",
                     line_number=chunk.line_number or action.line_number,
                     target_path=action.path,
+                    hint=hint,
                 )
             replacements.append((match, len(chunk.old_lines), chunk.new_lines))
             search_start = match + len(chunk.old_lines)
@@ -565,6 +585,85 @@ def _split_content_lines(content: str) -> tuple[list[str], str, bool]:
     return values, newline, had_final_newline
 
 
+_UNICODE_PUNCTUATION_MAP = str.maketrans({
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201a": "'",
+    "\u201b": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u201e": '"',
+    "\u201f": '"',
+    "\u2010": "-",
+    "\u2011": "-",
+    "\u2012": "-",
+    "\u2013": "-",
+    "\u2014": "-",
+    "\u2015": "-",
+    "\u2212": "-",
+    "\u00a0": " ",
+    "\u2002": " ",
+    "\u2003": " ",
+    "\u2004": " ",
+    "\u2005": " ",
+    "\u2006": " ",
+    "\u2007": " ",
+    "\u2008": " ",
+    "\u2009": " ",
+    "\u200a": " ",
+    "\u202f": " ",
+    "\u205f": " ",
+    "\u3000": " ",
+})
+
+
+def _normalize_unicode_line(line: str) -> str:
+    return line.translate(_UNICODE_PUNCTUATION_MAP).strip()
+
+
+def _find_line_sequence_tiered(
+    source: list[str],
+    pattern: tuple[str, ...],
+    start: int,
+    *,
+    require_end: bool = False,
+) -> tuple[int | None, str | None]:
+    if not pattern:
+        return start, None
+    if start < 0:
+        start = 0
+    last_start = len(source) - len(pattern)
+    if last_start < start:
+        return None, "not_found"
+
+    candidate_range = (
+        (last_start,) if require_end else range(start, last_start + 1)
+    )
+    # Tier 0: exact match preserves first forward-only match behavior.
+    for candidate in candidate_range:
+        if tuple(source[candidate : candidate + len(pattern)]) == pattern:
+            return candidate, None
+
+    # Deterministic tolerant fallbacks (apply ONLY when match is unique).
+    normalizers: tuple[Callable[[str], str], ...] = (
+        str.rstrip,
+        str.strip,
+        _normalize_unicode_line,
+    )
+    for normalize in normalizers:
+        norm_pattern = tuple(normalize(line) for line in pattern)
+        matches = [
+            candidate
+            for candidate in candidate_range
+            if tuple(normalize(line) for line in source[candidate : candidate + len(pattern)]) == norm_pattern
+        ]
+        if len(matches) == 1:
+            return matches[0], None
+        if len(matches) > 1:
+            return None, "ambiguous"
+    return None, "not_found"
+
+
 def _find_line_sequence(
     source: list[str],
     pattern: tuple[str, ...],
@@ -572,26 +671,47 @@ def _find_line_sequence(
     *,
     require_end: bool = False,
 ) -> int | None:
-    if not pattern:
-        return start
-    if start < 0:
-        start = 0
-    last_start = len(source) - len(pattern)
-    if last_start < start:
-        return None
-    if require_end:
-        candidate = last_start
-        if candidate < start:
-            return None
-        return (
-            candidate
-            if tuple(source[candidate : candidate + len(pattern)]) == pattern
-            else None
-        )
-    for candidate in range(start, last_start + 1):
-        if tuple(source[candidate : candidate + len(pattern)]) == pattern:
-            return candidate
-    return None
+    match, _reason = _find_line_sequence_tiered(
+        source, pattern, start, require_end=require_end
+    )
+    return match
+
+
+def _nearby_snippet(
+    original_lines: list[str],
+    pattern: tuple[str, ...],
+    search_start: int,
+) -> str:
+    if not original_lines:
+        return ""
+    anchor = next((line.strip() for line in pattern if line.strip()), "")
+    start_bound = max(0, min(search_start, len(original_lines) - 1))
+    best_idx = start_bound
+    best_score = -1.0
+    if anchor:
+        for idx in range(start_bound, len(original_lines)):
+            candidate = original_lines[idx].strip()
+            if not candidate:
+                continue
+            score = fuzz.ratio(anchor, candidate)
+            if score > best_score:
+                best_score = score
+                best_idx = idx
+        if best_score < 45.0:
+            best_idx = start_bound
+    window_start = max(0, best_idx - 2)
+    window_end = min(len(original_lines), window_start + 8)
+    rendered: list[str] = []
+    total_chars = 0
+    for idx in range(window_start, window_end):
+        entry = f"L{idx + 1}: {original_lines[idx]}"
+        if total_chars + len(entry) > 600 and rendered:
+            break
+        rendered.append(entry)
+        total_chars += len(entry) + 1
+    if not rendered:
+        return ""
+    return "Nearby file lines:\n" + "\n".join(rendered)
 
 
 def _format_error(

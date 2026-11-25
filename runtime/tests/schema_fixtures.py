@@ -4,8 +4,15 @@ from __future__ import annotations
 import sqlite3
 
 
+def remove_guardrails_schema(connection: sqlite3.Connection) -> None:
+    """Drop the v57 guardrail tables when constructing an older database."""
+    for table in ("automation_guardrail_state", "background_guardrail_settings"):
+        connection.execute(f"DROP TABLE IF EXISTS {table}")
+
+
 def remove_team_schema(connection: sqlite3.Connection) -> None:
-    """Drop the v56 team objects when constructing an older database."""
+    """Drop the v56 team objects, and later ones, when constructing an older database."""
+    remove_guardrails_schema(connection)
     for table in ("team_runs", "team_wakes", "team_message_deliveries", "team_messages", "team_task_deps",
                   "team_tasks", "team_members", "team_proposals", "teams"):
         connection.execute(f"DROP TABLE IF EXISTS {table}")

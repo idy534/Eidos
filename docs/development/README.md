@@ -482,7 +482,7 @@ PYTHONPATH=runtime uv run --locked python scripts/evaluate-memory-cases.py --mod
 
 开发者可以用重复的 `--group` 或 `--case` 缩小范围，用 `--repeats` 调整次数。检查只读取状态、工具调用和回答文字，结论前仍需阅读回答与笔记。
 
-离线恢复接受 `eidos-data-backup-v2` 和 schema v40 至 v54。恢复会逐级升级为 v54，并保留归档笔记和历史。目标目录必须不存在，不能与运行数据合并：
+离线恢复接受 `eidos-data-backup-v2` 和 schema v40 至 v57。恢复会逐级升级为 v57，并保留归档笔记和历史。目标目录必须不存在，不能与运行数据合并：
 
 ```bash
 uv run --locked python -m eidos_runtime.db.backup /absolute/path/backup.zip /absolute/path/new-eidos-data

@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ComposerSlot } from "./ComposerSlot.js";
 import type { ApprovalRequest, Run } from "../../../shared/domain-contracts.js";
@@ -165,5 +166,39 @@ describe("Browser approvals", () => {
     render(<ComposerSlot run={run} approval={request} onApprove={vi.fn()} onReject={vi.fn()}><textarea /></ComposerSlot>);
     expect(screen.getByRole("note")).toHaveTextContent("这些文件会发送给当前网页所在的网站");
     expect(screen.getByLabelText("工具参数")).toHaveTextContent("/workspace/report.pdf");
+  });
+});
+
+describe("Approval rejection feedback and keyboard shortcuts", () => {
+  it("submits optional rejection feedback when rejecting via button or Enter", async () => {
+    const onReject = vi.fn();
+    const user = userEvent.setup();
+    render(<ComposerSlot run={run} approval={approval} onApprove={vi.fn()} onReject={onReject}>
+      <textarea aria-label="message" />
+    </ComposerSlot>);
+
+    await user.click(screen.getByText("附带拒绝原因"));
+    const input = screen.getByLabelText("拒绝原因（可选）");
+    await user.type(input, "请改用只读命令");
+    await user.click(screen.getByRole("button", { name: "拒绝" }));
+
+    expect(onReject).toHaveBeenCalledWith(approval, "请改用只读命令");
+  });
+
+  it("supports Ctrl/Cmd+Enter to approve safe requests and Ctrl/Cmd+Backspace to reject with feedback", async () => {
+    const onApprove = vi.fn();
+    const onReject = vi.fn();
+    const user = userEvent.setup();
+    render(<ComposerSlot run={run} approval={approval} onApprove={onApprove} onReject={onReject}>
+      <textarea aria-label="message" />
+    </ComposerSlot>);
+
+    fireEvent.keyDown(window, { key: "Enter", ctrlKey: true });
+    expect(onApprove).toHaveBeenCalledWith(approval);
+
+    await user.click(screen.getByText("附带拒绝原因"));
+    await user.type(screen.getByLabelText("拒绝原因（可选）"), "改用局部路径");
+    fireEvent.keyDown(window, { key: "Backspace", ctrlKey: true });
+    expect(onReject).toHaveBeenCalledWith(approval, "改用局部路径");
   });
 });

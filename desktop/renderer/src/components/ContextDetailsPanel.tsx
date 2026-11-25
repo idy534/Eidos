@@ -175,6 +175,14 @@ export function ContextDetailsPanel({
                   已使用 {activeTokensDisplay}/ {windowTokensDisplay}
                 </span>
               </div>
+              {details.cacheReadTokens != null && details.cacheReadTokens > 0 && (
+                <div className="context-hero-cache">
+                  缓存命中 {formatTokenCount(details.cacheReadTokens)}
+                  {details.cacheHitRatePercent != null
+                    ? ` (${details.cacheHitRatePercent.toFixed(1).replace(/\.0$/, "")}%)`
+                    : ""}
+                </div>
+              )}
             </div>
 
             <div

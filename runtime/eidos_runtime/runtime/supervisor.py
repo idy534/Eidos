@@ -7,6 +7,7 @@ from enum import StrEnum
 import json
 import logging
 import os
+from pathlib import Path
 import threading
 import time
 import uuid
@@ -45,7 +46,14 @@ from eidos_runtime.runtime.resource_registry import (
 from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.hook_lifecycle import HookLifecycle
 from eidos_runtime.sandbox.sensitive import default_scanner
-from eidos_runtime.runtime.long_task import RestartVerifier, ResumeVerifier
+from eidos_runtime.context.project_rules import ProjectRuleResolver
+from eidos_runtime.git.backend import DulwichGitBackend
+from eidos_runtime.persistence.rule_paths import RulePathRepository
+from eidos_runtime.runtime.long_task import (
+    RestartVerifier,
+    ResumeVerifier,
+    compute_permission_snapshot_hash,
+)
 from eidos_runtime.runtime.runtime_dependencies import RuntimeDependencyCatalog
 from eidos_runtime.infrastructure.browser_host import BrowserHost
 from eidos_runtime.domain.long_task import (
@@ -167,6 +175,7 @@ class RunSupervisor:
         self.repository_runtime = repository_runtime
         self._runtime_dependency_catalog = runtime_dependency_catalog
         self._browser_host: BrowserHost | None = None
+        self.checkpoint_capture: Callable[[str], object] | None = None
         from eidos_runtime.application.collaboration import CollaborationApplication
 
         self.collaboration = CollaborationApplication(store, self.schedule_next, self.cancel_agent, self.events.deliver_pending)
@@ -422,19 +431,9 @@ class RunSupervisor:
         repository = self.store.long_task_repository()
         current = repository.request_resume(run_id)
         frozen_workspace = self.store.workspace_for_run(run_id)
-        try:
-            workspace_stat = os.stat(
-                frozen_workspace.path,
-                follow_symlinks=False,
-            )
-            current_workspace = (
-                str(frozen_workspace.path),
-                workspace_stat.st_dev,
-                workspace_stat.st_ino,
-                workspace_stat.st_uid,
-            )
-        except OSError:
-            current_workspace = (str(frozen_workspace.path), -1, -1, -1)
+        state = self._collect_current_resume_state(
+            run_id, current, workspace_path=frozen_workspace.path
+        )
         verification = ResumeVerifier.verify(
             run_id=run_id,
             expected_workspace=(
@@ -443,18 +442,13 @@ class RunSupervisor:
                 current.workspace_inode,
                 current.workspace_owner,
             ),
-            current_workspace=current_workspace,
             expected_git_head=current.git_head,
-            current_git_head=current.git_head,
             expected_rule_snapshot_id=current.rule_snapshot_id,
-            current_rule_snapshot_id=current.rule_snapshot_id,
             expected_index_snapshot_id=current.index_snapshot_id,
-            current_index_snapshot_id=current.index_snapshot_id,
             expected_context_plan_id=current.context_plan_id,
-            current_context_plan_id=current.context_plan_id,
             expected_permission_snapshot_hash=current.permission_snapshot_hash,
-            current_permission_snapshot_hash=current.permission_snapshot_hash,
             side_effects_may_exist=current.side_effects_may_exist,
+            **state,  # type: ignore[arg-type]
         )
         current = repository.record_verification(run_id, verification)
         if verification.outcome is ResumeOutcome.SAFE_RESUME:
@@ -465,16 +459,9 @@ class RunSupervisor:
         repository = self.store.long_task_repository()
         verified: list[LongTaskProgress] = []
         for current in repository.list_resumable():
-            try:
-                stat = os.stat(current.workspace_path, follow_symlinks=False)
-                workspace = (
-                    current.workspace_path,
-                    stat.st_dev,
-                    stat.st_ino,
-                    stat.st_uid,
-                )
-            except OSError:
-                workspace = (current.workspace_path, -1, -1, -1)
+            state = self._collect_current_resume_state(
+                current.run_id, current, workspace_path=Path(current.workspace_path)
+            )
             verification = ResumeVerifier.verify(
                 run_id=current.run_id,
                 expected_workspace=(
@@ -483,18 +470,13 @@ class RunSupervisor:
                     current.workspace_inode,
                     current.workspace_owner,
                 ),
-                current_workspace=workspace,
                 expected_git_head=current.git_head,
-                current_git_head=current.git_head,
                 expected_rule_snapshot_id=current.rule_snapshot_id,
-                current_rule_snapshot_id=current.rule_snapshot_id,
                 expected_index_snapshot_id=current.index_snapshot_id,
-                current_index_snapshot_id=current.index_snapshot_id,
                 expected_context_plan_id=current.context_plan_id,
-                current_context_plan_id=current.context_plan_id,
                 expected_permission_snapshot_hash=current.permission_snapshot_hash,
-                current_permission_snapshot_hash=current.permission_snapshot_hash,
                 side_effects_may_exist=current.side_effects_may_exist,
+                **state,  # type: ignore[arg-type]
             )
             verified.append(
                 repository.record_restart_verification(
@@ -503,14 +485,138 @@ class RunSupervisor:
             )
         return tuple(verified)
 
+    def _collect_current_resume_state(
+        self, run_id: str, expected: LongTaskProgress, *, workspace_path: Path
+    ) -> dict[str, object]:
+        try:
+            workspace_stat = os.stat(workspace_path, follow_symlinks=False)
+            current_workspace: tuple[str, int, int, int] = (
+                str(workspace_path),
+                workspace_stat.st_dev,
+                workspace_stat.st_ino,
+                workspace_stat.st_uid,
+            )
+        except OSError:
+            current_workspace = (str(workspace_path), -1, -1, -1)
+
+        current_git_head: str | None = None
+        if expected.git_head is not None:
+            try:
+                current_git_head = DulwichGitBackend().head(workspace_path)
+            except Exception:
+                current_git_head = None
+
+        with self.store.database.read_scope(), self.store.database.lock:
+            connection = self.store.database.connection()
+            plan_row = connection.execute(
+                "SELECT id, rule_snapshot_id, index_snapshot_id "
+                "FROM context_plans WHERE run_id = ? ORDER BY rowid DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+            pending_approval = bool(
+                connection.execute(
+                    "SELECT 1 FROM approvals WHERE run_id = ? AND status = 'pending' LIMIT 1",
+                    (run_id,),
+                ).fetchone()
+            )
+
+        current_context_plan_id = (
+            None
+            if expected.context_plan_id is None
+            else (str(plan_row["id"]) if plan_row is not None else None)
+        )
+
+        try:
+            is_projectless = self.store.run_is_projectless(run_id)
+        except Exception:
+            is_projectless = False
+
+        current_rule_snapshot_id: str | None = None
+        if expected.rule_snapshot_id is not None:
+            if (
+                plan_row is not None
+                and plan_row["rule_snapshot_id"] != expected.rule_snapshot_id
+            ):
+                current_rule_snapshot_id = str(plan_row["rule_snapshot_id"])
+            elif not is_projectless:
+                try:
+                    effective_cwd = self.store.effective_cwd_for_run(
+                        run_id, workspace_root=workspace_path
+                    )
+                    current_rule_snapshot_id = ProjectRuleResolver().resolve(
+                        workspace_path,
+                        effective_cwd,
+                        RulePathRepository(self.store.database).touched_paths(run_id),
+                    ).id
+                except Exception:
+                    current_rule_snapshot_id = None
+            else:
+                current_rule_snapshot_id = (
+                    str(plan_row["rule_snapshot_id"])
+                    if plan_row is not None and plan_row["rule_snapshot_id"] is not None
+                    else expected.rule_snapshot_id
+                )
+
+        current_index_snapshot_id: str | None = None
+        if expected.index_snapshot_id is not None:
+            if self.repository_runtime is not None and not is_projectless:
+                try:
+                    capture = self.repository_runtime.available_for_run(
+                        workspace_path
+                    ).capture_for_run()
+                    snapshot = getattr(capture, "snapshot", None)
+                    index = getattr(snapshot, "index", None)
+                    current_index_snapshot_id = (
+                        str(index.snapshot_id) if index is not None else None
+                    )
+                except Exception:
+                    current_index_snapshot_id = None
+            elif plan_row is not None and plan_row["index_snapshot_id"] is not None:
+                current_index_snapshot_id = str(plan_row["index_snapshot_id"])
+
+        current_permission_snapshot_hash: str | None = None
+        if expected.permission_snapshot_hash is not None:
+            try:
+                run_record = self.store.read_run(run_id)
+                current_permission_snapshot_hash = compute_permission_snapshot_hash(
+                    str(run_record.get("approvalMode") or "manual"),
+                    self.store.run_permission_grants(run_id),
+                )
+            except Exception:
+                current_permission_snapshot_hash = None
+
+        return {
+            "current_workspace": current_workspace,
+            "current_git_head": current_git_head,
+            "current_rule_snapshot_id": current_rule_snapshot_id,
+            "current_index_snapshot_id": current_index_snapshot_id,
+            "current_context_plan_id": current_context_plan_id,
+            "current_permission_snapshot_hash": current_permission_snapshot_hash,
+            "pending_approval": pending_approval,
+        }
+
     def _initialize_long_task(self, run_id: str) -> LongTaskProgress:
         workspace = self.store.workspace_for_run(run_id)
+        try:
+            git_head: str | None = DulwichGitBackend().head(workspace.path)
+        except Exception:
+            git_head = None
+        try:
+            run_record = self.store.read_run(run_id)
+            permission_snapshot_hash: str | None = compute_permission_snapshot_hash(
+                str(run_record.get("approvalMode") or "manual"),
+                self.store.run_permission_grants(run_id),
+            )
+        except Exception:
+            permission_snapshot_hash = None
         return self.store.long_task_repository().initialize(
             run_id=run_id,
             workspace_path=str(workspace.path),
             workspace_device=workspace.device,
             workspace_inode=workspace.inode,
             workspace_owner=workspace.owner,
+            git_head=git_head,
+            permission_snapshot_hash=permission_snapshot_hash,
         )
 
     def request_cancel(self, run_id: str) -> bool:
@@ -977,6 +1083,7 @@ class RunSupervisor:
                 )
                 engine_kwargs["browser_host"] = self._browser_host
                 engine_kwargs["hook_lifecycle"] = self.hooks
+                engine_kwargs["checkpoint_capture"] = self.checkpoint_capture
             engine = self.engine_factory(
                 self.store,
                 lease.client,

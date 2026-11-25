@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { AppShell } from "./app/AppShell.js";
 import { EidosMark } from "./components/EidosMark.js";
 import { Button } from "./components/Button.js";
@@ -14,8 +15,15 @@ import type { RuntimeStatus } from "./contracts.js";
  */
 export function App() {
   const runtime = useRuntimeLifecycle();
+  const [hasBeenReady, setHasBeenReady] = useState(runtime.status.state === "ready");
 
-  if (runtime.status.state !== "ready") {
+  useEffect(() => {
+    if (runtime.status.state === "ready") {
+      setHasBeenReady(true);
+    }
+  }, [runtime.status.state]);
+
+  if (!hasBeenReady && runtime.status.state !== "ready") {
     return (
       <RuntimeGate
         status={runtime.status}

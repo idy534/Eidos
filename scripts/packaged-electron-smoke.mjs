@@ -241,7 +241,9 @@ async function verifyRuntimeProtocol({ appRoot, pythonExecutable }) {
     ...process.env,
     EIDOS_DATA_DIR: path.join(dataDirectory, "data"),
     HOME: path.join(dataDirectory, "home"),
-    PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+    ...(process.platform === "win32"
+      ? { USERPROFILE: path.join(dataDirectory, "home") }
+      : { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }),
     PYTHONPATH: appRoot,
     PYTHONDONTWRITEBYTECODE: "1",
     PYTHONNOUSERSITE: "1",
@@ -374,8 +376,101 @@ async function verifyPackagedElectron({ appPath, appRoot }) {
 }
 
 
+async function verifyWindowsApplicationLayout(executablePath) {
+  const bundleDir = path.dirname(executablePath);
+  const resourcesRoot = path.join(bundleDir, "resources");
+  const runtimeRoot = path.join(resourcesRoot, "runtime");
+  const pythonExecutable = path.join(runtimeRoot, "python", "python.exe");
+  const appRoot = path.join(runtimeRoot, "app");
+  const asarPath = path.join(resourcesRoot, "app.asar");
+
+  assert.equal((await stat(executablePath)).isFile(), true, `Missing packaged executable: ${executablePath}`);
+  assert.equal((await stat(asarPath)).isFile(), true, "Electron application must be in app.asar");
+  assert.equal((await stat(pythonExecutable)).isFile(), true, `Missing bundled Python: ${pythonExecutable}`);
+  assert.equal((await stat(path.join(appRoot, "eidos_runtime", "__main__.py"))).isFile(), true);
+  assert.equal((await stat(path.join(runtimeRoot, "runtime.json"))).isFile(), true, "Missing runtime/runtime.json");
+
+  const asarBytes = await readFile(asarPath);
+  assert.equal(
+    asarBytes.includes(Buffer.from("eidos_runtime/__main__.py")),
+    false,
+    "Runtime source must remain outside app.asar",
+  );
+  return { appRoot, pythonExecutable, resourcesRoot, runtimeRoot, executablePath };
+}
+
+
+async function verifyPackagedWindowsElectron({ appRoot, pythonExecutable, executablePath }) {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-packaged-win-electron-"));
+  const dataDirectory = path.join(temporaryRoot, "eidos-data");
+  const userDataDirectory = path.join(temporaryRoot, "electron-user-data");
+  const sentinelRoot = path.join(temporaryRoot, "python-sentinel");
+  const markerPath = path.join(temporaryRoot, "python-sentinel-used");
+  await mkdir(sentinelRoot, { recursive: true });
+  await writeFile(
+    path.join(sentinelRoot, "sitecustomize.py"),
+    `from pathlib import Path\nPath(${JSON.stringify(markerPath)}).write_text("used", encoding="utf-8")\n`,
+    "utf8",
+  );
+  const environment = {
+    ...process.env,
+    EIDOS_DATA_DIR: path.join(dataDirectory, "data"),
+    HOME: path.join(dataDirectory, "home"),
+    USERPROFILE: path.join(dataDirectory, "home"),
+    EIDOS_ELECTRON_SMOKE: "1",
+    PYTHONPATH: sentinelRoot,
+    PYTHONHOME: path.join(sentinelRoot, "invalid-python-home"),
+    EIDOS_PYTHON: pythonExecutable,
+    PYTHONDONTWRITEBYTECODE: "0",
+    PYTHONNOUSERSITE: "0",
+  };
+  let output = "";
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const child = spawn(
+        executablePath,
+        [`--user-data-dir=${userDataDirectory}`],
+        { cwd: path.dirname(executablePath), env: environment, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const timer = setTimeout(() => {
+        child.kill();
+        reject(new Error(`packaged Windows Electron smoke timed out\n${output}`));
+      }, 45_000);
+      const capture = (chunk) => { output = `${output}${chunk.toString("utf8")}`.slice(-1024 * 1024); };
+      child.stdout.on("data", capture);
+      child.stderr.on("data", capture);
+      child.once("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      child.once("close", (code, signal) => {
+        clearTimeout(timer);
+        resolve({ code, signal });
+      });
+    });
+    assert.equal(result.code, 0, output);
+    const marker = await access(markerPath).then(() => true, () => false);
+    assert.equal(marker, false, "packaged Windows Runtime inherited the host PYTHONPATH");
+    void appRoot;
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
+
 async function main() {
-  assert.equal(process.platform, "darwin", "packaged Electron supports macOS only");
+  if (process.platform === "win32") {
+    assert.equal(process.arch, "x64", "packaged Windows Electron supports x64 only");
+    const executablePath = path.resolve(
+      process.argv[2] ?? path.join(defaultReleaseRoot, "win-unpacked", "Eidos.exe"),
+    );
+    const layout = await verifyWindowsApplicationLayout(executablePath);
+    await verifyRuntimeProtocol(layout);
+    await verifyPackagedWindowsElectron(layout);
+    console.log(`Packaged Windows layout, direct Runtime, SQLite, and Electron smoke passed: ${executablePath}`);
+    return;
+  }
+  assert.equal(process.platform, "darwin", "packaged Electron supports macOS or Windows");
   assert.equal(process.arch, "arm64", "packaged Electron supports macOS arm64 only");
   const appPath = path.resolve(process.argv[2] ?? await findAppPath());
   const layout = await verifyApplicationLayout(appPath);

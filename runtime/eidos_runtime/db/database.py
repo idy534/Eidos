@@ -38,6 +38,7 @@ from eidos_runtime.db.schema import (
     V53_SCHEMA_VERSION,
     V54_SCHEMA_VERSION,
     V55_SCHEMA_VERSION,
+    V56_SCHEMA_VERSION,
     V5_SCHEMA_VERSION,
     V6_SCHEMA_VERSION,
     V7_SCHEMA_VERSION,
@@ -239,6 +240,7 @@ class Database:
                     V53_SCHEMA_VERSION,
                     V54_SCHEMA_VERSION,
                     V55_SCHEMA_VERSION,
+                    V56_SCHEMA_VERSION,
                     SCHEMA_VERSION,
                     4,
                 }
@@ -604,6 +606,12 @@ class Database:
                 from eidos_runtime.db.team_migration import migrate_teams
                 try:
                     migrate_teams(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V56_SCHEMA_VERSION:
+                from eidos_runtime.db.guardrails_migration import migrate_guardrails
+                try:
+                    migrate_guardrails(connection)
                 except sqlite3.Error as error:
                     raise StorageError("schema_migration_failed") from error
             self._verify_startup_integrity(

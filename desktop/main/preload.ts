@@ -1,6 +1,7 @@
 import type { QoderConnectionRequest, QoderConnectionState } from "../shared/qoder.js";
 import type { ProjectUpdateRequest, ProjectCreateFoldersRequest, GitWorkspaceRequest } from "../shared/project-workspaces.js";
 import type { ShellEnvironmentReadRequest, ShellEnvironmentRefreshRequest, ShellEnvironmentSaveRequest, ShellEnvironmentResponse } from "../shared/shell-environment.js";
+import type { GuardrailsReadRequest, GuardrailsSaveRequest, GuardrailsResponse } from "../shared/guardrails.js";
 import type { PersonalizationReadRequest, PersonalizationSaveRequest, PersonalizationResponse } from "../shared/personalization.js";
 import type { WebSearchReadRequest, WebSearchSaveRequest, WebSearchResponse, WebSearchOfficialPageRequest } from "../shared/web-search.js";
 import type { CustomProviderRequest, CustomProviderResult } from "../shared/custom-models.js";
@@ -38,6 +39,9 @@ import type {
   SessionGitStatus,
   SessionGitMutationResult,
   SessionGitCommitResult,
+  SessionGitSuggestCommitMessageResult,
+  SessionCheckpoint,
+  CheckpointRewindResult,
   ReviewComment,
   ReviewCommentCreateInput,
   GitRemoteStatus,
@@ -72,6 +76,7 @@ import type {
   RuntimeNotification,
   AppShortcut,
   WorkspaceDirectoryListing,
+  WorkspaceFileSearchResult,
   WorkspaceFilePreview,
   TerminalSessionInfo,
   TerminalDataEvent,
@@ -94,6 +99,7 @@ const api: EidosRuntimeAPI = {
   getStatus: (): Promise<RuntimeStatus> => ipcRenderer.invoke(IPC.RUNTIME_GET_STATUS),
   getHealth: (): Promise<RuntimeHealth> => ipcRenderer.invoke(IPC.RUNTIME_HEALTH),
   restartRuntime: (): Promise<RuntimeStatus> => ipcRenderer.invoke(IPC.RUNTIME_RESTART),
+  exportDiagnostics: (): Promise<boolean> => ipcRenderer.invoke(IPC.DIAGNOSTICS_EXPORT),
   onStatus: (callback: (status: RuntimeStatus) => void): Unsubscribe => {
     const listener = (_event: Electron.IpcRendererEvent, status: RuntimeStatus) => callback(status);
     ipcRenderer.on(IPC.RUNTIME_STATUS_EVENT, listener);
@@ -110,6 +116,14 @@ const api: EidosRuntimeAPI = {
     projectId?: string,
   ): Promise<WorkspaceDirectoryListing> =>
     ipcRenderer.invoke(IPC.WORKSPACE_LIST_DIRECTORY, sessionId, path, limit, workspaceRoot, projectId),
+  findWorkspaceFiles: (
+    sessionId: string,
+    query: string,
+    limit?: number,
+    workspaceRoot?: string,
+    projectId?: string,
+  ): Promise<WorkspaceFileSearchResult> =>
+    ipcRenderer.invoke(IPC.WORKSPACE_FIND_FILES, sessionId, query, limit, workspaceRoot, projectId),
   prepareWorkspacePreview: (
     sessionId: string,
     path: string,
@@ -128,6 +142,14 @@ const api: EidosRuntimeAPI = {
   closeBrowser: (sessionId: string, browserId: string) => ipcRenderer.invoke(IPC.BROWSER_CLOSE, sessionId, browserId),
   stopBrowser: (sessionId: string, browserId: string) => ipcRenderer.invoke(IPC.BROWSER_STOP, sessionId, browserId),
   readBrowserState: (sessionId: string, browserId: string) => ipcRenderer.invoke(IPC.BROWSER_STATE, sessionId, browserId),
+  browserGoBack: (sessionId: string, browserId: string) => ipcRenderer.invoke(IPC.BROWSER_GO_BACK, sessionId, browserId),
+  browserGoForward: (sessionId: string, browserId: string) => ipcRenderer.invoke(IPC.BROWSER_GO_FORWARD, sessionId, browserId),
+  onBrowserState: (callback: (event: import("../shared/domain-contracts.js").BrowserStateEvent) => void): Unsubscribe => {
+    const listener = (_event: Electron.IpcRendererEvent, browserEvent: import("../shared/domain-contracts.js").BrowserStateEvent) =>
+      callback(browserEvent);
+    ipcRenderer.on(IPC.BROWSER_STATE_EVENT, listener);
+    return () => ipcRenderer.removeListener(IPC.BROWSER_STATE_EVENT, listener);
+  },
   annotateBrowser: (sessionId: string, browserId: string) => ipcRenderer.invoke(IPC.BROWSER_ANNOTATE, sessionId, browserId),
   readWorkspaceFilePreview: (
     sessionId: string,
@@ -148,8 +170,9 @@ const api: EidosRuntimeAPI = {
     sessionId: string,
     workspaceRoot?: string,
     projectId?: string,
+    preferredShell?: string,
   ): Promise<TerminalSessionInfo> =>
-    ipcRenderer.invoke(IPC.TERMINAL_CREATE, sessionId, workspaceRoot, projectId),
+    ipcRenderer.invoke(IPC.TERMINAL_CREATE, sessionId, workspaceRoot, projectId, preferredShell),
   writeTerminal: (terminalId: string, data: string): Promise<void> =>
     ipcRenderer.invoke(IPC.TERMINAL_WRITE, terminalId, data),
   resizeTerminal: (terminalId: string, columns: number, rows: number): Promise<void> =>
@@ -170,6 +193,8 @@ const api: EidosRuntimeAPI = {
   },
 
   readShellEnvironment: (request: ShellEnvironmentReadRequest = {}): Promise<ShellEnvironmentResponse> => ipcRenderer.invoke(IPC.SHELL_ENVIRONMENT_READ, request),
+  readGuardrails: (request: GuardrailsReadRequest = {}): Promise<GuardrailsResponse> => ipcRenderer.invoke(IPC.GUARDRAILS_READ, request),
+  saveGuardrails: (request: GuardrailsSaveRequest): Promise<GuardrailsResponse> => ipcRenderer.invoke(IPC.GUARDRAILS_SAVE, request),
   readPersonalization: (request: PersonalizationReadRequest = {}): Promise<PersonalizationResponse> => ipcRenderer.invoke(IPC.PERSONALIZATION_READ, request),
   savePersonalization: (request: PersonalizationSaveRequest): Promise<PersonalizationResponse> => ipcRenderer.invoke(IPC.PERSONALIZATION_SAVE, request),
   saveShellEnvironment: (request: ShellEnvironmentSaveRequest): Promise<ShellEnvironmentResponse> => ipcRenderer.invoke(IPC.SHELL_ENVIRONMENT_SAVE, request),
@@ -266,12 +291,44 @@ const api: EidosRuntimeAPI = {
     operationId: string,
   ): Promise<SessionGitMutationResult> =>
     ipcRenderer.invoke(IPC.SESSION_GIT_STAGE, sessionId, paths, operationId),
+  unstageSessionGit: (
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ): Promise<SessionGitMutationResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_UNSTAGE, sessionId, paths, operationId),
+  discardSessionGit: (
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ): Promise<SessionGitMutationResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_DISCARD, sessionId, paths, operationId),
+  stageSessionGitHunk: (
+    sessionId: string,
+    patch: string,
+    reverse: boolean,
+    operationId: string,
+  ): Promise<SessionGitMutationResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_STAGE_HUNK, sessionId, patch, reverse, operationId),
+  suggestSessionGitCommitMessage: (
+    sessionId: string,
+    includeUnstaged = true,
+  ): Promise<SessionGitSuggestCommitMessageResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_SUGGEST_COMMIT_MESSAGE, sessionId, includeUnstaged),
   commitSessionGit: (
     sessionId: string,
     message: string,
     operationId: string,
   ): Promise<SessionGitCommitResult> =>
     ipcRenderer.invoke(IPC.SESSION_GIT_COMMIT, sessionId, message, operationId),
+  listCheckpoints: (sessionId: string): Promise<SessionCheckpoint[]> =>
+    ipcRenderer.invoke(IPC.CHECKPOINT_LIST, sessionId),
+  rewindCheckpoint: (
+    sessionId: string,
+    checkpointId: string,
+    operationId?: string,
+  ): Promise<CheckpointRewindResult> =>
+    ipcRenderer.invoke(IPC.CHECKPOINT_REWIND, sessionId, checkpointId, operationId),
   listReviewComments: (
     sessionId: string,
     path?: string,
@@ -364,6 +421,7 @@ const api: EidosRuntimeAPI = {
   readAgentChanges: (request: AgentChangesRequest): Promise<AgentChanges> => ipcRenderer.invoke(IPC.AGENT_CHANGES, request),
   discardAgentWorkspace: (parentRunId: string, agentId: string): Promise<CollaborationState> => ipcRenderer.invoke(IPC.AGENT_DISCARD_WORKSPACE, parentRunId, agentId),
   backupData: (): Promise<void> => ipcRenderer.invoke(IPC.DATA_BACKUP),
+  restoreData: (): Promise<RuntimeStatus> => ipcRenderer.invoke(IPC.DATA_RESTORE),
   exportMemoryNotes: (request: import("../shared/memory.generated.js").MemoryExportRequest): Promise<void> => ipcRenderer.invoke(IPC.MEMORY_EXPORT, request),
   memory: <K extends keyof MemoryMethods>(method: K, request: MemoryMethods[K]["request"]): Promise<MemoryMethods[K]["response"]> => ipcRenderer.invoke(IPC.MEMORY_REQUEST, method, request),
   readPlanning: (sessionId: string): Promise<PlanningReadResponse> => ipcRenderer.invoke(IPC.PLANNING_READ, sessionId),
@@ -437,6 +495,7 @@ const api: EidosRuntimeAPI = {
   listSkills: (): Promise<SkillListResult> => ipcRenderer.invoke(IPC.SKILL_LIST),
   getResourceStatus: () => ipcRenderer.invoke(IPC.RESOURCE_STATUS),
   retryResource: (request: ResourceRetryRequest) => ipcRenderer.invoke(IPC.RESOURCE_RETRY, request),
+  cleanupResources: () => ipcRenderer.invoke(IPC.RESOURCE_CLEANUP),
   readSkillDetail: (qualifiedId: string): Promise<SkillDetail> =>
     ipcRenderer.invoke(IPC.SKILL_DETAIL, qualifiedId),
   setSkillEnabled: (qualifiedId: string, enabled: boolean): Promise<SkillMetadata> =>

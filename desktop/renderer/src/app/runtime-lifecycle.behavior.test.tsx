@@ -33,8 +33,10 @@ const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime"
 describe("App & Runtime Lifecycle behavior", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    window.localStorage.clear();
   });
   afterEach(() => {
+    window.localStorage.clear();
     if (runtimeDescriptor) Object.defineProperty(window, "eidosRuntime", runtimeDescriptor);
     else delete (window as Partial<Window>).eidosRuntime;
   });
@@ -582,5 +584,48 @@ describe("App & Runtime Lifecycle behavior", () => {
     Object.defineProperty(window, "scrollY", { value: 16, configurable: true });
     fireEvent.scroll(window);
     expect(scrollToSpy).toHaveBeenCalledWith(0, 0);
+  });
+
+  it("keeps AppShell mounted with a recovery banner when Runtime crashes after initial ready", async () => {
+    const restartRuntime = vi.fn().mockResolvedValue(mockReadyStatus);
+    const { emitStatus } = setupMockRuntime({ restartRuntime });
+
+    const { container } = render(<App />);
+    await waitFor(() => {
+      expect(container.querySelector(".workspace")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      emitStatus({ state: "error", message: "Runtime exited unexpectedly (code 1)." });
+    });
+
+    // AppShell stays mounted instead of unmounting back to full-screen RuntimeGate.
+    expect(container.querySelector(".workspace")).toBeInTheDocument();
+    expect(container.querySelector(".runtime-gate")).not.toBeInTheDocument();
+    const banner = await screen.findByRole("alert");
+    expect(banner).toHaveTextContent(/Runtime 异常中断/);
+
+    fireEvent.click(within(banner).getByRole("button", { name: "重新启动 Runtime" }));
+    await waitFor(() => expect(restartRuntime).toHaveBeenCalledOnce());
+  });
+
+  it("automatically reopens the persisted last active session on startup", async () => {
+    window.localStorage.setItem("eidos.lastActiveSessionId", startupSession.id);
+    const snapshot: SessionSnapshot = {
+      session: startupSession,
+      runs: [],
+      items: [],
+      stepResolutions: [],
+      throughEventId: 0,
+    };
+    const readSession = vi.fn().mockResolvedValue(snapshot);
+    setupMockRuntime({
+      listSessions: vi.fn().mockResolvedValue({ items: [startupSession] }),
+      readSession,
+      listEvents: vi.fn().mockResolvedValue({ items: [], throughEventId: 0, hasMore: false }),
+    });
+
+    render(<App />);
+    await waitFor(() => expect(readSession).toHaveBeenCalledWith(startupSession.id));
   });
 });

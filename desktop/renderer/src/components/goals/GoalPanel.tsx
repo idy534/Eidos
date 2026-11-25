@@ -21,7 +21,10 @@ const labels: Record<Tone, string> = { running: "进行中", waiting: "等待审
 const icons: Record<Tone, ReactNode> = {
   running: <GoalMarkIcon />, waiting: <GoalMarkIcon />, paused: <GoalPausedIcon />, blocked: <GoalBlockedIcon />, complete: <GoalCheckIcon />,
 };
-const reasons: Record<string, string> = { idle_runs: "连续三轮没有新的有效工具结果。", runtime_restarted: "应用重启后，目标等待你继续。",
+const reasons: Record<string, string> = { idle_runs: "连续无进展轮次达到上限，目标已暂停。恢复后将重新计数。",
+  guardrail_tokens_exceeded: "本轮 Token 已达到护栏上限，目标已暂停。恢复后将从 0 重新计算。",
+  guardrail_cost_exceeded: "本轮成本已达到护栏上限，目标已暂停。恢复后将从 0 重新计算。",
+  runtime_restarted: "应用重启后，目标等待你继续。",
   run_failed: "上一轮执行失败，请查看执行记录。", run_stopped: "上一轮执行已停止。", run_canceled: "你停止了执行，目标已暂停续跑。",
   preparation_failed: "续跑准备失败，请检查模型和工作区。",
   plan_selected: "切换到 Plan 模式后，目标已暂停续跑。", user_paused: "你暂停了续跑，当前执行会继续完成。",

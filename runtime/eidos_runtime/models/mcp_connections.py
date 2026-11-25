@@ -60,6 +60,7 @@ class McpConnectionRequest(EidosFrozenModel):
     action: Literal["read", "connect", "cancel", "disconnect"] = "read"
     method: Literal["browser", "token"] = "browser"
     token: SecretStr | None = Field(default=None, repr=False)
+    client_id: str | None = Field(default=None, max_length=256)
     operation_id: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="after")
@@ -73,6 +74,13 @@ class McpConnectionRequest(EidosFrozenModel):
             raise ValueError("mcp_credential_required")
         if self.token and any(ord(char) <= 32 or ord(char) >= 127 for char in self.token.get_secret_value()):
             raise ValueError("mcp_credential_invalid")
+        if self.client_id is not None and (
+            self.action != "connect"
+            or self.method != "browser"
+            or not 1 <= len(self.client_id) <= 256
+            or any(ord(char) <= 32 or ord(char) >= 127 for char in self.client_id)
+        ):
+            raise ValueError("mcp_auth_invalid")
         return self
 
 

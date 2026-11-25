@@ -81,3 +81,18 @@ it("keeps the detail panel readable while context statistics are loading", async
   fireEvent.keyDown(document, { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
+
+it("renders prompt cache hit rate when cacheReadTokens is positive and omits it otherwise", async () => {
+  const view = render(
+    <ContextIndicator
+      usage={usage}
+      runId="run-1"
+      details={{ ...details, cacheReadTokens: 6400, cacheHitRatePercent: 53.3 }}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "查看上下文详情" }));
+  expect(await screen.findByText(/缓存命中 6\.4K \(53\.3%\)/)).toBeInTheDocument();
+
+  view.rerender(<ContextIndicator usage={usage} runId="run-2" details={{ ...details, runId: "run-2" }} />);
+  expect(screen.queryByText(/缓存命中/)).toBeNull();
+});

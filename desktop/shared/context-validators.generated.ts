@@ -4,7 +4,7 @@ import ucs2lengthRuntime from "ajv/dist/runtime/ucs2length.js";
 const ucs2length = typeof ucs2lengthRuntime === "function" ? ucs2lengthRuntime : ucs2lengthRuntime.default;
 "use strict";
 export const isContextDetails = validate68;
-const schema20 = {"additionalProperties":false,"properties":{"runId":{"title":"Runid","type":"string"},"measurement":{"enum":["provider","provider_calibrated","tokenizer_estimate","unavailable"],"title":"Measurement","type":"string"},"activeTokens":{"anyOf":[{"minimum":0,"type":"integer"},{"type":"null"}],"default":null,"title":"Activetokens"},"projectedTokens":{"anyOf":[{"minimum":0,"type":"integer"},{"type":"null"}],"default":null,"title":"Projectedtokens"},"contextWindowTokens":{"exclusiveMinimum":0,"title":"Contextwindowtokens","type":"integer"},"sections":{"default":[],"items":{"$ref":"#/$defs/ContextTokenSection"},"title":"Sections","type":"array"},"clearedToolResults":{"default":0,"minimum":0,"title":"Clearedtoolresults","type":"integer"},"calibrationSamples":{"default":0,"minimum":0,"title":"Calibrationsamples","type":"integer"},"lastEstimationErrorPercent":{"anyOf":[{"type":"number"},{"type":"null"}],"default":null,"title":"Lastestimationerrorpercent"},"compaction":{"anyOf":[{"$ref":"#/$defs/ContextCompactionRecord"},{"type":"null"}],"default":null},"manualPending":{"default":false,"title":"Manualpending","type":"boolean"},"planId":{"anyOf":[{"type":"string"},{"type":"null"}],"default":null,"title":"Planid"},"updatedAt":{"default":0,"maximum":9007199254740991,"minimum":-9007199254740991,"title":"Updatedat","type":"integer"}},"required":["runId","measurement","contextWindowTokens"],"title":"ContextDetails","type":"object"};
+const schema20 = {"additionalProperties":false,"properties":{"runId":{"title":"Runid","type":"string"},"measurement":{"enum":["provider","provider_calibrated","tokenizer_estimate","unavailable"],"title":"Measurement","type":"string"},"activeTokens":{"anyOf":[{"minimum":0,"type":"integer"},{"type":"null"}],"default":null,"title":"Activetokens"},"projectedTokens":{"anyOf":[{"minimum":0,"type":"integer"},{"type":"null"}],"default":null,"title":"Projectedtokens"},"contextWindowTokens":{"exclusiveMinimum":0,"title":"Contextwindowtokens","type":"integer"},"sections":{"default":[],"items":{"$ref":"#/$defs/ContextTokenSection"},"title":"Sections","type":"array"},"clearedToolResults":{"default":0,"minimum":0,"title":"Clearedtoolresults","type":"integer"},"calibrationSamples":{"default":0,"minimum":0,"title":"Calibrationsamples","type":"integer"},"lastEstimationErrorPercent":{"anyOf":[{"type":"number"},{"type":"null"}],"default":null,"title":"Lastestimationerrorpercent"},"cacheReadTokens":{"anyOf":[{"minimum":0,"type":"integer"},{"type":"null"}],"default":null,"title":"Cachereadtokens"},"cacheHitRatePercent":{"anyOf":[{"maximum":100,"minimum":0,"type":"number"},{"type":"null"}],"default":null,"title":"Cachehitratepercent"},"compaction":{"anyOf":[{"$ref":"#/$defs/ContextCompactionRecord"},{"type":"null"}],"default":null},"manualPending":{"default":false,"title":"Manualpending","type":"boolean"},"planId":{"anyOf":[{"type":"string"},{"type":"null"}],"default":null,"title":"Planid"},"updatedAt":{"default":0,"maximum":9007199254740991,"minimum":-9007199254740991,"title":"Updatedat","type":"integer"}},"required":["runId","measurement","contextWindowTokens"],"title":"ContextDetails","type":"object"};
 const func1 = Object.prototype.hasOwnProperty;
 const schema21 = {"additionalProperties":false,"properties":{"name":{"enum":["instructions","tools","skills","memory","conversation","tool_results","summary","other","overhead"],"title":"Name","type":"string"},"tokens":{"minimum":0,"title":"Tokens","type":"integer"}},"required":["name","tokens"],"title":"ContextTokenSection","type":"object"};
 
@@ -1010,21 +1010,14 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.compaction !== undefined){
-let data10 = data.compaction;
+if(data.cacheReadTokens !== undefined){
+let data10 = data.cacheReadTokens;
 const _errs33 = errors;
 const _errs34 = errors;
 let valid5 = false;
 const _errs35 = errors;
-if(!(validate56(data10, {instancePath:instancePath+"/compaction",parentData:data,parentDataProperty:"compaction",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate56.errors : vErrors.concat(validate56.errors);
-errors = vErrors.length;
-}
-var _valid3 = _errs35 === errors;
-valid5 = valid5 || _valid3;
-const _errs36 = errors;
-if(data10 !== null){
-const err11 = {instancePath:instancePath+"/compaction",schemaPath:"#/properties/compaction/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(!((typeof data10 == "number") && (!(data10 % 1) && !isNaN(data10)))){
+const err11 = {instancePath:instancePath+"/cacheReadTokens",schemaPath:"#/properties/cacheReadTokens/anyOf/0/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err11];
 }
@@ -1033,15 +1026,42 @@ vErrors.push(err11);
 }
 errors++;
 }
-var _valid3 = _errs36 === errors;
-valid5 = valid5 || _valid3;
-if(!valid5){
-const err12 = {instancePath:instancePath+"/compaction",schemaPath:"#/properties/compaction/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+if(errors === _errs35){
+if(typeof data10 == "number"){
+if(data10 < 0 || isNaN(data10)){
+const err12 = {instancePath:instancePath+"/cacheReadTokens",schemaPath:"#/properties/cacheReadTokens/anyOf/0/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err12];
 }
 else {
 vErrors.push(err12);
+}
+errors++;
+}
+}
+}
+var _valid3 = _errs35 === errors;
+valid5 = valid5 || _valid3;
+const _errs37 = errors;
+if(data10 !== null){
+const err13 = {instancePath:instancePath+"/cacheReadTokens",schemaPath:"#/properties/cacheReadTokens/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(vErrors === null){
+vErrors = [err13];
+}
+else {
+vErrors.push(err13);
+}
+errors++;
+}
+var _valid3 = _errs37 === errors;
+valid5 = valid5 || _valid3;
+if(!valid5){
+const err14 = {instancePath:instancePath+"/cacheReadTokens",schemaPath:"#/properties/cacheReadTokens/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+if(vErrors === null){
+vErrors = [err14];
+}
+else {
+vErrors.push(err14);
 }
 errors++;
 validate68.errors = vErrors;
@@ -1064,51 +1084,16 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.manualPending !== undefined){
-const _errs38 = errors;
-if(typeof data.manualPending !== "boolean"){
-validate68.errors = [{instancePath:instancePath+"/manualPending",schemaPath:"#/properties/manualPending/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"}];
-return false;
-}
-var valid0 = _errs38 === errors;
-}
-else {
-var valid0 = true;
-}
-if(valid0){
-if(data.planId !== undefined){
-let data12 = data.planId;
+if(data.cacheHitRatePercent !== undefined){
+let data11 = data.cacheHitRatePercent;
+const _errs39 = errors;
 const _errs40 = errors;
-const _errs41 = errors;
 let valid6 = false;
-const _errs42 = errors;
-if(typeof data12 !== "string"){
-const err13 = {instancePath:instancePath+"/planId",schemaPath:"#/properties/planId/anyOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err13];
-}
-else {
-vErrors.push(err13);
-}
-errors++;
-}
-var _valid4 = _errs42 === errors;
-valid6 = valid6 || _valid4;
-const _errs44 = errors;
-if(data12 !== null){
-const err14 = {instancePath:instancePath+"/planId",schemaPath:"#/properties/planId/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
-if(vErrors === null){
-vErrors = [err14];
-}
-else {
-vErrors.push(err14);
-}
-errors++;
-}
-var _valid4 = _errs44 === errors;
-valid6 = valid6 || _valid4;
-if(!valid6){
-const err15 = {instancePath:instancePath+"/planId",schemaPath:"#/properties/planId/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+const _errs41 = errors;
+if(errors === _errs41){
+if(typeof data11 == "number"){
+if(data11 > 100 || isNaN(data11)){
+const err15 = {instancePath:instancePath+"/cacheHitRatePercent",schemaPath:"#/properties/cacheHitRatePercent/anyOf/0/maximum",keyword:"maximum",params:{comparison: "<=", limit: 100},message:"must be <= 100"};
 if(vErrors === null){
 vErrors = [err15];
 }
@@ -1116,51 +1101,228 @@ else {
 vErrors.push(err15);
 }
 errors++;
+}
+else {
+if(data11 < 0 || isNaN(data11)){
+const err16 = {instancePath:instancePath+"/cacheHitRatePercent",schemaPath:"#/properties/cacheHitRatePercent/anyOf/0/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+if(vErrors === null){
+vErrors = [err16];
+}
+else {
+vErrors.push(err16);
+}
+errors++;
+}
+}
+}
+else {
+const err17 = {instancePath:instancePath+"/cacheHitRatePercent",schemaPath:"#/properties/cacheHitRatePercent/anyOf/0/type",keyword:"type",params:{type: "number"},message:"must be number"};
+if(vErrors === null){
+vErrors = [err17];
+}
+else {
+vErrors.push(err17);
+}
+errors++;
+}
+}
+var _valid4 = _errs41 === errors;
+valid6 = valid6 || _valid4;
+const _errs43 = errors;
+if(data11 !== null){
+const err18 = {instancePath:instancePath+"/cacheHitRatePercent",schemaPath:"#/properties/cacheHitRatePercent/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(vErrors === null){
+vErrors = [err18];
+}
+else {
+vErrors.push(err18);
+}
+errors++;
+}
+var _valid4 = _errs43 === errors;
+valid6 = valid6 || _valid4;
+if(!valid6){
+const err19 = {instancePath:instancePath+"/cacheHitRatePercent",schemaPath:"#/properties/cacheHitRatePercent/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+if(vErrors === null){
+vErrors = [err19];
+}
+else {
+vErrors.push(err19);
+}
+errors++;
 validate68.errors = vErrors;
 return false;
 }
 else {
-errors = _errs41;
+errors = _errs40;
 if(vErrors !== null){
-if(_errs41){
-vErrors.length = _errs41;
+if(_errs40){
+vErrors.length = _errs40;
 }
 else {
 vErrors = null;
 }
 }
 }
-var valid0 = _errs40 === errors;
+var valid0 = _errs39 === errors;
+}
+else {
+var valid0 = true;
+}
+if(valid0){
+if(data.compaction !== undefined){
+let data12 = data.compaction;
+const _errs45 = errors;
+const _errs46 = errors;
+let valid7 = false;
+const _errs47 = errors;
+if(!(validate56(data12, {instancePath:instancePath+"/compaction",parentData:data,parentDataProperty:"compaction",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate56.errors : vErrors.concat(validate56.errors);
+errors = vErrors.length;
+}
+var _valid5 = _errs47 === errors;
+valid7 = valid7 || _valid5;
+const _errs48 = errors;
+if(data12 !== null){
+const err20 = {instancePath:instancePath+"/compaction",schemaPath:"#/properties/compaction/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(vErrors === null){
+vErrors = [err20];
+}
+else {
+vErrors.push(err20);
+}
+errors++;
+}
+var _valid5 = _errs48 === errors;
+valid7 = valid7 || _valid5;
+if(!valid7){
+const err21 = {instancePath:instancePath+"/compaction",schemaPath:"#/properties/compaction/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+if(vErrors === null){
+vErrors = [err21];
+}
+else {
+vErrors.push(err21);
+}
+errors++;
+validate68.errors = vErrors;
+return false;
+}
+else {
+errors = _errs46;
+if(vErrors !== null){
+if(_errs46){
+vErrors.length = _errs46;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid0 = _errs45 === errors;
+}
+else {
+var valid0 = true;
+}
+if(valid0){
+if(data.manualPending !== undefined){
+const _errs50 = errors;
+if(typeof data.manualPending !== "boolean"){
+validate68.errors = [{instancePath:instancePath+"/manualPending",schemaPath:"#/properties/manualPending/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"}];
+return false;
+}
+var valid0 = _errs50 === errors;
+}
+else {
+var valid0 = true;
+}
+if(valid0){
+if(data.planId !== undefined){
+let data14 = data.planId;
+const _errs52 = errors;
+const _errs53 = errors;
+let valid8 = false;
+const _errs54 = errors;
+if(typeof data14 !== "string"){
+const err22 = {instancePath:instancePath+"/planId",schemaPath:"#/properties/planId/anyOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err22];
+}
+else {
+vErrors.push(err22);
+}
+errors++;
+}
+var _valid6 = _errs54 === errors;
+valid8 = valid8 || _valid6;
+const _errs56 = errors;
+if(data14 !== null){
+const err23 = {instancePath:instancePath+"/planId",schemaPath:"#/properties/planId/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(vErrors === null){
+vErrors = [err23];
+}
+else {
+vErrors.push(err23);
+}
+errors++;
+}
+var _valid6 = _errs56 === errors;
+valid8 = valid8 || _valid6;
+if(!valid8){
+const err24 = {instancePath:instancePath+"/planId",schemaPath:"#/properties/planId/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+if(vErrors === null){
+vErrors = [err24];
+}
+else {
+vErrors.push(err24);
+}
+errors++;
+validate68.errors = vErrors;
+return false;
+}
+else {
+errors = _errs53;
+if(vErrors !== null){
+if(_errs53){
+vErrors.length = _errs53;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid0 = _errs52 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.updatedAt !== undefined){
-let data13 = data.updatedAt;
-const _errs46 = errors;
-if(!((typeof data13 == "number") && (!(data13 % 1) && !isNaN(data13)))){
+let data15 = data.updatedAt;
+const _errs58 = errors;
+if(!((typeof data15 == "number") && (!(data15 % 1) && !isNaN(data15)))){
 validate68.errors = [{instancePath:instancePath+"/updatedAt",schemaPath:"#/properties/updatedAt/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
 return false;
 }
-if(errors === _errs46){
-if(typeof data13 == "number"){
-if(data13 > 9007199254740991 || isNaN(data13)){
+if(errors === _errs58){
+if(typeof data15 == "number"){
+if(data15 > 9007199254740991 || isNaN(data15)){
 validate68.errors = [{instancePath:instancePath+"/updatedAt",schemaPath:"#/properties/updatedAt/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"}];
 return false;
 }
 else {
-if(data13 < -9007199254740991 || isNaN(data13)){
+if(data15 < -9007199254740991 || isNaN(data15)){
 validate68.errors = [{instancePath:instancePath+"/updatedAt",schemaPath:"#/properties/updatedAt/minimum",keyword:"minimum",params:{comparison: ">=", limit: -9007199254740991},message:"must be >= -9007199254740991"}];
 return false;
 }
 }
 }
 }
-var valid0 = _errs46 === errors;
+var valid0 = _errs58 === errors;
 }
 else {
 var valid0 = true;
+}
+}
 }
 }
 }

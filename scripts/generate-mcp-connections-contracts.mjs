@@ -5,7 +5,8 @@ import path from "node:path";
 import { compile } from "json-schema-to-typescript";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const schema = JSON.parse(execFileSync(path.join(root, ".venv/bin/python"), ["-c", `
+const python = process.env.EIDOS_PYTHON ?? path.join(root, ".venv", ...(process.platform === "win32" ? ["Scripts", "python.exe"] : ["bin", "python"]));
+const schema = JSON.parse(execFileSync(python, ["-c", `
 import json
 from eidos_runtime.models import EidosFrozenModel
 from eidos_runtime.models.mcp_connections import McpConnectionRequest, McpConnectionState, BuiltinPluginRequest, BuiltinPluginsResponse, RemoteMcpInfo

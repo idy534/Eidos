@@ -116,7 +116,7 @@ class TeamRepository:
     # Roles and reads ------------------------------------------------------------
 
     def role_for_run(self, run_id: str) -> RunTeamRole | None:
-        with self.database.lock:
+        with self.database.read_scope(), self.database.lock:
             return self._role(self.database.connection(), run_id)
 
     @staticmethod
@@ -144,19 +144,19 @@ class TeamRepository:
             (run_id,))
 
     def team_for_session(self, session_id: str) -> TeamView | None:
-        with self.database.lock:
+        with self.database.read_scope(), self.database.lock:
             connection = self.database.connection()
             row = self._open_team(connection, session_id)
             return self._team_view(connection, row) if row else None
 
     def team(self, team_id: str) -> TeamView:
-        with self.database.lock:
+        with self.database.read_scope(), self.database.lock:
             connection = self.database.connection()
             return self._team_view(connection, self._team_row(connection, team_id))
 
     def pending_proposal(self, session_id: str) -> TeamProposalView | None:
         """The proposal still waiting for the user: undecided, and its lead Run still active."""
-        with self.database.lock:
+        with self.database.read_scope(), self.database.lock:
             row = self.database.connection().execute(
                 "SELECT p.* FROM team_proposals p JOIN runs r ON r.id=p.run_id "
                 f"WHERE p.session_id=? AND p.decision='pending' AND p.decision_json IS NULL AND r.status IN {_ACTIVE_SQL} "
@@ -904,7 +904,7 @@ class TeamRepository:
 
     def messages_page(self, team_id: str, viewer: Actor, *, after: int = 0, limit: int = 50,
                       member: str | None = None, task: str | None = None, channel: str | None = None) -> TeamMessagePage:
-        with self.database.lock:
+        with self.database.read_scope(), self.database.lock:
             connection = self.database.connection()
             self._team_row(connection, team_id)  # an unknown team is an error, not an empty board
             names = self._names(connection, team_id)
@@ -933,7 +933,7 @@ class TeamRepository:
                                    next_cursor=page[-1]["seq"] if page else after, has_more=len(rows) > limit)
 
     def message(self, team_id: str, viewer: Actor, message_id: str) -> TeamMessageView:
-        with self.database.lock:
+        with self.database.read_scope(), self.database.lock:
             connection = self.database.connection()
             row = connection.execute("SELECT * FROM team_messages WHERE team_id=? AND id=?", (team_id, message_id)).fetchone()
             if row is None:
@@ -1020,7 +1020,7 @@ class TeamRepository:
         Goal continuation waits then: the team's own wakes bring the lead back
         when members report, so the goal does not re-run the lead in between.
         """
-        with self.database.lock:
+        with self.database.read_scope(), self.database.lock:
             return self.database.connection().execute(
                 "SELECT 1 FROM teams t WHERE t.lead_session_id=? AND t.status='active' AND ("
                 f"EXISTS (SELECT 1 FROM team_members m JOIN runs r ON r.session_id=m.session_id WHERE m.team_id=t.id AND r.status IN {_ACTIVE_SQL}) "

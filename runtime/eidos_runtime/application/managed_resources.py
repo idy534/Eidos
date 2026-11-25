@@ -8,7 +8,13 @@ import uuid
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.infrastructure.managed_resources import ManagedResourceManager, ResourceError
-from eidos_runtime.models.managed_resources import ResourcePack, ResourceRetryRequest, ResourceRetryResponse, ResourceStatus
+from eidos_runtime.models.managed_resources import (
+    ResourceCleanupResponse,
+    ResourcePack,
+    ResourceRetryRequest,
+    ResourceRetryResponse,
+    ResourceStatus,
+)
 from eidos_runtime.resource_paths import managed_resource_directory
 
 logger = logging.getLogger(__name__)
@@ -80,3 +86,14 @@ class ManagedResourceApplication:
     def warmup(self) -> None:
         if self.manager is not None and any(pack.id == "document-python" for pack in self.manager.index.packs):
             self.retry(ResourceRetryRequest(pack_id="document-python"))
+
+    def cleanup(self) -> ResourceCleanupResponse:
+        if self.manager is None:
+            return ResourceCleanupResponse(removed_count=0, freed_bytes=0)
+        try:
+            removed_count, freed_bytes = self.manager.cleanup_legacy()
+        except ResourceError as error:
+            if error.code == "resource_cleanup_busy":
+                raise ApplicationError("OPERATION_IN_PROGRESS") from error
+            raise ApplicationError("RESOURCE_UNKNOWN") from error
+        return ResourceCleanupResponse(removed_count=removed_count, freed_bytes=freed_bytes)

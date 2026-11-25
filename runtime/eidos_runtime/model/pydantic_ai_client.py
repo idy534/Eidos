@@ -203,6 +203,9 @@ class PydanticAIModelClient:
             profile_spec.provider_id == "kimi"
             and profile_spec.model_id == "kimi-k3"
             and reasoning_selection in ("low", "high", "max")
+        ) or (
+            profile_spec.provider_id in {"anthropic", "gemini"}
+            and reasoning_selection in ("low", "medium", "high")
         ):
             self._reasoning_effort = reasoning_selection
         # Other Volcengine selections remain snapshot-only until verified.

@@ -201,6 +201,10 @@ class HookService:
             if not self.repository.allowed(binding):
                 self.repository.complete(invocation_id, HookResult(status="skipped", error_code="hook_not_trusted"))
                 return HookResult(status="skipped", error_code="hook_not_trusted")
+            if binding.definition.handler_type != "mcp_tool" and not binding.definition.command_for_platform(windows=local_files.WINDOWS):
+                skipped = HookResult(status="skipped", error_code="hook_platform_command_missing")
+                self.repository.complete(invocation_id, skipped)
+                return skipped
             launch_scope.enter_context(self.launch_window(cancel))
             if binding.source_kind == "plugin":
                 self.catalog.package(binding.plugin_id, expected_hash=binding.plugin_hash)
@@ -256,7 +260,8 @@ class HookService:
                 with self._mcp_lock:
                     raw = hook_output(self.mcp_execute(binding, invocation_id, arguments, cancel))
             else:
-                launch = prepare_shell_launch_for_execution(workspace, binding.definition.command, workspace, attempt,
+                command = binding.definition.command_for_platform(windows=local_files.WINDOWS)
+                launch = prepare_shell_launch_for_execution(workspace, command, workspace, attempt,
                     active_skill_roots=(root, *(Path(value) for value in transcript_roots)), dependency_environment=dependency_environment,
                     environment_policy=ShellEnvironmentRepository(self.store.database).read().policy)
                 environment = {**launch.environment, "PLUGIN_ROOT": str(root), "PLUGIN_DATA": str(data),

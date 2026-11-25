@@ -18,6 +18,7 @@ from eidos_runtime.persistence.errors import (
     ConditionalUpdateFailed,
     PersistenceCorruptionError,
 )
+from eidos_runtime.sandbox.permissions import AdditionalPermissionProfile
 
 
 CONTROL_SCOPE = "long_task/control"
@@ -157,6 +158,9 @@ class LongTaskRepository(Repository):
         index_snapshot_id: str | None = None,
         context_plan_id: str | None = None,
         context_snapshot_id: str | None = None,
+        rule_snapshot_id: str | None = None,
+        git_head: str | None = None,
+        permission_snapshot_hash: str | None = None,
         safe_point: SafePoint | None = None,
     ) -> LongTaskProgress:
         current = self._require(run_id)
@@ -168,6 +172,9 @@ class LongTaskRepository(Repository):
             ("index_snapshot_id", index_snapshot_id),
             ("context_plan_id", context_plan_id),
             ("context_snapshot_id", context_snapshot_id),
+            ("rule_snapshot_id", rule_snapshot_id),
+            ("git_head", git_head),
+            ("permission_snapshot_hash", permission_snapshot_hash),
         ):
             if value is not None:
                 changes[name] = value
@@ -451,6 +458,28 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def compute_permission_snapshot_hash(
+    approval_mode: str, grants: AdditionalPermissionProfile
+) -> str:
+    """Return a canonical digest covering approval mode and active Run grants."""
+    entries = sorted(
+        (
+            {
+                "access": entry.access.value,
+                "path": entry.path,
+                "recursive": entry.recursive,
+            }
+            for entry in grants.file_system
+        ),
+        key=lambda item: (str(item["path"]), str(item["access"]), bool(item["recursive"])),
+    )
+    return _hash({
+        "approvalMode": approval_mode,
+        "fileSystem": entries,
+        "network": grants.network.enabled if grants.network is not None else None,
+    })
+
+
 def _hash(value: object) -> str:
     return hashlib.sha256(
         json.dumps(
@@ -463,4 +492,5 @@ __all__ = [
     "LongTaskRepository",
     "RestartVerifier",
     "ResumeVerifier",
+    "compute_permission_snapshot_hash",
 ]

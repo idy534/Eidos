@@ -12,6 +12,8 @@ export type Sections = ContextTokenSection[];
 export type Clearedtoolresults = number;
 export type Calibrationsamples = number;
 export type Lastestimationerrorpercent = number | null;
+export type Cachereadtokens = number | null;
+export type Cachehitratepercent = number | null;
 export type Requestid = string;
 export type Stage = "requested" | "started" | "finished";
 export type Trigger = "manual" | "soft_target" | "window_pressure" | "provider_limit" | "projection_limit";
@@ -70,6 +72,8 @@ export interface ContextDetails {
   clearedToolResults?: Clearedtoolresults;
   calibrationSamples?: Calibrationsamples;
   lastEstimationErrorPercent?: Lastestimationerrorpercent;
+  cacheReadTokens?: Cachereadtokens;
+  cacheHitRatePercent?: Cachehitratepercent;
   compaction?: ContextCompactionRecord | null;
   manualPending?: Manualpending;
   planId?: Planid;

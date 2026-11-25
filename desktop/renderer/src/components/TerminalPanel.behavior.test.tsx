@@ -6,7 +6,13 @@ import type {
   TerminalDataEvent,
   TerminalExitEvent,
 } from "../contracts.js";
-import { TerminalPanel } from "./TerminalPanel.js";
+import {
+  _resetTerminalRegistryForTest,
+  disposeSessionTerminals,
+  disposeTerminal,
+  setPreferredTerminalShell,
+  TerminalPanel,
+} from "./TerminalPanel.js";
 
 interface FakeTerminalHandle {
   write: ReturnType<typeof vi.fn>;
@@ -87,6 +93,8 @@ describe("TerminalPanel", () => {
   });
 
   afterEach(() => {
+    _resetTerminalRegistryForTest();
+    setPreferredTerminalShell("");
     vi.restoreAllMocks();
     if (runtimeDescriptor) Object.defineProperty(window, "eidosRuntime", runtimeDescriptor);
     else delete (window as Partial<Window>).eidosRuntime;
@@ -120,5 +128,26 @@ describe("TerminalPanel", () => {
 
     act(() => exitListener?.({ terminalId: "terminal-1", exitCode: 0 }));
     expect(screen.getByRole("status")).toHaveTextContent("终端已退出");
+  });
+
+  it("keeps keepAlive terminals alive across unmount and remount until explicitly disposed", async () => {
+    setPreferredTerminalShell("pwsh");
+    const first = render(
+      <TerminalPanel sessionId="session-k" tabKey="session-k:terminal-1" keepAlive active={true} />,
+    );
+    await waitFor(() => expect(api.createTerminal).toHaveBeenCalledWith("session-k", undefined, undefined, "pwsh"));
+
+    first.unmount();
+    expect(api.closeTerminal).not.toHaveBeenCalled();
+
+    render(
+      <TerminalPanel sessionId="session-k" tabKey="session-k:terminal-1" keepAlive active={true} />,
+    );
+    expect(api.createTerminal).toHaveBeenCalledTimes(1);
+
+    disposeTerminal("session-k:terminal-1");
+    expect(api.closeTerminal).toHaveBeenCalledWith("terminal-1");
+
+    disposeSessionTerminals("session-k");
   });
 });

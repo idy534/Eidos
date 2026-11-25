@@ -21,6 +21,7 @@ export type Event =
 export type Matcher = string | null;
 export type Handlertype = "command" | "mcp_tool" | "prompt" | "agent";
 export type Command = string;
+export type Commandwindows = string | null;
 export type Timeoutseconds = number;
 export type Background = boolean;
 export type Statusmessage = string | null;
@@ -136,6 +137,7 @@ export interface HookDefinition {
   matcher?: Matcher;
   handlerType?: Handlertype;
   command?: Command;
+  commandWindows?: Commandwindows;
   timeoutSeconds?: Timeoutseconds;
   background?: Background;
   statusMessage?: Statusmessage;

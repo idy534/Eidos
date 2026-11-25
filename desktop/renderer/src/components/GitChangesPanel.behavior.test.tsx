@@ -559,8 +559,8 @@ describe("GitChangesPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送审阅意见" }));
 
     await waitFor(() => expect(onSendReviewFeedback).toHaveBeenCalledWith(
-      "Please address the following review feedback:\n"
-      + "- README.md (new line 1): Add coverage.",
+      "请处理以下审阅意见：\n"
+      + "- README.md（新第 1 行）：Add coverage.",
     ));
   });
 
@@ -640,5 +640,71 @@ describe("GitChangesPanel", () => {
     expect(await screen.findByRole("menuitem", { name: "agentic-kit" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "worktree-test · 共享" })).toBeInTheDocument();
     multi.result.unmount();
+  });
+
+  it("supports split diff toggle, syntax token highlighting, file stage/unstage/discard, hunk staging, and commit message generation", async () => {
+    const stage = vi.fn().mockResolvedValue({ head: status.head, branch: status.branch, status });
+    const unstage = vi.fn().mockResolvedValue({ head: status.head, branch: status.branch, status });
+    const discard = vi.fn().mockResolvedValue({ head: status.head, branch: status.branch, status });
+    const stageHunk = vi.fn().mockResolvedValue({ head: status.head, branch: status.branch, status });
+    const suggestCommitMessage = vi.fn().mockResolvedValue({ message: "feat(src): update index.ts", source: "heuristic" as const });
+
+    const { result, onRefresh } = renderPanel({
+      stage,
+      unstage,
+      discard,
+      stageHunk,
+      suggestCommitMessage,
+      workflowOpenRequest: 1,
+      readDiff: vi.fn().mockResolvedValue({
+        ...fileDiff("src/index.ts"),
+        unifiedDiff: [
+          "diff --git a/src/index.ts b/src/index.ts",
+          "--- a/src/index.ts",
+          "+++ b/src/index.ts",
+          "@@ -1 +1 @@",
+          "-const value = 1;",
+          "+const value = \"updated\";",
+          "",
+        ].join("\n"),
+      }),
+    });
+
+    // Switch to Split Diff view and expand file
+    fireEvent.click(screen.getByRole("button", { name: "分栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "src/index.ts" }));
+    await waitFor(() => {
+      expect(document.querySelector(".git-diff-split")).toBeInTheDocument();
+      expect(document.querySelector(".diff-token--keyword")).toBeInTheDocument();
+      expect(document.querySelector(".diff-token--string")).toBeInTheDocument();
+    });
+
+    // Per-hunk stage
+    fireEvent.click(screen.getByRole("button", { name: "暂存块" }));
+    await waitFor(() => expect(stageHunk).toHaveBeenCalledTimes(1));
+    expect(stageHunk.mock.calls[0]?.[2]).toBe(false);
+
+    // Per-file stage / unstage / two-click discard
+    fireEvent.click(screen.getByRole("button", { name: "暂存 src/index.ts" }));
+    await waitFor(() => expect(stage).toHaveBeenCalledWith("session-a", ["src/index.ts"], expect.any(String)));
+
+    fireEvent.click(screen.getByRole("button", { name: "取消暂存 README.md" }));
+    await waitFor(() => expect(unstage).toHaveBeenCalledWith("session-a", ["README.md"], expect.any(String)));
+
+    const discardButton = screen.getByRole("button", { name: "丢弃 src/index.ts" });
+    fireEvent.click(discardButton);
+    expect(discardButton).toHaveTextContent("确认丢弃");
+    fireEvent.click(discardButton);
+    await waitFor(() => expect(discard).toHaveBeenCalledWith("session-a", ["src/index.ts"], expect.any(String)));
+    expect(onRefresh).toHaveBeenCalled();
+
+    // Commit message suggestion (dialog opened via workflowOpenRequest)
+    fireEvent.click(await screen.findByRole("button", { name: "生成提交信息" }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("提交信息")).toHaveValue("feat(src): update index.ts");
+    });
+
+    localStorage.removeItem("eidos.gitDiffViewType");
+    result.unmount();
   });
 });

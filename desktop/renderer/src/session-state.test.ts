@@ -4,6 +4,7 @@ import test from "node:test";
 import type { Item, Run, RuntimeNotification, SessionSnapshot } from "./contracts.js";
 import {
   applyNotification,
+  applyNotifications,
   applyQueuedRunChange,
   findActiveRun,
   groupSessionsByProject,
@@ -167,6 +168,39 @@ test("item deltas use offsets to ignore duplicates and gaps", () => {
   assert.equal(applyNotification(current, delta(0, "🙂"))?.items[0]?.content, "🙂");
   assert.equal(applyNotification(current, delta(1, "x"))?.items[0]?.content, "🙂");
   assert.equal(applyNotification(current, delta(2, "x"))?.items[0]?.content, "🙂x");
+});
+
+test("applyNotifications coalesces consecutive item/delta bursts while preserving event order", () => {
+  const current = snapshot("running", "Hi");
+  const batch: RuntimeNotification[] = [
+    {
+      method: "item/delta",
+      params: { sessionId: session.id, runId: "run-1", itemId: "item-1", sequence: 1, delta: ", " },
+    },
+    {
+      method: "item/delta",
+      params: { sessionId: session.id, runId: "run-1", itemId: "item-1", sequence: 2, delta: "world" },
+    },
+    {
+      method: "run/completed",
+      params: {
+        sessionId: session.id,
+        run: {
+          id: "run-1",
+          sessionId: session.id,
+          status: "succeeded",
+          modelId: "deepseek-v4-flash",
+          modelStepCount: 1,
+          createdAt: 1,
+          updatedAt: 2,
+          completedAt: 2,
+        },
+      },
+    },
+  ];
+  const next = applyNotifications(current, batch);
+  assert.equal(next?.items[0]?.content, "Hi, world");
+  assert.equal(next?.runs[0]?.status, "succeeded");
 });
 
 test("an item update preserves content and merges the latest tool evidence", () => {

@@ -12,7 +12,7 @@ from eidos_runtime.runtime.state_machine import EventType
 
 class ShellEnvironmentRepository(Repository):
     def read(self) -> ShellEnvironmentSettings:
-        with self.lock:
+        with self.database.read_scope(), self.lock:
             row = (
                 self._connection()
                 .execute(
