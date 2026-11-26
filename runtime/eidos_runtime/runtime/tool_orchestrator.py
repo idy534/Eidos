@@ -46,6 +46,7 @@ class OrchestratorContext:
     environment_identity: str = "local"
     granted_permissions: AdditionalPermissionProfile | None = None
     execution_started: Callable[[], bool] | None = None
+    default_sandbox: SandboxType = SandboxType.MACOS_SEATBELT
 
 
 @dataclass(frozen=True)
@@ -149,7 +150,7 @@ class ToolOrchestrator:
             sandbox=(
                 SandboxType.NONE
                 if explicit_escalation or effective.full_access
-                else SandboxType.MACOS_SEATBELT
+                else context.default_sandbox
             ),
             effective=effective,
             workspace_roots=workspace_roots,
@@ -175,6 +176,7 @@ class ToolOrchestrator:
         attempt_count = 1
         if (
             denial is None
+            or first.sandbox is SandboxType.WINDOWS_MXC
             or denial.category is SandboxDenialCategory.NETWORK
             or explicit_escalation
             or context.cancel.is_set()
@@ -267,7 +269,7 @@ class ToolOrchestrator:
             workspaceRoots=workspace_roots,
             profileHash=(
                 effective.profile_hash
-                if sandbox is SandboxType.MACOS_SEATBELT
+                if sandbox is not SandboxType.NONE
                 else None
             ),
             escalationReason=escalation_reason,
@@ -359,11 +361,11 @@ class ToolOrchestrator:
                 record_attempt(attempt, "failed" if started is not None and not started() else "uncertain", None)
             raise
         if record_attempt is not None:
-            record_attempt(
-                attempt,
-                "completed" if result.get("outcome") == "success" else "failed",
-                result,
-            )
+            if attempt.sandbox is SandboxType.WINDOWS_MXC and result.get("reconciliationRequired") is True:
+                status = "uncertain"
+            else:
+                status = "completed" if result.get("outcome") == "success" else "failed"
+            record_attempt(attempt, status, result)
         return result, denial
 
 
@@ -406,7 +408,7 @@ def _attach_metadata(
     data.update(
         {
             "attemptCount": attempt_count,
-            "sandboxed": attempt.sandbox is SandboxType.MACOS_SEATBELT,
+            "sandboxed": attempt.sandbox is not SandboxType.NONE,
             "sandboxPermissions": requested_mode.value,
             "escalated": escalated,
             "profileHash": attempt.permissions.profile_hash,

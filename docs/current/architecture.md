@@ -515,7 +515,7 @@ ApprovalCoordinator 把扩权 Approval request、用户 decision、feedback、�
 
 默认 Shell attempt 使用 macOS Seatbelt。Seatbelt Policy 根据 Workspace、Runtime root、Eidos 数据目录、永久拒绝、附加权限和网络权限物化为 effective permission profile，并保存 profile hash。默认 Workspace profile 在权限校验和 Durable Intent 后直接启动。显式权限升级会创建新的 Approval attempt。用户可以通过高危人工审批允许显式 unsandboxed attempt。窗口说明命令及其子进程会使用当前 macOS 用户的权限。Runtime 不因未知副作用自动重放命令。
 
-Windows 使用 NTFS 句柄执行已准备的文件提交。Runtime 保留权限物化、Durable Intent、目标与版本核对、排他创建、原地写入和结果验证。Windows 的 Job Object 管理授权的 Shell、ConPTY 和浏览器进程。Runtime 使用同一托管资源目录安装随包提供的 Windows 文档与浏览器资源。默认受限 Shell 与本地 MCP 仍返回沙盒不可用。Windows 的范围和实机验收见 [当前限制](limitations.md#平台与分发) 和 [开发参考](../development/README.md#windows-x64-预览)。
+Windows 使用 NTFS 句柄执行已准备的文件提交。Runtime 保留权限物化、Durable Intent、目标与版本核对、排他创建、原地写入和结果验证。MXC 自检通过后，Runtime 将已物化的权限编译为 ProcessContainer 策略，通过本地管道传给经哈希核验的随包启动器。请求管道也充当启动闸门。Runtime 在受管 Job Object 登记启动后才放行请求，另一个管道回报启动与退出。放行后缺失可信退出记录时保存未知结果。受限 Shell PIPE 和命令 Hook 使用这个后端。SQLite v58 保留此前尝试记录并接受 `windows_mxc`。Windows 的范围和实机验收见 [当前限制](limitations.md#平台与分发) 和 [开发参考](../development/README.md#windows-x64-预览)。
 
 ### Shell
 

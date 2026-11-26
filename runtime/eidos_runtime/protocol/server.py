@@ -203,6 +203,7 @@ from eidos_runtime.sandbox.sensitive import (
 from eidos_runtime.sandbox.seatbelt import (
     run_seatbelt_self_test,
 )
+from eidos_runtime.sandbox.windows_mxc import run_mxc_self_test
 from eidos_runtime.db.storage import (
     ResourceNotFoundError,
     SessionStore,
@@ -2552,15 +2553,21 @@ class RuntimeServer:
             return
 
         if self.store.health_state == "ready":
-            with startup_phase("seatbelt_self_test"):
-                seatbelt = run_seatbelt_self_test()
-            if seatbelt.available:
-                logger.info("Seatbelt self-test passed")
-                self.shell_available = True
+            if sys.platform == "win32":
+                backend = "MXC"
+                with startup_phase("mxc_self_test"):
+                    sandbox_test = run_mxc_self_test(self.runtime_dependency_catalog)
+            else:
+                backend = "Seatbelt"
+                with startup_phase("seatbelt_self_test"):
+                    sandbox_test = run_seatbelt_self_test()
+            self.shell_available = sandbox_test.available
+            if sandbox_test.available:
+                logger.info("%s self-test passed", backend)
             else:
                 logger.warning(
-                    "Seatbelt self-test failed; Shell remains unavailable: %s",
-                    ",".join(seatbelt.failures),
+                    "%s self-test failed; Shell remains unavailable: %s",
+                    backend, ",".join(sandbox_test.failures),
                 )
 
         self.initialized = True

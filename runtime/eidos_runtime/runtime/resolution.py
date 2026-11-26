@@ -20,6 +20,8 @@ from eidos_runtime.sandbox.permissions import (
     BasePermissionProfile,
     base_permission_profile_for_workspace,
     materialize_effective_profile,
+    platform_shell_sandbox,
+    SandboxType,
     with_project_metadata_paths,
 )
 from eidos_runtime.sandbox.seatbelt_policy import BASE_POLICY_PATH
@@ -361,14 +363,20 @@ def create_run_resolution_snapshot(
     permission_hash = materialize_effective_profile(
         base_permissions
     ).profile_hash
-    base_policy_hash = hashlib.sha256(BASE_POLICY_PATH.read_bytes()).hexdigest()
+    platform_sandbox = platform_shell_sandbox()
+    if platform_sandbox is SandboxType.WINDOWS_MXC:
+        from eidos_runtime.sandbox.mxc_policy import MXC_SCHEMA_SHA256
+
+        base_policy_hash = MXC_SCHEMA_SHA256
+    else:
+        base_policy_hash = hashlib.sha256(BASE_POLICY_PATH.read_bytes()).hexdigest()
     sandbox_policy = {
         "approvalPolicy": "side_effects_require_approval",
         "approvalMode": approval_mode,
         "fullAccessConfirmation": FULL_ACCESS_WARNING_VERSION if approval_mode == "full_access" else None,
         "basePolicyHash": base_policy_hash,
         "permissionProfileHash": permission_hash,
-        "sandboxType": "none" if approval_mode == "full_access" else "macos_seatbelt",
+        "sandboxType": (SandboxType.NONE if approval_mode == "full_access" else platform_sandbox).value,
     }
     sandbox_json = canonical_json(sandbox_policy)
     return RunResolutionSnapshot.create(

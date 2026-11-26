@@ -15,9 +15,11 @@ import subprocess
 import tempfile
 import threading
 import time
+from typing import BinaryIO
 
 from eidos_runtime.domain.shell_environment import ShellEnvironmentPolicy
 from eidos_runtime.extensions.skill_access import SkillAccessRecord
+from eidos_runtime.infrastructure.mxc_status import MxcProcessStatus
 from eidos_runtime.sandbox.dependency_environment import (
     DependencyShellEnvironment,
     apply_dependency_environment,
@@ -40,6 +42,7 @@ from eidos_runtime.runtime.resource_registry import (
 from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.shell_output_buffer import ShellOutputBuffer
 from eidos_runtime.sandbox.permissions import SandboxAttempt, SandboxType
+from eidos_runtime.sandbox.windows_mxc import MxcLaunch, MxcUnavailableError, current_mxc_helper
 from eidos_runtime.workspace.search_driver import RipgrepBinaryResolver, SearchDriverError
 
 
@@ -79,6 +82,7 @@ class ShellLaunchSpec:
     rows: int = 30
     terminal_profile: SeatbeltProfile | None = None
     shell_argv: tuple[str, ...] = ()
+    mxc: MxcLaunch | None = None
 
     def terminal_command(self, device: Path) -> tuple[str, ...]:
         if not self.sandboxed:
@@ -137,7 +141,7 @@ def run_shell(
         return workspace_changed_result(
             started, skill_invocation=skill_invocation,
         )
-    except SeatbeltUnavailableError:
+    except (SeatbeltUnavailableError, MxcUnavailableError):
         return sandbox_unavailable_result(started, skill_invocation=skill_invocation)
     finally:
         if cwd_fd >= 0:
@@ -383,6 +387,8 @@ def prepare_shell_launch_for_execution(
             environment_policy,
         )
         if tty:
+            if launch.mxc is not None:
+                raise MxcUnavailableError("mxc_pty_unavailable")
             launch = replace(launch, environment={
                 **launch.environment, "TERM": "dumb", "NO_COLOR": "1",
                 "PAGER": "cat", "GIT_PAGER": "cat",
@@ -407,8 +413,19 @@ def _prepare_verified_shell_launch(
     for root in (workspace, *workspace.additional_roots):
         _verify_directory_path(root)
     host_shell = HOST_SHELL_RESOLVER.resolve()
-    sandboxed = attempt is None or attempt.sandbox is SandboxType.MACOS_SEATBELT
-    if sandboxed:
+    seatbelt = attempt is None or attempt.sandbox is SandboxType.MACOS_SEATBELT
+    mxc = None
+    if attempt is not None and attempt.sandbox is SandboxType.WINDOWS_MXC:
+        helper = current_mxc_helper()
+        if helper is None or host_shell.kind != "powershell":
+            raise MxcUnavailableError("mxc_unavailable")
+        permissions = attempt.permissions.model_copy(update={
+            "active_skill_roots": tuple(dict.fromkeys((
+                *attempt.permissions.active_skill_roots, *(str(path) for path in active_skill_roots),
+            ))),
+        })
+        mxc = MxcLaunch(helper, permissions, workspace, cwd)
+    if seatbelt:
         fallback_environment = _effective_shell_environment(
             SHELL_ENVIRONMENT_PROVIDER.fallback_environment(host_shell),
             host_shell,
@@ -423,7 +440,7 @@ def _prepare_verified_shell_launch(
     snapshot = SHELL_ENVIRONMENT_PROVIDER.get(
         host_shell,
         cwd.path,
-        command_wrapper=preflight_profile.command if sandboxed else None,
+        command_wrapper=preflight_profile.command if seatbelt else None,
         **({"environment_policy": environment_policy} if environment_policy is not None else {}),
     )
     environment = _effective_shell_environment(snapshot.environment, host_shell)
@@ -432,7 +449,7 @@ def _prepare_verified_shell_launch(
         environment=environment,
         attempt=attempt,
         active_skill_roots=active_skill_roots,
-    ) if sandboxed else None
+    ) if seatbelt else None
     for root in (workspace, *workspace.additional_roots):
         _verify_directory_path(root)
     _verify_directory_path(cwd)
@@ -446,6 +463,7 @@ def _prepare_verified_shell_launch(
         environment_source=snapshot.source,
         environment_policy=environment_policy,
         dependency_environment=dependency_environment,
+        mxc=mxc,
     )
     return launch
 
@@ -484,8 +502,9 @@ def prepare_shell_launch(
     environment_source: str | None = None,
     dependency_environment: DependencyShellEnvironment | None = None,
     environment_policy: ShellEnvironmentPolicy | None = None,
+    mxc: MxcLaunch | None = None,
 ) -> ShellLaunchSpec:
-    sandboxed = attempt is None or attempt.sandbox is SandboxType.MACOS_SEATBELT
+    sandbox = attempt.sandbox if attempt is not None else SandboxType.MACOS_SEATBELT
     # zsh and bash support pipefail natively. Keep POSIX sh compatibility.
     shell_argv = [str(shell.executable)]
     if shell.kind == "zsh" and environment_policy is not None and environment_policy.inherit != "all":
@@ -507,13 +526,16 @@ def prepare_shell_launch(
         shell_argv.extend(("-NoLogo", "-NoProfile", "-EncodedCommand", encoded))
     else:
         shell_argv.extend(("-c", execution_command))
-    if sandboxed and profile is None:
+    if sandbox is SandboxType.MACOS_SEATBELT and profile is None:
         raise SeatbeltUnavailableError("sandbox profile is unavailable")
-    argv = (
-        profile.command(shell_argv)
-        if sandboxed and profile is not None
-        else shell_argv
-    )
+    if sandbox is SandboxType.WINDOWS_MXC:
+        if mxc is None:
+            raise MxcUnavailableError("mxc_unavailable")
+        argv = (str(mxc.helper.path), "run")
+    elif sandbox is SandboxType.MACOS_SEATBELT and profile is not None:
+        argv = profile.command(shell_argv)
+    else:
+        argv = shell_argv
     filtered_environment = environment_policy.apply(environment) if environment_policy is not None else dict(environment)
     if shell.kind == "powershell":
         # The Windows loader and side-by-side assemblies need the system root
@@ -526,12 +548,56 @@ def prepare_shell_launch(
             filtered_environment,
             dependency_environment,
         ),
-        sandboxed=sandboxed,
+        sandboxed=sandbox is not SandboxType.NONE,
         shell_kind=shell.kind,
         environment_source=environment_source,
-        terminal_profile=profile if sandboxed else None,
+        terminal_profile=profile if sandbox is SandboxType.MACOS_SEATBELT else None,
         shell_argv=tuple(shell_argv),
+        mxc=mxc,
     )
+
+
+def start_shell_pipe(launch: ShellLaunchSpec, *, stdin: int | BinaryIO) -> host_processes.OwnedProcess:
+    if launch.mxc is not None:
+        return launch.mxc.start(
+            launch.shell_argv, launch.environment, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+    return host_processes.start(
+        launch.argv, cwd=launch.cwd, env=launch.environment,
+        stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, hold=True,
+    )
+
+
+def mxc_process_status(process: host_processes.OwnedProcess) -> MxcProcessStatus | None:
+    if not host_processes.WINDOWS:
+        return None
+    from eidos_runtime.infrastructure.windows_processes import MxcJobProcess
+
+    if not isinstance(process, MxcJobProcess):
+        return None
+    return process.mxc_status() if process.poll() is not None else MxcProcessStatus()
+
+
+def apply_mxc_status(result: dict[str, object], status: MxcProcessStatus | None) -> dict[str, object]:
+    if status is None:
+        return result
+    data = result["data"]
+    assert isinstance(data, dict)
+    data["exitCode"] = status.exit_code
+    if status.failure_code is not None:
+        code = "sandbox_unavailable" if status.failure_code in {"backend_unavailable", "policy_rejected"} else "process_start_failed"
+        if status.failure_code == "not_released" and data.get("termination") == "canceled":
+            code = "canceled"
+        data["termination"] = "not_started"
+        result.update(outcome="error", code=code, summary="The command did not start in the Windows sandbox",
+                      sideEffectsMayExist=False, reconciliationRequired=False)
+    elif status.uncertain:
+        if data.get("termination") == "exit":
+            data["termination"] = "unknown"
+        code = data.get("termination") if data.get("termination") in {"timeout", "canceled"} else "shell_execution_unknown"
+        result.update(outcome="error", code=code, summary="Windows sandbox command outcome is unknown",
+                      sideEffectsMayExist=True, reconciliationRequired=True)
+    return result
 
 
 def run_shell_process(
@@ -552,14 +618,9 @@ def run_shell_process(
         if input_file is not None:
             input_file.write(stdin_bytes)
             input_file.seek(0)
-        process = host_processes.start(
-            launch.argv,
-            cwd=launch.cwd,
-            env=launch.environment,
+        process = start_shell_pipe(
+            launch,
             stdin=input_file if input_file is not None else subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            hold=True,
         )
     except OSError as error:
         raise ShellProcessStartError from error
@@ -644,9 +705,11 @@ def run_shell_process(
                     emit_decoded(key.data, preview)
             if process.poll() is not None and termination == "exit":
                 if has_members():
-                    termination = "background_process"
-                    termination_started_at = time.monotonic()
-                    terminate()
+                    if launch.mxc is None:
+                        termination = "background_process"
+                    if termination_started_at is None:
+                        termination_started_at = time.monotonic()
+                        terminate()
                 elif not selector.get_map():
                     break
             if (
@@ -662,6 +725,9 @@ def run_shell_process(
         except subprocess.TimeoutExpired:
             terminate()
             returncode = process.wait(timeout=1)
+        mxc_status = mxc_process_status(process)
+        if mxc_status is not None and has_members():
+            mxc_status = MxcProcessStatus()
     finally:
         selector.close()
         if process.poll() is None or has_members():
@@ -709,7 +775,7 @@ def run_shell_process(
     }
     if truncated:
         data["truncationReason"] = "output_limit"
-    return {
+    result = {
         "schemaVersion": 1,
         "toolName": "run_shell",
         "outcome": outcome,
@@ -722,6 +788,7 @@ def run_shell_process(
         "data": data,
         "sideEffectsMayExist": True,
     }
+    return apply_mxc_status(result, mxc_status)
 
 
 def _shell_failure_summary(

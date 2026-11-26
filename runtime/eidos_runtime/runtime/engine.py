@@ -115,6 +115,7 @@ from eidos_runtime.sandbox.permissions import (
     BasePermissionProfile,
     materialize_effective_profile,
 )
+from eidos_runtime.sandbox.windows_mxc import current_mxc_helper
 from eidos_runtime.model.instructions import StepPermissionPolicy
 
 
@@ -1890,7 +1891,9 @@ def _build_step_policy(
         sandbox_mode = "read-only"
 
     shell_available = "run_shell" in available_tools
-    allow_additional_permissions = shell_available and not local_files.WINDOWS
+    allow_additional_permissions = shell_available and (
+        not local_files.WINDOWS or current_mxc_helper() is not None
+    )
     network_permission_requestable = bool(
         shell_available and allow_additional_permissions
     )

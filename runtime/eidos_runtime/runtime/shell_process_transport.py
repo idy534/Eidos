@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from eidos_runtime.infrastructure import host_processes
 from eidos_runtime.sandbox.seatbelt import runtime_python_executable
-from eidos_runtime.sandbox.shell import ShellLaunchSpec, _terminate_group
+from eidos_runtime.sandbox.shell import ShellLaunchSpec, _terminate_group, start_shell_pipe
 
 if TYPE_CHECKING:
     from eidos_runtime.infrastructure.windows_terminal import ConPtyProcess
@@ -104,11 +104,7 @@ def spawn_shell_process(
     launch: ShellLaunchSpec, *, cancel: threading.Event | None = None,
 ) -> ShellProcessTransport:
     if not launch.tty:
-        return ShellProcessTransport(host_processes.start(
-            launch.argv, cwd=launch.cwd, env=launch.environment,
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            hold=True,
-        ))
+        return ShellProcessTransport(start_shell_pipe(launch, stdin=subprocess.PIPE))
     if sys.platform == "win32":
         from eidos_runtime.infrastructure.windows_terminal import ConPtyProcess
 

@@ -1,6 +1,6 @@
 # Windows 沙盒适配设计
 
-状态：2026-11-26 修订为 V2，尚未实施，第 0 期实机验证尚未开始。V1（2026-11-17）选定 MXC ProcessContainer 作为 Windows 后端，本版沿用该方向，并根据 [Agent Harness 调研](../research/windows-sandbox-agent-harnesses.md) 更新 MXC 发布状态与系统要求，确定接入方式、读取语义和进程模型，补充实机验证项，把分期细化到文件、测试和验收。当前 Windows 行为以 [限制说明](../current/limitations.md)、[架构说明](../current/architecture.md)、源码和测试为准。
+V2 于 2026-11-26 修订。本分支接入第一期的 Shell PIPE 和命令 Hook。原生启动探测、安全边界和分发验证的范围见第 7 至 11 节。当前 Windows 行为以 [限制说明](../current/limitations.md)、[架构说明](../current/architecture.md)、源码和测试为准。
 
 ## 1. 目标与范围
 
@@ -24,7 +24,7 @@
 - 沙盒不可用时 fail closed，保留现有的审批后无沙盒运行和完全访问路径；
 - 不建多后端框架，只抽出 Shell 启动需要的一个窄接口。
 
-## 2. 现状
+## 2. 实施前的 Windows 基线
 
 | 位置 | Windows 当前行为 |
 |---|---|
@@ -85,9 +85,9 @@ MXC 在受支持的构建上发送四个必需诊断事件，SDK 设置、用户
 
 维护者已于 2026-11-26 确认以下做法：
 
-- Eidos 从源码构建 helper，构建时不打包微软签名的遥测组件，运行时把该变量设为空；
+- Eidos 从源码构建 helper，编译时显式向 Cargo 传入空的 `MXC_TELEMETRY_COMPONENT_PATH`，停用 SDK 的诊断路由；
 - 第 0 期用抓包和 ETW 确认事件确实不再发出（V10）；
-- 若无法关闭，由维护者决定是否接受，并在用户文档中说明。未决定前不进入第一期。
+- 发布前核对实际交付产物的诊断路由。若依然路由，由维护者决定是否接受，并在用户文档中说明。
 
 ### D6 不可用时保持现状
 
@@ -107,18 +107,9 @@ ToolOrchestrator → shell_orchestration → prepare_shell_launch
               → powershell.exe -NoLogo -NoProfile -EncodedCommand …
 ```
 
-### 4.2 `SandboxLauncher`
+### 4.2 Shell 启动
 
-在 [shell.py](../../runtime/eidos_runtime/sandbox/shell.py) 中，`prepare_shell_launch` 和 `ShellLaunchSpec.terminal_profile` 目前直接依赖 `SeatbeltProfile.command(argv, terminal_device=...)`。把这一个调用抽成协议：
-
-```python
-class SandboxLauncher(Protocol):
-    sandbox_type: SandboxType
-    profile_hash: str
-    def command(self, argv: Sequence[str], *, terminal_device: Path | None = None) -> Sequence[str]: ...
-```
-
-`SeatbeltProfile` 原样满足该协议；新增 `MxcLaunchProfile`。`sandboxed` 的判断改为 `attempt.sandbox is not SandboxType.NONE`。不再增加其他抽象。
+[shell.py](../../runtime/eidos_runtime/sandbox/shell.py) 的 `ShellLaunchSpec` 记录 Windows MXC 启动所需的工作区身份和权限。`start_shell_pipe` 同时服务 Agent Shell 和命令 Hook。Windows 分支准备请求与状态句柄，macOS 分支使用 Seatbelt 命令。结果中的 `sandboxed` 取自实际 Sandbox Attempt。
 
 ### 4.3 `MxcPolicyCompiler`
 
@@ -131,15 +122,15 @@ class SandboxLauncher(Protocol):
 
 - 定位：helper 本身就是沙盒启动器，地位相当于 macOS 的 `/usr/bin/sandbox-exec`。它在容器外运行，只启动容器内的工作负载，不接受模型或项目文件的参数来改变策略。
 - 位置：`native/windows-sandbox/`，Rust，`Cargo.lock` 入库；MXC 依赖固定到发布 tag 的 git 修订；工具链跟随 MXC 的 `rust-toolchain.toml`（当前 1.93）。
-- `probe`：stdout 输出一行 JSON，包含 helper 版本、MXC 版本、系统构建号、PSEC 是否可用、`fsDeny`、`loopbackServer`。
+- `probe`：stdout 输出一行 JSON，包含 helper 版本、MXC 版本、PSEC 是否可用、`fsDeny`、`loopbackServer`。Runtime 先检查系统构建号。
 - `run --request-handle R --status-handle S [--pty]`：
   - 从继承的句柄 R 读取请求。Eidos 在把 helper 放进 Job 之后才写入请求，句柄 R 因此兼任启动闸门，沙盒启动不再经过 Python 启动器；
   - 请求不落盘，沙盒内进程无法读取；
   - 工作负载继承 helper 的 stdio（PIPE）或控制台（ConPTY）；
-  - 工作负载恢复运行后，向句柄 S 写 `{"event":"started"}`；启动前失败时写 `{"event":"failed","code":…}` 后退出。`code` 取值为 `request_invalid`、`backend_unavailable`、`policy_rejected`、`launch_failed`；
-  - 启动后以工作负载退出码退出；
+  - 工作负载恢复运行后，向句柄 S 写 `{"event":"started"}`。已确认未启动的失败写 `{"event":"failed","code":…}` 后退出，原因使用 `request_invalid`、`backend_unavailable`、`policy_rejected`、`launch_failed`；
+  - 已确认工作负载退出后写 `{"event":"exited","exitCode":…}`，再以工作负载退出码退出；
   - 不实施超时，不重试，不回退到其他后端。
-- Python 根据状态通道区分“未启动”和“已启动”：未启动的失败映射为 `sideEffectsMayExist=false` 的结果；已启动后 helper 异常退出，按现有规则记录未知结果。退出码本身不承担区分职责，因此不会与工作负载的退出码冲突。
+- 请求尚未放行或状态管道完整报告了启动前失败时，Python 保存 `sideEffectsMayExist=false`。一旦尝试放行请求，缺少完整可信的启动与退出记录就按未知结果保存，含恢复工作负载后还来不及发送 `started` 的情况。
 - 打包：[build-windows-runtime.py](../../scripts/build-windows-runtime.py) 调用 `cargo build --locked --release`，产物放入 `resources/bin/windows-sandbox/`，SHA-256 写入运行时清单；Runtime 使用前按清单校验哈希。代码签名暂不纳入本方案，后续随 Windows 安装包签名单独处理（第 12 节）。
 
 ## 5. 权限映射
@@ -158,11 +149,11 @@ class SandboxLauncher(Protocol):
 | `network_enabled=false` | `egress.default: deny`，`ingress.default: deny`，`ingress.hostLoopback: deny` |
 | `network_enabled=true` | `egress.default: allow`，`ingress.default: deny`（公网可达，局域网不可达，见 V11） |
 | UI | `ui.disable: false`（保留 PowerShell 启动所需的 Win32k，做法同 Codex）、`clipboard: none`、`injection: false` |
-| 环境 | 沿用现有 Shell 环境继承策略；补齐 `SYSTEMROOT`；`LOCALAPPDATA` 固定为宿主值 |
+| 环境 | 沿用现有 Shell 环境继承策略，补齐 `SYSTEMROOT` 和 `LOCALAPPDATA`，将 `HOME`、`TEMP`、`TMP` 和 `TMPDIR` 指向沙盒专用目录。PSEC 可以把子进程的 `LOCALAPPDATA` 定向到容器配置目录 |
 
 与 macOS 的差异：
 
-- macOS 的禁止规则对不存在的路径同样生效。MXC 的处理需要实测（V1）：Copilot 会把缺失的禁止路径创建为目录，Eidos 不接受这种副作用（缺失的 `.git` 被创建为目录会让工作区看起来像仓库）。在 V1 有结论前，编译器只为已存在的路径生成例外项，并依靠现有的工作区清单差异检测发现新建的受保护元数据。
+- 本机原生测试确认，缺失的路径列入 `readonlyPaths` 后仍可被创建，列入 `deniedPaths` 后会被系统拒绝。编译器为缺失的保留路径生成显式拒绝。可写父目录下已有的只读保护路径，在进程运行期间持有按身份核验的 NTFS 句柄，阻止目录项被替换。
 - 局域网访问在 V11 有结论后再决定是否开放。
 
 ### 5.2 本地 MCP
@@ -192,14 +183,14 @@ class SandboxLauncher(Protocol):
 
 1. 校验 helper 哈希；
 2. 运行 `probe`，检查支持线、PSEC 可用和 `fsDeny`；
-3. 在临时工作区、临时数据目录和临时 Git 仓库上执行功能检查，检查项名称与 macOS 一致：`system_execute`、`workspace_write`、`external_read_allowed`、`home_read_allowed`、`home_write_denied`、`sandbox_tmp_write`、`external_write_denied`、`data_models_read_denied`、`data_private_token_read_denied`、`sensitive_read_allowed`、`git_read_allowed`、`git_write_denied`、`symlink_escape_denied`（Windows 上覆盖 junction）、`child_inherits_policy`、`loopback_denied`、`timeout_enforced`。
+3. 通过真正的启动器在临时目录中验证 PowerShell 的工作目录和标准输入输出。验证工作区及临时目录可写、外部普通文件只读、仿真私有文件不可读、Git 元数据只读、缺失的保留目录无法创建、子进程继承约束和默认拒绝宿主回环。
 
 任一项失败即判为不可用，日志记录失败项，`runShell` 为 `false`，本地 MCP 继续返回 `mcp_sandbox_unavailable`。检查合并到尽量少的容器中执行，目标总耗时在 2 秒以内；Windows 的 `initialize` 限时为 60 秒，不需要调整。
 
 ## 8. 协议、持久化与界面
 
 - `SandboxType` 新增 `windows_mxc`。该值写入持久化的 `SandboxAttempt` 和审批载荷中的 `sandbox` 字段，[tool_orchestrator.py:268](../../runtime/eidos_runtime/runtime/tool_orchestrator.py) 同时为它记录 `profileHash`。
-- 没有 SQLite 表结构变化。需要确认旧版本读取 `windows_mxc` 时的行为，以及 Desktop 审批卡片对未知 `sandbox` 值的展示。
+- SQLite v58 调整 `tool_attempts.sandbox_type` 的 CHECK 约束并事务迁移既有记录。旧 Runtime 拒绝打开 v58 数据库，回退时恢复升级前备份。
 - `initialize` 的能力字段第一期不变。第二期新增不可用原因（例如 `os_update_required`、`fs_deny_unsupported`），Desktop 据此提示用户更新 Windows，同步协议 Fixture、TypeScript 契约和 `docs/current/`。
 
 ## 9. 第 0 期实机验证
@@ -222,7 +213,7 @@ class SandboxLauncher(Protocol):
 | V12 | 工作区内指向受保护路径或工作区外的 junction、符号链接和硬链接 |
 | V13 | 每条命令相对无沙盒的额外耗时（p50、p95） |
 
-完成标准：V1 至 V13 都有记录，D3、D5 得到确认或修订，并据此决定是否进入第一期。记录写入 `docs/evaluations/`。
+首期启动前把文件权限、工作目录、标准管道与取消纳入对应的原生测试。普通用户、旧系统、签名策略和遥测的发布检查，以及 PTY 与 MCP 各期的原生检查，仍按此表验证并记录。
 
 ## 10. 分期实施
 
@@ -237,10 +228,10 @@ class SandboxLauncher(Protocol):
 | Commit | 内容 | 测试 |
 |---|---|---|
 | 1 | `native/windows-sandbox/` helper；`build-windows-runtime.py` 构建并写入哈希；[windows.yml](../../.github/workflows/windows.yml) 安装 Rust 工具链 | Rust 单元测试；Windows CI 构建并校验哈希 |
-| 2 | `SandboxLauncher` 协议，`SeatbeltProfile` 适配，`sandboxed` 判断改为非 `NONE` | macOS 现有 Shell 与 Seatbelt 测试不变；`pnpm test:seatbelt-native` |
+| 2 | Shell PIPE 共用启动入口，Windows 传递 MXC 启动计划，`sandboxed` 判断改为非 `NONE` | macOS Shell 用例、`pnpm test:seatbelt-native` |
 | 3 | `MxcPolicyCompiler` 与随源码保存的 schema | 跨平台单元测试：映射表每一行、优先级、路径排序与哈希、schema 校验、注入的卷根探测 |
 | 4 | `SandboxType.WINDOWS_MXC`、`run_mxc_self_test`、`server.py` 能力判定、`tool_orchestrator.py` 记录 `profileHash`、`hooks.py` 按平台选择、撤掉 `engine.py` 的 Windows 例外 | 用伪 helper 的单元测试覆盖自检判定、状态通道映射和未启动结果 |
-| 5 | `shell.py` 接入 `MxcLaunchProfile`（PIPE），请求与状态句柄传递 | Windows 实机：工作区写入成功，工作区外写入、数据目录读取、Git 元数据写入和联网被拒，取消后进程树退出；不可用机器上行为与现在相同 |
+| 5 | `shell.py` 接入 `MxcLaunch`（PIPE），请求与状态句柄传递 | Windows 实机验证工作区写入、外部写入拒绝、私有数据读取拒绝、Git 元数据保护、回环拒绝及取消 |
 | 6 | 同步 `docs/current/`（limitations、architecture、agent-shell）与 `docs/development/README.md` | `git diff --check` |
 
 完成标准：macOS 行为与测试不变；Windows 档位 A 的 Shell 和 Hook 通过真实沙盒测试；不可用时行为不变。本期跨 Sandbox、持久化值和 Tool 链路，按 AGENTS.md 第 31 节属于高风险改动，提交前做独立评审。
@@ -273,7 +264,7 @@ class SandboxLauncher(Protocol):
 | 系统更新推送不均，构建号满足但能力缺失 | 以 `probe` 和自检为准，失败即不可用 |
 | 宽读组合与 PowerShell 不兼容，或路径过多导致启动慢 | V2、V13 验证；必要时调整卷根展开粒度，但不开放数据目录或保密路径 |
 | MSYS2 `sh.exe` 崩溃导致 Git Hook 失败 | V5 确认；写入限制说明；Hook 失败如实返回 |
-| 必需遥测无法关闭 | D5：维护者决定前不进入第一期 |
+| 发布产物仍路由遥测 | 发布前按 D5 核验和决策 |
 | Windows 安装包目前未签名，helper 可能被智能应用控制拦截 | 签名已决定暂缓，后续单独处理；V10 只记录拦截情况，不阻塞第一期 |
 | 局域网与 DNS 语义不同于 macOS | V11 确认后写入限制说明 |
 
@@ -281,7 +272,7 @@ class SandboxLauncher(Protocol):
 
 - 运行时：helper 缺失、哈希不符或自检失败时自动进入不可用状态，行为与今天相同；
 - 诊断：环境变量 `EIDOS_WINDOWS_SANDBOX=off` 强制判为不可用（只会让受限 Shell 不可用，不会让命令无沙盒运行）；
-- 代码：各 Commit 可单独回退；没有 SQLite 表结构变化；已持久化的 `windows_mxc` 记录在回退后仍需能被读取，回退前确认旧版本的解析行为（第 8 节）。
+- 代码回退到 v57 Runtime 时恢复升级前的数据库备份。SQLite v58 的新记录仍保存在当前数据库中（第 8 节）。
 
 ## 13. 与 V1 的差异
 
