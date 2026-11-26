@@ -391,8 +391,11 @@ class PydanticAIModelClient:
             if self._reasoning_selection in ("low", "medium", "high", "xhigh", "max"):
                 settings_values["anthropic_thinking"] = {"type": "adaptive"}
                 settings_values["anthropic_effort"] = self._reasoning_selection
-        if required_tool is not None:
+        if required_tool is not None and self._profile_spec.wire_api != "anthropic_messages":
             # Pydantic AI handles provider support and wire tool_choice mapping.
+            # Claude 5.x models reject a forced tool_choice with a 400, so the
+            # Anthropic wire relies on instructions naming the tool; callers
+            # still validate that exactly that tool was called.
             settings_values["tool_choice"] = [required_tool]
         settings = ModelSettings(**settings_values)
         parameters = ModelRequestParameters(

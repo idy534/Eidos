@@ -81,9 +81,8 @@ def _sse_event(name: str, payload: dict[str, object]) -> str:
     return f"event: {name}\ndata: {json.dumps(payload)}\n\n"
 
 
-def test_anthropic_native_messages_request_streaming_usage_and_replay() -> None:
-    captured_requests: list[tuple[str, dict[str, object]]] = []
-    sse_body = "".join([
+def _anthropic_stream_body() -> bytes:
+    return "".join([
         _sse_event("message_start", {
             "type": "message_start",
             "message": {
@@ -136,6 +135,11 @@ def test_anthropic_native_messages_request_streaming_usage_and_replay() -> None:
         }),
         _sse_event("message_stop", {"type": "message_stop"}),
     ]).encode("utf-8")
+
+
+def test_anthropic_native_messages_request_streaming_usage_and_replay() -> None:
+    captured_requests: list[tuple[str, dict[str, object]]] = []
+    sse_body = _anthropic_stream_body()
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured_requests.append((str(request.url), json.loads(request.content.decode("utf-8"))))
@@ -239,6 +243,58 @@ def test_anthropic_native_messages_request_streaming_usage_and_replay() -> None:
     fallback_messages = encode_context(context, reasoning_required=True, wire_api="chat_completions")
     assert isinstance(fallback_messages[0].parts[0], UserPromptPart)
     assert "Historical model response" in str(fallback_messages[0].parts[0].content)
+
+
+def test_anthropic_wire_does_not_force_tool_choice_for_required_tool() -> None:
+    """Claude 5.x models return 400 for a forced tool_choice; the summary path names the tool instead."""
+    captured: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=_anthropic_stream_body())
+
+    kernel = RuntimeAsyncKernel()
+    kernel.start()
+    try:
+        anthropic_client = AsyncAnthropic(
+            api_key="sk-ant-test",
+            base_url="https://api.anthropic.com",
+            max_retries=0,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        model = AnthropicModel("claude-sonnet-5-5", provider=AnthropicProvider(anthropic_client=anthropic_client))
+        spec = MODEL_CATALOG.profile("claude-sonnet-5-5")
+        cfg = MODEL_CATALOG.materialize("anthropic", "claude-sonnet-5-5", "sk-ant-test")
+        client = PydanticAIModelClient(
+            model,
+            spec,
+            provider_client=anthropic_client,
+            profile_snapshot=spec.snapshot(cfg),
+            async_kernel=kernel,
+        )
+        try:
+            client.complete(
+                ({"type": "user", "content": "Summarize"},),
+                threading.Event(),
+                lambda _delta: None,
+                instructions="Return submit_context_summary once.",
+                allow_tools=True,
+                tool_definitions=(FunctionToolDefinition(
+                    name="submit_context_summary",
+                    description="Submit the summary",
+                    parameters_json_schema={"type": "object"},
+                ),),
+                required_tool="submit_context_summary",
+            )
+        finally:
+            client.close()
+    finally:
+        kernel.close()
+
+    assert len(captured) == 1
+    tool_choice = captured[0].get("tool_choice")
+    assert tool_choice is None or tool_choice.get("type") == "auto"
+    assert [tool["name"] for tool in captured[0]["tools"]] == ["submit_context_summary"]
 
 
 def test_builtin_overseas_providers_materialize_and_build_clients(tmp_path: Path) -> None:
