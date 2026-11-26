@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path, PureWindowsPath
+import stat
+import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -230,3 +233,40 @@ def test_old_protected_path_identity_cannot_be_replaced_before_launch(
     assert len(descriptors) == 1
     with pytest.raises(OSError):
         os.fstat(descriptors[0])
+
+
+def test_unreadable_drives_receive_no_grant_and_keep_the_policy_usable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    system = tmp_path / "system"
+    (system / "Windows").mkdir(parents=True)
+    (system / "pagefile.sys").write_bytes(b"")
+    (system / "Junction").symlink_to(system / "Windows", target_is_directory=True)
+    listed = tmp_path / "listed"
+    listed.mkdir()
+    drives = {"C:\\": system, "D:\\": tmp_path / "locked", "E:\\": listed}
+    real_children = mxc_policy._drive_children
+
+    def open_directory(root: str) -> int:
+        if root == "D:\\":
+            raise OSError(5, "volume unavailable")
+        return os.open(drives[root], os.O_RDONLY)
+
+    def drive_children(root: str):
+        if root == "E:\\":
+            # A listing that fails part way must not leave a partial grant.
+            yield str(listed / "partial")
+            raise PermissionError("listing denied")
+        yield from real_children(str(drives[root]))
+
+    monkeypatch.setattr(mxc_policy.local_files, "WINDOWS", True)
+    monkeypatch.setattr(mxc_policy.local_files, "open_directory", open_directory)
+    monkeypatch.setattr(mxc_policy.local_files, "is_link", lambda metadata: stat.S_ISLNK(metadata.st_mode))
+    monkeypatch.setattr(mxc_policy, "_drive_children", drive_children)
+    monkeypatch.setitem(sys.modules, "eidos_runtime.infrastructure.windows_files", SimpleNamespace(
+        logical_drive_roots=lambda: tuple(drives),
+    ))
+
+    assert sorted(mxc_policy._local_readonly_roots()) == sorted(
+        (str(system / "Windows"), str(system / "pagefile.sys")),
+    )

@@ -296,26 +296,33 @@ def _local_readonly_roots() -> Iterator[str]:
     from eidos_runtime.infrastructure.windows_files import logical_drive_roots
 
     for root in logical_drive_roots():
+        # Unavailable, locked, non-local and non-NTFS volumes, and volumes that
+        # cannot be listed, receive no grant. Skipping one keeps the rest of the
+        # policy usable without widening access.
         try:
             descriptor = local_files.open_directory(root)
-        except (FileNotFoundError, PermissionError):
-            # Unavailable, non-local and non-NTFS volumes receive no grant.
+        except OSError:
             continue
         try:
-            with os.scandir(root) as children:
-                for child in children:
-                    try:
-                        metadata = child.stat(follow_symlinks=False)
-                    except FileNotFoundError:
-                        continue
-                    if not local_files.is_link(metadata) and (
-                        stat.S_ISDIR(metadata.st_mode) or stat.S_ISREG(metadata.st_mode)
-                    ):
-                        yield child.path
+            children = tuple(_drive_children(root))
         except OSError:
-            raise MxcPolicyError("MXC cannot enumerate a local drive") from None
+            continue
         finally:
             os.close(descriptor)
+        yield from children
+
+
+def _drive_children(root: str) -> Iterator[str]:
+    with os.scandir(root) as entries:
+        for entry in entries:
+            try:
+                metadata = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if not local_files.is_link(metadata) and (
+                stat.S_ISDIR(metadata.st_mode) or stat.S_ISREG(metadata.st_mode)
+            ):
+                yield entry.path
 
 
 def _sorted_paths(paths: Iterable[PureWindowsPath]) -> tuple[str, ...]:
