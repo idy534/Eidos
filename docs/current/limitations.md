@@ -397,7 +397,7 @@ Run `e277e61b`（`deepseek-v4-1-flash-261017`，reasoning high）共 10 步。�
 ## 平台与分发
 
 - Eidos 的正式交付目标是 macOS arm64。仓库增加了 Windows 11 x64、本地 NTFS 的预览代码、安装包入口和原生验收用例。Windows 实机结果见后续验收记录。
-- Windows 预览接入了 Desktop、独立 Python Runtime、MinGit、ripgrep、受控文件提交、PowerShell PIPE 和 ConPTY。受限 Shell PIPE 与命令 Hook 要求 MXC 原生能力及功能自检通过。系统缺少能力时，单条 Shell 可以显式申请沙盒外执行，也可由用户确认完全访问。受限 ConPTY 与本地 MCP 沙盒仍待实现，Windows 浏览器工具需要用户确认完全访问。Windows Qoder 资源包仍待适配。
+- Windows 预览接入了 Desktop、独立 Python Runtime、MinGit、ripgrep、受控文件提交、PowerShell PIPE 和 ConPTY。受限 Shell PIPE 与命令 Hook 要求 MXC 原生能力及功能自检通过。MXC 的遥测退出由构建期强制，实机抓包核验在首次面向用户发布前完成。系统缺少能力时，单条 Shell 可以显式申请沙盒外执行，也可由用户确认完全访问。受限 ConPTY 与本地 MCP 沙盒仍待实现，Windows 浏览器工具需要用户确认完全访问。Windows Qoder 资源包仍待适配。
 - Linux、Windows ARM64、macOS x64 和 Universal binary 仍无交付入口。
 - Auto Update、GitHub Release 发布闭环和其他平台 artifact 尚未实现。
 - Release packaging 的签名、notarization、stapling 和 Gatekeeper 命令已经接入脚本，但这些步骤需要 Apple credentials。没有 credentials 时不能证明已生成可发布的 Release artifact。

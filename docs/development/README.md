@@ -526,6 +526,7 @@ uv run --locked --python 3.12 pytest -q runtime/tests/test_mxc_policy.py runtime
 5. 验收人在 Chrome 中检查三种浏览器目标。验收人检查专用 Chrome 的下载拦截与退出清理、用户 Chrome 的远程调试确认，以及 Playwright Extension 的令牌、标签组和重新连接。
 6. 验收人检查保存记忆、计划、用户与项目 Hook、数据备份，以及用 skill-creator 创建、校验再删除用户 Skill。
 7. 验收人在新装环境打开完全访问 Run，使用 DOCX、PPTX、XLSX 和 PDF Skill。验收人断网检查首次解包、Office 转换、公式重算、缩略图、PDF 渲染和中英文 OCR，再重启检查资源复用。Windows CI 同时执行 `scripts/bundled-document-skills-smoke.py`。
+8. 向用户发布含 MXC 启动器的安装包前，验收人在实机上运行受限 Shell，同时用 ETW 记录 MXC 事件并抓包。验收人确认事件不带遥测路由，也没有对应的上传。结果记入 `docs/evaluations/`，未通过时暂停发布。
 
 Windows 预览对本地 NTFS 目录执行路径、句柄和 ACL 核验。网络盘、reparse point 和启用了大小写敏感的目录在此范围外。GitHub Windows runner 缺少 PSEC 时，原生 MXC 用例会报告跳过，使用支持的 Windows 11 实机完成该项。SQLite v57 在启动时升级到 v58，降级到旧 Runtime 需要恢复升级前数据库备份。
 
