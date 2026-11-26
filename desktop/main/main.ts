@@ -32,7 +32,7 @@ import * as nodePty from "node-pty";
 
 import { buildRuntimeEnvironment, RuntimeClient } from "./runtime-client.js";
 import { clearRuntimeState } from "./runtime-process-state.js";
-import { exportDiagnosticBundle, RotatingFileLogger } from "./app-logger.js";
+import { desktopLogDirectory, exportDiagnosticBundle, RotatingFileLogger } from "./app-logger.js";
 import { restoreDataBackup } from "./data-restore.js";
 import { isMcpToolsRequest } from "../shared/mcp-details.js";
 import {
@@ -92,7 +92,7 @@ const execFileAsync = promisify(execFile);
 let appLogger: RotatingFileLogger | undefined;
 
 function getAppLogger(): RotatingFileLogger {
-  appLogger ??= new RotatingFileLogger(path.join(runtimeDataDirectory(), "logs"));
+  appLogger ??= new RotatingFileLogger(desktopLogDirectory(runtimeDataDirectory()));
   return appLogger;
 }
 
@@ -786,7 +786,7 @@ handleIpc(IPC.DIAGNOSTICS_EXPORT, async (event) => {
   const dataDir = runtimeDataDirectory();
   exportDiagnosticBundle({
     destinationPath: result.filePath,
-    logDirectory: path.join(dataDir, "logs"),
+    logDirectory: desktopLogDirectory(dataDir),
     crashDumpsDirectory: path.join(dataDir, "crash-dumps"),
     summary: {
       appVersion: app.getVersion(),

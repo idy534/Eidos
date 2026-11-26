@@ -17,6 +17,15 @@ import { redactLogLine, sanitizeLogValue } from "./log-redaction.js";
 export const DEFAULT_MAX_LOG_BYTES = 5 * 1024 * 1024;
 export const DEFAULT_MAX_LOG_FILES = 5;
 export const MAX_DIAGNOSTIC_LOG_TAIL_BYTES = 1024 * 1024;
+// `<data>/logs` belongs to the Runtime, which requires a private 0700 directory
+// and fails storage closed otherwise. Desktop logs live beside it, never inside.
+export const DESKTOP_LOG_DIRECTORY_NAME = "desktop-logs";
+const PRIVATE_DIRECTORY_MODE = 0o700;
+const PRIVATE_FILE_MODE = 0o600;
+
+export function desktopLogDirectory(dataDirectory: string): string {
+  return path.join(dataDirectory, DESKTOP_LOG_DIRECTORY_NAME);
+}
 
 export interface LoggerOptions {
   maxBytes?: number;
@@ -36,12 +45,12 @@ export class RotatingFileLogger {
 
   append(fileName: "desktop.log" | "runtime.log", rawLine: string): void {
     try {
-      mkdirSync(this.logDirectory, { recursive: true });
+      mkdirSync(this.logDirectory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
       const target = path.join(this.logDirectory, fileName);
       const safeLine = `${redactLogLine(rawLine.replace(/\r?\n$/, ""))}\n`;
       const encodedBytes = Buffer.byteLength(safeLine, "utf8");
       this.rotateIfNeeded(target, encodedBytes);
-      appendFileSync(target, safeLine, "utf8");
+      appendFileSync(target, safeLine, { encoding: "utf8", mode: PRIVATE_FILE_MODE });
     } catch {
       // File logging is best-effort and must never disrupt the Main process.
     }

@@ -1,11 +1,30 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { inflateRawSync } from "node:zlib";
 
-import { exportDiagnosticBundle, RotatingFileLogger } from "./app-logger.js";
+import { desktopLogDirectory, exportDiagnosticBundle, RotatingFileLogger } from "./app-logger.js";
+
+test("Desktop logs stay outside the Runtime-owned logs directory and are private", { skip: process.platform === "win32" }, () => {
+  const dataDirectory = mkdtempSync(path.join(os.tmpdir(), "eidos-logger-data-"));
+  try {
+    const logDirectory = desktopLogDirectory(dataDirectory);
+    assert.notEqual(path.resolve(logDirectory), path.resolve(dataDirectory, "logs"));
+    const previousMask = process.umask(0o022);
+    try {
+      new RotatingFileLogger(logDirectory).append("desktop.log", "started");
+    } finally {
+      process.umask(previousMask);
+    }
+    assert.equal(existsSync(path.join(dataDirectory, "logs")), false);
+    assert.equal(statSync(logDirectory).mode & 0o777, 0o700);
+    assert.equal(statSync(path.join(logDirectory, "desktop.log")).mode & 0o777, 0o600);
+  } finally {
+    rmSync(dataDirectory, { recursive: true, force: true });
+  }
+});
 
 function parseZipEntries(zipBuffer: Buffer): Map<string, string> {
   const entries = new Map<string, string>();
