@@ -16,7 +16,7 @@
 
 用户可以通过 `/goal` 设定持续目标。Runtime 在每轮正常结束后接纳新的普通 Run，直到模型按要求声明完成、系统记录受阻或用户暂停、清除目标。Desktop 通过输入框的“＋”菜单和 `/goal` 开启目标模式。目标标签位于访问模式右边，并与 Plan 互斥。用户在输入框中直接填写目标，状态区域展示完成证据。目标的权限、取消、工具执行、未知结果和恢复继续使用现有链路。当前 P0 边界见[目标模式](features/goals.md)。
 
-Eidos 支持多目录项目、一个主要文件夹和侧栏项目编辑。会话固定创建时的目录绑定。Files 和 Review 分别选择文件夹与 Git checkout。主仓库 Worktree 映射其源 checkout 内的目录，其他目录继续共享。系统在 Git 会话每轮 Run 启动前自动保存轻量级工作区 Checkpoint，支持在对话流通过 `checkpoint/rewind` 回退主工作区或受管 Worktree 文件与 HEAD；多目录次级文件夹的快照回退尚未纳入。具体行为和限制见 [多目录项目](features/projects.md)。
+Eidos 支持多目录项目、一个主要文件夹和侧栏项目编辑。会话固定创建时的目录绑定。Files 和 Review 分别选择文件夹与 Git checkout。主仓库 Worktree 映射其源 checkout 内的目录，其他目录继续共享。系统在 Git 会话每轮 Run 启动前自动保存轻量级工作区 Checkpoint，支持在对话流通过 `checkpoint/rewind` 回退主工作区或受管 Worktree 文件与 HEAD；删除会话时一并释放它的 Checkpoint 快照、隐藏 ref 和快照文件，无法立即清理的快照解除会话引用后交给启动核对。多目录次级文件夹的快照回退尚未纳入。具体行为和限制见 [多目录项目](features/projects.md)。
 
 用户可以在“设置 → 网页搜索”配置 DeepSeek Search、LangSearch 和豆包搜索 Custom 版，并手动勾选默认服务。三家可以同时保存，用户也可以全部取消。没有默认服务或可用本地 Key 时，新 Run 不发布 `web_search`。系统不会自动切换服务。Run 固定创建时的配置。用户选择默认服务后，搜索不再逐次审批，仍保留 Durable Intent、取消和有界结果投影；请求可能计费。实现已接入，真实账户 Key 验证仍未进行。配置、持久化和验证边界见[当前网页搜索](features/web-search.md)。
 
@@ -369,7 +369,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Persistence
 
-- 当前 state schema 是 v57。v56 → v57 新增后台执行护栏配置与周期计数表，v55 → v56 新增 Agent 团队与协作表，v54 → v55 增加目标与计划相关字段，v53 → v54 为记忆笔记增加上次读取时间和读取次数。v42 移除临时记忆模式，v43 新增记忆归档并移除普通聊天来源的连带撤销。v40 重建文档记忆并清除旧记忆，v41 修复历史自动版本的来源撤销。v37 保存插件版本身份，v38 保存远程连接状态和凭据引用，v39 保存 Hook 配置来源和后台接收记录。v32 → v33 增加可重建的聊天搜索正文、FTS5 trigram、待处理队列和索引版本。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
+- 当前 state schema 是 v57。v56 → v57 新增后台执行护栏配置与周期计数表，v55 → v56 新增 Agent 团队与协作表，v54 → v55 新增子 Agent 隔离工作区及其交付与集成记录，v53 → v54 为记忆笔记增加上次读取时间和读取次数。v42 移除临时记忆模式，v43 新增记忆归档并移除普通聊天来源的连带撤销。v40 重建文档记忆并清除旧记忆，v41 修复历史自动版本的来源撤销。v37 保存插件版本身份，v38 保存远程连接状态和凭据引用，v39 保存 Hook 配置来源和后台接收记录。v32 → v33 增加可重建的聊天搜索正文、FTS5 trigram、待处理队列和索引版本。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
 - `state.sqlite` 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context lineage、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 使用独立 schema v2 索引有总量上限的日志 JSONL。Runtime 会兼容迁移使用 `content_sha256` 或 `chain_sha256` 的两种 v1 日志表。记忆正文使用私有 Markdown 文件，作用域、版本与撤销状态由 `state.sqlite` 管理；旧 `memories.sqlite` 在 v40 升级后删除。
 - ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。新 ContextSnapshot 将重复的模型上下文项和工具定义保存为共享块，顶层清单保留顺序和快照元数据；旧版完整快照仍可读取。主库保存带 checksum 和大小的顶层引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。

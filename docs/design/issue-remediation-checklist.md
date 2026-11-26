@@ -251,6 +251,23 @@
 
 ---
 
+## 评审后修复（2026-11-26，macOS arm64，未提交工作区）
+
+评审发现的 P0、P1 与 CI 失败已在本分支修复：
+
+- **B3-3（P0）**：Desktop 轮转日志从 Runtime 私有的 `<data>/logs` 移到 `<data>/desktop-logs`（目录 0700、文件 0600）。原实现以 0755 创建 `logs/`，全新安装时 Runtime 报 `state_security_invalid` 并进入 `health_only`。
+- **B5-3（P0）**：删除会话前释放其 Checkpoint、快照行、隐藏 ref 与快照文件；删除事务同时解除残留快照的会话引用。原实现中跑过 Run 的 Git 会话无法删除（`FOREIGN KEY constraint failed`）。
+- **B1-3**：Git HEAD 基线在每个模型步骤和暂停点刷新；核验不再激活 Repository 索引；规则、Context plan、索引变化允许恢复；其他阻断结果退回 `PAUSED`，不再卡在 `RESUME_REQUESTED`；移除裸 `dict` 传参。
+- **B4-5**：审批快捷键只作用于持有焦点的审批卡片，并忽略输入框内的按键；替换输入框时卡片只在焦点丢失时自动聚焦。原实现一次 Cmd/Ctrl+Enter 会批准所有可见审批。
+- **B1-2**：成本上限改为“Credits 上限”，并注明目前仅 Qoder 返回 Credits；定时任务的成功执行计为进展，只有连续未成功执行计入无进展上限；升级前的定时任务从下一次执行开始计算周期。
+- **B2-2**：三处 Hook 信任审阅界面同时显示 `command` 与 `commandWindows`。
+- **B5-2**：Anthropic 协议不再强制 `tool_choice`（Claude 5.x 返回 400），模型辅助压缩改由指令点名工具。
+- **B1-1**：最高降级等级的硬保底与 `recovery_context` 一致，原样保留个性化、项目规则、所选 Skill、自定义 Agent 和完整当前目标；原实现会丢掉它们（`test_personalization` 的 level 8 用例失败）。
+- **CI**：`eval` 测试导入路径、协议向量的客户端版本、审批拒绝调用参数、新建会话被“恢复上次会话”抢回、Hook/查找文件测试在 macOS 的夹具问题、runtime-paths 用例未固定平台、方法注册表测试未登记 `GuardrailsResponse` 这一读写共用的响应类型。
+- **B6-1 说明更正**：`eval/runner.py` 使用 `ScriptedModel`，是确定性的多轮回归框架，不是真实模型 Eval。
+
+---
+
 ## 暂不修复 / 延后或不适用项（不计入本期清零分母）
 
 以下 6 项已按用户明确决策归档，暂不列入当前清零目标：
