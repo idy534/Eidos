@@ -42,8 +42,11 @@ jobs:
       - run: pnpm exec tsc -p tsconfig.renderer.json --noEmit
       - run: pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/BackgroundGuardrailSettings.behavior.test.tsx desktop/renderer/src/components/settings/DataSettings.behavior.test.tsx desktop/renderer/src/components/settings/McpConnectionPanel.behavior.test.tsx desktop/renderer/src/components/settings/ShellEnvironmentSettings.behavior.test.tsx desktop/renderer/src/components/settings/ManagedResourceSettings.behavior.test.tsx
       - run: uv run --locked --python 3.12 pytest -q runtime/tests/test_windows_platform.py runtime/tests/test_hooks_windows.py runtime/tests/test_windows_git_ssh.py runtime/tests/test_tool_runtime_platform_wording.py runtime/tests/test_managed_resources_cleanup.py runtime/tests/test_guardrails.py runtime/tests/test_context_capacity_recovery.py
-      - run: pnpm package:win
-      - run: uv run --locked --python 3.12 pytest -q runtime/tests/test_mxc_policy.py runtime/tests/test_windows_mxc.py runtime/tests/test_hooks_windows.py::test_restricted_command_hook_runs_in_mxc
+      # The release helper build and MXC checks are independent of earlier test failures.
+      - if: ${{ !cancelled() }}
+        run: pnpm package:win
+      - if: ${{ !cancelled() }}
+        run: uv run --locked --python 3.12 pytest -q runtime/tests/test_mxc_policy.py runtime/tests/test_windows_mxc.py runtime/tests/test_hooks_windows.py::test_restricted_command_hook_runs_in_mxc
       - run: pnpm test:electron-smoke
       - run: pnpm test:electron-packaged
       - name: Exercise bundled document Skills in PowerShell
