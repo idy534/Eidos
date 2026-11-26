@@ -43,7 +43,7 @@ from eidos_runtime.model.client import ModelClient
 from eidos_runtime.domain.approval_policy import FULL_ACCESS_WARNING_VERSION
 from eidos_runtime.domain.run_termination import RunTermination
 from eidos_runtime.domain.long_task import LongTaskStatus, SafePoint
-from eidos_runtime.runtime.long_task import compute_permission_snapshot_hash
+from eidos_runtime.runtime.long_task import compute_permission_snapshot_hash, observe_git_head
 from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalDecision
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.contracts import (
@@ -1624,6 +1624,10 @@ class RuntimeEngine:
             return
         progress = repository.record_safe_point(run_id, safe_point)
         if progress.status is LongTaskStatus.PAUSE_REQUESTED:
+            if progress.git_head is not None:
+                repository.record_snapshots(
+                    run_id, git_head=self._observe_run_git_head(run_id)
+                )
             progress = repository.mark_paused(run_id, safe_point)
         while progress.status in {
             LongTaskStatus.PAUSED,
@@ -1667,7 +1671,8 @@ class RuntimeEngine:
             retrieval=retrieval,
         )
         progress_repository = self.store.long_task_repository()
-        if progress_repository.read(step.run_id) is not None:
+        progress = progress_repository.read(step.run_id)
+        if progress is not None:
             run_record = self.store.read_run(step.run_id)
             permission_hash = compute_permission_snapshot_hash(
                 str(run_record.get("approvalMode") or "manual"),
@@ -1679,7 +1684,18 @@ class RuntimeEngine:
                 context_snapshot_id=snapshot.snapshot_id,
                 rule_snapshot_id=rule_snapshot.id,
                 permission_snapshot_hash=permission_hash,
+                git_head=(
+                    self._observe_run_git_head(step.run_id)
+                    if progress.git_head is not None else None
+                ),
             )
+
+    def _observe_run_git_head(self, run_id: str) -> str | None:
+        """The Run's own commits move HEAD; keep the resume baseline current."""
+        try:
+            return observe_git_head(self.store.workspace_for_run(run_id).path)
+        except Exception:
+            return None
 
     def _resume_effective_time(self) -> None:
         self.active_started = self.monotonic()

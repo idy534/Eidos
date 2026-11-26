@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 import time
 
 from eidos_runtime.db.database import Repository
 from eidos_runtime.db.events import append_event
 from eidos_runtime.runtime.state_machine import EventType
 from eidos_runtime.domain.long_task import (
+    RESUMABLE_OUTCOMES,
     LongTaskProgress,
     LongTaskStatus,
     ResumeVerification,
@@ -242,7 +244,7 @@ class LongTaskRepository(Repository):
         if (
             current.status is not LongTaskStatus.RESUME_REQUESTED
             or current.last_verification is None
-            or current.last_verification.outcome is not ResumeOutcome.SAFE_RESUME
+            or current.last_verification.outcome not in RESUMABLE_OUTCOMES
         ):
             raise ConditionalUpdateFailed("resume requires verified state")
         return self._update(
@@ -251,6 +253,18 @@ class LongTaskRepository(Repository):
             safe_point=SafePoint.BEFORE_MODEL,
             resumed_at=_now_ms(),
         )
+
+    def decline_resume(self, run_id: str) -> LongTaskProgress:
+        """Return a blocked resume to PAUSED so it can be retried or canceled."""
+
+        current = self._require(run_id)
+        if (
+            current.status is not LongTaskStatus.RESUME_REQUESTED
+            or current.last_verification is None
+            or current.last_verification.outcome in RESUMABLE_OUTCOMES
+        ):
+            raise ConditionalUpdateFailed("resume decline requires a blocking verification")
+        return self._update(current, status=LongTaskStatus.PAUSED)
 
     def request_cancel(self, run_id: str) -> LongTaskProgress:
         current = self._require(run_id)
@@ -480,6 +494,16 @@ def compute_permission_snapshot_hash(
     })
 
 
+def observe_git_head(workspace: Path) -> str | None:
+    """Read the workspace HEAD for the resume baseline; None outside Git."""
+    from eidos_runtime.git.backend import DulwichGitBackend
+
+    try:
+        return DulwichGitBackend().head(workspace)
+    except Exception:
+        return None
+
+
 def _hash(value: object) -> str:
     return hashlib.sha256(
         json.dumps(
@@ -493,4 +517,5 @@ __all__ = [
     "RestartVerifier",
     "ResumeVerifier",
     "compute_permission_snapshot_hash",
+    "observe_git_head",
 ]
