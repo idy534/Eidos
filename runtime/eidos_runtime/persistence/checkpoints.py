@@ -122,6 +122,41 @@ class CheckpointRepository:
         assert row is not None
         return _action_from_row(row)
 
+    def delete_for_session(self, session_id: str) -> tuple[str, ...]:
+        """Delete a Session's checkpoints and return the snapshot ids they pinned."""
+
+        with self._database.lock:
+            conn = self._database.connection()
+            with conn:
+                rows = conn.execute(
+                    """
+                    SELECT c.git_snapshot_id
+                    FROM checkpoints c
+                    JOIN runs r ON r.id = c.run_id
+                    WHERE r.session_id = ? AND c.git_snapshot_id IS NOT NULL
+                    """,
+                    (session_id,),
+                ).fetchall()
+                conn.execute(
+                    """
+                    DELETE FROM checkpoint_actions
+                    WHERE checkpoint_id IN (
+                        SELECT c.id FROM checkpoints c
+                        JOIN runs r ON r.id = c.run_id
+                        WHERE r.session_id = ?
+                    )
+                    """,
+                    (session_id,),
+                )
+                conn.execute(
+                    """
+                    DELETE FROM checkpoints
+                    WHERE run_id IN (SELECT id FROM runs WHERE session_id = ?)
+                    """,
+                    (session_id,),
+                )
+        return tuple(dict.fromkeys(str(row["git_snapshot_id"]) for row in rows))
+
     def list_actions(self, checkpoint_id: str) -> list[CheckpointActionRecord]:
         with self._database.lock:
             rows = self._database.connection().execute(

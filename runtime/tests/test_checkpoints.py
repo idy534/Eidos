@@ -10,7 +10,7 @@ from eidos_runtime.application.sessions import SessionApplication
 from eidos_runtime.application.worktree_retention import WorktreeRetentionService
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.git import WorktreeManager
-from eidos_runtime.protocol.methods import SessionCreateRequestDto
+from eidos_runtime.protocol.methods import SessionCreateRequestDto, SessionDeleteRequestDto
 from eidos_runtime.protocol.server import RuntimeServer
 
 
@@ -97,6 +97,68 @@ def test_checkpoint_capture_and_rewind_restores_git_state(tmp_path: Path) -> Non
         actions = checkpoints._repository.list_actions(captured.id)
         assert len(actions) == 1
         assert actions[0].action == "rewind"
+    finally:
+        store.close()
+
+
+def _snapshot_rows(store: SessionStore) -> list[tuple[str, str | None]]:
+    with store.database.lock:
+        return [
+            (str(row["id"]), row["session_id"])
+            for row in store.database.connection().execute(
+                "SELECT id, session_id FROM worktree_snapshots ORDER BY id"
+            )
+        ]
+
+
+def _checkpointed_local_session(tmp_path: Path, *, release_before_delete: bool):
+    repo = _init_repo(tmp_path / "repo")
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    manager = WorktreeManager(store.database, managed_root=tmp_path / "worktrees")
+    retention = WorktreeRetentionService(store.database, manager)
+    checkpoints = CheckpointApplication(store.database, manager, retention.snapshot_service)
+    sessions = SessionApplication(
+        store,
+        scan_text=lambda v: v,
+        worktree_manager=manager,
+        before_delete=checkpoints.release_for_session if release_before_delete else None,
+    )
+    session = sessions.create(
+        SessionCreateRequestDto(workspaceRoot=str(repo), executionMode="local")
+    )
+    run, _user_item = store.create_run(session.id, "edit files")
+    captured = checkpoints.capture_run_checkpoint(str(run["id"]))
+    assert captured is not None and captured.git_snapshot_id is not None
+    with store.database.lock, store.database.connection() as conn:
+        conn.execute("UPDATE runs SET status = 'succeeded' WHERE id = ?", (str(run["id"]),))
+    return repo, store, manager, sessions, session, captured
+
+
+def test_session_with_checkpoint_deletes_and_releases_its_snapshot(tmp_path: Path) -> None:
+    repo, store, manager, sessions, session, captured = _checkpointed_local_session(
+        tmp_path, release_before_delete=True
+    )
+    try:
+        assert [row[0] for row in _snapshot_rows(store)] == [captured.git_snapshot_id]
+
+        deleted = sessions.delete(SessionDeleteRequestDto(sessionId=session.id))
+
+        assert deleted.deleted_session_id == session.id
+        assert _snapshot_rows(store) == []
+        assert tuple(manager.git.list_snapshot_anchors(repo)) == ()
+    finally:
+        store.close()
+
+
+def test_session_delete_detaches_snapshot_when_release_did_not_run(tmp_path: Path) -> None:
+    _repo, store, _manager, sessions, session, captured = _checkpointed_local_session(
+        tmp_path, release_before_delete=False
+    )
+    try:
+        sessions.delete(SessionDeleteRequestDto(sessionId=session.id))
+
+        assert _snapshot_rows(store) == [(captured.git_snapshot_id, None)]
     finally:
         store.close()
 

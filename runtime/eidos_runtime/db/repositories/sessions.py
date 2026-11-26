@@ -833,6 +833,13 @@ class SessionRepository(Repository):
                 f"DELETE FROM checkpoints WHERE run_id IN ({run_ids})",
                 (session_id,),
             )
+            # Snapshots outlive their Session (fork sources, cleanup deferred
+            # by Git or the filesystem). Keep the row and its artifact for
+            # reconciliation, but drop the restrictive Session reference.
+            connection.execute(
+                "UPDATE worktree_snapshots SET session_id = NULL WHERE session_id = ?",
+                (session_id,),
+            )
             connection.execute(
                 f"DELETE FROM run_dependency_bindings WHERE run_id IN ({run_ids})",
                 (session_id,),

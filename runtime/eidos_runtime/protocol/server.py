@@ -875,6 +875,7 @@ class RuntimeServer:
         self.sensitive: SensitiveScanner | None = None
         self.plugins: PluginCatalog | None = None
         self.worktree_manager: WorktreeManager | None = None
+        self._checkpoint_application: CheckpointApplication | None = None
         self.worktree_retention: WorktreeRetentionService | None = None
         self._applications: _RuntimeApplications | None = None
         self.repository_factory = RepositoryApplicationFactory(
@@ -2306,6 +2307,13 @@ class RuntimeServer:
 
     def _before_session_delete(self, session_id: str) -> None:
         self.supervisor.hooks.end_session(session_id)
+        checkpoints = self._checkpoint_application
+        if checkpoints is not None:
+            try:
+                checkpoints.release_for_session(session_id)
+            except Exception:
+                # The Session delete transaction detaches any snapshot left behind.
+                logger.exception("Checkpoint cleanup before Session delete failed session_id=%s", session_id)
         workspaces = self.supervisor.collaboration.workspaces
         if workspaces is not None:
             try:
@@ -2413,6 +2421,7 @@ class RuntimeServer:
             self.worktree_retention.snapshot_service if self.worktree_retention else None,
         )
         self.supervisor.checkpoint_capture = app.capture_run_checkpoint
+        self._checkpoint_application = app
         return app
 
     def initialize(self, request_id: str, params: object) -> None:

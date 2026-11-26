@@ -125,6 +125,37 @@ class CheckpointApplication:
             )
             return None
 
+    def release_for_session(self, session_id: str) -> None:
+        """Drop a Session's checkpoints and the snapshots only they referenced.
+
+        Checkpoint snapshots carry the Session id under a restrictive foreign
+        key, so they must go before the Session row. Anchor or artifact cleanup
+        that cannot complete is logged and left for storage reconciliation.
+        """
+
+        snapshot_ids = self._repository.delete_for_session(session_id)
+        if self._snapshots is None:
+            return
+        for snapshot_id in snapshot_ids:
+            snapshot = self._snapshots.snapshots.read(snapshot_id)
+            if snapshot is None:
+                continue
+            if (
+                self._snapshots.snapshots.referenced_by_checkpoint(snapshot_id)
+                or self._snapshots.snapshots.referenced_by_lifecycle(snapshot_id)
+            ):
+                continue
+            try:
+                self._snapshots.delete_anchor_if_expected(snapshot)
+                self._snapshots.artifacts.delete(snapshot.artifact_path)
+                self._snapshots.snapshots.delete(snapshot_id)
+            except Exception:
+                logger.warning(
+                    "checkpoint_snapshot_cleanup_deferred",
+                    extra={"session_id": session_id, "snapshot_id": snapshot_id},
+                    exc_info=logger.isEnabledFor(logging.DEBUG),
+                )
+
     def list_checkpoints(self, session_id: str) -> CheckpointListResponseDto:
         if self._sessions.read_session(session_id) is None:
             raise ApplicationError("SESSION_NOT_FOUND")
