@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-import json
 import sqlite3
 from uuid import uuid4
 
@@ -312,19 +311,20 @@ def settle_automation_run(connection: sqlite3.Connection, run_id: str, status: s
             return
         raise
     if state is None:
-        cycle_after_seq = 0
+        # Automations saved before schema v57 have no cycle yet. Start it at
+        # this Run so earlier history never counts against a new guardrail.
+        run_row = connection.execute("SELECT creation_seq FROM runs WHERE id=?", (run_id,)).fetchone()
+        cycle_after_seq = max(0, int(run_row[0]) - 1) if run_row is not None else 0
         consecutive_idle = 0
-        known: list[str] = []
         connection.execute(
             "INSERT INTO automation_guardrail_state"
             "(automation_id, cycle, consecutive_idle_runs, cycle_after_run_seq, cycle_started_at, progress_json) "
-            "VALUES(?,1,0,0,?,?)",
-            (task.id, task.created_at, "[]"),
+            "VALUES(?,1,0,?,?,?)",
+            (task.id, cycle_after_seq, now_ms(), "[]"),
         )
     else:
         cycle_after_seq = int(state["cycle_after_run_seq"])
         consecutive_idle = int(state["consecutive_idle_runs"])
-        known = json.loads(state["progress_json"])
 
     from eidos_runtime.persistence.guardrails import GuardrailSettingsRepository
 
@@ -349,25 +349,16 @@ def settle_automation_run(connection: sqlite3.Connection, run_id: str, status: s
     cycle_tokens = int(cycle_usage[0] or 0)
     cycle_cost = float(cycle_usage[1] or 0.0)
 
-    observed = [
-        obs[0]
-        for obs in connection.execute(
-            "SELECT t.progress_fingerprint FROM tool_calls t JOIN items i ON i.id=t.item_id "
-            "WHERE i.run_id=? AND t.status='completed' AND t.progress_fingerprint IS NOT NULL "
-            "AND json_extract(t.result_json,'$.outcome')='success' AND t.tool_name NOT IN ('update_goal','automation') "
-            "ORDER BY t.creation_seq DESC LIMIT 256",
-            (run_id,),
-        )
-    ]
+    # A scheduled Run that succeeds did its job even when it found nothing new
+    # (a report, a check with no change). Only consecutive unsuccessful Runs
+    # count toward the idle guardrail; user cancellation does not count.
     if status in {"canceled", "interrupted"}:
         idle = consecutive_idle
     else:
-        fresh = set(observed) - set(known)
-        idle = 0 if (status == "succeeded" and fresh) else consecutive_idle + 1
-    updated_progress = json.dumps(list(dict.fromkeys([*known, *observed]))[-256:])
+        idle = 0 if status == "succeeded" else consecutive_idle + 1
     connection.execute(
-        "UPDATE automation_guardrail_state SET consecutive_idle_runs=?, progress_json=? WHERE automation_id=?",
-        (idle, updated_progress, task.id),
+        "UPDATE automation_guardrail_state SET consecutive_idle_runs=? WHERE automation_id=?",
+        (idle, task.id),
     )
 
     pause_reason: str | None = None

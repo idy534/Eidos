@@ -43,7 +43,7 @@ describe("Background guardrail settings", () => {
 
     expect(screen.getByRole("heading", { name: "后台执行护栏" })).toBeInTheDocument();
     const tokensInput = await screen.findByLabelText("单轮 Token 上限");
-    const costInput = screen.getByLabelText("单轮成本上限");
+    const costInput = screen.getByLabelText("单轮 Credits 上限");
     const idleInput = screen.getByLabelText("连续无进展轮次上限");
 
     await waitFor(() => expect(tokensInput).toBeEnabled());
@@ -83,7 +83,7 @@ describe("Background guardrail settings", () => {
     render(<BackgroundGuardrailSettings />);
 
     const tokensInput = await screen.findByLabelText("单轮 Token 上限");
-    const costInput = screen.getByLabelText("单轮成本上限");
+    const costInput = screen.getByLabelText("单轮 Credits 上限");
     const idleInput = screen.getByLabelText("连续无进展轮次上限");
     await waitFor(() => expect(tokensInput).toHaveValue("10000"));
 
@@ -110,7 +110,7 @@ describe("Background guardrail settings", () => {
     render(<BackgroundGuardrailSettings onShowToast={toast} />);
 
     const tokensInput = await screen.findByLabelText("单轮 Token 上限");
-    const costInput = screen.getByLabelText("单轮成本上限");
+    const costInput = screen.getByLabelText("单轮 Credits 上限");
     const idleInput = screen.getByLabelText("连续无进展轮次上限");
     await waitFor(() => expect(tokensInput).toBeEnabled());
 
@@ -123,7 +123,7 @@ describe("Background guardrail settings", () => {
     await user.type(costInput, "0");
     await user.click(screen.getByRole("button", { name: "保存护栏" }));
     expect(saveGuardrails).not.toHaveBeenCalled();
-    expect(await screen.findByRole("alert")).toHaveTextContent("单轮成本上限需要大于 0");
+    expect(await screen.findByRole("alert")).toHaveTextContent("单轮 Credits 上限需要大于 0");
 
     await user.clear(costInput);
     await user.clear(idleInput);

@@ -69,7 +69,7 @@ export function BackgroundGuardrailSettings({ onShowToast }: {
     if (!settings || saving) return;
     const tokens = parseOptionalInt(maxTokens, { min: 1_000, max: 100_000_000, label: "单轮 Token 上限" });
     if (tokens.error) { setError(tokens.error); onShowToast?.(tokens.error, "error"); return; }
-    const cost = parseOptionalFloat(maxCost, { max: 1_000_000, label: "单轮成本上限" });
+    const cost = parseOptionalFloat(maxCost, { max: 1_000_000, label: "单轮 Credits 上限" });
     if (cost.error) { setError(cost.error); onShowToast?.(cost.error, "error"); return; }
     const idle = parseOptionalInt(maxIdleRounds, { min: 1, max: 100, label: "连续无进展轮次上限" });
     if (idle.error) { setError(idle.error); onShowToast?.(idle.error, "error"); return; }
@@ -129,11 +129,11 @@ export function BackgroundGuardrailSettings({ onShowToast }: {
         }
       />
       <SettingRow
-        title="单轮成本上限"
-        description="单周期累计 Credits 上限；超限暂停，恢复后重新计数"
+        title="单轮 Credits 上限"
+        description="只统计模型服务返回的 Credits，目前仅 Qoder 提供；超限暂停，恢复后重新计数"
         action={
           <input
-            aria-label="单轮成本上限"
+            aria-label="单轮 Credits 上限"
             type="text"
             inputMode="decimal"
             placeholder="不限制"
@@ -145,7 +145,7 @@ export function BackgroundGuardrailSettings({ onShowToast }: {
       />
       <SettingRow
         title="连续无进展轮次上限"
-        description="连续多轮无新有效工具结果时暂停（默认 3 轮，留空不限制）"
+        description="目标连续多轮没有新的有效工具结果、定时任务连续多次执行未成功时暂停（默认 3 轮，留空不限制）"
         action={
           <input
             aria-label="连续无进展轮次上限"

@@ -535,14 +535,14 @@ def test_automation_guardrails_pause_reset_on_resume_and_re_pause(tmp_path):
             operation_id=str(uuid4()),
         )
 
-        # Idle 2 rounds without exceeding cost -> guardrail_idle_runs
+        # Two unsuccessful Runs without exceeding cost -> guardrail_idle_runs
         _run_automation_occurrence(
             store,
             session,
             app.repository,
             task.id,
             NOW + timedelta(minutes=30),
-            [ModelResponse(text="无工具1", usage=ModelUsage(credits_usage=CreditsUsage(amount=1.0, source="request")))],
+            [ModelResponse(finish_reason="error", usage=ModelUsage(credits_usage=CreditsUsage(amount=1.0, source="request")))],
         )
         assert app.repository.read(task.id).status == "ACTIVE"
         _run_automation_occurrence(
@@ -551,7 +551,7 @@ def test_automation_guardrails_pause_reset_on_resume_and_re_pause(tmp_path):
             app.repository,
             task.id,
             NOW + timedelta(minutes=40),
-            [ModelResponse(text="无工具2", usage=ModelUsage(credits_usage=CreditsUsage(amount=1.0, source="request")))],
+            [ModelResponse(finish_reason="error", usage=ModelUsage(credits_usage=CreditsUsage(amount=1.0, source="request")))],
         )
         idle_paused = app.repository.read(task.id)
         assert idle_paused.status == "PAUSED"
@@ -597,5 +597,74 @@ def test_automation_guardrails_pause_reset_on_resume_and_re_pause(tmp_path):
         cost_paused = app.repository.read(task.id)
         assert cost_paused.status == "PAUSED"
         assert cost_paused.pause_reason == "guardrail_cost_exceeded"
+    finally:
+        store.close()
+
+
+def _create_cron_automation(store: SessionStore, session: str) -> tuple[AutomationApplication, str]:
+    app = AutomationApplication(
+        store,
+        resolve_model=lambda value: value,
+        publish=lambda: None,
+        launch=lambda _task: None,
+        clock=lambda: NOW,
+    )
+    task = app.execute(
+        AutomationRequest.model_validate({
+            "mode": "create",
+            "kind": "cron",
+            "name": "每日汇总",
+            "prompt": "汇总今天的变化",
+            "schedule": {"expression": "*/10 * * * *", "timezone": "Asia/Shanghai"},
+            "sessionId": session,
+            "model": {"modelId": "deepseek-v4.1-flash"},
+        }),
+        context_session_id=session,
+        operation_id=str(uuid4()),
+    ).automation
+    assert task is not None
+    return app, task.id
+
+
+def test_successful_scheduled_runs_without_tools_never_pause_by_default(tmp_path):
+    store, session = _setup_store(tmp_path)
+    try:
+        # No saved settings: the default idle limit (3) applies.
+        assert GuardrailSettingsRepository(store.database).read().policy.max_idle_rounds == 3
+        app, task_id = _create_cron_automation(store, session)
+        for index in range(5):
+            _run_automation_occurrence(
+                store, session, app.repository, task_id,
+                NOW + timedelta(minutes=10 * index),
+                [ModelResponse(text="今天没有新的变化。")],
+            )
+        assert app.repository.read(task_id).status == "ACTIVE"
+    finally:
+        store.close()
+
+
+def test_automation_saved_before_guardrails_starts_its_cycle_at_the_next_run(tmp_path):
+    store, session = _setup_store(tmp_path)
+    try:
+        app, task_id = _create_cron_automation(store, session)
+        _run_automation_occurrence(
+            store, session, app.repository, task_id, NOW,
+            [ModelResponse(text="历史执行", usage=ModelUsage(input_tokens=600, output_tokens=300))],
+        )
+        # A task saved before schema v57 has no guardrail cycle yet.
+        with store.database.transaction() as connection:
+            connection.execute("DELETE FROM automation_guardrail_state WHERE automation_id=?", (task_id,))
+        GuardrailSettingsRepository(store.database).save(
+            BackgroundGuardrailPolicy(max_tokens_per_cycle=1000, max_idle_rounds=None),
+            expected_revision=0,
+        )
+
+        _run_automation_occurrence(
+            store, session, app.repository, task_id, NOW + timedelta(minutes=10),
+            [ModelResponse(text="升级后首轮", usage=ModelUsage(input_tokens=150, output_tokens=50))],
+        )
+
+        # 900 historical tokens + 200 new would breach 1000; only the new Run counts.
+        assert app.repository.read(task_id).status == "ACTIVE"
     finally:
         store.close()

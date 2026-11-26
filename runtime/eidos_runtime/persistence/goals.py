@@ -176,7 +176,7 @@ def settle_goal_run(connection: sqlite3.Connection, run_id: str, status: str, re
         pause_detail = f"本轮已使用 {cycle_tokens:,} Token，达到上限 {policy.max_tokens_per_cycle:,}。恢复后将从 0 重新计数。"
     elif policy.max_cost_credits_per_cycle is not None and cycle_cost >= policy.max_cost_credits_per_cycle:
         pause_reason = "guardrail_cost_exceeded"
-        pause_detail = f"本轮累计成本 {cycle_cost:g} 达到上限 {policy.max_cost_credits_per_cycle:g}。恢复后将从 0 重新计数。"
+        pause_detail = f"本轮累计 {cycle_cost:g} Credits，达到上限 {policy.max_cost_credits_per_cycle:g}。恢复后将从 0 重新计数。"
     elif policy.max_idle_rounds is not None and idle >= policy.max_idle_rounds:
         pause_reason = "idle_runs"
     updates: dict[str, object] = {"consecutive_idle_runs": idle}
