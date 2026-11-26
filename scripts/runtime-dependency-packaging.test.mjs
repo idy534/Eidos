@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   chmod,
   mkdir,
@@ -414,4 +415,57 @@ test("core-only manifest excludes downloadable payloads and inventories the pinn
     const verified = await run(process.execPath, [manifestScript, "--verify", "--bundle-root", fixture]);
     assert.equal(verified.code, 0, verified.stderr);
   } finally { await rm(fixture, { recursive: true, force: true }); }
+});
+
+
+test("Windows Runtime manifest requires and hashes the MXC helper", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "eidos-windows-manifest-"));
+  const helperPath = "app/eidos_runtime/resources/bin/windows-sandbox/eidos-sandbox-win.exe";
+  const helperBytes = "fixture MXC helper";
+  try {
+    for (const relative of [
+      "python/python.exe",
+      "python/Lib/site-packages/package.py",
+      "git/cmd/git.exe",
+      "app/eidos_runtime/resources/bin/ripgrep/win32-x64/rg.exe",
+      "app/eidos_runtime/resources/runtime-loader.mjs",
+    ]) {
+      const target = path.join(fixture, relative);
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, "fixture");
+    }
+    const sharedPython = path.join(fixture, "shared-python.json");
+    await writeFile(sharedPython, "[]");
+    const generate = [
+      manifestScript, "--target", "win32-x64", "--core-only", "--bundle-root", fixture,
+      "--shared-python", sharedPython, "--bundle-id", "eidos-runtime", "--bundle-version", "0.3.0",
+      "--python-version", "3.12.13", "--git-version", "2.56.1", "--ripgrep-version", "15.2.0",
+    ];
+    const missing = await run(process.execPath, generate);
+    assert.notEqual(missing.code, 0);
+    assert.match(missing.stderr, /required Windows sandbox helper is missing.*eidos-sandbox-win\.exe/);
+
+    const helper = path.join(fixture, helperPath);
+    await mkdir(path.dirname(helper), { recursive: true });
+    await writeFile(helper, helperBytes);
+    const generated = await run(process.execPath, generate);
+    assert.equal(generated.code, 0, generated.stderr);
+    const manifest = JSON.parse(await readFile(path.join(fixture, "runtime.json"), "utf8"));
+    const sha256 = createHash("sha256").update(helperBytes).digest("hex");
+    assert.equal(manifest.executables.some(({ path: relative }) => relative === helperPath), false);
+    assert.deepEqual(manifest.files.find(({ path: relative }) => relative === helperPath), {
+      path: helperPath,
+      sha256,
+    });
+
+    const verify = [manifestScript, "--verify", "--bundle-root", fixture];
+    const verified = await run(process.execPath, verify);
+    assert.equal(verified.code, 0, verified.stderr);
+    await writeFile(helper, "unexpected helper bytes");
+    const changed = await run(process.execPath, verify);
+    assert.notEqual(changed.code, 0);
+    assert.match(changed.stderr, /inventory hash or file set mismatch/);
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
 });

@@ -474,7 +474,9 @@ function validateManifestShape(bundleRoot, manifest) {
 function manifestOptions(options) {
   const target = options.target ?? TARGET;
   if (![TARGET, WINDOWS_TARGET].includes(target)) fail("unsupported Runtime target");
-  if (target === WINDOWS_TARGET && (!options.coreOnly || !options.gitVersion)) fail("Windows requires the core-only layout and a Git version");
+  if (target === WINDOWS_TARGET && (!options.coreOnly || !options.gitVersion)) {
+    fail("Windows requires the core-only layout and a Git version");
+  }
   const bundleRoot = asAbsolutePath(options.bundleRoot, "bundleRoot");
   const pythonLock = options.coreOnly ? null : asAbsolutePath(options.pythonLock, "pythonLock");
   const nodeModules = options.coreOnly ? null : options.nodeModules ?? "dependencies/node/node_modules";
@@ -509,6 +511,12 @@ export function generateRuntimeManifestSync(options) {
   }
   resolveInside(bundleRoot, normalized.nodeLoader, "nodeLoader");
   const files = inventoryFiles(bundleRoot, normalized.target);
+  if (normalized.target === WINDOWS_TARGET) {
+    const sandboxHelper = "app/eidos_runtime/resources/bin/windows-sandbox/eidos-sandbox-win.exe";
+    if (!files.some((file) => file.path === sandboxHelper)) {
+      fail(`required Windows sandbox helper is missing: ${sandboxHelper}`);
+    }
+  }
   const manifest = {
     schemaVersion: 1,
     bundleId: normalized.bundleId,
