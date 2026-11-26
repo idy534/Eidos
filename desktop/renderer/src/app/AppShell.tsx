@@ -553,11 +553,16 @@ export function AppShell({ runtime }: AppShellProps) {
   }, [sessionState.snapshot?.session.id]);
 
   useEffect(() => {
+    // Restoring the last Session is a startup step only. Once the user is in a
+    // Session, a later "new conversation" must not be pulled back to it.
+    if (sessionState.snapshot) {
+      restoredLastSessionRef.current = true;
+      return;
+    }
     if (
       restoredLastSessionRef.current
       || runtimeStatus.state !== "ready"
       || !isStorageReady
-      || sessionState.snapshot
       || sessionState.navigationSessionId
       || sessionState.pending.selectingSessionId
       || sessionState.sessions.length === 0
