@@ -44,6 +44,7 @@ from eidos_runtime.db.transitions import (
     transition_segments,
 )
 from eidos_runtime.db.repositories.workspace import execution_workspace_for_session
+from eidos_runtime.workspace.recorded_identity import current_workspace_identity
 from eidos_runtime.file_limits import MAX_PATCH_ARGUMENT_BYTES
 from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.model.retry import ModelRetryRecord
@@ -595,6 +596,8 @@ class ExecutionRepository(Repository):
             git_dir_identity=identity.git_dir_identity,
             git_common_identity=identity.git_common_identity,
         )
+        # The snapshot may predate a restart that renumbered the volume.
+        workspace = current_workspace_identity(workspace)
         roots = (workspace, *workspace.additional_roots)
         if not any(
             (root.git_dir is not None and root.git_dir_identity is None)

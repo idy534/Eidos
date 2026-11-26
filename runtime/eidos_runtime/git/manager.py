@@ -58,6 +58,10 @@ from eidos_runtime.git.status import (
 )
 from eidos_runtime.persistence.worktrees import ProjectWorktreeRepository
 from eidos_runtime.persistence.worktree_lifecycle import WorktreeLifecycleRepository
+from eidos_runtime.workspace.recorded_identity import (
+    current_directory_identity,
+    same_recorded_directory,
+)
 
 
 class WorktreeManager:
@@ -1278,7 +1282,9 @@ class WorktreeManager:
                 if validation.observed_git_common_dir is not None
                 else None
             ),
-            git_dir_identity=worktree.git_dir_identity,
+            git_dir_identity=current_directory_identity(
+                validation.observed_git_dir, worktree.git_dir_identity
+            ),
         )
 
     def list(self, project_id: str | None = None) -> tuple[WorktreeView, ...]:
@@ -1946,7 +1952,9 @@ class WorktreeManager:
             )
         except WorktreeError:
             actual_git_dir_identity = None
-        if actual_git_dir_identity != worktree.git_dir_identity:
+        if actual_git_dir_identity is None or not _same_recorded_identity(
+            worktree.git_dir_identity, actual_git_dir_identity
+        ):
             return self._record_validation(
                 worktree,
                 valid=False,
@@ -2425,6 +2433,15 @@ def _paths_overlap(left: Path, right: Path) -> bool:
 
 def _capture_git_dir_identity(path: str) -> DirectoryIdentity:
     return _capture_directory_identity(path)
+
+
+def _same_recorded_identity(
+    recorded: DirectoryIdentity, observed: DirectoryIdentity
+) -> bool:
+    return same_recorded_directory(
+        (recorded.device, recorded.inode, recorded.owner),
+        (observed.device, observed.inode, observed.owner),
+    )
 
 
 def _capture_directory_identity(path: str) -> DirectoryIdentity:

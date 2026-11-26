@@ -18,6 +18,7 @@ from eidos_runtime.workspace.reader import (
     capture_directory_identity,
     WorkspacePathError,
 )
+from eidos_runtime.workspace.recorded_identity import current_session_root
 
 if TYPE_CHECKING:
     from eidos_runtime.application.sessions import ManagedWorktreePort, SessionApplication
@@ -71,6 +72,7 @@ def scoped_git_application(application, request):
     root = next((root for root in session.roots if root.id == root_id), None)
     if root is None or root.repository_root is None:
         raise ApplicationError("WORKSPACE_BOUNDARY_VIOLATION", "Git target is not an attached repository")
+    root = current_session_root(root)
     manager = application._require_manager()
     if (
         root.git_dir is None

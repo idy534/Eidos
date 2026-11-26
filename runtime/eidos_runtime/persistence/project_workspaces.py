@@ -159,6 +159,7 @@ def capture_session_roots(roots: tuple[ProjectRoot, ...]) -> tuple[SessionRoot, 
 def verify_session_roots(roots: tuple[SessionRoot, ...]) -> None:
     from pathlib import Path
     from eidos_runtime.workspace.reader import capture_directory_identity, WorkspacePathError
+    from eidos_runtime.workspace.recorded_identity import same_recorded_directory
     for root in roots:
         expected = [(root.path, DirectoryIdentity(device=root.device, inode=root.inode, owner=root.owner))]
         expected.extend((path, fixed) for path, fixed in (
@@ -166,7 +167,9 @@ def verify_session_roots(roots: tuple[SessionRoot, ...]) -> None:
         ) if path is not None and fixed is not None)
         for path, fixed in expected:
             actual = capture_directory_identity(path)
-            if actual.path != Path(path) or (actual.device, actual.inode, actual.owner) != (fixed.device, fixed.inode, fixed.owner):
+            if actual.path != Path(path) or not same_recorded_directory(
+                (fixed.device, fixed.inode, fixed.owner), (actual.device, actual.inode, actual.owner),
+            ):
                 raise WorkspacePathError("workspace_identity_changed")
 
 

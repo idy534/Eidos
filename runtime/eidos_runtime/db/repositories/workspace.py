@@ -15,6 +15,11 @@ from eidos_runtime.db.errors import (
     WorkspaceIdentityChangedError,
 )
 from eidos_runtime.db.file_identity import decode_file_identity
+from eidos_runtime.workspace.recorded_identity import (
+    current_device,
+    current_session_root,
+    same_recorded_directory,
+)
 
 
 _SESSION_WORKSPACE_SELECT = """
@@ -68,11 +73,16 @@ def _identity_from_session_row(row: sqlite3.Row) -> WorkspaceIdentity:
             for field in ("workspace_dev", "workspace_inode", "workspace_uid")
         ):
             raise StorageError("workspace identity is unavailable")
+        recorded = (
+            decode_file_identity(row["workspace_dev"]),
+            decode_file_identity(row["workspace_inode"]),
+            row["workspace_uid"],
+        )
         return WorkspaceIdentity(
             path=Path(row["workspace_root"]),
-            device=decode_file_identity(row["workspace_dev"]),
-            inode=decode_file_identity(row["workspace_inode"]),
-            owner=row["workspace_uid"],
+            device=current_device(row["workspace_root"], recorded),
+            inode=recorded[1],
+            owner=recorded[2],
         )
 
     if execution_mode != "worktree" or row["worktree_id"] is None:
@@ -135,13 +145,12 @@ def _worktree_git_dir_identity(row: sqlite3.Row) -> DirectoryIdentity:
         captured = capture_directory_identity(row["git_dir"])
     except WorkspacePathError as error:
         raise WorkspaceIdentityChangedError(error.code) from error
-    if captured.path != Path(row["git_dir"]) or (
-        captured.device,
-        captured.inode,
-        captured.owner,
-    ) != (expected.device, expected.inode, expected.owner):
+    if captured.path != Path(row["git_dir"]) or not same_recorded_directory(
+        (expected.device, expected.inode, expected.owner),
+        (captured.device, captured.inode, captured.owner),
+    ):
         raise WorkspaceIdentityChangedError("workspace_identity_changed")
-    return expected
+    return expected.model_copy(update={"device": captured.device})
 
 
 def _verify_expected_git_common_identity(root: SessionRoot, actual: Path | None) -> None:
@@ -172,7 +181,10 @@ def _verify_expected_git_common_identity(root: SessionRoot, actual: Path | None)
 
 def _with_roots(row: sqlite3.Row, primary: WorkspaceIdentity) -> WorkspaceIdentity:
     from eidos_runtime.workspace.reader import WorkspacePathError, WorkspaceReader
-    roots = tuple(SessionRoot.model_validate(value) for value in json.loads(row["workspace_roots_json"]))
+    roots = tuple(
+        current_session_root(SessionRoot.model_validate(value))
+        for value in json.loads(row["workspace_roots_json"])
+    )
     if not roots:
         if row["worktree_root"] is not None:
             raise WorkspaceIdentityChangedError("workspace_identity_changed")
