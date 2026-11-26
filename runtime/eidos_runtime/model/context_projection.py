@@ -195,7 +195,12 @@ def hard_floor_recovery_context(
     current_goal_id: str | None = None,
     max_item_bytes: int = 512,
 ) -> tuple[dict[str, object], ...]:
-    """Deterministic minimal fallback when maximum progressive reduction still exceeds capacity."""
+    """Deterministic minimal fallback when maximum progressive reduction still exceeds capacity.
+
+    Like ``recovery_context`` it keeps protected layers verbatim: preferences
+    (the builder fits them to the budget afterwards), project rules, selected
+    Skills, the custom Agent and the current goal. Only history is cut.
+    """
     messages = [item for item in context if item.get("type") in {"user", "context"}]
     goals = [item for item in messages if item.get("type") == "user" and not item.get("sectionId")]
     primary_goal = (
@@ -207,10 +212,6 @@ def hard_floor_recovery_context(
         primary_goal = goals[-1]
     latest_feedback = next(
         (item for item in reversed(messages) if item.get("sectionId") == "runtime-feedback"),
-        None,
-    )
-    goal_current = next(
-        (item for item in reversed(messages) if item.get("sectionId") == "goal-current"),
         None,
     )
     result: list[dict[str, object]] = []
@@ -226,6 +227,8 @@ def hard_floor_recovery_context(
                     "content": "Saved memory evidence guard",
                     "memoryEpochs": item["memoryEpochs"],
                 })
+        elif _protected_personalization(item) or _protected_guidance(item):
+            result.append(dict(item))
         elif _protected_continuity(item):
             result.append({
                 **dict(item),
@@ -235,7 +238,7 @@ def hard_floor_recovery_context(
                     continuation="Use saved session continuity if needed.",
                 ),
             })
-    for candidate in (goal_current, primary_goal, latest_feedback):
+    for candidate in (primary_goal, latest_feedback):
         if candidate is None:
             continue
         compact: dict[str, object] = {

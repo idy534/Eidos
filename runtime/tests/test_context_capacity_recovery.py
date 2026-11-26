@@ -228,3 +228,22 @@ def test_repeated_recovery_loops_apply_cancelable_backoff(workspace_store):
     engine.run(run["id"], RecordingCancel())
     assert store.read_run(run["id"])["status"] == "canceled"
     assert waits == [1.0, 1.0, 2.0, 4.0]
+
+
+def test_hard_floor_keeps_project_rules_and_the_full_current_goal() -> None:
+    from eidos_runtime.model.context_projection import hard_floor_recovery_context
+
+    goal_text = "目标：" + "完成迁移。" * 400
+    rule = {"type": "context", "sectionId": "project-rule:AGENTS.md", "content": "Never push to main."}
+    goal = {"type": "context", "sectionId": "goal-current", "content": goal_text}
+    history = [{"type": "assistant", "content": "old reply " * 200} for _ in range(5)]
+    user = {"type": "user", "content": "继续。" * 400, "sourceItemId": "u1"}
+
+    reduced = hard_floor_recovery_context((rule, goal, *history, user), current_goal_id="u1")
+
+    by_section = {item.get("sectionId"): item for item in reduced}
+    assert by_section["project-rule:AGENTS.md"]["content"] == "Never push to main."
+    assert by_section["goal-current"]["content"] == goal_text
+    assert not any(item.get("type") == "assistant" for item in reduced)
+    user_items = [item for item in reduced if item.get("sourceItemId") == "u1"]
+    assert len(user_items) == 1 and len(str(user_items[0]["content"]).encode()) < len(str(user["content"]).encode())
