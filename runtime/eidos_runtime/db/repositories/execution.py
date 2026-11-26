@@ -2034,6 +2034,11 @@ class ExecutionRepository(Repository):
                 "UPDATE durable_intents SET status = ?, reconciled_at = ? WHERE tool_call_id = ? AND status = 'running'",
                 ("uncertain" if uncertain else "completed", now, fact["id"]),
             )
+            connection.execute(
+                """UPDATE tool_attempts SET status = ?, result_code = ?, completed_at = ?
+                   WHERE tool_call_id = ? AND sandbox_type = 'windows_mxc' AND result_code = 'shell_running'""",
+                ("uncertain" if uncertain else status, result.get("code"), now, fact["id"]),
+            )
             if workspace_changed:
                 connection.execute(
                     "UPDATE runs SET workspace_version = workspace_version + 1, last_diff_hash = ?, updated_at = ? WHERE id = ?",
@@ -2214,7 +2219,7 @@ class ExecutionRepository(Repository):
     ) -> None:
         if ordinal not in {0, 1}:
             raise ValueError("invalid tool attempt ordinal")
-        if sandbox_type not in {"macos_seatbelt", "none"}:
+        if sandbox_type not in {"macos_seatbelt", "windows_mxc", "none"}:
             raise ValueError("invalid sandbox type")
         if status not in {
             "running", "completed", "failed", "canceled", "uncertain"
