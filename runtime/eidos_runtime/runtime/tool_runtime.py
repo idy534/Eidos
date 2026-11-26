@@ -8,6 +8,8 @@ import hashlib
 import json
 import logging
 from pathlib import Path
+import platform
+import sys
 import threading
 from typing import TYPE_CHECKING, Callable, cast
 
@@ -176,6 +178,14 @@ from eidos_runtime.runtime.shell_process_manager import (
     ShellProcessSessionNotFound,
     ShellSessionFinalizationError,
 )
+
+
+def _host_platform_label() -> str:
+    if sys.platform == "win32":
+        return "Windows"
+    if sys.platform == "darwin":
+        return "macOS"
+    return platform.system() or "host OS"
 
 
 logger = logging.getLogger("eidos.runtime")
@@ -1308,10 +1318,11 @@ class ShellToolHandler:
                 if request.escalation_reason is not None
                 else None
             )
+            platform_label = _host_platform_label()
             description = {
                 "kind": "command_execution",
                 "summary": (
-                    "Run shell command without the macOS sandbox"
+                    f"Run shell command without the {platform_label} sandbox"
                     if mode == "unsandboxed"
                     else "Run shell command with expanded sandbox permissions"
                     if mode == "expanded_sandbox"
@@ -1362,7 +1373,10 @@ class ShellToolHandler:
             if human_confirmation:
                 description["requiresHumanConfirmation"] = True
             if human_confirmation or mode == "unsandboxed":
-                description["riskWarning"] = "此命令会开放受保护路径，或使用当前 macOS 用户的权限在沙盒外执行。沙盒外命令及其子进程可能读取、修改工作区外文件并访问网络。批准仅适用于本次命令。"
+                description["riskWarning"] = (
+                    f"此命令会开放受保护路径，或使用当前 {platform_label} 用户的权限在沙盒外执行。"
+                    "沙盒外命令及其子进程可能读取、修改工作区外文件并访问网络。批准仅适用于本次命令。"
+                )
             # In request-approval mode one approval of network access or Git
             # metadata writes covers the rest of the task, like a permission
             # request. Auto review keeps judging each command at no user cost.

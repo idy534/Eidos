@@ -1030,3 +1030,50 @@ it("chooses goal mode from the plus menu, keeps the draft and makes Plan mutuall
   expect(screen.queryByRole("button", { name: "退出 Plan 模式" })).toBeNull();
   expect(screen.getByRole("textbox")).toHaveValue("");
 });
+
+it("exposes and dispatches /compact, /fork, and /review slash commands through the unified registry", async () => {
+  const api = {
+    listSkills: vi.fn().mockResolvedValue({ skills: [] }),
+    listPlugins: vi.fn().mockResolvedValue({ plugins: [] }),
+    listMcpServers: vi.fn().mockResolvedValue({ servers: [] }),
+    listSessions: vi.fn().mockResolvedValue({ items: [] }),
+    listAgentTypes: vi.fn().mockResolvedValue({ agents: [] }),
+    listWorkspaceDirectory: vi.fn().mockResolvedValue({ path: ".", entries: [], truncated: false }),
+    onInputQuote: vi.fn().mockReturnValue(vi.fn()),
+  };
+  Object.defineProperty(window, "eidosRuntime", { configurable: true, writable: true, value: api });
+
+  const onCompactContext = vi.fn();
+  const onForkSession = vi.fn();
+  const onOpenReview = vi.fn();
+  function SlashHarness() {
+    const [input, setInput] = useState("");
+    return (
+      <InputContextProvider sessionId="session-1" workspaceRoot="/workspace" ready onAdd={vi.fn()} onSettings={vi.fn()}>
+        <Composer
+          {...defaultProps}
+          input={input}
+          onInputChange={setInput}
+          onCompactContext={onCompactContext}
+          onForkSession={onForkSession}
+          onOpenReview={onOpenReview}
+        />
+      </InputContextProvider>
+    );
+  }
+
+  render(<SlashHarness />);
+  const textbox = screen.getByRole("textbox");
+
+  fireEvent.change(textbox, { target: { value: "/compact" } });
+  fireEvent.click(await screen.findByRole("option", { name: /\/compact/ }));
+  expect(onCompactContext).toHaveBeenCalledTimes(1);
+
+  fireEvent.change(textbox, { target: { value: "/fork" } });
+  fireEvent.click(await screen.findByRole("option", { name: /\/fork/ }));
+  expect(onForkSession).toHaveBeenCalledTimes(1);
+
+  fireEvent.change(textbox, { target: { value: "/review" } });
+  fireEvent.click(await screen.findByRole("option", { name: /\/review/ }));
+  expect(onOpenReview).toHaveBeenCalledTimes(1);
+});

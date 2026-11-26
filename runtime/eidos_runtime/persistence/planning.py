@@ -40,14 +40,14 @@ class PlanningRepository:
         return PlanDocument(**{key: row[key] for key in row.keys() if key != 'projected_sha256'}, path=str(self._path(row['session_id'], row['id'])))
 
     def read(self, plan_id: str) -> PlanDocument:
-        with self.database.lock:
+        with self.database.read_scope(), self.database.lock:
             row = self.database.connection().execute('SELECT * FROM plans WHERE id = ?', (plan_id,)).fetchone()
             if row is None:
                 raise ValueError('plan_not_found')
             return self._plan(row)
 
     def list_plans(self, session_id: str) -> list[PlanDocument]:
-        with self.database.lock:
+        with self.database.read_scope(), self.database.lock:
             result = []
             size = 0
             for row in self.database.connection().execute(
@@ -61,7 +61,7 @@ class PlanningRepository:
             return result
 
     def context(self, run_id: str) -> str:
-        with self.database.lock:
+        with self.database.read_scope(), self.database.lock:
             row = self.database.connection().execute(
                 'SELECT r.plan_id, r.plan_revision, p.title, v.markdown FROM runs r '
                 'JOIN plans p ON p.id = r.plan_id JOIN plan_revisions v '
@@ -244,7 +244,7 @@ class PlanningRepository:
             created_at=row['created_at'])
 
     def requests(self, session_id: str) -> list[UserInputRequest]:
-        with self.database.lock:
+        with self.database.read_scope(), self.database.lock:
             rows = self.database.connection().execute('SELECT q.*, r.status AS run_status FROM user_input_requests q JOIN runs r ON r.id=q.run_id WHERE q.session_id=? ORDER BY q.created_at DESC LIMIT 50', (session_id,)).fetchall()
             result = []
             size = 0
@@ -257,12 +257,12 @@ class PlanningRepository:
             return result
 
     def for_item(self, item_id: str) -> UserInputRequest | None:
-        with self.database.lock:
+        with self.database.read_scope(), self.database.lock:
             row = self.database.connection().execute('SELECT * FROM user_input_requests WHERE item_id=?', (item_id,)).fetchone()
             return self._request(row) if row else None
 
     def unfinished(self, run_id: str) -> UserInputRequest | None:
-        with self.database.lock:
+        with self.database.read_scope(), self.database.lock:
             row = self.database.connection().execute("SELECT q.* FROM user_input_requests q JOIN tool_calls t ON t.item_id=q.item_id WHERE q.run_id=? AND t.status='running' ORDER BY q.created_at DESC LIMIT 1", (run_id,)).fetchone()
             return self._request(row) if row else None
 

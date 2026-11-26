@@ -252,3 +252,40 @@ def test_startup_lock_holds_are_not_reported_but_later_holds_are(
         assert [r for r in caplog.records if "storage_lock_held" in r.getMessage()]
     finally:
         store.close()
+
+
+def test_repository_reads_complete_while_writer_holds_state_lock(tmp_path: Path) -> None:
+    from eidos_runtime.persistence.automations import AutomationRepository
+    from eidos_runtime.persistence.goals import GoalRepository
+    from eidos_runtime.persistence.guardrails import GuardrailSettingsRepository
+    from eidos_runtime.persistence.planning import PlanningRepository
+    from eidos_runtime.persistence.shell_environment import ShellEnvironmentRepository
+    from eidos_runtime.persistence.teams import TeamRepository
+
+    store = _store(tmp_path)
+    try:
+        session = store.create_session(_workspace(tmp_path))
+        session_id = str(session["id"])
+        holding = threading.Event()
+        release = threading.Event()
+
+        def hold_writer() -> None:
+            with store.database.lock:
+                holding.set()
+                release.wait(5)
+
+        writer = threading.Thread(target=hold_writer)
+        writer.start()
+        assert holding.wait(5)
+        try:
+            assert GoalRepository(store.database).view(session_id).goal is None
+            assert AutomationRepository(store.database).list() == []
+            assert TeamRepository(store.database).team_for_session(session_id) is None
+            assert PlanningRepository(store.database).list_plans(session_id) == []
+            assert ShellEnvironmentRepository(store.database).read().policy.inherit == "all"
+            assert GuardrailSettingsRepository(store.database).read().policy.max_idle_rounds == 3
+        finally:
+            release.set()
+            writer.join()
+    finally:
+        store.close()

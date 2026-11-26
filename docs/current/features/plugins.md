@@ -71,7 +71,7 @@ Runtime 读取 `interface.displayName`、`shortDescription`、`developerName`、
 
 ## 更新、重装与旧任务
 
-内置 GitHub 的图标包版本为 `1.0.1`。旧 `1.0.0` 安装可以通过“更新”切换到新版本。包内容变化必须同时更新版本，图标和展示清单也属于包内容。内置安装入口会将同版本内容冲突返回为 `PLUGIN_VERSION_CONFLICT`，其他包不可用错误仍返回 `PLUGIN_UNAVAILABLE`。升级继续撤销旧账号连接和 MCP 授权，用户需要重新连接账号。
+内置 GitHub 的图标包版本为 `1.0.2`。旧 `1.0.0` / `1.0.1` 安装可以通过“更新”切换到新版本。包内容变化必须同时更新版本，图标和展示清单也属于包内容。内置安装入口会将同版本内容冲突返回为 `PLUGIN_VERSION_CONFLICT`，其他包不可用错误仍返回 `PLUGIN_UNAVAILABLE`。升级继续撤销旧账号连接和 MCP 授权，用户需要重新连接账号。
 
 用户可以通过现有“导入本地 Plugin”入口导入同 ID 的另一个版本。Runtime 也允许用户显式导入已知旧版本进行回退。安装路径继续是 `<data>/extensions/plugins/<id>/<version>/`，路径不加入 Hash。
 

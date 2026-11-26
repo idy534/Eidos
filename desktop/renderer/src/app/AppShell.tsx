@@ -14,7 +14,8 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import type { ApprovalMode, ModelOption, Project, ResponseFeedbackValue, Run, Session, Item } from "../contracts.js";
+import type { ApprovalMode, ModelOption, Project, ResponseFeedbackValue, Run, Session, SessionCheckpoint, Item } from "../contracts.js";
+import type { StructuredReviewFinding } from "../components/review-findings.js";
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import { WelcomeMessage } from "../components/WelcomeMessage.js";
@@ -73,15 +74,17 @@ import { McpPluginNamesContext } from "../components/McpToolDetails.js";
 import { useGitReviewController } from "./useGitReviewController.js";
 import { useDraftGit } from "./useDraftGit.js";
 import { applyThinking, clearThinking, type LiveThinkingMap } from "../live-thinking.js";
-import { applyNotification, applyQueuedRunChange, isQueuedMessage, userFacingError } from "../session-state.js";
+import { applyNotifications, applyQueuedRunChange, isQueuedMessage, userFacingError } from "../session-state.js";
+import type { RuntimeNotification } from "../contracts.js";
 import { IPC } from "../../../shared/ipc-channels.js";
 import { NavigationControls } from "../components/NavigationControls.js";
 import { useNavigationHistory } from "./useNavigationHistory.js";
 import {
-  collectOutputArtifacts,
+  mergeOutputArtifacts,
   OutputContent,
   useCompleteSessionItems,
 } from "../components/TurnResults.js";
+import { disposeSessionTerminals, disposeTerminal } from "../components/terminal-shell-preference.js";
 import { ToastContainer, type ToastItem, type ToastType } from "../components/ToastContainer.js";
 import { memoryTidyPrompt } from "../memory-tidy.js";
 import { isPathWithinRoot, joinWorkspacePath, pathBasename } from "../platform.js";
@@ -93,6 +96,7 @@ interface AppShellProps {
 type CreateBranchMode = "local" | "worktree";
 
 const SIDEBAR_OPEN_KEY = "eidos.sidebarOpen";
+const LAST_ACTIVE_SESSION_KEY = "eidos.lastActiveSessionId";
 
 function loadSidebarOpen(): boolean {
   try {
@@ -110,7 +114,23 @@ const MAIN_MIN_WIDTH = 16 * 16;
 const DOCK_AUTO_COLLAPSE_BODY_WIDTH = 40 * 16;
 const EMPTY_MODELS: ModelOption[] = [];
 const EMPTY_AGENTS: AgentSummary[] = [];
+const EMPTY_ITEMS: Item[] = [];
+const EMPTY_RUNS: Run[] = [];
 const ENDED_RUN_STATUSES = new Set<Run["status"]>(["stopped", "succeeded", "failed", "canceled", "interrupted"]);
+
+interface SessionDockState {
+  openTabs: WorkspaceTab[];
+  activeTabId: string | undefined;
+  dockOpen: boolean;
+  dockExpanded: boolean;
+}
+
+const DEFAULT_SESSION_DOCK_STATE: SessionDockState = {
+  openTabs: [],
+  activeTabId: undefined,
+  dockOpen: false,
+  dockExpanded: false,
+};
 
 const TerminalPanel = lazy(() => import("../components/TerminalPanel.js").then((module) => ({
   default: module.TerminalPanel,
@@ -258,6 +278,10 @@ export function AppShell({ runtime }: AppShellProps) {
   const [createBranchSessionId, setCreateBranchSessionId] = useState<string | undefined>(undefined);
   const [createBranchMode, setCreateBranchMode] = useState<CreateBranchMode>("worktree");
   const [handoffSessionId, setHandoffSessionId] = useState<string | undefined>(undefined);
+  const [checkpoints, setCheckpoints] = useState<SessionCheckpoint[]>([]);
+  const [checkpointToRewind, setCheckpointToRewind] = useState<SessionCheckpoint | undefined>(undefined);
+  const [rewindBusy, setRewindBusy] = useState(false);
+  const [rewindError, setRewindError] = useState<string | undefined>(undefined);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(loadSidebarOpen);
   const [browserRequest, setBrowserRequest] = useState<{ browserId: string; url: string; id: number }>();
   const [reviewRequest, setReviewRequest] = useState<{
@@ -266,7 +290,60 @@ export function AppShell({ runtime }: AppShellProps) {
     itemId?: string;
     requestId: number;
   }>();
-  const [dockOpen, setDockOpen] = useState(false);
+  const dockSessionKey = activeSnapshot?.session.id ?? "__none__";
+  const [dockBySession, setDockBySession] = useState<Record<string, SessionDockState>>({});
+  const sessionDock = dockBySession[dockSessionKey] ?? DEFAULT_SESSION_DOCK_STATE;
+  const { openTabs, activeTabId, dockOpen, dockExpanded } = sessionDock;
+  const dockSeqBySessionRef = useRef<Record<string, { terminal: number; browser: number }>>({});
+
+  const updateSessionDock = useCallback((
+    sessionKey: string,
+    updater: (previous: SessionDockState) => SessionDockState,
+  ) => {
+    setDockBySession((prev) => {
+      const current = prev[sessionKey] ?? DEFAULT_SESSION_DOCK_STATE;
+      const next = updater(current);
+      if (next === current) return prev;
+      return { ...prev, [sessionKey]: next };
+    });
+  }, []);
+
+  const setOpenTabs = useCallback((
+    updater: WorkspaceTab[] | ((previous: WorkspaceTab[]) => WorkspaceTab[]),
+  ) => {
+    updateSessionDock(dockSessionKey, (previous) => {
+      const nextTabs = typeof updater === "function" ? updater(previous.openTabs) : updater;
+      return nextTabs === previous.openTabs ? previous : { ...previous, openTabs: nextTabs };
+    });
+  }, [dockSessionKey, updateSessionDock]);
+
+  const setActiveTabId = useCallback((
+    value: string | undefined | ((previous: string | undefined) => string | undefined),
+  ) => {
+    updateSessionDock(dockSessionKey, (previous) => {
+      const nextId = typeof value === "function" ? value(previous.activeTabId) : value;
+      return nextId === previous.activeTabId ? previous : { ...previous, activeTabId: nextId };
+    });
+  }, [dockSessionKey, updateSessionDock]);
+
+  const setDockOpen = useCallback((
+    value: boolean | ((previous: boolean) => boolean),
+  ) => {
+    updateSessionDock(dockSessionKey, (previous) => {
+      const nextOpen = typeof value === "function" ? value(previous.dockOpen) : value;
+      return nextOpen === previous.dockOpen ? previous : { ...previous, dockOpen: nextOpen };
+    });
+  }, [dockSessionKey, updateSessionDock]);
+
+  const setDockExpanded = useCallback((
+    value: boolean | ((previous: boolean) => boolean),
+  ) => {
+    updateSessionDock(dockSessionKey, (previous) => {
+      const nextExpanded = typeof value === "function" ? value(previous.dockExpanded) : value;
+      return nextExpanded === previous.dockExpanded ? previous : { ...previous, dockExpanded: nextExpanded };
+    });
+  }, [dockSessionKey, updateSessionDock]);
+
   const [dockRetained, setDockRetained] = useState(false);
   useEffect(() => {
     if (dockOpen) { setDockRetained(true); return; }
@@ -274,7 +351,6 @@ export function AppShell({ runtime }: AppShellProps) {
     const timer = window.setTimeout(() => setDockRetained(false), 280);
     return () => window.clearTimeout(timer);
   }, [dockOpen]);
-  const [dockExpanded, setDockExpanded] = useState(false);
   const [dockWidth, setDockWidth] = useState<number>();
   const wasNarrowRef = useRef(false);
   // Auto-collapse the side-by-side dock when the workspace body becomes too
@@ -368,8 +444,6 @@ export function AppShell({ runtime }: AppShellProps) {
     };
   }, []);
   const [environmentPopoverOpen, setEnvironmentPopoverOpen] = useState(false);
-  const [openTabs, setOpenTabs] = useState<WorkspaceTab[]>([]);
-  const [activeTabId, setActiveTabId] = useState<string | undefined>(undefined);
   const [workflowOpenRequest, setWorkflowOpenRequest] = useState(0);
   const [explorerOpenRequest, setExplorerOpenRequest] = useState<WorkspaceFileOpenRequest | undefined>(undefined);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -381,8 +455,6 @@ export function AppShell({ runtime }: AppShellProps) {
     startX: number;
     startWidth: number;
   } | undefined>(undefined);
-  const terminalSequenceRef = useRef(0);
-  const browserSequenceRef = useRef(0);
   const fileOpenSequenceRef = useRef(0);
   const modelSessionInitializedRef = useRef<string | undefined>(undefined);
   const getDialogFallbackFocus = useCallback((): HTMLElement | null => {
@@ -467,6 +539,72 @@ export function AppShell({ runtime }: AppShellProps) {
     previousWarningRef.current = warningDesc;
   }, [runtimePresentation.tone, runtimePresentation.description]);
 
+  const prevRuntimeStateRef = useRef(runtimeStatus.state);
+  const restoredLastSessionRef = useRef(false);
+
+  useEffect(() => {
+    const activeId = sessionState.snapshot?.session.id;
+    if (!activeId) return;
+    try {
+      window.localStorage.setItem(LAST_ACTIVE_SESSION_KEY, activeId);
+    } catch {
+      // Ignore storage access failures.
+    }
+  }, [sessionState.snapshot?.session.id]);
+
+  useEffect(() => {
+    // Restoring the last Session is a startup step only. Once the user is in a
+    // Session, a later "new conversation" must not be pulled back to it.
+    if (sessionState.snapshot) {
+      restoredLastSessionRef.current = true;
+      return;
+    }
+    if (
+      restoredLastSessionRef.current
+      || runtimeStatus.state !== "ready"
+      || !isStorageReady
+      || sessionState.navigationSessionId
+      || sessionState.pending.selectingSessionId
+      || sessionState.sessions.length === 0
+    ) {
+      return;
+    }
+    restoredLastSessionRef.current = true;
+    let savedId: string | null = null;
+    try {
+      savedId = window.localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
+    } catch {
+      return;
+    }
+    if (!savedId) return;
+    const matched = sessionState.sessions.find((item) => item.id === savedId);
+    if (matched && !runState.input.trim()) {
+      void sessionActions.selectSession(matched);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    runtimeStatus.state,
+    isStorageReady,
+    sessionState.snapshot,
+    sessionState.navigationSessionId,
+    sessionState.pending.selectingSessionId,
+    sessionState.sessions,
+  ]);
+
+  useEffect(() => {
+    const previousState = prevRuntimeStateRef.current;
+    prevRuntimeStateRef.current = runtimeStatus.state;
+    if (
+      previousState !== "ready"
+      && runtimeStatus.state === "ready"
+      && runtimeStatus.storageHealth.state === "ready"
+      && sessionState.snapshot
+    ) {
+      void sessionActions.selectSession(sessionState.snapshot.session);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runtimeStatus.state, runtimeStatus.state === "ready" ? runtimeStatus.storageHealth.state : null]);
+
   // -----------------------------------------------------------------------
   // Bootstrap: load sessions, model, approvals independently
   // -----------------------------------------------------------------------
@@ -518,32 +656,58 @@ export function AppShell({ runtime }: AppShellProps) {
   }, [sessionState.snapshot?.session.id, runtimeStatus.state, isStorageReady]);
 
   useEffect(() => {
-    setDockOpen(false);
-    setDockExpanded(false);
-    setDockWidth(undefined);
-    setOpenTabs([]);
     setTeamMember(undefined);
     setBrowserRequest(undefined);
-    setActiveTabId(undefined);
-    terminalSequenceRef.current = 0;
-    browserSequenceRef.current = 0;
-  }, [
-    sessionState.snapshot?.session.id,
-    sessionState.snapshot?.session.executionMode,
-    sessionState.snapshot?.session.associatedWorktreeId,
-  ]);
+    setDockRetained(dockOpen);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionState.snapshot?.session.id]);
 
   // -----------------------------------------------------------------------
   // Runtime notifications
   // -----------------------------------------------------------------------
   useEffect(() => {
+    let disposed = false;
+    let pendingDeltas: Extract<RuntimeNotification, { method: "item/delta" }>[] = [];
+    let deltaFrame: number | null = null;
+
+    const flushPendingDeltas = () => {
+      if (deltaFrame !== null) {
+        window.cancelAnimationFrame(deltaFrame);
+        deltaFrame = null;
+      }
+      if (disposed || pendingDeltas.length === 0) {
+        pendingDeltas = [];
+        return;
+      }
+      const batch = pendingDeltas;
+      pendingDeltas = [];
+      sessionActions.setSnapshot((prev) => applyNotifications(prev, batch));
+    };
+
     const unsubNotifications = window.eidosRuntime?.onNotification?.((notification) => {
+      if (notification.method === "item/delta") {
+        pendingDeltas.push(notification);
+        if (deltaFrame === null) {
+          deltaFrame = window.requestAnimationFrame(flushPendingDeltas);
+        }
+        return;
+      }
+      if (deltaFrame !== null) {
+        window.cancelAnimationFrame(deltaFrame);
+        deltaFrame = null;
+      }
+      const drained = pendingDeltas;
+      pendingDeltas = [];
+
       handleContextUsageNotification(notification);
       gitReviewActions.handleNotification(notification);
       if (notification.method === "run/thinking") {
         // A summary can arrive after the Run's terminal notification; ignore it.
         if (!endedThinkingRuns.current.has(notification.params.runId)) {
           setLiveThinking((prev) => applyThinking(prev, notification.params));
+        }
+        if (drained.length > 0) {
+          sessionActions.setSnapshot((prev) => applyNotifications(prev, drained));
         }
         return;
       }
@@ -579,7 +743,8 @@ export function AppShell({ runtime }: AppShellProps) {
       ) {
         approvalActions.removeApproval(notification.params.approvalId);
       }
-      sessionActions.setSnapshot((prev) => applyNotification(prev, notification));
+      const batch = drained.length > 0 ? [...drained, notification] : [notification];
+      sessionActions.setSnapshot((prev) => applyNotifications(prev, batch));
     });
 
     const unsubApprovals = window.eidosRuntime?.onApprovalRequest?.((request) => {
@@ -587,6 +752,11 @@ export function AppShell({ runtime }: AppShellProps) {
     });
 
     return () => {
+      disposed = true;
+      if (deltaFrame !== null) {
+        window.cancelAnimationFrame(deltaFrame);
+      }
+      pendingDeltas = [];
       unsubNotifications?.();
       unsubApprovals?.();
     };
@@ -990,6 +1160,14 @@ export function AppShell({ runtime }: AppShellProps) {
     const result = await sessionActions.deleteSession(sessionToDelete);
     setDeleteBusy(false);
     if (result.confirmed) {
+      disposeSessionTerminals(sessionToDelete.id);
+      delete dockSeqBySessionRef.current[sessionToDelete.id];
+      setDockBySession((prev) => {
+        if (!(sessionToDelete.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[sessionToDelete.id];
+        return next;
+      });
       navHistoryActions.removeSession(sessionToDelete.id);
       setSessionToDelete(undefined);
     } else {
@@ -1047,7 +1225,12 @@ export function AppShell({ runtime }: AppShellProps) {
 
   async function handleSubmit(): Promise<void> {
     if (!modelState.selectedModelId) return;
-    const command = /^\/(goal|plan|team)(?:\s|$)/.exec(runState.input.trim());
+    const trimmedInput = runState.input.trim();
+    const reviewCommand = /^\/review(?:\s+(.*))?$/.exec(trimmedInput);
+    const reviewInputOverride = reviewCommand
+      ? `请使用 review-agent 规范对${reviewCommand[1]?.trim() ? `“${reviewCommand[1].trim()}”` : "当前工作区 Git 变更"}执行只读代码审阅，并按 \`### [P0-P3] 标题 — relative/path:line\` 格式输出结构化问题与 **建议修改**。`
+      : undefined;
+    const command = /^\/(goal|plan|team)(?:\s|$)/.exec(trimmedInput);
     if (command?.[1] === "team" && !teamAvailable) return;
     const submissionMode: ComposerWorkMode = command?.[1] === "goal" ? "goal" : command?.[1] === "plan" ? "plan"
       : command?.[1] === "team" ? "team" : workMode;
@@ -1128,6 +1311,7 @@ export function AppShell({ runtime }: AppShellProps) {
       reasoningSelection: modelState.reasoningSelection,
       approvalMode,
       planning: submissionOptions,
+      ...(reviewInputOverride !== undefined ? { inputOverride: reviewInputOverride } : {}),
       isStorageReady,
       onRunProjected: (sessionId, run) => {
         sessionActions.projectRun(sessionId, run);
@@ -1195,6 +1379,11 @@ export function AppShell({ runtime }: AppShellProps) {
   const { snapshot } = sessionState;
   const currentSnapshot = snapshot ?? sessionState.draft;
   const isDraft = Boolean(!snapshot && sessionState.draft);
+  const latestForkableItem = currentSnapshot && !isDraft
+    ? currentSnapshot.items
+      .filter((item) => item.kind === "assistant_message" && item.status === "completed" && !item.incomplete && Boolean(item.content))
+      .at(-1)
+    : undefined;
   const showWelcome = Boolean(currentSnapshot
     && (isDraft || (currentSnapshot.session.taskStatus === "new"
       && currentSnapshot.runs.length === 0 && currentSnapshot.items.length === 0))
@@ -1204,13 +1393,21 @@ export function AppShell({ runtime }: AppShellProps) {
   const showSessionSetup = Boolean(currentSnapshot
     && currentSnapshot.session.taskStatus === "new"
     && currentSnapshot.runs.length === 0);
+  const needsCompleteHistory = Boolean(
+    openTabs.some((tab) => tab.kind === "text-review" || tab.kind === "review")
+    || (environmentPopoverOpen && !currentSnapshot?.declaredOutputs && Boolean(currentSnapshot?.previousItemId)),
+  );
   const completeSessionItems = useCompleteSessionItems(
     currentSnapshot && !isDraft ? currentSnapshot.session.id : undefined,
-    currentSnapshot?.items ?? [],
+    currentSnapshot?.items ?? EMPTY_ITEMS,
     currentSnapshot?.previousItemId,
-    currentSnapshot?.runs ?? [],
+    currentSnapshot?.runs ?? EMPTY_RUNS,
+    needsCompleteHistory,
   );
-  const outputArtifacts = collectOutputArtifacts(completeSessionItems.items);
+  const outputArtifacts = useMemo(
+    () => mergeOutputArtifacts(currentSnapshot?.declaredOutputs, completeSessionItems.items),
+    [currentSnapshot?.declaredOutputs, completeSessionItems.items],
+  );
   const { approvals, respondingApprovalIds, respondingKindByApprovalId, errorsByApprovalId } = approvalState;
   const currentSessionId = currentSnapshot?.session.id;
   const feedModels = modelState.list?.models ?? EMPTY_MODELS;
@@ -1220,11 +1417,11 @@ export function AppShell({ runtime }: AppShellProps) {
     [approvals, currentSessionId],
   );
   const feedVisibleRuns = useMemo(
-    () => (currentSnapshot ? currentSnapshot.runs.filter((run) => !isQueuedMessage(run)) : []),
+    () => (currentSnapshot ? currentSnapshot.runs.filter((run) => !isQueuedMessage(run)) : EMPTY_RUNS),
     [currentSnapshot?.runs],
   );
   const feedVisibleItems = useMemo(() => {
-    if (!currentSnapshot) return [];
+    if (!currentSnapshot) return EMPTY_ITEMS;
     const queuedRunIds = new Set(
       currentSnapshot.runs.filter((run) => isQueuedMessage(run)).map((run) => run.id),
     );
@@ -1309,6 +1506,73 @@ export function AppShell({ runtime }: AppShellProps) {
     : currentSnapshot?.session.roots !== undefined
       ? currentSnapshot.session.roots[0]?.repositoryRoot !== undefined
       : sessionProject?.gitAvailable === true;
+  useEffect(() => {
+    if (!isStorageReady || !currentSessionId || isDraft || !sessionHasGit || typeof window.eidosRuntime?.listCheckpoints !== "function") {
+      setCheckpoints([]);
+      return;
+    }
+    let cancelled = false;
+    void window.eidosRuntime.listCheckpoints(currentSessionId)
+      .then((list) => { if (!cancelled) setCheckpoints(list); })
+      .catch(() => { if (!cancelled) setCheckpoints([]); });
+    return () => { cancelled = true; };
+  }, [isStorageReady, currentSessionId, isDraft, sessionHasGit, currentSnapshot?.runs.length, activeRun?.id, activeRun?.status]);
+  const checkpointsByRunId = useMemo(
+    () => new Map(checkpoints.map((checkpoint) => [checkpoint.runId, checkpoint] as const)),
+    [checkpoints],
+  );
+  const confirmCheckpointRewind = useCallback(async () => {
+    if (!checkpointToRewind || !currentSessionId || typeof window.eidosRuntime?.rewindCheckpoint !== "function") return;
+    setRewindBusy(true);
+    setRewindError(undefined);
+    try {
+      await window.eidosRuntime.rewindCheckpoint(currentSessionId, checkpointToRewind.id, crypto.randomUUID());
+      setCheckpointToRewind(undefined);
+      gitReviewActions.refresh();
+      void sessionActions.refreshCompletedSession(currentSessionId);
+      showToast("已回退工作区到指定检查点。", "info", 3000);
+    } catch (cause: unknown) {
+      setRewindError(userFacingError(cause));
+    } finally {
+      setRewindBusy(false);
+    }
+  }, [checkpointToRewind, currentSessionId, gitReviewActions, sessionActions, showToast]);
+  const handleAdoptReviewFinding = useCallback((finding: StructuredReviewFinding) => {
+    const prompt = [
+      `请修复以下代码审阅问题（\`${finding.path}:${finding.line}\`）：`,
+      `[${finding.severity}] ${finding.title}`,
+      ...(finding.body ? [finding.body] : []),
+      ...(finding.suggestion ? ["", "建议修改：", finding.suggestion] : []),
+    ].join("\n");
+    void handleReviewFeedback(prompt);
+  }, [handleReviewFeedback]);
+  const handleAddReviewFindingComment = useCallback((finding: StructuredReviewFinding) => {
+    if (!currentSessionId || isDraft || typeof window.eidosRuntime?.readSessionGitDiff !== "function" || typeof window.eidosRuntime?.createReviewComment !== "function") {
+      return;
+    }
+    void window.eidosRuntime.readSessionGitDiff(currentSessionId, "head", finding.path)
+      .then((diff) => window.eidosRuntime.createReviewComment(
+        currentSessionId,
+        {
+          commentId: crypto.randomUUID(),
+          path: finding.path,
+          scope: "head",
+          side: "new",
+          line: finding.line,
+          body: `[${finding.severity}] ${finding.title}${finding.body ? `\n${finding.body}` : ""}`,
+          baseHead: diff.head,
+          diffHash: diff.diffHash,
+        },
+        crypto.randomUUID(),
+      ))
+      .then(() => {
+        gitReviewActions.refresh();
+        showToast(`已添加到 ${finding.path}:${finding.line} 的审阅评论。`, "info", 2500);
+      })
+      .catch((cause: unknown) => {
+        showToast(userFacingError(cause), "error", 3500);
+      });
+  }, [currentSessionId, isDraft, gitReviewActions, showToast]);
   const sessionHasGitRepositories = sessionHasGit || Boolean(currentSnapshot?.session.roots?.some((root) => root.repositoryRoot));
   const sessionBranch = gitReviewState.status?.branch ?? sessionWorktree?.branch ?? null;
   const handoffBusy = Boolean(snapshot && sessionState.pending.handoffSessionId === snapshot.session.id);
@@ -1329,7 +1593,8 @@ export function AppShell({ runtime }: AppShellProps) {
         ...(agents.state?.agents?.length ? ["agent" as const] : []),
         ...(teams.team ? ["team" as const] : []),
         ...(sessionHasGitRepositories ? ["review" as const] : []),
-        ...(sessionHasProject ? ["terminal", "files"] as const : []),
+        ...(sessionHasProject || Boolean(currentSnapshot.session.workspaceRoot) ? ["terminal" as const] : []),
+        ...(sessionHasProject ? ["files" as const] : []),
         "browser",
       ]
     : [], [currentSnapshot, agents.state?.agents?.length, teams.team, sessionHasGitRepositories, sessionHasProject]);
@@ -1434,24 +1699,39 @@ export function AppShell({ runtime }: AppShellProps) {
     if (!availableTools.includes(tool)) return;
     if (environmentPopoverRef.current) environmentPopoverRef.current.open = false;
     setEnvironmentPopoverOpen(false);
-    const existing = tool === "terminal" || tool === "browser"
-      ? undefined
-      : openTabs.find((tab) => tab.id === tool || (tab.kind === tool && !tab.id.startsWith("agent-")));
-    let tab = existing;
-    if (!tab && tool === "terminal") {
-      const index = ++terminalSequenceRef.current;
-      tab = { id: `terminal-${index}`, kind: tool, title: `终端 ${index}` };
-    } else if (!tab && tool === "browser") {
-      const index = ++browserSequenceRef.current;
-      tab = { id: `browser-${index}`, kind: tool, title: index === 1 ? "新标签页" : `新标签页 ${index}` };
-    } else if (!tab) {
-      tab = { id: tool, kind: tool };
+    let seq = dockSeqBySessionRef.current[dockSessionKey];
+    if (!seq) {
+      seq = { terminal: 0, browser: 0 };
+      dockSeqBySessionRef.current[dockSessionKey] = seq;
     }
-    if (!existing) setOpenTabs((current) => current.some((entry) => entry.id === tab.id) ? current : [...current, tab]);
-    setActiveTabId(tab.id);
-    setDockOpen(true);
+    const tab: WorkspaceTab = tool === "terminal"
+      ? (() => {
+          const index = ++seq.terminal;
+          return { id: `terminal-${index}`, kind: tool, title: `终端 ${index}` };
+        })()
+      : tool === "browser"
+        ? (() => {
+            const index = ++seq.browser;
+            return { id: `browser-${index}`, kind: tool, title: index === 1 ? "新标签页" : `新标签页 ${index}` };
+          })()
+        : { id: tool, kind: tool };
+    updateSessionDock(dockSessionKey, (previous) => {
+      const existing = tool === "terminal" || tool === "browser"
+        ? undefined
+        : previous.openTabs.find((entry) => entry.id === tool || (entry.kind === tool && !entry.id.startsWith("agent-")));
+      if (existing) {
+        return { ...previous, activeTabId: existing.id, dockOpen: true };
+      }
+      const alreadyHas = previous.openTabs.some((entry) => entry.id === tab.id);
+      return {
+        ...previous,
+        openTabs: alreadyHas ? previous.openTabs : [...previous.openTabs, tab],
+        activeTabId: tab.id,
+        dockOpen: true,
+      };
+    });
     return tab.id;
-  }, [availableTools, openTabs]);
+  }, [availableTools, dockSessionKey, updateSessionDock]);
 
   // The team appears only after the lead's resumed team_propose commits it; open
   // its panel then, once, for the Session whose roster the user just confirmed.
@@ -1574,21 +1854,32 @@ export function AppShell({ runtime }: AppShellProps) {
     setDockOpen(true);
   }
 
-  function closeTab(tabId: string): void {
+  const closeTab = useCallback((tabId: string): void => {
     if (browserRequest?.browserId === tabId) setBrowserRequest(undefined);
-    setOpenTabs((current) => {
-      const index = current.findIndex((tab) => tab.id === tabId);
-      const next = current.filter((tab) => tab.id !== tabId);
+    if (tabId.startsWith("terminal-") && dockSessionKey !== "__none__") {
+      disposeTerminal(`${dockSessionKey}:${tabId}`);
+    }
+    updateSessionDock(dockSessionKey, (previous) => {
+      const index = previous.openTabs.findIndex((tab) => tab.id === tabId);
+      const next = previous.openTabs.filter((tab) => tab.id !== tabId);
       if (next.length === 0) {
-        setActiveTabId(undefined);
-        setDockOpen(false);
-        setDockExpanded(false);
-      } else if (activeTabId === tabId) {
-        setActiveTabId(next[Math.min(index, next.length - 1)]?.id);
+        return {
+          ...previous,
+          openTabs: next,
+          activeTabId: undefined,
+          dockOpen: false,
+          dockExpanded: false,
+        };
       }
-      return next;
+      return {
+        ...previous,
+        openTabs: next,
+        activeTabId: previous.activeTabId === tabId
+          ? next[Math.min(index, next.length - 1)]?.id
+          : previous.activeTabId,
+      };
     });
-  }
+  }, [browserRequest?.browserId, dockSessionKey, updateSessionDock]);
 
   function openGitWorkflow(): void {
     if (environmentPopoverRef.current) environmentPopoverRef.current.open = false;
@@ -1760,32 +2051,67 @@ export function AppShell({ runtime }: AppShellProps) {
   );
 
 
+  const handleOpenModelSettings = useCallback(() => {
+    setAutomationsOpen(false);
+    setSettingsCategory("model");
+    setSettingsOpen(true);
+    setDockOpen(false);
+    setDockExpanded(false);
+  }, [setDockOpen, setDockExpanded]);
+  const artifactHandlers = useStableHandlers({
+    openFile: (path: string, position?: WorkspaceFilePosition) => handleOpenFileInDock(path, position),
+    openBrowser: (url: string) => handleOpenBrowser(url),
+    openExternal: (path: string) => handleOpenExternal(path),
+    openReview: (request: { runId: string; path?: string; itemId?: string }) => handleOpenReview(request),
+    showInFinder: (path: string) => handleShowInFinder(path),
+    showToast: (message: string, type?: ToastType, duration?: number) => showToast(message, type, duration),
+  });
+  const artifactExecutionRoot = currentSnapshot
+    ? (currentSnapshot.session.roots?.[0]?.path ?? currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot)
+    : undefined;
+  const artifactValue = useMemo(() => (
+    currentSnapshot && artifactExecutionRoot !== undefined
+      ? {
+          sessionId: currentSnapshot.session.id,
+          roots: currentSnapshot.session.roots,
+          executionRoot: artifactExecutionRoot,
+          ...(currentSnapshot.session.project?.id
+            ? { projectId: currentSnapshot.session.project.id }
+            : {}),
+          ...artifactHandlers,
+        }
+      : undefined
+  ), [
+    currentSnapshot?.session.id,
+    currentSnapshot?.session.roots,
+    artifactExecutionRoot,
+    currentSnapshot?.session.project?.id,
+    artifactHandlers,
+  ]);
+  const inputWorkspaceRoots = useMemo(
+    () => currentSnapshot?.session.roots?.map((root) => root.path),
+    [currentSnapshot?.session.roots],
+  );
+  const handleInputSettings = useCallback((section?: string) => {
+    setSettingsCategory(section === "agents" ? "agents" : section === "mcp" ? "mcp" : section === "skills" ? "skills" : "plugins");
+    setSettingsOpen(true);
+    setDockOpen(false);
+  }, [setDockOpen]);
+  const handleInputNavigateToSession = useCallback((target: string) => {
+    if (settingsOpen) setSettingsOpen(false);
+    navHistoryActions.navigateTo(target);
+    handleNavigateToSession(target);
+  }, [settingsOpen, navHistoryActions, handleNavigateToSession]);
+
   return (
     <McpPluginNamesContext.Provider value={mcpPluginNames}>
-    <ArtifactProvider value={currentSnapshot ? {
-      sessionId: currentSnapshot.session.id,
-      roots: currentSnapshot.session.roots,
-      executionRoot: currentSnapshot.session.roots?.[0]?.path ?? currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot,
-      ...(currentSnapshot.session.project?.id
-        ? { projectId: currentSnapshot.session.project.id }
-        : {}),
-      openFile: handleOpenFileInDock,
-      openBrowser: handleOpenBrowser,
-      openExternal: handleOpenExternal,
-      openReview: handleOpenReview,
-      showInFinder: handleShowInFinder,
-      showToast,
-    } : undefined}>
+    <ArtifactProvider value={artifactValue}>
     <InputContextProvider ready={runState.draftReady && isStorageReady} sessionId={currentSnapshot?.session.id} workspaceRoot={currentSnapshot?.session.roots?.[0]?.path ?? currentSnapshot?.session.worktree?.worktreeRoot ?? currentSnapshot?.session.workspaceRoot}
       workspaceRevision={draftGitRevision}
-      workspaceRoots={currentSnapshot?.session.roots?.map(root => root.path)}
+      workspaceRoots={inputWorkspaceRoots}
       projectId={sessionProject?.id}
-      onAdd={runActions.addReference} onInsert={runActions.insertReference} onSettings={(section) => { setSettingsCategory(section === "agents" ? "agents" : section === "mcp" ? "mcp" : section === "skills" ? "skills" : "plugins"); setSettingsOpen(true); setDockOpen(false); }}
-      onNavigateToSession={(target) => {
-        if (settingsOpen) setSettingsOpen(false);
-        navHistoryActions.navigateTo(target);
-        handleNavigateToSession(target);
-      }}>
+      onAdd={runActions.addReference} onInsert={runActions.insertReference} onSettings={handleInputSettings}
+      onNavigateToSession={handleInputNavigateToSession}>
     <main className={`workbench${sidebarOpen && !settingsOpen && !automationsOpen ? "" : " workbench--sidebar-collapsed"}${settingsOpen ? " workbench--settings" : ""}${automationsOpen ? " workbench--settings workbench--automations" : ""}`}>
       <ToastContainer toasts={toasts} onDismiss={dismissToast} portal={false} />
       <SessionSidebar
@@ -1820,6 +2146,37 @@ export function AppShell({ runtime }: AppShellProps) {
 
       {searchMode === "global" && <ChatSearch key="global-search" mode="global" onClear={clearSearchTarget} projects={sessionState.projects} sessions={sessionState.sessions} onClose={() => { setSearchMode(undefined); setSearchTarget(undefined); }} onSelect={handleSearchSelect} />}
       <section ref={workspaceRef} className="workspace" aria-label="Agent 工作区" tabIndex={-1}>
+        {runtimeStatus.state !== "ready" && (
+          <div
+            className="worktree-restore-banner runtime-recovery-banner"
+            role={runtimeStatus.state === "error" ? "alert" : "status"}
+          >
+            <span>
+              {runtimeStatus.state === "error"
+                ? `Runtime 异常中断：${runtimePresentation.description ?? runtimeStatus.message}`
+                : "Runtime 正在重新启动，恢复后将自动同步状态…"}
+            </span>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              {runtimeStatus.state === "error" && (
+                <Button
+                  variant="primary"
+                  size="small"
+                  loading={runtime.restarting}
+                  onClick={() => void runtime.restartRuntime()}
+                >
+                  {runtime.restarting ? "正在重新启动…" : "重新启动 Runtime"}
+                </Button>
+              )}
+              <Button
+                variant="secondary"
+                size="small"
+                onClick={() => void window.eidosRuntime?.exportDiagnostics?.()}
+              >
+                导出诊断包
+              </Button>
+            </div>
+          </div>
+        )}
         {currentSnapshot?.session.worktreeRestoreAvailable === true && !isDraft && (
           <div className="worktree-restore-banner" role="status">
             <span>本地工作树已清理，以释放磁盘空间</span>
@@ -1992,7 +2349,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   modelRetries={currentSnapshot.modelRetries}
                   goalActivities={goals.view.activities}
                   liveThinking={liveThinking}
-                  onOpenModelSettings={() => { setAutomationsOpen(false); setSettingsCategory("model"); setSettingsOpen(true); setDockOpen(false); setDockExpanded(false); }}
+                  onOpenModelSettings={handleOpenModelSettings}
                   runs={feedVisibleRuns}
                   models={feedModels}
                   workspaceRoot={currentSnapshot.session.workspaceRoot}
@@ -2005,6 +2362,13 @@ export function AppShell({ runtime }: AppShellProps) {
                   onRetryLoadPending={handleFeedRetryLoadPending}
                   onFeedback={handleFeedFeedback}
                   onFork={handleFeedFork}
+                  checkpointsByRunId={checkpointsByRunId}
+                  onRewindCheckpoint={!activeRun && sessionHasGit ? (checkpoint) => {
+                    setRewindError(undefined);
+                    setCheckpointToRewind(checkpoint);
+                  } : undefined}
+                  onAdoptReviewFinding={!activeRun ? handleAdoptReviewFinding : undefined}
+                  onAddReviewFindingComment={!isDraft && sessionHasGit ? handleAddReviewFindingComment : undefined}
                   onLoadOlder={currentSnapshot.previousItemId ? handleFeedLoadOlder : undefined}
                   loadingOlder={sessionState.pending.loadingHistorySessionId === currentSnapshot.session.id}
                   onRegenerate={handleFeedRegenerate}
@@ -2055,7 +2419,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   expiredApprovalIds={approvalState.expiredApprovalIds}
                   errorsByApprovalId={errorsByApprovalId}
                   onApprove={(request) => void approvalActions.approve(request)}
-                  onReject={(request) => void approvalActions.reject(request)}
+                  onReject={(request, feedback) => void approvalActions.reject(request, feedback)}
                 >
                 <Composer
                   ref={composerRef}
@@ -2111,6 +2475,18 @@ export function AppShell({ runtime }: AppShellProps) {
                   onSelectProject={() => void handleSelectProject()}
                   onLeaveProject={() => handleCreateSession()}
                   onExecutionModeChange={sessionHasGit ? requestExecutionModeChange : undefined}
+                  onCompactContext={!isDraft && contextRun?.id ? () => {
+                    void window.eidosRuntime.requestContextCompaction(contextRun.id).then(
+                      () => showToast("已请求压缩当前上下文。", "info", 2500),
+                      () => showToast("当前无法压缩上下文，请稍后重试。", "error", 3500),
+                    );
+                  } : undefined}
+                  onForkSession={!isDraft && !sessionState.pending.creatingSession && latestForkableItem
+                    ? () => handleFeedFork(latestForkableItem)
+                    : undefined}
+                  onOpenReview={!isDraft && contextRun?.id
+                    ? () => handleOpenReview({ runId: contextRun.id })
+                    : undefined}
                 />
                 </ComposerSlot>
                 </SessionCanvas>
@@ -2168,7 +2544,7 @@ export function AppShell({ runtime }: AppShellProps) {
                     expiredApprovalIds={approvalState.expiredApprovalIds}
                     errorsByApprovalId={errorsByApprovalId}
                     onApprove={(request) => void approvalActions.approve(request)}
-                    onReject={(request) => void approvalActions.reject(request)}
+                    onReject={(request, feedback) => void approvalActions.reject(request, feedback)}
                     onOpenFile={handleOpenFileInDock}
                     onOpenPlan={handleOpenPlan}
                     workspaceRoot={currentSnapshot.session.workspaceRoot}
@@ -2190,7 +2566,7 @@ export function AppShell({ runtime }: AppShellProps) {
                     expiredApprovalIds={approvalState.expiredApprovalIds}
                     errorsByApprovalId={errorsByApprovalId}
                     onApprove={(request) => void approvalActions.approve(request)}
-                    onReject={(request) => void approvalActions.reject(request)}
+                    onReject={(request, feedback) => void approvalActions.reject(request, feedback)}
                     onOpenFile={handleOpenFileInDock}
                     workspaceRoot={currentSnapshot.session.workspaceRoot}
                     models={feedModels}
@@ -2257,16 +2633,19 @@ export function AppShell({ runtime }: AppShellProps) {
                     ) : null;
                   }
                   if (tab.kind === "terminal") {
+                    const tabKey = `${currentSnapshot.session.id}:${tab.id}`;
                     return (
                       <Suspense fallback={<p className="terminal-panel__message" role="status">正在准备终端…</p>}>
                         <TerminalPanel
-                          key={tab.id}
+                          key={tabKey}
+                          tabKey={tabKey}
+                          keepAlive
                           sessionId={currentSnapshot.session.id}
                           workspaceRoot={currentSnapshot.session.roots?.[0]?.path ?? currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot}
                           {...(currentSnapshot.session.project?.id
                             ? { projectId: currentSnapshot.session.project.id }
                             : {})}
-                          active={activeTabId === tab.id}
+                          active={dockOpen && activeTabId === tab.id}
                         />
                       </Suspense>
                     );
@@ -2438,6 +2817,21 @@ export function AppShell({ runtime }: AppShellProps) {
         onTargetChange={setForkTarget}
         onCancel={() => setForkSelection(null)}
         onConfirm={() => { if (forkSelection) void createConversationFork(forkSelection.session, forkSelection.item, forkTarget); }}
+      />
+      <ConfirmDialog
+        open={Boolean(checkpointToRewind)}
+        title="回退工作区到此轮之前？"
+        description={checkpointToRewind
+          ? `将恢复工作区文件到检查点（HEAD ${checkpointToRewind.gitHead ? checkpointToRewind.gitHead.slice(0, 7) : "快照"}）状态，该轮之后的工作区修改将被覆盖。`
+          : ""}
+        confirmLabel="回退工作区"
+        cancelLabel="取消"
+        isDestructive
+        busy={rewindBusy}
+        error={rewindError}
+        getFallbackFocus={getDialogFallbackFocus}
+        onConfirm={() => void confirmCheckpointRewind()}
+        onCancel={() => { if (!rewindBusy) { setCheckpointToRewind(undefined); setRewindError(undefined); } }}
       />
       <ConfirmDialog
         open={Boolean(draftGit.requestedSwitch)}

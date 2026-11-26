@@ -1,6 +1,7 @@
 import { isQoderConnectionState, isQoderModelSettings, type QoderConnectionRequest, type QoderConnectionState } from "../shared/qoder.js";
 import { isProjectGitContext, isProjectRoot, isProjectWorkspace, type ProjectGitContextBinding, type ProjectUpdateRequest, type ProjectCreateFoldersRequest, type GitWorkspaceRequest, type GitWorkspaceContract } from "../shared/project-workspaces.js";
 import { isShellEnvironmentResponse, type ShellEnvironmentReadRequest, type ShellEnvironmentRefreshRequest, type ShellEnvironmentSaveRequest, type ShellEnvironmentResponse } from "../shared/shell-environment.js";
+import { isGuardrailsResponse, type GuardrailsReadRequest, type GuardrailsSaveRequest, type GuardrailsResponse } from "../shared/guardrails.js";
 import { isPersonalizationResponse, type PersonalizationReadRequest, type PersonalizationSaveRequest, type PersonalizationResponse } from "../shared/personalization.js";
 import { isHookActivity, isHookActivityPage, isHookSourceList, isPluginHookReview, isPluginCompatibility } from "../shared/hooks.js";
 import type { HookActivityPage, HookConfigurationRequest, HookHistoryRequest, HookSourceList } from "../shared/hooks.js";
@@ -93,6 +94,7 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "OPERATION_IN_PROGRESS",
   "PROJECT_CONFIGURATION_CONFLICT",
   "SHELL_ENVIRONMENT_CONFIG_CONFLICT",
+  "GUARDRAIL_CONFIG_CONFLICT",
   "PERSONALIZATION_CONFLICT",
   "WEB_SEARCH_CONFIG_CONFLICT",
   "WEB_SEARCH_CREDENTIALS_UNAVAILABLE",
@@ -101,6 +103,11 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "SENSITIVE_SCAN_FAILED",
   "INVALID_SESSION_TITLE",
   "SESSION_HAS_ACTIVE_RUN",
+  "SESSION_NOT_FOUND",
+  "SESSION_ACTIVE",
+  "CHECKPOINT_NOT_FOUND",
+  "CHECKPOINT_SNAPSHOT_UNAVAILABLE",
+  "CHECKPOINT_REWIND_FAILED",
   "PROJECT_HAS_SESSIONS",
   "PROJECT_WORKTREE_RECOVERY_REQUIRED",
   "PROJECT_PERSISTENCE_FAILED",
@@ -254,6 +261,7 @@ import type {
   Project,
   ProjectListResult,
   DeleteProjectResult,
+  DeclaredOutputSummary,
   CreateBranchResult,
   Session,
   SessionHandoffResult,
@@ -264,6 +272,9 @@ import type {
   SessionGitStatus,
   SessionGitMutationResult,
   SessionGitCommitResult,
+  SessionGitSuggestCommitMessageResult,
+  SessionCheckpoint,
+  CheckpointRewindResult,
   ReviewComment,
   ReviewCommentCreateInput,
   GitRemoteStatus,
@@ -284,6 +295,7 @@ import type {
   ToolProvenance,
   ExtensionSnapshot as ExtensionSnapshotResult,
   WorkspaceDirectoryListing,
+  WorkspaceFileSearchResult,
   WorkspaceFilePreview,
   WorkspaceAssetChunk,
 } from "../shared/index.js";
@@ -336,6 +348,7 @@ interface RuntimeClientOptions {
   pythonExecutable: string;
   runtimeRoot: string;
   dataDirectory?: string;
+  clientVersion?: string;
   environment?: NodeJS.ProcessEnv;
   environmentPolicy?: RuntimeEnvironmentPolicy;
   onNotification?: (notification: RuntimeNotification) => void;
@@ -435,10 +448,25 @@ export class RuntimeShutdownError extends Error {
   }
 }
 
+// Main passes app.getVersion(); only tests and tools construct a client without it.
+// A dev marker cannot be mistaken for a release the way a copied number can.
+export const UNSPECIFIED_CLIENT_VERSION = "0.0.0-dev";
+
+export function buildInitializeParams(clientVersion: string): {
+  client: { name: string; version: string };
+  protocolVersion: 1;
+} {
+  return {
+    client: { name: "eidos-desktop", version: clientVersion || UNSPECIFIED_CLIENT_VERSION },
+    protocolVersion: 1,
+  };
+}
+
 export class RuntimeClient {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly exitPromise: Promise<number>;
+  private readonly clientVersion: string;
   private readonly onNotification: ((notification: RuntimeNotification) => void) | undefined;
   private readonly onApprovalRequest: ((request: ApprovalRequest) => Promise<ApprovalDecision>) | undefined;
   private stdoutBuffer = Buffer.alloc(0);
@@ -447,6 +475,7 @@ export class RuntimeClient {
   private shutdownRequested = false;
 
   constructor(options: RuntimeClientOptions) {
+    this.clientVersion = options.clientVersion || UNSPECIFIED_CLIENT_VERSION;
     const environment = buildRuntimeEnvironment({
       runtimeRoot: options.runtimeRoot,
       baseEnvironment: process.env,
@@ -493,10 +522,7 @@ export class RuntimeClient {
   initialize(): Promise<InitializeResult> {
     return this.validatedRequest(
       "initialize",
-      {
-        client: { name: "eidos-desktop", version: "0.3.0" },
-        protocolVersion: 1,
-      },
+      buildInitializeParams(this.clientVersion),
       isInitializeResult,
     );
   }
@@ -576,6 +602,14 @@ export class RuntimeClient {
 
   readShellEnvironment(request: ShellEnvironmentReadRequest = {}): Promise<ShellEnvironmentResponse> {
     return this.validatedRequest("shellEnvironment/read", { ...request }, isShellEnvironmentResponse);
+  }
+
+  readGuardrails(request: GuardrailsReadRequest = {}): Promise<GuardrailsResponse> {
+    return this.validatedRequest("guardrails/read", { ...request }, isGuardrailsResponse);
+  }
+
+  saveGuardrails(request: GuardrailsSaveRequest): Promise<GuardrailsResponse> {
+    return this.validatedRequest("guardrails/save", { ...request }, isGuardrailsResponse);
   }
 
   readPersonalization(request: PersonalizationReadRequest = {}): Promise<PersonalizationResponse> {
@@ -666,7 +700,10 @@ export class RuntimeClient {
       "review/createComment": (value: unknown) => isRecord(value) && hasOnlyKeys(value, ["comment"]) && isReviewComment(value.comment),
       "review/deleteComment": (value: unknown) => isRecord(value) && hasOnlyKeys(value, ["commentId"]) && typeof value.commentId === "string",
       "session/gitStatus": isSessionGitStatus, "session/gitDiff": isSessionGitDiff,
-      "session/gitStage": isSessionGitMutationResult, "session/gitCommit": isSessionGitCommitResult,
+      "session/gitStage": isSessionGitMutationResult, "session/gitUnstage": isSessionGitMutationResult,
+      "session/gitDiscard": isSessionGitMutationResult, "session/gitStageHunk": isSessionGitMutationResult,
+      "session/gitSuggestCommitMessage": isSessionGitSuggestCommitMessageResult,
+      "session/gitCommit": isSessionGitCommitResult,
       "session/gitSwitchBranch": isSessionGitMutationResult, "session/gitCreateBranch": isSessionGitMutationResult,
       "session/gitRemoteStatus": isGitRemoteStatus, "session/gitFetch": isGitFetchResult,
       "session/gitPull": isGitPullResult, "session/gitPush": isGitPullResult,
@@ -777,6 +814,26 @@ export class RuntimeClient {
     );
   }
 
+  findWorkspaceFiles(
+    sessionId: string,
+    query: string,
+    limit = 100,
+    workspaceRoot?: string,
+    projectId?: string,
+  ): Promise<WorkspaceFileSearchResult> {
+    return this.validatedRequest(
+      "workspace/findFiles",
+      {
+        sessionId,
+        query,
+        limit,
+        ...(workspaceRoot ? { workspaceRoot } : {}),
+        ...(projectId ? { projectId } : {}),
+      },
+      isWorkspaceFileSearchResult,
+    );
+  }
+
   readWorkspaceFilePreview(
     sessionId: string,
     path: string,
@@ -884,6 +941,71 @@ export class RuntimeClient {
   ): Promise<SessionGitMutationResult> {
     return this.validatedRequest(
       "session/gitStage", { operationId, sessionId, paths }, isSessionGitMutationResult,
+    );
+  }
+
+  unstageSessionGit(
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ): Promise<SessionGitMutationResult> {
+    return this.validatedRequest(
+      "session/gitUnstage", { operationId, sessionId, paths }, isSessionGitMutationResult,
+    );
+  }
+
+  discardSessionGit(
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ): Promise<SessionGitMutationResult> {
+    return this.validatedRequest(
+      "session/gitDiscard", { operationId, sessionId, paths }, isSessionGitMutationResult,
+    );
+  }
+
+  stageSessionGitHunk(
+    sessionId: string,
+    patch: string,
+    reverse: boolean,
+    operationId: string,
+  ): Promise<SessionGitMutationResult> {
+    return this.validatedRequest(
+      "session/gitStageHunk", { operationId, sessionId, patch, reverse }, isSessionGitMutationResult,
+    );
+  }
+
+  suggestSessionGitCommitMessage(
+    sessionId: string,
+    includeUnstaged = true,
+  ): Promise<SessionGitSuggestCommitMessageResult> {
+    return this.validatedRequest(
+      "session/gitSuggestCommitMessage", { sessionId, includeUnstaged }, isSessionGitSuggestCommitMessageResult,
+    );
+  }
+
+  listCheckpoints(sessionId: string): Promise<SessionCheckpoint[]> {
+    return this.validatedRequest(
+      "checkpoint/list",
+      { sessionId },
+      (value): value is { checkpoints: SessionCheckpoint[] } => (
+        isRecord(value)
+        && hasOnlyKeys(value, ["checkpoints"])
+        && Array.isArray(value.checkpoints)
+        && value.checkpoints.every(isSessionCheckpoint)
+      ),
+    ).then((result) => result.checkpoints);
+  }
+
+  rewindCheckpoint(
+    sessionId: string,
+    checkpointId: string,
+    operationId?: string,
+  ): Promise<CheckpointRewindResult> {
+    return this.validatedRequest(
+      "checkpoint/rewind",
+      { sessionId, checkpointId, ...(operationId === undefined ? {} : { operationId }) },
+      isCheckpointRewindResult,
     );
   }
 
@@ -1308,6 +1430,11 @@ export class RuntimeClient {
     return this.validatedRequest("resource/retry", { ...request }, isResourceRetryResponse);
   }
 
+  cleanupResources(): Promise<ResourceCleanupResponse> {
+    if (this.shutdownRequested) return Promise.resolve({ removedCount: 0, freedBytes: 0 });
+    return this.validatedRequest("resource/cleanup", {}, isResourceCleanupResponse);
+  }
+
   readSkillDetail(qualifiedId: string): Promise<SkillDetail> {
     return this.validatedRequest("skill/detail", { qualifiedId }, isSkillDetail);
   }
@@ -1663,6 +1790,10 @@ function isNotification(value: unknown): value is RuntimeNotification {
   if (value.method === "memory/changed") {
     return isMemoryChangedNotice(params);
   }
+  if (value.method === "channel/updated") {
+    return hasOnlyKeys(params, ["channel"])
+      && (params.channel === "dingtalk" || params.channel === "feishu" || params.channel === "wecom");
+  }
   if (value.method === "automation/changed") {
     return typeof value.params.id === "string";
   }
@@ -1822,12 +1953,25 @@ function isInitializeResult(value: unknown): value is InitializeResult {
   );
 }
 
+const VALID_INPUT_MODALITIES = new Set(["text", "image", "audio", "video"]);
+
+function isModelInputModalities(value: unknown): boolean {
+  return (
+    value == null
+    || (
+      Array.isArray(value)
+      && value.every((entry) => typeof entry === "string" && VALID_INPUT_MODALITIES.has(entry))
+    )
+  );
+}
+
 function isModelOption(value: unknown): value is ModelOption {
   return (
     isRecord(value)
     && hasOnlyKeys(value, [
       "id", "name", "vendor", "provider", "url", "supportsToolCall",
-      "supportsImages", "supportsReasoning", "reasoning", "custom", "qoder", "modelId", "contextWindowTokens", "maxOutputTokens", "apiKey",
+      "supportsImages", "supportsReasoning", "reasoning", "custom", "qoder",
+      "modelId", "contextWindowTokens", "maxOutputTokens", "inputModalities", "apiKey",
     ])
     && (value.apiKey === undefined || typeof value.apiKey === "string")
     && (value.custom == null || isCustomModelSettings(value.custom))
@@ -1835,6 +1979,7 @@ function isModelOption(value: unknown): value is ModelOption {
     && (value.modelId == null || isModelId(value.modelId))
     && (value.contextWindowTokens == null || (Number.isSafeInteger(value.contextWindowTokens) && Number(value.contextWindowTokens) > 0))
     && (value.maxOutputTokens == null || (Number.isSafeInteger(value.maxOutputTokens) && Number(value.maxOutputTokens) > 0))
+    && isModelInputModalities(value.inputModalities)
     && isModelId(value.id)
     && typeof value.name === "string"
     && typeof value.vendor === "string"
@@ -1892,7 +2037,7 @@ function isModelPresetsResult(value: unknown): value is ModelPresetsResult {
     && value.providers.every((provider) => (
       isRecord(provider)
       && hasOnlyKeys(provider, ["id", "name", "models"])
-      && ["deepseek", "minimax", "kimi", "volcengine"].includes(String(provider.id))
+      && ["deepseek", "minimax", "kimi", "volcengine", "openai", "anthropic", "gemini"].includes(String(provider.id))
       && typeof provider.name === "string"
       && Array.isArray(provider.models)
       && provider.models.every((model) => (
@@ -2062,6 +2207,17 @@ function isSessionGitStatus(value: unknown): value is SessionGitStatus {
   );
 }
 
+function isWorkspaceDirectoryEntry(entry: unknown): boolean {
+  return (
+    isRecord(entry)
+    && hasOnlyKeys(entry, ["name", "relativePath", "kind", "sizeBytes"])
+    && typeof entry.name === "string"
+    && typeof entry.relativePath === "string"
+    && ["file", "directory"].includes(String(entry.kind))
+    && (entry.sizeBytes === undefined || isNonNegativeInteger(entry.sizeBytes))
+  );
+}
+
 function isWorkspaceDirectoryListing(value: unknown): value is WorkspaceDirectoryListing {
   return (
     isRecord(value)
@@ -2069,14 +2225,17 @@ function isWorkspaceDirectoryListing(value: unknown): value is WorkspaceDirector
     && typeof value.path === "string"
     && typeof value.truncated === "boolean"
     && Array.isArray(value.entries)
-    && value.entries.every((entry) => (
-      isRecord(entry)
-      && hasOnlyKeys(entry, ["name", "relativePath", "kind", "sizeBytes"])
-      && typeof entry.name === "string"
-      && typeof entry.relativePath === "string"
-      && ["file", "directory"].includes(String(entry.kind))
-      && (entry.sizeBytes === undefined || isNonNegativeInteger(entry.sizeBytes))
-    ))
+    && value.entries.every(isWorkspaceDirectoryEntry)
+  );
+}
+
+function isWorkspaceFileSearchResult(value: unknown): value is WorkspaceFileSearchResult {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["entries", "truncated"])
+    && typeof value.truncated === "boolean"
+    && Array.isArray(value.entries)
+    && value.entries.every(isWorkspaceDirectoryEntry)
   );
 }
 
@@ -2203,6 +2362,53 @@ function isSessionGitCommitResult(value: unknown): value is SessionGitCommitResu
   );
 }
 
+function isSessionGitSuggestCommitMessageResult(value: unknown): value is SessionGitSuggestCommitMessageResult {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["message", "source"])
+    && typeof value.message === "string"
+    && (value.source === "heuristic" || value.source === "model")
+  );
+}
+
+function isSessionCheckpoint(value: unknown): value is SessionCheckpoint {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "id",
+      "runId",
+      "itemOrdinal",
+      "creationSeq",
+      "workspaceIdentityHash",
+      "gitHead",
+      "gitSnapshotId",
+      "reconciliationRequired",
+      "createdAt",
+    ])
+    && typeof value.id === "string"
+    && typeof value.runId === "string"
+    && isNonNegativeInteger(value.itemOrdinal)
+    && isNonNegativeInteger(value.creationSeq)
+    && typeof value.workspaceIdentityHash === "string"
+    && (value.gitHead === null || typeof value.gitHead === "string")
+    && (value.gitSnapshotId === null || typeof value.gitSnapshotId === "string")
+    && typeof value.reconciliationRequired === "boolean"
+    && isNonNegativeInteger(value.createdAt)
+  );
+}
+
+function isCheckpointRewindResult(value: unknown): value is CheckpointRewindResult {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["checkpointId", "sessionId", "runId", "gitHead", "restoredAt"])
+    && typeof value.checkpointId === "string"
+    && typeof value.sessionId === "string"
+    && typeof value.runId === "string"
+    && typeof value.gitHead === "string"
+    && isNonNegativeInteger(value.restoredAt)
+  );
+}
+
 function isGitRemoteStatus(value: unknown): value is GitRemoteStatus {
   return (
     isRecord(value)
@@ -2267,12 +2473,28 @@ function isSessionListResult(value: unknown): value is SessionListResult {
   );
 }
 
+function isDeclaredOutputSummary(value: unknown): value is DeclaredOutputSummary {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "path", "executionRoot", "version", "sizeBytes", "runId", "itemId", "title",
+    ])
+    && typeof value.path === "string" && value.path.length > 0 && value.path.length <= 512
+    && typeof value.executionRoot === "string" && value.executionRoot.length > 0 && value.executionRoot.length <= 4096
+    && typeof value.version === "string" && /^[a-f0-9]{64}$/.test(value.version)
+    && isNonNegativeInteger(value.sizeBytes)
+    && typeof value.runId === "string" && value.runId.length > 0
+    && typeof value.itemId === "string" && value.itemId.length > 0
+    && (value.title === undefined || (typeof value.title === "string" && value.title.trim().length > 0 && value.title.length <= 120))
+  );
+}
+
 function isSessionSnapshot(value: unknown): value is SessionSnapshot {
   return (
     isRecord(value)
     && hasOnlyKeys(value, [
       "session", "runs", "items", "stepResolutions",
-      "previousItemId", "throughEventId", "inheritedHistory", "contextCompactions", "modelRetries",
+      "previousItemId", "throughEventId", "inheritedHistory", "contextCompactions", "modelRetries", "declaredOutputs",
     ])
     && isSession(value.session)
     && (value.contextCompactions === undefined || Array.isArray(value.contextCompactions)
@@ -2280,6 +2502,8 @@ function isSessionSnapshot(value: unknown): value is SessionSnapshot {
     && (value.modelRetries === undefined || Array.isArray(value.modelRetries)
       && value.modelRetries.every(isModelRetryActivity))
     && (value.inheritedHistory === undefined || Array.isArray(value.inheritedHistory) && value.inheritedHistory.every((entry) => isInheritedHistoryEntry(entry)))
+    && (value.declaredOutputs === undefined || Array.isArray(value.declaredOutputs)
+      && value.declaredOutputs.every(isDeclaredOutputSummary))
     && Array.isArray(value.runs)
     && value.runs.every(isRun)
     && Array.isArray(value.items)
@@ -2865,10 +3089,15 @@ function isPositiveInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) > 0;
 }
 
+export function isAbsoluteFsPath(value: unknown): value is string {
+  if (typeof value !== "string" || !value || value.includes("\0")) return false;
+  return value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
+}
+
 function projectApprovalFileSystemAccess(value: unknown): CommandApprovalRequest["additionalFileSystemAccess"] {
   if (!Array.isArray(value) || !value.every((entry) =>
-    isRecord(entry) && typeof entry.path === "string" && entry.path.startsWith("/")
-    && !entry.path.includes("\0") && ["read", "write", "execute", "deny"].includes(String(entry.access))
+    isRecord(entry) && isAbsoluteFsPath(entry.path)
+    && ["read", "write", "execute", "deny"].includes(String(entry.access))
     && typeof entry.recursive === "boolean")) return undefined;
   return value.map((entry) => ({
     path: entry.path as string,
@@ -3013,7 +3242,7 @@ function approvalRequestFrom(
     const entries = permissions.fileSystem;
     if (network !== undefined && (!isRecord(network) || typeof network.enabled !== "boolean")) return undefined;
     if (entries !== undefined && (!Array.isArray(entries) || !entries.every((entry) =>
-      isRecord(entry) && typeof entry.path === "string" && entry.path.startsWith("/")
+      isRecord(entry) && isAbsoluteFsPath(entry.path)
       && ["read", "write", "execute"].includes(String(entry.access))
       && typeof entry.recursive === "boolean"))) return undefined;
     if ([params.reason, params.command, params.cwd].some((value) => value != null && typeof value !== "string")) return undefined;
@@ -3126,4 +3355,4 @@ function isShellDisplayIntent(value: unknown): value is string {
 }
 import { isContextDetails, isContextCompactionRecord, isContextCompactionActivity, isModelRetryActivity } from "../shared/context-management.js";
 import type { ContextDetails, ContextCompactionRecord } from "../shared/context-management.js";
-import { isResourceStatus, isResourceRetryResponse, type ResourceStatus, type ResourceRetryRequest, type ResourceRetryResponse } from "../shared/managed-resources.js";
+import { isResourceCleanupResponse, isResourceStatus, isResourceRetryResponse, type ResourceCleanupResponse, type ResourceStatus, type ResourceRetryRequest, type ResourceRetryResponse } from "../shared/managed-resources.js";

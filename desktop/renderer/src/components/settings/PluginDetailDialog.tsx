@@ -16,6 +16,7 @@ import { HookHistoryDialog } from "./HookHistoryDialog.js";
 import { mcpCommandLabel } from "./mcpCommand.js";
 import { BROWSER_PLUGIN_ID, BrowserSettingsSection } from "./BrowserSettingsSection.js";
 import { chromeIconSrc } from "../ChromeIcon.js";
+import { hookCommandText } from "./hook-command.js";
 
 interface PluginDetailDialogProps {
   plugin: PluginRecord | undefined;
@@ -403,9 +404,7 @@ export function PluginDetailDialog({
                     </summary>
                     <div className="plugin-hook-body">
                       <pre className="plugin-hook-command">
-                        {hook.handlerType === "mcp_tool"
-                          ? JSON.stringify({ server: hook.mcpServer, tool: hook.mcpTool, input: hook.mcpInput }, null, 2)
-                          : hook.command || `处理器：${hook.handlerType}`}
+                        {hookCommandText(hook)}
                       </pre>
                     </div>
                   </details>

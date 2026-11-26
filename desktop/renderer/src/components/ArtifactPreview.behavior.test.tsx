@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { EidosRuntimeAPI, Item, WorkspaceFilePreview } from "../contracts.js";
+import type { BrowserStateEvent, EidosRuntimeAPI, Item, WorkspaceFilePreview } from "../contracts.js";
 import { ArtifactImage, ArtifactProvider } from "./ArtifactContext.js";
 import { BrowserPanel, getBrowserTabTitle, resolveBrowserTarget } from "./BrowserPanel.js";
 import { LastTurnChanges } from "./LastTurnChanges.js";
@@ -73,6 +73,7 @@ function artifactValue() {
 
 describe("artifact previews and feedback", () => {
   let api: Partial<EidosRuntimeAPI>;
+  let browserStateListeners: Array<(event: BrowserStateEvent) => void> = [];
 
   it("shows an empty preview for a removed file and retries after the file changes", async () => {
     vi.mocked(api.prepareWorkspacePreview!).mockResolvedValueOnce(null).mockResolvedValueOnce("eidos-preview://restored/image.png");
@@ -96,15 +97,32 @@ describe("artifact previews and feedback", () => {
       disconnect() {}
     });
     vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValue("operation-1") });
+    browserStateListeners = [];
     api = {
       onNotification: vi.fn().mockReturnValue(vi.fn()),
       prepareWorkspacePreview: vi.fn().mockImplementation(async (_sessionId: string, path: string) => `eidos-preview://preview/${path}`),
       releaseWorkspacePreview: vi.fn().mockResolvedValue(undefined),
-      openBrowser: vi.fn().mockResolvedValue({ url: "http://localhost:3000", title: "App", loading: false }),
+      openBrowser: vi.fn().mockResolvedValue({
+        url: "http://localhost:3000", title: "App", loading: false, canGoBack: false, canGoForward: false,
+      }),
       closeBrowser: vi.fn().mockResolvedValue(undefined),
       stopBrowser: vi.fn().mockResolvedValue(undefined),
       setBrowserBounds: vi.fn().mockResolvedValue(undefined),
-      readBrowserState: vi.fn().mockResolvedValue({ url: "http://localhost:3000", title: "App", loading: false }),
+      readBrowserState: vi.fn().mockResolvedValue({
+        url: "http://localhost:3000", title: "App", loading: false, canGoBack: false, canGoForward: false,
+      }),
+      browserGoBack: vi.fn().mockResolvedValue({
+        url: "http://localhost:3000/prev", title: "Prev", loading: false, canGoBack: false, canGoForward: true,
+      }),
+      browserGoForward: vi.fn().mockResolvedValue({
+        url: "http://localhost:3000/next", title: "Next", loading: false, canGoBack: true, canGoForward: false,
+      }),
+      onBrowserState: vi.fn().mockImplementation((listener: (event: BrowserStateEvent) => void) => {
+        browserStateListeners.push(listener);
+        return () => {
+          browserStateListeners = browserStateListeners.filter((item) => item !== listener);
+        };
+      }),
       annotateBrowser: vi.fn().mockResolvedValue({
         url: "eidos-preview://preview/docs/index.html",
         title: "Preview",
@@ -359,12 +377,9 @@ describe("artifact previews and feedback", () => {
     expect(resolveBrowserTarget("设计系统")).toBe("https://www.google.com/search?q=%E8%AE%BE%E8%AE%A1%E7%B3%BB%E7%BB%9F");
   });
 
-  it("opens a page in its own browser tab and removes unsupported controls", async () => {
-    const pollers: Array<() => void> = [];
-    vi.spyOn(window, "setInterval").mockImplementation((handler) => {
-      if (typeof handler === "function") pollers.push(handler as () => void);
-      return 1;
-    });
+  it("opens a page with event-driven state updates, back/forward history, and page annotation", async () => {
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
+    const onAnnotate = vi.fn();
     const { unmount } = render(
       <BrowserPanel
         browserId="browser-1"
@@ -372,26 +387,49 @@ describe("artifact previews and feedback", () => {
         executionKey="local:/workspace"
         active
         request={{ url: "localhost:3000", id: 1 }}
+        onAnnotate={onAnnotate}
       />,
     );
 
     await waitFor(() => expect(api.openBrowser).toHaveBeenCalledWith("session-a", "browser-1", "http://localhost:3000", undefined));
+    expect(setIntervalSpy).not.toHaveBeenCalledWith(expect.any(Function), 1000);
+
     const address = screen.getByRole("textbox", { name: "网页地址" });
     fireEvent.change(address, { target: { value: "" } });
     expect(address).toHaveValue("");
     fireEvent.change(address, { target: { value: "example.com/docs" } });
-    const poll = pollers.at(-1);
-    expect(poll).toBeDefined();
-    await act(async () => {
-      (poll as () => void)();
-      await Promise.resolve();
+
+    act(() => {
+      for (const listener of browserStateListeners) {
+        listener({
+          sessionId: "session-a",
+          browserId: "browser-1",
+          state: { url: "http://localhost:3000/sub", title: "Sub", loading: false, canGoBack: true, canGoForward: true },
+        });
+      }
     });
+    // Dirty user-edited address must not be overwritten by pushed browser state.
     expect(address).toHaveValue("example.com/docs");
+
+    const backButton = screen.getByRole("button", { name: "后退" });
+    const forwardButton = screen.getByRole("button", { name: "前进" });
+    expect(backButton).toBeEnabled();
+    expect(forwardButton).toBeEnabled();
+    fireEvent.click(backButton);
+    await waitFor(() => expect(api.browserGoBack).toHaveBeenCalledWith("session-a", "browser-1"));
+    fireEvent.click(forwardButton);
+    await waitFor(() => expect(api.browserGoForward).toHaveBeenCalledWith("session-a", "browser-1"));
+
+    const annotateButton = screen.getByRole("button", { name: "标注页面" });
+    expect(annotateButton).toBeEnabled();
+    fireEvent.click(annotateButton);
+    await waitFor(() => expect(api.annotateBrowser).toHaveBeenCalledWith("session-a", "browser-1"));
+    expect(onAnnotate).toHaveBeenCalledWith(expect.objectContaining({ selection: "selected text" }));
+
     expect(screen.queryByText("页面正在加载…")).not.toBeInTheDocument();
     const refresh = screen.getByRole("button", { name: "刷新" });
     fireEvent.click(refresh);
     expect(refresh.querySelector("svg")).toHaveClass("browser-navigation__refresh-icon--refreshing");
-    expect(screen.queryByRole("button", { name: "标注" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "开发终端" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "网页菜单" })).not.toBeInTheDocument();
     unmount();

@@ -4,17 +4,23 @@ import type { ProjectRootDto } from "../../../shared/project-workspaces.js";
 import { gitFileTarget, gitWorkspaceClient } from "../app/git-workspace-client.js";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  Decoration,
   Diff,
   Hunk,
   getChangeKey,
   parseDiff,
   type ChangeData,
+  type FileData,
+  type HunkData,
 } from "react-diff-view";
+import { buildSingleHunkPatch, tokenizeDiffHunks } from "./diff-syntax.js";
 
 import type {
   GitDiffScope,
   SessionGitDiff,
+  SessionGitMutationResult,
   SessionGitStatus,
+  SessionGitSuggestCommitMessageResult,
   ReviewComment,
   ReviewCommentCreateInput,
 } from "../contracts.js";
@@ -95,6 +101,31 @@ interface GitChangesPanelProps {
     commentId: string,
     operationId: string,
   ) => Promise<string>;
+  stage?: (
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ) => Promise<SessionGitMutationResult>;
+  unstage?: (
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ) => Promise<SessionGitMutationResult>;
+  discard?: (
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ) => Promise<SessionGitMutationResult>;
+  stageHunk?: (
+    sessionId: string,
+    patch: string,
+    reverse: boolean,
+    operationId: string,
+  ) => Promise<SessionGitMutationResult>;
+  suggestCommitMessage?: (
+    sessionId: string,
+    includeUnstaged?: boolean,
+  ) => Promise<SessionGitSuggestCommitMessageResult>;
   onSendReviewFeedback?: (feedback: string) => Promise<void>;
   reviewFeedbackDisabled?: boolean;
   workflowDisabled?: boolean;
@@ -133,9 +164,9 @@ interface CommentAnchor {
 export function formatReviewFeedback(comments: readonly ReviewComment[]): string {
   const active = comments.filter((comment) => comment.status === "active");
   return [
-    "Please address the following review feedback:",
+    "请处理以下审阅意见：",
     ...active.map((comment) => (
-      `- ${comment.path} (${comment.side} line ${comment.line}): ${comment.body}`
+      `- ${comment.path}（${comment.side === "old" ? "旧" : "新"}第 ${comment.line} 行）：${comment.body}`
     )),
   ].join("\n");
 }
@@ -252,6 +283,22 @@ function GitChangesContent(props: GitChangesPanelProps) {
   // - 最近一轮：最近一次 run 的 Item 补丁；
   // - 整个任务：本 session 全部 run 的 Item 补丁。
   const [reviewTab, setReviewTab] = useState<ReviewTab>("uncommitted");
+  const [diffViewType, setDiffViewType] = useState<"unified" | "split">(() => {
+    try {
+      return localStorage.getItem("eidos.gitDiffViewType") === "split" ? "split" : "unified";
+    } catch {
+      return "unified";
+    }
+  });
+  const [mutatingKey, setMutatingKey] = useState<string>();
+  const [confirmDiscardKey, setConfirmDiscardKey] = useState<string>();
+  useEffect(() => {
+    try {
+      localStorage.setItem("eidos.gitDiffViewType", diffViewType);
+    } catch {
+      // Ignore storage access failures in sandboxed views.
+    }
+  }, [diffViewType]);
   useEffect(() => {
     setReviewTab(props.lastTurnRequest ? "lastRun" : "uncommitted");
   }, [props.lastTurnRequest?.requestId, props.sessionId]);
@@ -286,6 +333,20 @@ function GitChangesContent(props: GitChangesPanelProps) {
     onWorkflowClose,
     onCreateBranch,
   } = props;
+  const runtimeApi: Partial<EidosRuntimeAPI> | undefined =
+    typeof window !== "undefined" ? (window.eidosRuntime as Partial<EidosRuntimeAPI> | undefined) : undefined;
+  const stage: GitChangesPanelProps["stage"] =
+    props.stage ?? gitClient?.stageSessionGit ?? runtimeApi?.stageSessionGit?.bind(runtimeApi);
+  const unstage: GitChangesPanelProps["unstage"] =
+    props.unstage ?? gitClient?.unstageSessionGit ?? runtimeApi?.unstageSessionGit?.bind(runtimeApi);
+  const discard: GitChangesPanelProps["discard"] =
+    props.discard ?? gitClient?.discardSessionGit ?? runtimeApi?.discardSessionGit?.bind(runtimeApi);
+  const stageHunk: GitChangesPanelProps["stageHunk"] =
+    props.stageHunk ?? gitClient?.stageSessionGitHunk ?? runtimeApi?.stageSessionGitHunk?.bind(runtimeApi);
+  const suggestCommitMessage: GitChangesPanelProps["suggestCommitMessage"] =
+    props.suggestCommitMessage
+    ?? gitClient?.suggestSessionGitCommitMessage
+    ?? runtimeApi?.suggestSessionGitCommitMessage?.bind(runtimeApi);
   const isDraft = sessionId.startsWith("draft-");
   const [loadedSummary, setLoadedSummary] = useState<SessionGitDiff>();
   const [summaryLoading, setSummaryLoading] = useState(false);
@@ -465,6 +526,43 @@ function GitChangesContent(props: GitChangesPanelProps) {
     }
   };
 
+  const runFileMutation = async (
+    key: string,
+    action: () => Promise<SessionGitMutationResult>,
+  ): Promise<void> => {
+    setMutatingKey(key);
+    setLocalError(undefined);
+    setConfirmDiscardKey(undefined);
+    try {
+      await action();
+      setFileStates((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      onRefresh();
+    } catch (cause: unknown) {
+      setLocalError(userFacingError(cause));
+    } finally {
+      setMutatingKey(undefined);
+    }
+  };
+
+  const runHunkMutation = async (
+    key: string,
+    file: FileData,
+    hunk: HunkData,
+    reverse: boolean,
+  ): Promise<void> => {
+    if (!stageHunk) return;
+    await runFileMutation(key, () => stageHunk(
+      sessionId,
+      buildSingleHunkPatch(file, hunk),
+      reverse,
+      operationId(),
+    ));
+  };
+
   const sendReviewFeedback = async (): Promise<void> => {
     if (!onSendReviewFeedback) return;
     setCommentLoading(true);
@@ -606,6 +704,26 @@ function GitChangesContent(props: GitChangesPanelProps) {
               <span className="git-review-stat git-review-stat--deletion">-{toolbarStats.deletions}</span>
             </>}
           </div>
+          {!isItemTab && (
+            <div className="git-diff-view-toggle" role="group" aria-label="Diff 视图模式">
+              <button
+                type="button"
+                className="git-diff-view-tab"
+                aria-pressed={diffViewType === "unified"}
+                onClick={() => setDiffViewType("unified")}
+              >
+                统一
+              </button>
+              <button
+                type="button"
+                className="git-diff-view-tab"
+                aria-pressed={diffViewType === "split"}
+                onClick={() => setDiffViewType("split")}
+              >
+                分栏
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="git-changes-toolbar-right">
@@ -675,11 +793,12 @@ function GitChangesContent(props: GitChangesPanelProps) {
               {...(gitClient ? {
                 switchBranch: gitClient.switchSessionGitBranch, readRemoteStatus: gitClient.readSessionGitRemoteStatus,
                 commit: gitClient.commitSessionGit, stage: gitClient.stageSessionGit,
+                suggestCommitMessage: gitClient.suggestSessionGitCommitMessage,
                 fetch: gitClient.fetchSessionGit, pull: gitClient.pullSessionGit, push: gitClient.pushSessionGit,
                 merge: gitClient.mergeSessionGit, mergeAbort: gitClient.abortSessionGitMerge,
                 rebase: gitClient.rebaseSessionGit, rebaseContinue: gitClient.continueSessionGitRebase,
                 rebaseAbort: gitClient.abortSessionGitRebase,
-              } : {})}
+              } : suggestCommitMessage ? { suggestCommitMessage } : {})}
               sessionId={sessionId}
               workspaceRoot={workspaceRoot}
               status={status}
@@ -767,6 +886,49 @@ function GitChangesContent(props: GitChangesPanelProps) {
                         </span>
                       )}
                     </button>
+                    {!isDraft && !isItemTab && !workspaceMutationDisabled && group.id !== "conflicts" && (
+                      <div className="git-file-actions">
+                        {(group.id === "changes" || group.id === "untracked") && stage && (
+                          <Button
+                            size="small"
+                            variant="ghost"
+                            aria-label={`暂存 ${path}`}
+                            disabled={mutatingKey === key}
+                            onClick={() => void runFileMutation(key, () => stage(sessionId, [path], operationId()))}
+                          >
+                            暂存
+                          </Button>
+                        )}
+                        {group.id === "staged" && unstage && (
+                          <Button
+                            size="small"
+                            variant="ghost"
+                            aria-label={`取消暂存 ${path}`}
+                            disabled={mutatingKey === key}
+                            onClick={() => void runFileMutation(key, () => unstage(sessionId, [path], operationId()))}
+                          >
+                            取消暂存
+                          </Button>
+                        )}
+                        {(group.id === "changes" || group.id === "untracked") && discard && (
+                          <Button
+                            size="small"
+                            variant={confirmDiscardKey === key ? "danger" : "ghost"}
+                            aria-label={`丢弃 ${path}`}
+                            disabled={mutatingKey === key}
+                            onClick={() => {
+                              if (confirmDiscardKey !== key) {
+                                setConfirmDiscardKey(key);
+                                return;
+                              }
+                              void runFileMutation(key, () => discard(sessionId, [path], operationId()));
+                            }}
+                          >
+                            {confirmDiscardKey === key ? "确认丢弃" : "丢弃"}
+                          </Button>
+                        )}
+                      </div>
+                    )}
                     <Tooltip content={isDraft
                       ? "创建聊天后可在编辑器中打开文件"
                       : editorPathAllowed
@@ -818,12 +980,14 @@ function GitChangesContent(props: GitChangesPanelProps) {
                       {parsedFiles.map((file) => (
                         <Diff
                           key={`${file.oldPath}:${file.newPath}`}
-                          className="git-diff-unified"
-                          viewType="unified"
+                          className={diffViewType === "split" ? "git-diff-split" : "git-diff-unified"}
+                          viewType={diffViewType}
                           diffType={file.type}
                           hunks={file.hunks}
+                          tokens={tokenizeDiffHunks(file.hunks, path)}
                           gutterClassName="git-diff-line-numbers"
                           renderGutter={({ change, side, renderDefault }) => {
+                            if (diffViewType === "split") return renderDefault();
                             if (side === "new") return null;
                             return change.type === "insert" ? change.lineNumber : renderDefault();
                           }}
@@ -865,7 +1029,26 @@ function GitChangesContent(props: GitChangesPanelProps) {
                             (commentId) => void removeComment(key, commentId),
                           )}
                         >
-                          {(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
+                          {(hunks) => hunks.flatMap((hunk) => [
+                            ...((!isDraft && !isItemTab && !workspaceMutationDisabled && (group.id === "changes" || group.id === "staged") && stageHunk)
+                              ? [
+                                  <Decoration key={`dec:${hunk.content}`}>
+                                    <div className="git-hunk-decoration">
+                                      <code>{hunk.content}</code>
+                                      <Button
+                                        size="small"
+                                        variant="ghost"
+                                        disabled={mutatingKey === key}
+                                        onClick={() => void runHunkMutation(key, file, hunk, group.id === "staged")}
+                                      >
+                                        {group.id === "staged" ? "取消暂存块" : "暂存块"}
+                                      </Button>
+                                    </div>
+                                  </Decoration>,
+                                ]
+                              : []),
+                            <Hunk key={`hunk:${hunk.content}`} hunk={hunk} />,
+                          ])}
                         </Diff>
                       ))}
                       {staleComments.length > 0 && (

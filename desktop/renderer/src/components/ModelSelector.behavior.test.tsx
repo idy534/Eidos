@@ -325,4 +325,58 @@ describe("ModelSelector", () => {
     expect(info).not.toHaveTextContent("视频");
   });
 
+  it("renders runtime-driven context windows and input modalities without hardcoded model tables", () => {
+    const dynamicModel: ModelOption = {
+      id: "brand-new-model-2026",
+      name: "Future Model",
+      vendor: "Custom",
+      provider: "custom",
+      url: "https://example.invalid/v1/chat/completions",
+      supportsToolCall: true,
+      supportsImages: true,
+      supportsReasoning: true,
+      contextWindowTokens: 2_000_000,
+      inputModalities: ["text", "image", "audio", "video"],
+      custom: {
+        providerName: "Custom",
+        baseUrl: "https://example.invalid/v1",
+        name: "Future Model",
+        contextWindowTokens: 2_000_000,
+        maxOutputTokens: 32_768,
+        reasoningControl: "provider_default",
+      },
+    };
+    const unknownWindowModel: ModelOption = {
+      id: "deepseek-flash",
+      name: "Unknown Window",
+      vendor: "DeepSeek",
+      provider: "deepseek",
+      url: "https://api.deepseek.com/chat/completions",
+      supportsToolCall: true,
+      supportsImages: false,
+      supportsReasoning: false,
+    };
+    render(
+      <ModelSelector
+        models={[dynamicModel, unknownWindowModel]}
+        selectedModelId={dynamicModel.id}
+        selection={undefined}
+        disabled={false}
+        onModelChange={vi.fn()}
+        onChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Future Model/ }));
+    fireEvent.mouseEnter(screen.getByRole("radio", { name: "Future Model，Custom" }).closest("label")!);
+    let info = screen.getByRole("tooltip");
+    expect(info).toHaveTextContent("2M");
+    expect(info).toHaveTextContent("文本, 图像, 音频, 视频");
+
+    fireEvent.mouseEnter(screen.getByRole("radio", { name: "Unknown Window，深度求索" }).closest("label")!);
+    info = screen.getByRole("tooltip");
+    expect(info).toHaveTextContent("--");
+    expect(info).not.toHaveTextContent("800K");
+    expect(info).toHaveTextContent("文本");
+  });
+
 });

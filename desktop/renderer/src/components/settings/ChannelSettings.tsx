@@ -101,19 +101,24 @@ export function ChannelSettings({ modelList, initialChannel = "list", onShowToas
 
   useEffect(() => {
     let active = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    async function poll() {
+    async function refreshAll() {
       try {
         const value = await load();
         if (active) setResponses(value);
       } catch {
         if (active) setError("无法读取助理状态，请检查 Runtime 后刷新。 ");
       }
-      if (active) {
-        timer = setTimeout(() => {
-          void poll();
-        }, 3000);
+    }
+
+    async function refreshOne(channel: Channel) {
+      try {
+        const single = await window.eidosRuntime.readChannel({ channel });
+        if (active) {
+          setResponses((prev) => ({ ...prev, [channel]: single }));
+        }
+      } catch {
+        if (active) setError("无法读取助理状态，请检查 Runtime 后刷新。 ");
       }
     }
 
@@ -126,11 +131,30 @@ export function ChannelSettings({ modelList, initialChannel = "list", onShowToas
         if (active) setError("无法读取项目列表，请重新打开设置。 ");
       });
 
-    void poll();
+    void refreshAll();
+
+    const unsubscribe = window.eidosRuntime.onNotification?.((notification) => {
+      if (notification.method === "channel/updated") {
+        void refreshOne(notification.params.channel);
+      }
+    });
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void refreshAll();
+      }
+    };
+    const handleFocus = () => {
+      void refreshAll();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleFocus);
 
     return () => {
       active = false;
-      clearTimeout(timer);
+      unsubscribe?.();
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleFocus);
     };
   }, [load]);
 

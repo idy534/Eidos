@@ -12,12 +12,16 @@ export type Errorcode = string | null;
 export type Packs = ResourceProgress[];
 export type Packid = string;
 export type Accepted = boolean;
+export type Removedcount = number;
+export type Freedbytes = number;
 
 export interface ManagedResourcesContract {
   statusRequest: ResourceStatusRequest;
   status: ResourceStatus;
   retry: ResourceRetryRequest;
   retryResponse: ResourceRetryResponse;
+  cleanupRequest: ResourceCleanupRequest;
+  cleanupResponse: ResourceCleanupResponse;
 }
 export interface ResourceStatusRequest {}
 export interface ResourceStatus {
@@ -39,4 +43,9 @@ export interface ResourceRetryRequest {
 }
 export interface ResourceRetryResponse {
   accepted: Accepted;
+}
+export interface ResourceCleanupRequest {}
+export interface ResourceCleanupResponse {
+  removedCount: Removedcount;
+  freedBytes: Freedbytes;
 }

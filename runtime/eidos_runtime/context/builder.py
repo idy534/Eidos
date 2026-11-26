@@ -36,7 +36,13 @@ from eidos_runtime.context.tool_history import (
     omit_old_browser_images,
     retained_content_ids,
 )
-from eidos_runtime.model.context_projection import project_context, recovery_context, generated_summary_view, fit_personalization
+from eidos_runtime.model.context_projection import (
+    fit_personalization,
+    generated_summary_view,
+    hard_floor_recovery_context,
+    project_context,
+    recovery_context,
+)
 from eidos_runtime.context.policy import CONTINUITY_SECTION_ID, context_thresholds
 from eidos_runtime.context.summary_evidence import continuity_context
 from eidos_runtime.context.agent_evidence import build_agent_evidence, message_page_delivery
@@ -53,6 +59,8 @@ from eidos_runtime.extensions.skills import RetainedContextSection
 from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
 from eidos_runtime.domain.goal import GoalSample
 from eidos_runtime.persistence.goals import GoalRepository
+
+MAX_CONTEXT_RECOVERY_LEVEL = 8
 
 
 class ContextBuild(BaseModel):
@@ -652,8 +660,18 @@ class ContextBuilder:
                     projected['agentMessageIds'] = message_page_delivery(page)
                 except (ValueError, KeyError, TypeError):
                     pass
-        context = list(project_context(tuple(context), text_bytes=(8 * 1024 * 1024 if not recovery_level else max(1024, 128 * 1024 // (2 ** min(recovery_level, 7))))))
-        if recovery_level:
+        context = list(project_context(tuple(context), text_bytes=(8 * 1024 * 1024 if not recovery_level else max(512 if recovery_level >= MAX_CONTEXT_RECOVERY_LEVEL else 1024, 128 * 1024 // (2 ** min(recovery_level, 7))))))
+        if recovery_level >= MAX_CONTEXT_RECOVERY_LEVEL:
+            context = list(recovery_context(
+                tuple(context),
+                max(1024, budget.usable_input_budget * 2 // (2 ** 7)),
+                current_goal_id=facts.current_user_goal_id,
+            ))
+            context = list(hard_floor_recovery_context(
+                tuple(context),
+                current_goal_id=facts.current_user_goal_id,
+            ))
+        elif recovery_level:
             context = list(recovery_context(tuple(context), max(1024,
                 budget.usable_input_budget * 2 // (2 ** min(recovery_level, 7))),
                 current_goal_id=facts.current_user_goal_id))

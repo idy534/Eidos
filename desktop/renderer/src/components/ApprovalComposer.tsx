@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import type { ApprovalFileSystemAccess, ApprovalRequest, CommandApprovalRequest, Run } from "../../../shared/domain-contracts.js";
 import { Button } from "./Button.js";
 import { ToastContainer } from "./ToastContainer.js";
@@ -12,7 +12,9 @@ export interface ApprovalComposerProps {
   expiredApprovalIds?: ReadonlySet<string> | undefined;
   errorsByApprovalId?: Readonly<Record<string, string>> | undefined;
   onApprove: (approval: ApprovalRequest) => void;
-  onReject: (approval: ApprovalRequest) => void;
+  onReject: (approval: ApprovalRequest, feedback?: string) => void;
+  /** Take focus when nothing else holds it, e.g. after replacing the message composer. */
+  autoFocus?: boolean | undefined;
 }
 
 function ShieldIcon({ className = "" }: { className?: string }) {
@@ -44,8 +46,11 @@ function ChevronIcon({ className = "" }: { className?: string }) {
 export function ApprovalComposer({
   run, approval, respondingApprovalIds,
   respondingKindByApprovalId, expiredApprovalIds, errorsByApprovalId,
-  onApprove, onReject,
+  onApprove, onReject, autoFocus = false,
 }: ApprovalComposerProps) {
+  const cardRef = useRef<HTMLElement>(null);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedback, setFeedback] = useState("");
   const isExpired = Boolean(expiredApprovalIds?.has(approval.id));
   const localError = errorsByApprovalId?.[approval.id];
   const isResponding = Boolean(respondingApprovalIds && respondingApprovalIds.has(approval.id));
@@ -58,6 +63,35 @@ export function ApprovalComposer({
     || (approval.kind === "file_change" && approval.sandboxPermissions === "require_escalated");
   const warning = approvalWarning(approval);
 
+  useEffect(() => {
+    setFeedback("");
+    setShowFeedback(false);
+  }, [approval.id]);
+
+  useEffect(() => {
+    if (!autoFocus) return;
+    const active = document.activeElement;
+    // Never pull focus away from another input, the terminal or a dialog.
+    if (!active || active === document.body) cardRef.current?.focus({ preventScroll: true });
+  }, [approval.id, autoFocus]);
+
+  // Shortcuts only act on the card that holds focus, so several pending
+  // approvals can never be decided by one keystroke, and text editing keys
+  // (Cmd+Backspace deletes to line start on macOS) keep working in inputs.
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (target?.closest('[role="dialog"], [role="alertdialog"]')) return;
+    if (target && (target.isContentEditable || target.closest("input, textarea, select"))) return;
+    if (event.key === "Enter" && canApprove && !isDangerous) {
+      event.preventDefault();
+      onApprove(approval);
+    } else if (event.key === "Backspace" && canReject) {
+      event.preventDefault();
+      onReject(approval, feedback.trim() || undefined);
+    }
+  }
+
   return (
     <article
       className={[
@@ -67,6 +101,9 @@ export function ApprovalComposer({
         isDangerous ? "approval-card--danger" : "",
       ].filter(Boolean).join(" ")}
       aria-labelledby={`approval-${approval.id}`}
+      ref={cardRef}
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
     >
       <div className="approval-heading">
         <div className="approval-heading-left">
@@ -109,14 +146,40 @@ export function ApprovalComposer({
           <ShieldIcon className="approval-actions-hint-icon" />
           <span>核对命令及授权范围后再行决定</span>
         </div>
+        <details
+          className="approval-feedback-details"
+          open={showFeedback}
+          onToggle={(event) => setShowFeedback(event.currentTarget.open)}
+        >
+          <summary className="approval-feedback-summary">附带拒绝原因</summary>
+          {showFeedback && (
+            <input
+              type="text"
+              className="approval-feedback-input"
+              aria-label="拒绝原因（可选）"
+              placeholder="输入拒绝原因或替代要求，按 Enter 提交拒绝…"
+              maxLength={4000}
+              disabled={!canReject}
+              value={feedback}
+              onChange={(event) => setFeedback(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && canReject) {
+                  event.preventDefault();
+                  onReject(approval, feedback.trim() || undefined);
+                }
+              }}
+            />
+          )}
+        </details>
         <div className="approval-actions-buttons">
           <Button
             variant="secondary"
             size="medium"
             className="btn-approval-reject"
+            title="拒绝 (Ctrl/Cmd + Backspace)"
             disabled={!canReject}
             loading={isRejecting}
-            onClick={() => onReject(approval)}
+            onClick={() => onReject(approval, feedback.trim() || undefined)}
           >
             拒绝
           </Button>
@@ -124,6 +187,7 @@ export function ApprovalComposer({
             variant={isDangerous ? "danger" : "primary"}
             size="medium"
             className="btn-approval-approve"
+            title={isDangerous ? undefined : "批准 (Ctrl/Cmd + Enter)"}
             disabled={!canApprove}
             loading={isApproving}
             onClick={() => onApprove(approval)}
@@ -158,6 +222,7 @@ function approvalTitle(approval: ApprovalRequest): string {
     "Run shell command": "批准命令执行",
     "Run shell command with expanded sandbox permissions": "批准命令所需权限",
     "Run shell command without the macOS sandbox": "批准命令在沙盒外执行",
+    "Run shell command without the Windows sandbox": "批准命令在沙盒外执行",
     "Write files without the sandbox": "批准文件在沙盒外写入",
     "Write files in the requested permission scope": "批准文件写入",
     "Allow additional permissions for this run": "批准当前任务所需权限",

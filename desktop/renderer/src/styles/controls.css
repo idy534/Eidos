@@ -31,7 +31,9 @@ button:active:not(:disabled) {
   box-shadow: none;
 }
 
-button:focus-visible {
+button:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
   outline: var(--focus-ring);
   outline-offset: 2px;
 }
@@ -39,7 +41,8 @@ button:focus-visible {
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: none;
+  outline: var(--focus-ring);
+  outline-offset: 1px;
 }
 
 button:disabled { cursor: not-allowed; opacity: var(--control-disabled-opacity); }

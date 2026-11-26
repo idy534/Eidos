@@ -9,6 +9,7 @@ from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.db.errors import SessionActiveError
 from eidos_runtime.domain.session import Session, SessionExecutionMode
 from eidos_runtime.git.backend import GitBackend
+from eidos_runtime.git.commit_message import suggest_commit_message as _build_suggested_commit_message
 from eidos_runtime.git.errors import (
     GitBranchOccupiedError,
     GitCheckoutConflictError,
@@ -52,6 +53,14 @@ from eidos_runtime.protocol.methods import (
     SessionGitRebaseResponseDto,
     SessionGitStageRequestDto,
     SessionGitStageResponseDto,
+    SessionGitUnstageRequestDto,
+    SessionGitUnstageResponseDto,
+    SessionGitDiscardRequestDto,
+    SessionGitDiscardResponseDto,
+    SessionGitStageHunkRequestDto,
+    SessionGitStageHunkResponseDto,
+    SessionGitSuggestCommitMessageRequestDto,
+    SessionGitSuggestCommitMessageResponseDto,
     SessionGitStatusResponseDto,
     SessionGitSwitchBranchRequestDto,
     SessionGitSwitchBranchResponseDto,
@@ -67,6 +76,8 @@ class GitMutationPlan:
     before: GitStatusSnapshot
     paths: tuple[str, ...] = ()
     message: str | None = None
+    patch: str | None = None
+    reverse: bool = False
 
 
 @dataclass(frozen=True)
@@ -159,6 +170,86 @@ class GitWorkflowApplication:
             raise _workflow_error(error) from error
         after = self._status(plan.session)
         return _mutation_result(SessionGitStageResponseDto, after)
+
+    def preflight_unstage(
+        self, request: SessionGitUnstageRequestDto
+    ) -> GitMutationPlan:
+        session, before = self._prepare_mutation(request.session_id, require_idle=False)
+        paths = _validated_paths(Path(before.worktree_root), request.paths)
+        return GitMutationPlan(session=session, before=before, paths=paths)
+
+    def unstage(self, plan: GitMutationPlan) -> SessionGitUnstageResponseDto:
+        try:
+            self._worktrees.git.unstage(Path(plan.before.worktree_root), plan.paths)
+        except GitError as error:
+            raise _workflow_error(error) from error
+        after = self._status(plan.session)
+        return _mutation_result(SessionGitUnstageResponseDto, after)
+
+    def preflight_discard(
+        self, request: SessionGitDiscardRequestDto
+    ) -> GitMutationPlan:
+        session, before = self._prepare_mutation(request.session_id, require_idle=False)
+        paths = _validated_paths(Path(before.worktree_root), request.paths)
+        return GitMutationPlan(session=session, before=before, paths=paths)
+
+    def discard(self, plan: GitMutationPlan) -> SessionGitDiscardResponseDto:
+        try:
+            self._worktrees.git.discard(Path(plan.before.worktree_root), plan.paths)
+        except GitError as error:
+            raise _workflow_error(error) from error
+        after = self._status(plan.session)
+        return _mutation_result(SessionGitDiscardResponseDto, after)
+
+    def preflight_stage_hunk(
+        self, request: SessionGitStageHunkRequestDto
+    ) -> GitMutationPlan:
+        session, before = self._prepare_mutation(request.session_id, require_idle=False)
+        return GitMutationPlan(
+            session=session,
+            before=before,
+            patch=request.patch,
+            reverse=request.reverse,
+        )
+
+    def stage_hunk(self, plan: GitMutationPlan) -> SessionGitStageHunkResponseDto:
+        if plan.patch is None:
+            raise AssertionError("stage_hunk plan requires a patch")
+        try:
+            self._worktrees.git.apply_cached_patch(
+                Path(plan.before.worktree_root), plan.patch, reverse=plan.reverse
+            )
+        except GitError as error:
+            raise _workflow_error(error) from error
+        after = self._status(plan.session)
+        return _mutation_result(SessionGitStageHunkResponseDto, after)
+
+    def suggest_commit_message(
+        self, request: SessionGitSuggestCommitMessageRequestDto
+    ) -> SessionGitSuggestCommitMessageResponseDto:
+        _session, status = self._prepare_mutation(request.session_id, require_idle=False)
+        paths: list[str] = list(status.staged_files)
+        used_staged = bool(paths)
+        if not paths and request.include_unstaged:
+            paths = list(dict.fromkeys([*status.unstaged_files, *status.untracked_files]))
+        if not paths:
+            raise ApplicationError("GIT_NOTHING_STAGED")
+        stat_summary = ""
+        if used_staged:
+            try:
+                stat_summary = self._worktrees.git.cached_diff_stat(
+                    Path(status.worktree_root)
+                )
+            except GitError:
+                stat_summary = ""
+        message = _build_suggested_commit_message(
+            paths,
+            stat_summary=stat_summary,
+            untracked_paths=set(status.untracked_files),
+        )
+        return SessionGitSuggestCommitMessageResponseDto(
+            message=message, source="heuristic"
+        )
 
     def preflight_commit(
         self, request: SessionGitCommitRequestDto

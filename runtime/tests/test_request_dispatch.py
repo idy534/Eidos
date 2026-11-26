@@ -128,19 +128,83 @@ def test_missing_scope_falls_back_to_exclusive() -> None:
 def test_every_classified_method_is_registered(tmp_path: Path) -> None:
     server = ResponseActionRuntimeServer(StringIO(), data_directory=tmp_path / "data")
     registered = set(server.method_registry.names())
-    classified = (
-        dispatch.SESSION_READS
-        | dispatch.INDEX_READS
-        | dispatch.CONFIG_READS
-        | dispatch.FREE_READS
-        | dispatch.GIT_WRITES
-        | dispatch.LIFECYCLE_WRITES
-        | dispatch.SESSION_WRITES
-        | set(dispatch.RUN_WRITES)
-        | {"input/draftRead", "input/draftWrite"}
-    )
+    classified = dispatch.EXPLICITLY_CLASSIFIED_METHODS - dispatch.CONTROL_METHODS
 
     assert classified - registered == set()
+    assert registered - classified == set()
+
+
+def test_browser_team_hook_plan_sidebar_and_guardrail_dispatch_lanes() -> None:
+    # Browser operations serialize against each other without stalling sessions, runs, or teams.
+    recorder = _Recorder()
+    recorder.submit("browser-open", "browser/open")
+    recorder.submit("browser-close", "browser/close")
+    recorder.submit("read-s1", "session/read", {"sessionId": "s1"})
+    recorder.submit("start-s1", "run/start", {"sessionId": "s1"})
+    recorder.submit("cancel-r1", "run/cancel", {"runId": "r1"})
+    recorder.submit("team-msgs-1", "team/messages", {"teamId": "team-1"})
+    assert recorder.started == [
+        "browser-open",
+        "read-s1",
+        "start-s1",
+        "cancel-r1",
+        "team-msgs-1",
+    ]
+    recorder.finish("browser-open")
+    assert "browser-close" in recorder.started
+
+    # team/post on team-1 blocks team/messages(team-1) and team/read, not team-2 or unrelated session/read.
+    team_rec = _Recorder()
+    team_rec.submit("post-1", "team/post", {"teamId": "team-1"})
+    team_rec.submit("msgs-1", "team/messages", {"teamId": "team-1"})
+    team_rec.submit("team-read", "team/read", {"sessionId": "s-lead"})
+    team_rec.submit("msgs-2", "team/messages", {"teamId": "team-2"})
+    team_rec.submit("post-2", "team/post", {"teamId": "team-2"})
+    team_rec.submit("other-session", "session/read", {"sessionId": "s-other"})
+    assert team_rec.started == ["post-1", "msgs-2", "post-2", "other-session"]
+    team_rec.finish("post-1")
+    assert team_rec.started[-1] == "msgs-1"
+    team_rec.finish("post-2")
+    assert team_rec.started[-1] == "team-read"
+
+    # team/confirmRoster blocks team/read and session/list but not unrelated session/read or run/cancel.
+    roster_rec = _Recorder()
+    roster_rec.submit("confirm", "team/confirmRoster", {"proposalId": "p1"})
+    roster_rec.submit("team-read", "team/read", {"sessionId": "s-lead"})
+    roster_rec.submit("session-list", "session/list")
+    roster_rec.submit("other-read", "session/read", {"sessionId": "s-other"})
+    roster_rec.submit("cancel", "run/cancel", {"runId": "r-other"})
+    assert roster_rec.started == ["confirm", "other-read", "cancel"]
+    roster_rec.finish("confirm")
+    assert set(roster_rec.started[-2:]) == {"team-read", "session-list"}
+
+    # hook/configuration read vs mutation, plan per-plan serialization, sidebar pins vs git, guardrails & model/update.
+    assert classify_request("hook/configuration", {"action": "read", "sessionId": "s1"}).read is True
+    assert classify_request("hook/configuration", {"action": "trust", "sourceId": "src-1"}) is EXCLUSIVE
+    assert classify_request("model/update", {"id": "m1"}) is EXCLUSIVE
+
+    plan_rec = _Recorder()
+    plan_rec.submit("plan1-read", "plan/read", {"planId": "p1"})
+    plan_rec.submit("plan1-edit", "plan/edit", {"planId": "p1"})
+    plan_rec.submit("plan2-read", "plan/read", {"planId": "p2"})
+    assert plan_rec.started == ["plan1-read", "plan2-read"]
+    plan_rec.finish("plan1-read")
+    assert plan_rec.started[-1] == "plan1-edit"
+
+    sidebar_rec = _Recorder()
+    sidebar_rec.submit("pin", "sidebar/setPinned", {"pinned": True})
+    sidebar_rec.submit("pins-read", "sidebar/listPins")
+    sidebar_rec.submit("git-commit", "session/gitCommit", {"sessionId": "s1"})
+    assert sidebar_rec.started == ["pin", "git-commit"]
+    sidebar_rec.finish("pin")
+    assert sidebar_rec.started[-1] == "pins-read"
+
+    guardrail_rec = _Recorder()
+    guardrail_rec.submit("save", "guardrails/save", {"expectedRevision": 0})
+    guardrail_rec.submit("read", "guardrails/read")
+    assert guardrail_rec.started == ["save"]
+    guardrail_rec.finish("save")
+    assert guardrail_rec.started == ["save", "read"]
 
 
 class _SlowRequest(BaseModel):

@@ -1,11 +1,15 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { compile } from "json-schema-to-typescript";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const schema = JSON.parse(execFileSync(path.join(root, ".venv/bin/python"), ["-c", `
+const posixPython = path.join(root, ".venv/bin/python");
+const winPython = path.join(root, ".venv/Scripts/python.exe");
+const pythonBin = existsSync(posixPython) ? posixPython : winPython;
+const schema = JSON.parse(execFileSync(pythonBin, ["-c", `
 import json
 from eidos_runtime.models import EidosFrozenModel
 from eidos_runtime.domain.hooks import PluginHookReview, PluginCompatibility, HookActivity, HookActivityPage, HookSourceList, HookConfigurationRequest, HookHistoryRequest

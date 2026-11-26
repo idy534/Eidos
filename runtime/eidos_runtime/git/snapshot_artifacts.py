@@ -10,6 +10,7 @@ import tempfile
 from pydantic import Field, ValidationError
 
 from eidos_runtime.git.models import GitWorkingTreePatch
+from eidos_runtime.infrastructure import local_files
 from eidos_runtime.models import EidosFrozenStrictModel
 
 
@@ -186,11 +187,7 @@ def _sha256(value: bytes) -> str:
 
 
 def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    local_files.sync_directory(path)
 
 
 __all__ = [

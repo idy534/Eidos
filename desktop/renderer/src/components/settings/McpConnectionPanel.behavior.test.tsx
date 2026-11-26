@@ -12,7 +12,7 @@ const server: McpServerRecord = {
 };
 const initial = { pluginId: "eidos-github", serverId: "github", status: "disconnected", authType: "github-device", browserAvailable: false, updatedAt: 0 };
 const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
-afterEach(() => { cleanup(); if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); localStorage.clear(); if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor); vi.restoreAllMocks(); });
 
 function api(value: object) {
   Object.defineProperty(window, "eidosRuntime", { configurable: true, value });
@@ -87,5 +87,31 @@ describe("Remote MCP accounts", () => {
     await act(async () => rejectConnect(new Error("old operation failed")));
     expect(screen.queryByText("连接操作失败，请稍后重试。")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "断开账号连接" })).toBeEnabled();
+  });
+
+  it("allows starting GitHub browser device flow with a custom OAuth Client ID when none is bundled", async () => {
+    const mcpConnection = vi.fn().mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce({ ...initial, status: "connecting",
+        authorizationUrl: "https://github.com/login/device", userCode: "CUST-1234" });
+    const openMcpLogin = vi.fn().mockResolvedValue(undefined);
+    api({ mcpConnection, openMcpLogin });
+    render(<McpConnectionPanel server={server} enabled />);
+    const user = userEvent.setup();
+
+    await screen.findByLabelText("个人访问令牌");
+    expect(screen.queryByRole("button", { name: "在浏览器中登录" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("使用 GitHub OAuth Client ID 浏览器登录"));
+    const clientInput = screen.getByLabelText("GitHub OAuth Client ID");
+    await user.type(clientInput, "Ov23liCustomClientId");
+    await user.click(screen.getByRole("button", { name: "使用 Client ID 浏览器登录" }));
+
+    expect(mcpConnection).toHaveBeenCalledWith(expect.objectContaining({
+      action: "connect",
+      method: "browser",
+      clientId: "Ov23liCustomClientId",
+    }));
+    expect(await screen.findByText("CUST-1234")).toBeInTheDocument();
+    expect(localStorage.getItem("eidos.mcp.github_client_id")).toBe("Ov23liCustomClientId");
   });
 });

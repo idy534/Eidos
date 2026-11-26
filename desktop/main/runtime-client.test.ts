@@ -1771,6 +1771,8 @@ test("uses the shared v1 vectors for requests, approvals, and notifications", as
     "utf8",
   );
 
+  // The vector pins the initialize request byte for byte, client version included.
+  const vectorClientVersion = (vectors.initialize.request as { params: { client: { version: string } } }).params.client.version;
   let client: RuntimeClient | undefined;
   try {
     const notifications: RuntimeNotification[] = [];
@@ -1785,6 +1787,7 @@ test("uses the shared v1 vectors for requests, approvals, and notifications", as
     client = new RuntimeClient({
       pythonExecutable: pythonExecutable,
       runtimeRoot,
+      clientVersion: vectorClientVersion,
       onApprovalRequest: async (request) => {
         assert.equal(request.kind, "file_change");
         if (request.kind === "file_change") {

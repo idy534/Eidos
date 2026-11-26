@@ -152,3 +152,98 @@ def test_capacity_recovery_stays_reduced_near_the_size_that_failed(
     assert "saved-tool-evidence" in _sections(reduced)
     assert engine.context_recovery_level == 1
     assert engine.context_recovery_ceilings == [95_000]
+
+
+def test_capacity_recovery_caps_at_max_level_with_hard_floor_fallback(
+    workspace_store, monkeypatch,
+):
+    from eidos_runtime.context.builder import MAX_CONTEXT_RECOVERY_LEVEL
+    from eidos_runtime.domain.capacity import CapacityExceeded
+    from eidos_runtime.runtime.engine import _recovery_backoff_seconds
+
+    store, session = workspace_store
+    (store.workspace_for_session(session["id"]) if hasattr(store, "workspace_for_session") else None)
+    long_prompt = "Context overflow prompt. " * 200
+    run, _ = store.create_run(session["id"], long_prompt)
+    store.create_tool_item(run["id"], 0, 0, "c-1", "read_file", '{"path": "README.md"}')
+    builder = ContextBuilder(store)
+    level_7 = builder.build(run["id"], recovery_level=7)
+    level_8 = builder.build(run["id"], recovery_level=MAX_CONTEXT_RECOVERY_LEVEL)
+    assert MAX_CONTEXT_RECOVERY_LEVEL == 8
+    assert level_8.budget.projected_input_tokens < level_7.budget.projected_input_tokens
+    assert "saved-tool-evidence" not in _sections(level_8.model_context)
+
+    assert _recovery_backoff_seconds(1, first_delay=1.0) == 1.0
+    assert _recovery_backoff_seconds(1, first_delay=0.0) == 0.0
+    assert _recovery_backoff_seconds(2) == 1.0
+    assert _recovery_backoff_seconds(3) == 2.0
+    assert _recovery_backoff_seconds(4) == 4.0
+    assert _recovery_backoff_seconds(7) == 30.0
+    assert _recovery_backoff_seconds(12) == 30.0
+
+    waits: list[float] = []
+
+    class RecordingCancel(threading.Event):
+        def wait(self, timeout: float | None = None) -> bool:
+            if timeout is not None:
+                waits.append(float(timeout))
+            if len(waits) >= 10:
+                self.set()
+            return self.is_set()
+
+    build = ContextBuilder.build
+
+    def always_over_budget(self, target_run_id, **options):
+        built = build(self, target_run_id, **options)
+        if options.get("recovery_level", 0) == 0 or len(waits) < 10:
+            raise CapacityExceeded("context_window_capacity")
+        return built
+
+    monkeypatch.setattr(ContextBuilder, "build", always_over_budget)
+    engine = RuntimeEngine(store, ScriptedModel([]), lambda _message: None)
+    cancel = RecordingCancel()
+    engine.run(run["id"], cancel)
+    assert store.read_run(run["id"])["status"] == "canceled"
+    assert engine.context_recovery_level == MAX_CONTEXT_RECOVERY_LEVEL
+    assert len(engine.context_recovery_ceilings) == MAX_CONTEXT_RECOVERY_LEVEL
+    assert waits == [1.0, 1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0, 30.0]
+
+
+def test_repeated_recovery_loops_apply_cancelable_backoff(workspace_store):
+    store, session = workspace_store
+    run, _ = store.create_run(session["id"], "Test loop backoff")
+    waits: list[float] = []
+
+    class RecordingCancel(threading.Event):
+        def wait(self, timeout: float | None = None) -> bool:
+            if timeout is not None:
+                waits.append(float(timeout))
+            if len(waits) >= 4:
+                self.set()
+                return True
+            return False
+
+    responses = [ModelResponse(text="x", finish_reason="length") for _ in range(8)]
+    engine = RuntimeEngine(store, ScriptedModel(responses), lambda _message: None)
+    engine.run(run["id"], RecordingCancel())
+    assert store.read_run(run["id"])["status"] == "canceled"
+    assert waits == [1.0, 1.0, 2.0, 4.0]
+
+
+def test_hard_floor_keeps_project_rules_and_the_full_current_goal() -> None:
+    from eidos_runtime.model.context_projection import hard_floor_recovery_context
+
+    goal_text = "目标：" + "完成迁移。" * 400
+    rule = {"type": "context", "sectionId": "project-rule:AGENTS.md", "content": "Never push to main."}
+    goal = {"type": "context", "sectionId": "goal-current", "content": goal_text}
+    history = [{"type": "assistant", "content": "old reply " * 200} for _ in range(5)]
+    user = {"type": "user", "content": "继续。" * 400, "sourceItemId": "u1"}
+
+    reduced = hard_floor_recovery_context((rule, goal, *history, user), current_goal_id="u1")
+
+    by_section = {item.get("sectionId"): item for item in reduced}
+    assert by_section["project-rule:AGENTS.md"]["content"] == "Never push to main."
+    assert by_section["goal-current"]["content"] == goal_text
+    assert not any(item.get("type") == "assistant" for item in reduced)
+    user_items = [item for item in reduced if item.get("sourceItemId") == "u1"]
+    assert len(user_items) == 1 and len(str(user_items[0]["content"]).encode()) < len(str(user["content"]).encode())

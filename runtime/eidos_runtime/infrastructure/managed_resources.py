@@ -235,6 +235,68 @@ class ManagedResourceManager:
                 self._verified.pop(pack.id, None)
             self.verified_catalog(pack.id)
 
+    def cleanup_legacy(self) -> tuple[int, int]:
+        """Remove unreferenced/stale versions and interrupted staging folders."""
+        with self._condition:
+            if self._busy:
+                raise ResourceError(
+                    "resource_cleanup_busy",
+                    "cannot clean up resources while an installation is running",
+                )
+            if not self.root.exists():
+                return 0, 0
+            _verify_ancestry(self.root, self.root)
+            canonical_root = self.root.resolve()
+            active_paths: set[Path] = set()
+            keep_ancestors: set[Path] = {canonical_root}
+            for pack in self.index.packs:
+                target = (canonical_root / pack.location).resolve(strict=False)
+                if not target.is_relative_to(canonical_root):
+                    continue
+                active_paths.add(target)
+                parent = target.parent
+                while parent != canonical_root and parent.is_relative_to(canonical_root):
+                    keep_ancestors.add(parent)
+                    parent = parent.parent
+
+            def remove_entry_bounded(path: Path) -> int:
+                metadata = path.lstat()
+                if local_files.is_link(metadata) or not stat.S_ISDIR(metadata.st_mode):
+                    size = max(0, int(metadata.st_size)) if stat.S_ISREG(metadata.st_mode) else 0
+                    path.unlink()
+                    return size
+                freed = 0
+                for child in list(path.iterdir()):
+                    freed += remove_entry_bounded(child)
+                path.rmdir()
+                return freed
+
+            removed_count = 0
+            freed_bytes = 0
+
+            def prune(directory: Path) -> None:
+                nonlocal removed_count, freed_bytes
+                for entry in sorted(directory.iterdir(), key=lambda p: p.name):
+                    entry_lstat = entry.lstat()
+                    resolved = entry.resolve(strict=False)
+                    if resolved in active_paths:
+                        continue
+                    if (
+                        resolved in keep_ancestors
+                        and stat.S_ISDIR(entry_lstat.st_mode)
+                        and not local_files.is_link(entry_lstat)
+                    ):
+                        prune(entry)
+                        if not any(entry.iterdir()):
+                            entry.rmdir()
+                        continue
+                    freed_bytes += remove_entry_bounded(entry)
+                    removed_count += 1
+
+            prune(self.root)
+            self._verified.clear()
+            return removed_count, freed_bytes
+
     def _prepare_archive(self, pack: ResourcePack, target: Path, cancel: threading.Event) -> None:
         if pack.url is None:
             if self.archive_root is None:

@@ -24,10 +24,13 @@ describe("renderer style ownership", () => {
   });
 });
 
-describe("focus ring", () => {
-  it("paints no ring for keyboard or pointer focus", () => {
-    expect(styles).toMatch(/--focus-ring:\s*none;/);
-    expect(styles).not.toMatch(/--focus-ring:\s*[^;]*\d+px\s+solid/);
+describe("focus ring and dark theme", () => {
+  it("provides a visible keyboard focus ring and dark theme tokens", () => {
+    expect(styles).not.toMatch(/--focus-ring:\s*none;/);
+    expect(styles).toMatch(/--focus-ring:\s*2px\s+solid/);
+    expect(styles).toContain(':root[data-theme="dark"]');
+    expect(styles).toContain("@media (prefers-color-scheme: dark)");
+    expect(styles).toMatch(/input:focus-visible,\s*textarea:focus-visible,\s*select:focus-visible\s*\{[^}]*outline:\s*var\(--focus-ring\);/s);
   });
 });
 

@@ -1,7 +1,8 @@
 import type { QoderConnectionRequest, QoderConnectionState } from "./qoder.js";
 import type { ProjectUpdateRequest, ProjectCreateFoldersRequest, GitWorkspaceRequest, GitWorkspaceContract, ProjectGitContextBinding } from "./project-workspaces.js";
-import type { ResourceStatus, ResourceRetryRequest, ResourceRetryResponse } from "./managed-resources.js";
+import type { ResourceCleanupResponse, ResourceStatus, ResourceRetryRequest, ResourceRetryResponse } from "./managed-resources.js";
 import type { ShellEnvironmentReadRequest, ShellEnvironmentRefreshRequest, ShellEnvironmentSaveRequest, ShellEnvironmentResponse } from "./shell-environment.js";
+import type { GuardrailsReadRequest, GuardrailsSaveRequest, GuardrailsResponse } from "./guardrails.js";
 import type { PersonalizationReadRequest, PersonalizationSaveRequest, PersonalizationResponse } from "./personalization.js";
 import type { HookActivityPage, HookConfigurationRequest, HookHistoryRequest, HookSourceList } from "./hooks.js";
 import type { WebSearchReadRequest, WebSearchSaveRequest, WebSearchResponse, WebSearchOfficialPageRequest } from "./web-search.js";
@@ -38,6 +39,9 @@ import type {
   SessionGitStatus,
   SessionGitMutationResult,
   SessionGitCommitResult,
+  SessionGitSuggestCommitMessageResult,
+  SessionCheckpoint,
+  CheckpointRewindResult,
   ReviewComment,
   ReviewCommentCreateInput,
   GitRemoteStatus,
@@ -72,6 +76,7 @@ import type {
   RuntimeNotification,
   AppShortcut,
   WorkspaceDirectoryListing,
+  WorkspaceFileSearchResult,
   WorkspaceFilePreview,
   TerminalSessionInfo,
   TerminalDataEvent,
@@ -97,6 +102,8 @@ export interface EidosRuntimeAPI {
   searchSessions(request: import("./search.js").SearchRequest): Promise<import("./search.js").SearchResponse>;
   readSessionAround(request: import("./search.js").ReadAroundRequest): Promise<SessionSnapshot>;
   readShellEnvironment(request?: ShellEnvironmentReadRequest): Promise<ShellEnvironmentResponse>;
+  readGuardrails(request?: GuardrailsReadRequest): Promise<GuardrailsResponse>;
+  saveGuardrails(request: GuardrailsSaveRequest): Promise<GuardrailsResponse>;
   readPersonalization(request?: PersonalizationReadRequest): Promise<PersonalizationResponse>;
   savePersonalization(request: PersonalizationSaveRequest): Promise<PersonalizationResponse>;
   saveShellEnvironment(request: ShellEnvironmentSaveRequest): Promise<ShellEnvironmentResponse>;
@@ -112,6 +119,7 @@ export interface EidosRuntimeAPI {
   automationHistory(request: AutomationHistoryRequest): Promise<AutomationResponse>;
   automationRunNow(request: AutomationRunNowRequest): Promise<AutomationResponse>;
   backupData(): Promise<void>;
+  restoreData(): Promise<RuntimeStatus>;
   exportMemoryNotes(request: import("./memory.generated.js").MemoryExportRequest): Promise<void>;
   memory<K extends keyof MemoryMethods>(method: K, request: MemoryMethods[K]["request"]): Promise<MemoryMethods[K]["response"]>;
 
@@ -119,6 +127,7 @@ export interface EidosRuntimeAPI {
   getStatus(): Promise<RuntimeStatus>;
   getHealth(): Promise<RuntimeHealth>;
   restartRuntime(): Promise<RuntimeStatus>;
+  exportDiagnostics(): Promise<boolean>;
 
   // Workspace
   selectWorkspace(): Promise<string | null>;
@@ -129,6 +138,13 @@ export interface EidosRuntimeAPI {
     workspaceRoot?: string,
     projectId?: string,
   ): Promise<WorkspaceDirectoryListing>;
+  findWorkspaceFiles(
+    sessionId: string,
+    query: string,
+    limit?: number,
+    workspaceRoot?: string,
+    projectId?: string,
+  ): Promise<WorkspaceFileSearchResult>;
   prepareWorkspacePreview(
     sessionId: string,
     path: string,
@@ -147,6 +163,9 @@ export interface EidosRuntimeAPI {
   closeBrowser(sessionId: string, browserId: string): Promise<void>;
   stopBrowser(sessionId: string, browserId: string): Promise<void>;
   readBrowserState(sessionId: string, browserId: string): Promise<import("./domain-contracts.js").BrowserPageState>;
+  browserGoBack(sessionId: string, browserId: string): Promise<import("./domain-contracts.js").BrowserPageState>;
+  browserGoForward(sessionId: string, browserId: string): Promise<import("./domain-contracts.js").BrowserPageState>;
+  onBrowserState(callback: (event: import("./domain-contracts.js").BrowserStateEvent) => void): Unsubscribe;
   annotateBrowser(sessionId: string, browserId: string): Promise<import("./domain-contracts.js").BrowserAnnotation>;
   readWorkspaceFilePreview(
     sessionId: string,
@@ -159,7 +178,7 @@ export interface EidosRuntimeAPI {
   openPath(path: string): Promise<void>;
 
   // User terminal
-  createTerminal(sessionId: string, workspaceRoot?: string, projectId?: string): Promise<TerminalSessionInfo>;
+  createTerminal(sessionId: string, workspaceRoot?: string, projectId?: string, preferredShell?: string): Promise<TerminalSessionInfo>;
   writeTerminal(terminalId: string, data: string): Promise<void>;
   resizeTerminal(terminalId: string, columns: number, rows: number): Promise<void>;
   closeTerminal(terminalId: string): Promise<void>;
@@ -231,11 +250,37 @@ export interface EidosRuntimeAPI {
     paths: string[],
     operationId: string,
   ): Promise<SessionGitMutationResult>;
+  unstageSessionGit(
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ): Promise<SessionGitMutationResult>;
+  discardSessionGit(
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ): Promise<SessionGitMutationResult>;
+  stageSessionGitHunk(
+    sessionId: string,
+    patch: string,
+    reverse: boolean,
+    operationId: string,
+  ): Promise<SessionGitMutationResult>;
+  suggestSessionGitCommitMessage(
+    sessionId: string,
+    includeUnstaged?: boolean,
+  ): Promise<SessionGitSuggestCommitMessageResult>;
   commitSessionGit(
     sessionId: string,
     message: string,
     operationId: string,
   ): Promise<SessionGitCommitResult>;
+  listCheckpoints(sessionId: string): Promise<SessionCheckpoint[]>;
+  rewindCheckpoint(
+    sessionId: string,
+    checkpointId: string,
+    operationId?: string,
+  ): Promise<CheckpointRewindResult>;
   listReviewComments(
     sessionId: string,
     path?: string,
@@ -367,6 +412,7 @@ export interface EidosRuntimeAPI {
   listSkills(): Promise<SkillListResult>;
   getResourceStatus(): Promise<ResourceStatus>;
   retryResource(request: ResourceRetryRequest): Promise<ResourceRetryResponse>;
+  cleanupResources(): Promise<ResourceCleanupResponse>;
   readSkillDetail(qualifiedId: string): Promise<SkillDetail>;
   setSkillEnabled(qualifiedId: string, enabled: boolean): Promise<SkillMetadata>;
   removeSkill(qualifiedId: string): Promise<SkillRemoval>;

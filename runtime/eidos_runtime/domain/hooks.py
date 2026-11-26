@@ -28,6 +28,7 @@ class HookDefinition(EidosFrozenModel):
     matcher: str | None = Field(default=None, max_length=1024)
     handler_type: Literal["command", "mcp_tool", "prompt", "agent"] = "command"
     command: str = Field(default="", max_length=32768)
+    command_windows: str | None = Field(default=None, max_length=32768)
     timeout_seconds: StrictInt = Field(default=600, ge=1, le=600)
     background: StrictBool = False
     status_message: str | None = Field(default=None, max_length=1024)
@@ -35,6 +36,12 @@ class HookDefinition(EidosFrozenModel):
     mcp_server: str | None = Field(default=None, max_length=128)
     mcp_tool: str | None = Field(default=None, max_length=128)
     mcp_input: dict[str, JsonValue] = Field(default_factory=dict)
+
+    def command_for_platform(self, *, windows: bool) -> str:
+        """Select the platform-specific command with POSIX fallback."""
+        if windows and self.command_windows:
+            return self.command_windows
+        return self.command
 
     @property
     def supported(self) -> bool:

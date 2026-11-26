@@ -153,12 +153,21 @@ class ContextManagementRepository(Repository):
                 ORDER BY a.creation_seq DESC LIMIT 20
             """, (run_id,)).fetchall()
         provider_tokens = None
+        cache_read_tokens: int | None = None
+        cache_hit_rate_percent: float | None = None
         errors = []
         for row in rows:
             usage = ModelUsage.model_validate_json(row["usage_json"])
             plan = ContextPlan.model_validate_json(row["plan_json"])
             if latest is not None and row["id"] == latest[0]:
                 provider_tokens = usage.input_tokens
+            if cache_read_tokens is None and usage.cache_read_tokens is not None:
+                cache_read_tokens = usage.cache_read_tokens
+                if usage.input_tokens and usage.input_tokens > 0:
+                    cache_hit_rate_percent = round(
+                        min(100.0, (usage.cache_read_tokens / usage.input_tokens) * 100.0),
+                        1,
+                    )
             if usage.input_tokens:
                 errors.append(round((plan.token_budget.projected_input_tokens - usage.input_tokens) / usage.input_tokens * 100, 1))
         budget = latest[1] if latest else None
@@ -186,6 +195,8 @@ class ContextManagementRepository(Repository):
             sections=_allocate_sections(budget.sections or (), provider_tokens if provider_tokens is not None else budget.projected_input_tokens) if budget else (),
             cleared_tool_results=self._cleared_count(run_id) if latest else 0,
             calibration_samples=len(errors), last_estimation_error_percent=errors[0] if errors else None,
+            cache_read_tokens=cache_read_tokens,
+            cache_hit_rate_percent=cache_hit_rate_percent,
             compaction=compaction,
             manual_pending=self.pending(run_id) is not None,
             plan_id=latest[0] if latest else None,

@@ -4,6 +4,7 @@ import { Button } from "../Button.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { Select } from "../Select.js";
 import { MarkdownEditor } from "../MarkdownEditor.js";
+import { applyThemePreference, readThemePreference, writeThemePreference, type ThemePreference } from "../../theme.js";
 import { SettingRow } from "./SettingRow.js";
 import { SettingSection } from "./SettingSection.js";
 import { usePersonalizationSettings } from "./usePersonalizationSettings.js";
@@ -26,6 +27,7 @@ export function PersonalizationSettings({ ready = true, paused = false, onShowTo
 }) {
   const id = useId();
   const [reloadOpen, setReloadOpen] = useState(false);
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() => readThemePreference());
   const { saved, draft, busy, error, dirty, languageError, load, update, handleBlur } = usePersonalizationSettings({ ready, paused, onShowToast, onDirtyChange, onBusyChange });
 
   return (
@@ -125,6 +127,27 @@ export function PersonalizationSettings({ ready = true, paused = false, onShowTo
           </SettingSection>
         </fieldset>
       </form>
+      <SettingSection title="外观">
+        <SettingRow
+          title={<label htmlFor={`${id}-theme`}>主题</label>}
+          action={
+            <Select
+              id={`${id}-theme`}
+              value={themePreference}
+              onChange={(event) => {
+                const next = event.target.value as ThemePreference;
+                setThemePreference(next);
+                writeThemePreference(next);
+                applyThemePreference(next);
+              }}
+            >
+              <option value="system">跟随系统</option>
+              <option value="light">浅色</option>
+              <option value="dark">深色</option>
+            </Select>
+          }
+        />
+      </SettingSection>
       <ConfirmDialog
         open={reloadOpen}
         title="重新读取个性化设置？"

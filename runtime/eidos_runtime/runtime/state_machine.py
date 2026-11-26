@@ -73,6 +73,7 @@ class OperationStatus(StrEnum):
 
 class EventType(StrEnum):
     HOOK_SOURCES_CHANGED = "hook_sources.changed"
+    GUARDRAILS_CHANGED = "guardrails.settings_changed"
     SHELL_ENVIRONMENT_CHANGED = "shell_environment.settings_changed"
     PERSONALIZATION_CHANGED = "personalization.settings_changed"
     WEB_SEARCH_CHANGED = "web_search.settings_changed"

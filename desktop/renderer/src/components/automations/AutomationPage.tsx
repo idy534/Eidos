@@ -530,7 +530,12 @@ export function AutomationPage({
 
                 {selected.pauseReason && (
                   <p role="status" className="automation-pause-banner">
-                    {selected.pauseReason === "one_shot_fired" ? "这个一次性任务已经结束。" : selected.pauseReason}
+                    {({
+                      one_shot_fired: "这个一次性任务已经结束。",
+                      guardrail_tokens_exceeded: "本轮 Token 已达到护栏上限，任务已暂停。恢复后将从 0 重新计算。",
+                      guardrail_cost_exceeded: "本轮 Credits 已达到护栏上限，任务已暂停。恢复后将从 0 重新计算。",
+                      guardrail_idle_runs: "连续多次执行未成功，任务已暂停。恢复后将重新计数。",
+                    } as Record<string, string>)[selected.pauseReason] ?? selected.pauseReason}
                   </p>
                 )}
 

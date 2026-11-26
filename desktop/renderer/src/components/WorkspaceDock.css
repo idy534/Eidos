@@ -700,6 +700,11 @@ button.environment-popover__row:hover:not(:disabled) {
   min-height: 0;
 }
 
+.terminal-panel__inner {
+  width: 100%;
+  height: 100%;
+}
+
 .terminal-panel__host .xterm,
 .terminal-panel__host .xterm-viewport {
   height: 100%;

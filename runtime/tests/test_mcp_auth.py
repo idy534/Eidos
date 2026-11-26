@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-import json
 import base64
+import gzip
 import hashlib
+import json
 from urllib.parse import parse_qs, urlsplit
+import zlib
 
 import anyio
 import httpx2
 import pytest
 from mcp.shared.auth import OAuthToken
+from pydantic import ValidationError
 
 from eidos_runtime.infrastructure import mcp_auth
 from eidos_runtime.infrastructure.mcp_auth import Credentials, McpAuthError, github_device_login, refresh_github, oauth_callback
@@ -187,10 +190,116 @@ def test_oauth_discovery_cannot_downgrade_token_requests_to_plain_http():
 def test_python_connection_fixtures_match_the_generated_contract():
     from pathlib import Path
     from eidos_runtime.models.mcp_connections import McpConnectionState, BuiltinPluginsResponse
-    from pydantic import ValidationError
     fixture = json.loads((Path(__file__).resolve().parents[2] / "protocol/fixtures/mcp-connections-v1.json").read_text())
     McpConnectionState.model_validate(fixture["connected"])
     McpConnectionRequest.model_validate(fixture["connect"])
     BuiltinPluginsResponse.model_validate(fixture["builtins"])
     with pytest.raises(ValidationError):
         McpConnectionState.model_validate({**fixture["connected"], "accessToken": "forbidden"})
+
+
+def test_bounded_transport_decompresses_gzip_and_deflate_and_rejects_bombs_or_unknown_codecs():
+    payload = json.dumps({"ok": True, "tools": ["repo"]}).encode("utf-8")
+    gzipped = gzip.compress(payload)
+    deflated = zlib.compress(payload)
+    bomb = gzip.compress(b"A" * (mcp_auth.MAX_HTTP_BYTES + 4096))
+
+    async def scenario():
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            if request.url.path == "/gzip":
+                return httpx2.Response(
+                    200,
+                    headers={"Content-Type": "application/json", "Content-Encoding": "gzip"},
+                    content=gzipped,
+                )
+            if request.url.path == "/deflate":
+                return httpx2.Response(
+                    200,
+                    headers={"Content-Type": "application/json", "Content-Encoding": "deflate"},
+                    content=deflated,
+                )
+            if request.url.path == "/bomb":
+                return httpx2.Response(
+                    200,
+                    headers={"Content-Type": "application/json", "Content-Encoding": "gzip"},
+                    content=bomb,
+                )
+            return httpx2.Response(
+                200,
+                headers={"Content-Encoding": "mystery-codec"},
+                content=payload,
+            )
+
+        transport = mcp_auth.BoundedMcpTransport(httpx2.MockTransport(handler))
+        async with httpx2.AsyncClient(transport=transport) as client:
+            gzip_response = await client.get("https://fixture.example/gzip")
+            assert gzip_response.json() == {"ok": True, "tools": ["repo"]}
+
+            deflate_response = await client.get("https://fixture.example/deflate")
+            assert deflate_response.json() == {"ok": True, "tools": ["repo"]}
+
+            with pytest.raises(httpx2.StreamError, match="mcp_response_too_large"):
+                await client.get("https://fixture.example/bomb")
+
+            with pytest.raises(httpx2.StreamError, match="mcp_compressed_response_unsupported"):
+                await client.get("https://fixture.example/unknown")
+
+    anyio.run(scenario)
+
+
+def test_bounded_transport_inherits_proxy_env_and_respects_opt_out(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:8899")
+    monkeypatch.setenv("EIDOS_MCP_TRUST_ENV", "1")
+    monkeypatch.setenv("NO_PROXY", "")
+
+    transport = mcp_auth.BoundedMcpTransport()
+    try:
+        proxied = transport._transport_for_url(httpx2.URL("https://api.githubcopilot.com/mcp/"))
+        assert proxied is not transport.transport
+        assert transport._transport_for_url(httpx2.URL("http://127.0.0.1:8000/callback")) is transport.transport
+        assert transport._transport_for_url(httpx2.URL("http://localhost:8000/callback")) is transport.transport
+        assert mcp_auth.client_kwargs()["trust_env"] is True
+    finally:
+        anyio.run(transport.aclose)
+
+    monkeypatch.setenv("EIDOS_MCP_TRUST_ENV", "0")
+    disabled_transport = mcp_auth.BoundedMcpTransport()
+    try:
+        assert disabled_transport.trust_env is False
+        assert disabled_transport._transport_for_url(httpx2.URL("https://api.githubcopilot.com/mcp/")) is disabled_transport.transport
+        assert mcp_auth.client_kwargs()["trust_env"] is False
+    finally:
+        anyio.run(disabled_transport.aclose)
+
+
+def test_mcp_connection_request_validates_browser_client_id():
+    valid = McpConnectionRequest(
+        plugin_id="eidos-github",
+        server_id="github",
+        action="connect",
+        method="browser",
+        client_id="Ov23liTestClientId123",
+        operation_id="op-1",
+    )
+    assert valid.client_id == "Ov23liTestClientId123"
+
+    with pytest.raises(ValidationError):
+        McpConnectionRequest(
+            plugin_id="eidos-github",
+            server_id="github",
+            action="connect",
+            method="token",
+            token="pat-token",
+            client_id="Ov23liTestClientId123",
+            operation_id="op-2",
+        )
+
+    with pytest.raises(ValidationError):
+        McpConnectionRequest(
+            plugin_id="eidos-github",
+            server_id="github",
+            action="connect",
+            method="browser",
+            client_id="bad client id",
+            operation_id="op-3",
+        )

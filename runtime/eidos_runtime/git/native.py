@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 import re
 import selectors
+from shlex import quote
 import shutil
 import signal
 import stat
@@ -102,6 +103,30 @@ def _native_git_path() -> str:
     if installed.is_file():
         return str(installed)
     return str(bundle / "build/windows-runtime/git/cmd/git.exe")
+
+
+def _windows_ssh_command(git_binary: Path) -> str:
+    """Prefer native Windows OpenSSH so OS agent keys work cleanly."""
+    system_root = os.environ.get("SYSTEMROOT")
+    if system_root:
+        native_ssh = Path(system_root) / "System32" / "OpenSSH" / "ssh.exe"
+        if native_ssh.is_file():
+            return f"{quote(native_ssh.as_posix())} -o BatchMode=yes"
+    bundled_ssh = git_binary.parents[1] / "usr/bin/ssh.exe"
+    return f"{quote(bundled_ssh.as_posix())} -o BatchMode=yes"
+
+
+def _validated_windows_ssh_auth_sock(value: str | None) -> str | None:
+    """Keep valid Windows OpenSSH named pipes or local agent paths."""
+    if not value or "\x00" in value or any(ord(character) < 32 for character in value):
+        return None
+    if value.startswith("\\\\.\\pipe\\"):
+        return value if len(value) > len("\\\\.\\pipe\\") else None
+    if value.startswith("//./pipe/"):
+        return value if len(value) > len("//./pipe/") else None
+    if os.path.exists(value):
+        return value
+    return None
 
 
 def _windows_git_environment(binary: Path, editor_policy: GitEditorPolicy) -> dict[str, str]:
@@ -232,11 +257,13 @@ class HardenedGitRunner:
         if local_files.WINDOWS:
             environment.update(_windows_git_environment(Path(self.git_executable), editor_policy))
             if profile is GitExecutionProfile.REMOTE:
-                from shlex import quote
-
-                ssh = Path(self.git_executable).parents[1] / "usr/bin/ssh.exe"
-                environment["GIT_SSH_COMMAND"] = f"{quote(ssh.as_posix())} -o BatchMode=yes"
-                environment.pop("SSH_AUTH_SOCK", None)
+                environment["GIT_SSH_COMMAND"] = _windows_ssh_command(Path(self.git_executable))
+                environment["USERPROFILE"] = str(self.user_home)
+                win_sock = _validated_windows_ssh_auth_sock(os.environ.get("SSH_AUTH_SOCK"))
+                if win_sock is not None:
+                    environment["SSH_AUTH_SOCK"] = win_sock
+                else:
+                    environment.pop("SSH_AUTH_SOCK", None)
         if git_index_file is not None:
             environment["GIT_INDEX_FILE"] = str(git_index_file)
         if disable_transport:
@@ -466,6 +493,83 @@ class GitCli:
             operation="stage",
             profile=GitExecutionProfile.LOCAL_MUTATION,
         )
+
+    def unstage(self, cwd: Path, paths: Sequence[str]) -> None:
+        has_head = (
+            self._runner.run(
+                ("rev-parse", "--verify", "--quiet", "HEAD"),
+                cwd=cwd,
+                operation="unstage-head-check",
+                allow_returncodes=(1,),
+            ).returncode
+            == 0
+        )
+        if has_head:
+            self._runner.run(
+                ("reset", "HEAD", "--", *paths),
+                cwd=cwd,
+                operation="unstage",
+                profile=GitExecutionProfile.LOCAL_MUTATION,
+            )
+            return
+        self._runner.run(
+            ("rm", "--cached", "--quiet", "-r", "--", *paths),
+            cwd=cwd,
+            operation="unstage",
+            profile=GitExecutionProfile.LOCAL_MUTATION,
+        )
+
+    def discard(
+        self,
+        cwd: Path,
+        *,
+        tracked_paths: Sequence[str],
+        untracked_paths: Sequence[str],
+    ) -> None:
+        if tracked_paths:
+            self._runner.run(
+                ("checkout", "--", *tracked_paths),
+                cwd=cwd,
+                operation="discard-tracked",
+                profile=GitExecutionProfile.LOCAL_MUTATION,
+            )
+        if untracked_paths:
+            self._runner.run(
+                ("clean", "-fd", "--", *untracked_paths),
+                cwd=cwd,
+                operation="discard-untracked",
+                profile=GitExecutionProfile.LOCAL_MUTATION,
+            )
+
+    def apply_cached_patch(
+        self, cwd: Path, patch: bytes, *, reverse: bool = False
+    ) -> None:
+        overrides = filter_config_overrides(self._runner, cwd)
+        self._runner.run(
+            (
+                "apply",
+                "--cached",
+                "--unidiff-zero",
+                *(("--reverse",) if reverse else ()),
+                "-",
+            ),
+            cwd=cwd,
+            operation="stage-hunk",
+            stdin=patch,
+            config_overrides=overrides,
+            profile=GitExecutionProfile.LOCAL_MUTATION,
+        )
+
+    def cached_diff_stat(self, cwd: Path, *, max_bytes: int = 16384) -> str:
+        result = self._runner.run(
+            ("diff", "--cached", "--stat", "--no-ext-diff", "--no-textconv"),
+            cwd=cwd,
+            operation="diff-stat",
+            config_overrides=filter_config_overrides(self._runner, cwd),
+            output_limit_bytes=max_bytes,
+            allow_returncodes=(0, 1),
+        )
+        return result.stdout.decode("utf-8", errors="replace")
 
     def remote_status(self, cwd: Path):
         from eidos_runtime.git.models import GitRemote, GitRemoteObservation, GitUpstream

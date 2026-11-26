@@ -5,7 +5,10 @@ import path from "node:path";
 import { compile } from "json-schema-to-typescript";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const schema = JSON.parse(execFileSync(path.join(root, ".venv/bin/python"), ["-c", `
+const venvPython = process.platform === "win32"
+  ? path.join(root, ".venv", "Scripts", "python.exe")
+  : path.join(root, ".venv", "bin", "python");
+const schema = JSON.parse(execFileSync(venvPython, ["-c", `
 import json
 from eidos_runtime.protocol.schemas import ClosedModel, ProjectDto
 from eidos_runtime.protocol.git_workspaces import GitWorkspaceContract

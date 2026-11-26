@@ -4,14 +4,17 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import parse_qs, urlsplit
-import time
 import logging
+import os
+import time
+from urllib.parse import parse_qs, urlsplit
 from weakref import WeakValueDictionary
 
 import anyio
 from anyio.lowlevel import RunVar
 import httpx2
+from httpx2._decoders import DecodingError, MultiDecoder, SUPPORTED_DECODERS
+from httpx2._utils import URLPattern, get_environment_proxies
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from authlib.integrations.base_client.errors import OAuthError
 from mcp import ClientSession
@@ -57,6 +60,12 @@ class Credentials(EidosFrozenModel):
     token_endpoint: str | None = None
 
 
+def _mcp_trust_env() -> bool:
+    return os.environ.get("EIDOS_MCP_TRUST_ENV", "1").strip().lower() not in {
+        "0", "false", "no", "off",
+    }
+
+
 class _BoundedStream(httpx2.AsyncByteStream):
     def __init__(self, stream: httpx2.AsyncByteStream) -> None:
         self.stream = stream
@@ -73,25 +82,113 @@ class _BoundedStream(httpx2.AsyncByteStream):
         await self.stream.aclose()
 
 
+class _BoundedDecodedStream(httpx2.AsyncByteStream):
+    def __init__(self, stream: httpx2.AsyncByteStream, encodings: list[str]) -> None:
+        self.stream = stream
+        try:
+            self._decoder = MultiDecoder(encodings)
+        except DecodingError as error:
+            raise httpx2.StreamError("mcp_response_decode_failed") from error
+
+    async def __aiter__(self):
+        raw_received = 0
+        decoded_received = 0
+        try:
+            async for chunk in self.stream:
+                raw_received += len(chunk)
+                if raw_received > MAX_HTTP_BYTES:
+                    raise httpx2.StreamError("mcp_response_too_large")
+                for decoded in self._decoder.decode(chunk):
+                    if not decoded:
+                        continue
+                    decoded_received += len(decoded)
+                    if decoded_received > MAX_HTTP_BYTES:
+                        raise httpx2.StreamError("mcp_response_too_large")
+                    yield decoded
+            for decoded in self._decoder.flush():
+                if not decoded:
+                    continue
+                decoded_received += len(decoded)
+                if decoded_received > MAX_HTTP_BYTES:
+                    raise httpx2.StreamError("mcp_response_too_large")
+                yield decoded
+        except DecodingError as error:
+            raise httpx2.StreamError("mcp_response_decode_failed") from error
+
+    async def aclose(self) -> None:
+        await self.stream.aclose()
+
+
 class BoundedMcpTransport(httpx2.AsyncBaseTransport):
     """Bound HTTP response bytes. The official SDK still parses JSON and SSE."""
-    def __init__(self, transport: httpx2.AsyncBaseTransport | None = None) -> None:
-        self.transport = transport or httpx2.AsyncHTTPTransport(retries=0, trust_env=False)
+    def __init__(
+        self,
+        transport: httpx2.AsyncBaseTransport | None = None,
+        *,
+        trust_env: bool | None = None,
+    ) -> None:
+        self.trust_env = _mcp_trust_env() if trust_env is None else trust_env
+        self.transport = transport or httpx2.AsyncHTTPTransport(retries=0, trust_env=self.trust_env)
+        self._mounts: dict[URLPattern, httpx2.AsyncBaseTransport | None] = {}
+        if transport is None and self.trust_env:
+            mounts: dict[URLPattern, httpx2.AsyncBaseTransport | None] = {
+                URLPattern(key): (
+                    None
+                    if proxy_url is None
+                    else httpx2.AsyncHTTPTransport(
+                        retries=0,
+                        trust_env=True,
+                        proxy=httpx2.Proxy(url=proxy_url),
+                    )
+                )
+                for key, proxy_url in get_environment_proxies().items()
+            }
+            for host in ("127.0.0.1", "[::1]", "localhost"):
+                mounts.setdefault(URLPattern(f"all://{host}"), None)
+            self._mounts = dict(sorted(mounts.items()))
+
+    def _transport_for_url(self, url: httpx2.URL) -> httpx2.AsyncBaseTransport:
+        for pattern, mounted_transport in self._mounts.items():
+            if pattern.matches(url):
+                return self.transport if mounted_transport is None else mounted_transport
+        return self.transport
 
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         if request.url.scheme != "https" and not (
             request.url.scheme == "http" and request.url.host in {"127.0.0.1", "::1", "localhost"}
         ):
             raise McpAuthError("mcp_url_invalid")
-        response = await self.transport.handle_async_request(request)
-        if response.headers.get("Content-Encoding", "identity").lower() != "identity":
+        response = await self._transport_for_url(request.url).handle_async_request(request)
+        values = response.headers.get_list("content-encoding", split_commas=True)
+        encodings = [value.strip().lower() for value in values if value.strip().lower() not in {"", "identity"}]
+        if any(encoding not in SUPPORTED_DECODERS for encoding in encodings):
             await response.aclose()
             raise httpx2.StreamError("mcp_compressed_response_unsupported")
+        if encodings:
+            cleaned_headers = [
+                (name, value)
+                for name, value in response.headers.raw
+                if name.lower() not in {b"content-encoding", b"content-length"}
+            ]
+            try:
+                decoded_stream = _BoundedDecodedStream(response.stream, encodings)
+            except BaseException:
+                await response.aclose()
+                raise
+            return httpx2.Response(
+                response.status_code,
+                headers=cleaned_headers,
+                stream=decoded_stream,
+                extensions=response.extensions,
+            )
         return httpx2.Response(response.status_code, headers=response.headers,
                                stream=_BoundedStream(response.stream), extensions=response.extensions)
 
     async def aclose(self) -> None:
         await self.transport.aclose()
+        for mounted_transport in self._mounts.values():
+            if mounted_transport is not None:
+                await mounted_transport.aclose()
 
 
 class DeviceCode(EidosFrozenModel):
@@ -107,9 +204,20 @@ def expires_at(token: OAuthToken) -> int | None:
 
 
 def client_kwargs() -> dict[str, object]:
-    return {"timeout": httpx2.Timeout(15), "follow_redirects": False, "trust_env": False,
-            "transport": BoundedMcpTransport(),
-            "headers": {"Accept": "application/json", "Accept-Encoding": "identity", "User-Agent": "Eidos-Desktop"}}
+    trust_env = _mcp_trust_env()
+    supported = [encoding for encoding in ("gzip", "deflate", "br", "zstd") if encoding in SUPPORTED_DECODERS]
+    accept_encoding = ", ".join(supported) if supported else "identity"
+    return {
+        "timeout": httpx2.Timeout(15),
+        "follow_redirects": False,
+        "trust_env": trust_env,
+        "transport": BoundedMcpTransport(trust_env=trust_env),
+        "headers": {
+            "Accept": "application/json",
+            "Accept-Encoding": accept_encoding,
+            "User-Agent": "Eidos-Desktop",
+        },
+    }
 
 
 async def github_device_login(client_id: str, scopes: list[str],

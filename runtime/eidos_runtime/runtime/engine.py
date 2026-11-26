@@ -21,7 +21,11 @@ from pydantic import JsonValue, TypeAdapter
 from eidos_runtime.domain.capacity import CapacityExceeded
 from typing import TYPE_CHECKING, Callable, Protocol
 
-from eidos_runtime.context.builder import ContextBuild, ContextBuilder
+from eidos_runtime.context.builder import (
+    ContextBuild,
+    ContextBuilder,
+    MAX_CONTEXT_RECOVERY_LEVEL,
+)
 from eidos_runtime.context.budget import estimate_model_request_budget
 from eidos_runtime.context.project_rules import ProjectRuleResolver
 from eidos_runtime.persistence.rule_paths import RulePathRepository
@@ -39,6 +43,7 @@ from eidos_runtime.model.client import ModelClient
 from eidos_runtime.domain.approval_policy import FULL_ACCESS_WARNING_VERSION
 from eidos_runtime.domain.run_termination import RunTermination
 from eidos_runtime.domain.long_task import LongTaskStatus, SafePoint
+from eidos_runtime.runtime.long_task import compute_permission_snapshot_hash, observe_git_head
 from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalDecision
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.contracts import (
@@ -149,8 +154,10 @@ class RuntimeEngine:
         lifecycle_observer: Callable[[LoopLifecycleEvent], None] | None = None,
         hook_lifecycle: HookLifecycle | None = None,
         browser_host: BrowserHost | None = None,
+        checkpoint_capture: Callable[[str], object] | None = None,
     ) -> None:
         self.browser_host = browser_host
+        self.checkpoint_capture = checkpoint_capture
         self.collaboration = collaboration
         self.store = store
         self.model = model
@@ -174,6 +181,15 @@ class RuntimeEngine:
     def run(self, run_id: str, cancel: threading.Event) -> None:
         run = self.store.read_run(run_id)
         self._emit_started(run_id, run)
+        if self.checkpoint_capture is not None:
+            try:
+                self.checkpoint_capture(run_id)
+            except Exception:
+                logger.warning(
+                    "checkpoint_capture_failed",
+                    extra={"run_id": run_id},
+                    exc_info=logger.isEnabledFor(logging.DEBUG),
+                )
         repository_context = RunRepositoryContext()
         repository_snapshot = None
         repository_state = None
@@ -311,6 +327,7 @@ class RuntimeEngine:
                 # fuller view returns only when it is clearly smaller than that.
                 self.context_recovery_ceilings: list[int] = []
                 self.context_projected_tokens = 0
+                self._consecutive_capacity_failures = 0
                 while True:
                     try:
                         self._drive(run_context, resources, cancel, repository_context)
@@ -326,8 +343,27 @@ class RuntimeEngine:
                         raise
                     except CapacityExceeded as error:
                         self.store.complete_current_step(run_id, "failed", reason="request_capacity")
-                        self.context_recovery_ceilings.append(self.context_projected_tokens)
-                        self.context_recovery_level += 1
+                        self._consecutive_capacity_failures += 1
+                        if self.context_recovery_level < MAX_CONTEXT_RECOVERY_LEVEL:
+                            self.context_recovery_level += 1
+                            self.context_recovery_ceilings.append(self.context_projected_tokens)
+                        elif self.context_recovery_ceilings:
+                            self.context_recovery_ceilings[-1] = min(
+                                self.context_recovery_ceilings[-1],
+                                self.context_projected_tokens,
+                            )
+                        delay = _recovery_backoff_seconds(
+                            self._consecutive_capacity_failures,
+                            first_delay=1.0,
+                        )
+                        logger.warning(
+                            "runtime_capacity_recovery_backoff run_id=%s level=%d consecutive=%d delay_s=%.1f reason=%s",
+                            run_id,
+                            self.context_recovery_level,
+                            self._consecutive_capacity_failures,
+                            delay,
+                            error.reason,
+                        )
                         run_context = run_context.model_copy(update={"model_context": ({
                             "type": "context", "sectionId": "runtime-feedback", "content": (
                                 "The last request could not be processed (" + error.reason + "). "
@@ -335,7 +371,7 @@ class RuntimeEngine:
                                 "read saved output by page, or use another approach. Do not repeat uncertain side effects."
                             ),
                         },)})
-                        if cancel.wait(1):
+                        if cancel.wait(delay):
                             raise RuntimeCancelled
         except (PlanningSuspended, AgentSuspended):
             self.events.deliver_pending()
@@ -526,6 +562,7 @@ class RuntimeEngine:
         if self.collaboration:
             self.collaboration.repository.clear_wait(run.run_id)
 
+        consecutive_recoveries = 0
         while True:
             self._check_cancel(run.run_id, cancel)
             if resources.hooks is not None:
@@ -902,6 +939,10 @@ class RuntimeEngine:
                                 "split large writes and read existing results by page."
                             ),
                         },)})
+                        consecutive_recoveries += 1
+                        self._wait_recovery_backoff(
+                            run.run_id, "request_capacity", consecutive_recoveries, cancel
+                        )
                         context_recovered = True
                         break
                     if (
@@ -982,9 +1023,15 @@ class RuntimeEngine:
                                 "smaller tool calls and a long answer into parts."
                             ),
                         },)})
+                        consecutive_recoveries += 1
+                        self._wait_recovery_backoff(
+                            run.run_id,
+                            "length",
+                            consecutive_recoveries,
+                            cancel,
+                            first_delay=1.0,
+                        )
                         context_recovered = True
-                        if cancel.wait(1):
-                            raise RuntimeCancelled
                         break
                     self._handle_sampling_failure(run.run_id, error, step=step)
                     return
@@ -1046,6 +1093,10 @@ class RuntimeEngine:
                     # The next step must see why this one was rejected; without
                     # it the model receives the same context and repeats itself.
                     keep_runtime_feedback = True
+                    consecutive_recoveries += 1
+                    self._wait_recovery_backoff(
+                        run.run_id, reason, consecutive_recoveries, cancel
+                    )
                     context_recovered = True
                     break
 
@@ -1106,6 +1157,7 @@ class RuntimeEngine:
 
                 guard.observe_empty_response(False)
                 self.store.clear_protocol_errors(run.run_id)
+                self._consecutive_capacity_failures = 0
                 sampled = sampling.accept_validated_response(
                     step, sampled, validation, cancel
                 )
@@ -1207,6 +1259,10 @@ class RuntimeEngine:
                 continue
             if repeated is not None:
                 self.store.complete_current_step(run.run_id, "completed", reason="tool_recovery")
+                consecutive_recoveries += 1
+                self._wait_recovery_backoff(
+                    run.run_id, "repeated_tool_call", consecutive_recoveries, cancel
+                )
                 run = run.model_copy(update={"model_context": (_loop_recovery_context(
                     "Repeated tools did not advance the task. Skip this unsuccessful route and choose another tool or method."
                 ),)})
@@ -1301,6 +1357,10 @@ class RuntimeEngine:
                 mutation = self._pause_effective_time(run.run_id)
                 if mutation is not None:
                     self.events.publish(mutation, run=mutation.value)
+                consecutive_recoveries += 1
+                self._wait_recovery_backoff(
+                    run.run_id, "recover_no_progress", consecutive_recoveries, cancel
+                )
                 run = run.model_copy(update={
                     "model_context": (_loop_recovery_context("no_progress_state"),)
                 })
@@ -1315,6 +1375,10 @@ class RuntimeEngine:
             if tool_decision.action == LoopAction.PAUSE:
                 if self.store.read_run(run.run_id)["status"] == "interrupted":
                     return
+                consecutive_recoveries += 1
+                self._wait_recovery_backoff(
+                    run.run_id, "no_progress", consecutive_recoveries, cancel
+                )
                 run = run.model_copy(update={"model_context": (_loop_recovery_context(
                     "The previous tool route did not work. Respect its error and permissions; try an alternative or explain the remaining limitation."
                 ),)})
@@ -1327,6 +1391,7 @@ class RuntimeEngine:
                     update={"model_context": (*run.model_context, *outcome.feedback)}
                 )
                 continue
+            consecutive_recoveries = 0
             mutation = self._pause_effective_time(run.run_id)
             if mutation is not None:
                 self.events.publish(mutation, run=mutation.value)
@@ -1522,6 +1587,27 @@ class RuntimeEngine:
             code = "MODEL_RATE_LIMITED"
         self._fail(run_id, code, termination=termination)
 
+    def _wait_recovery_backoff(
+        self,
+        run_id: str,
+        reason: str,
+        consecutive: int,
+        cancel: threading.Event,
+        *,
+        first_delay: float = 0.0,
+    ) -> None:
+        delay = _recovery_backoff_seconds(consecutive, first_delay=first_delay)
+        if consecutive >= 2:
+            logger.warning(
+                "runtime_recovery_loop_backoff run_id=%s reason=%s consecutive=%d delay_s=%.1f",
+                run_id,
+                reason,
+                consecutive,
+                delay,
+            )
+        if delay > 0 and cancel.wait(delay):
+            raise RuntimeCancelled
+
     def _check_cancel(self, run_id: str, cancel: threading.Event) -> None:
         if cancel.is_set() or self.store.read_run(run_id)["status"] in {
             "canceled",
@@ -1538,6 +1624,10 @@ class RuntimeEngine:
             return
         progress = repository.record_safe_point(run_id, safe_point)
         if progress.status is LongTaskStatus.PAUSE_REQUESTED:
+            if progress.git_head is not None:
+                repository.record_snapshots(
+                    run_id, git_head=self._observe_run_git_head(run_id)
+                )
             progress = repository.mark_paused(run_id, safe_point)
         while progress.status in {
             LongTaskStatus.PAUSED,
@@ -1581,12 +1671,31 @@ class RuntimeEngine:
             retrieval=retrieval,
         )
         progress_repository = self.store.long_task_repository()
-        if progress_repository.read(step.run_id) is not None:
+        progress = progress_repository.read(step.run_id)
+        if progress is not None:
+            run_record = self.store.read_run(step.run_id)
+            permission_hash = compute_permission_snapshot_hash(
+                str(run_record.get("approvalMode") or "manual"),
+                self.store.run_permission_grants(step.run_id),
+            )
             progress_repository.record_snapshots(
                 step.run_id,
                 context_plan_id=snapshot.plan_id,
                 context_snapshot_id=snapshot.snapshot_id,
+                rule_snapshot_id=rule_snapshot.id,
+                permission_snapshot_hash=permission_hash,
+                git_head=(
+                    self._observe_run_git_head(step.run_id)
+                    if progress.git_head is not None else None
+                ),
             )
+
+    def _observe_run_git_head(self, run_id: str) -> str | None:
+        """The Run's own commits move HEAD; keep the resume baseline current."""
+        try:
+            return observe_git_head(self.store.workspace_for_run(run_id).path)
+        except Exception:
+            return None
 
     def _resume_effective_time(self) -> None:
         self.active_started = self.monotonic()
@@ -1702,6 +1811,13 @@ def _projection_state(built: ContextBuild) -> tuple[object, ...]:
         built.facts.projection_omitted_count,
         built.facts.projection_omitted_bytes,
     )
+
+
+def _recovery_backoff_seconds(attempt: int, *, first_delay: float = 0.0) -> float:
+    """Exponential backoff (1s..30s) so repeated recovery loops stay cancelable without busy-spinning."""
+    if attempt <= 1:
+        return max(0.0, first_delay)
+    return min(30.0, float(2 ** min(attempt - 2, 5)))
 
 
 def _loop_recovery_context(reason: str) -> dict[str, object]:

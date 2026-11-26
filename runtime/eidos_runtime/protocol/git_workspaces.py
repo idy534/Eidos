@@ -13,7 +13,9 @@ class GitWorkspaceRequest(WorkspaceDto):
     root_id: str = Field(min_length=1, max_length=256)
     method: Literal[
         "review/listComments", "review/createComment", "review/deleteComment",
-        "session/gitStatus", "session/gitDiff", "session/gitStage", "session/gitCommit",
+        "session/gitStatus", "session/gitDiff", "session/gitStage", "session/gitUnstage",
+        "session/gitDiscard", "session/gitStageHunk", "session/gitSuggestCommitMessage",
+        "session/gitCommit",
         "session/gitSwitchBranch", "session/gitCreateBranch", "session/gitRemoteStatus",
         "session/gitFetch", "session/gitPull", "session/gitPush", "session/gitMerge",
         "session/gitMergeAbort", "session/gitRebase", "session/gitRebaseContinue", "session/gitRebaseAbort",
@@ -21,6 +23,8 @@ class GitWorkspaceRequest(WorkspaceDto):
     parameters: (
         review_dto.ReviewCommentListRequestDto | review_dto.ReviewCommentCreateRequestDto | review_dto.ReviewCommentDeleteRequestDto
         | dto.SessionGitStatusRequestDto | dto.SessionGitDiffRequestDto | dto.SessionGitStageRequestDto
+        | dto.SessionGitUnstageRequestDto | dto.SessionGitDiscardRequestDto | dto.SessionGitStageHunkRequestDto
+        | dto.SessionGitSuggestCommitMessageRequestDto
         | dto.SessionGitCommitRequestDto | dto.SessionGitSwitchBranchRequestDto | dto.SessionGitCreateBranchRequestDto
         | dto.SessionGitRemoteStatusRequestDto | dto.SessionGitFetchRequestDto | dto.SessionGitPullRequestDto
         | dto.SessionGitPushRequestDto | dto.SessionGitMergeRequestDto | dto.SessionGitMergeAbortRequestDto
@@ -33,6 +37,8 @@ class GitWorkspaceContract(WorkspaceDto):
     response: (
         review_dto.ReviewCommentListResponseDto | review_dto.ReviewCommentCreateResponseDto | review_dto.ReviewCommentDeleteResponseDto
         | dto.SessionGitStatusResponseDto | dto.SessionGitDiffResponseDto | dto.SessionGitStageResponseDto
+        | dto.SessionGitUnstageResponseDto | dto.SessionGitDiscardResponseDto | dto.SessionGitStageHunkResponseDto
+        | dto.SessionGitSuggestCommitMessageResponseDto
         | dto.SessionGitCommitResponseDto | dto.SessionGitSwitchBranchResponseDto | dto.SessionGitCreateBranchResponseDto
         | dto.SessionGitRemoteStatusResponseDto | dto.SessionGitFetchResponseDto | dto.SessionGitPullResponseDto
         | dto.SessionGitPushResponseDto | dto.SessionGitMergeResponseDto | dto.SessionGitMergeAbortResponseDto

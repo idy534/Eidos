@@ -702,3 +702,68 @@ def test_channel_read_reveals_client_secret_for_local_display(channels):
     wire = read_resp.model_dump(mode="json", by_alias=True)
     assert wire["connection"]["clientSecret"] == "my-super-secret-key"
     assert "secret_ref" not in wire["connection"]
+
+
+def test_channel_service_notifies_only_on_state_or_delivery_changes(channels) -> None:
+    from eidos_runtime.application.channels import ChannelApplication
+    from eidos_runtime.runtime.channel_service import ChannelService
+
+    _, repository, _, _ = channels
+    changed: list[str] = []
+    service = ChannelService(
+        ChannelApplication(repository, None, None, None, None),
+        lambda: True,
+        lambda: None,
+        lambda _fn: True,
+        on_change=changed.append,
+    )
+    service._set_state("dingtalk", "connecting", None)
+    service._set_state("dingtalk", "connecting", None)
+    service._set_state("dingtalk", "connected", None)
+    service._set_state("dingtalk", "error", "连接中断")
+    service._set_state("dingtalk", "error", "连接中断")
+    assert changed == ["dingtalk", "dingtalk", "dingtalk"]
+
+
+def test_server_channel_save_emits_channel_updated_transient_notification(tmp_path) -> None:
+    output = io.StringIO()
+    server = RuntimeServer(output, tmp_path / "data")
+    try:
+        server.handle({
+            "jsonrpc": "2.0",
+            "id": "client-init",
+            "method": "initialize",
+            "params": {"protocolVersion": 1, "client": {"name": "test", "version": "1"}},
+        })
+        assert server.initialized, output.getvalue()
+        server.handle({
+            "jsonrpc": "2.0",
+            "id": "client-save",
+            "method": "channel/save",
+            "params": {
+                "channel": "feishu",
+                "expectedRevision": 0,
+                "clientSecret": "feishu-secret",
+                "config": {"enabled": False, "clientId": "feishu-app", "modelId": DEFAULT_MODEL_ID, "approvalMode": "manual"},
+            },
+        })
+        deadline = time.monotonic() + 5
+        messages: list[dict[str, object]] = []
+        while time.monotonic() < deadline:
+            messages = [json.loads(line) for line in output.getvalue().splitlines() if line.strip()]
+            if (
+                any(msg.get("id") == "client-save" and "result" in msg for msg in messages)
+                and any(
+                    msg.get("method") == "channel/updated" and msg.get("params") == {"channel": "feishu"}
+                    for msg in messages
+                )
+            ):
+                break
+            time.sleep(0.02)
+        assert any(msg.get("id") == "client-save" and "result" in msg for msg in messages), messages
+        assert any(
+            msg.get("method") == "channel/updated" and msg.get("params") == {"channel": "feishu"}
+            for msg in messages
+        ), messages
+    finally:
+        server.close()

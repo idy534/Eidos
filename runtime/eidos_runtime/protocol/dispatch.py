@@ -50,10 +50,13 @@ CONTROL_METHODS = frozenset({"initialize", "runtime/shutdown", "runtime/health"}
 CONFIG = "config"
 SESSIONS = "sessions"
 GIT = "git"
+TEAMS = "teams"
+BROWSER = "browser"
 
 # Reads of one Session: they observe writes to that Session only.
 SESSION_READS = frozenset({
     "agent/read",
+    "checkpoint/list",
     "event/list",
     "goal/get",
     "hook/history",
@@ -64,6 +67,7 @@ SESSION_READS = frozenset({
     "session/gitDiff",
     "session/gitRemoteStatus",
     "session/gitStatus",
+    "session/gitSuggestCommitMessage",
     "session/read",
     "session/readAround",
 })
@@ -78,7 +82,10 @@ CONFIG_READS = frozenset({
     "channel/read",
     "extension/read",
     "extension/readEvents",
+    "guardrails/read",
     "mcp/list",
+    "mcp/tools",
+    "memory/export",
     "memory/list",
     "memory/read",
     "model/list",
@@ -91,6 +98,7 @@ CONFIG_READS = frozenset({
     "schedule/history",
     "settings/read",
     "shellEnvironment/read",
+    "skill/detail",
     "skill/list",
     "webSearch/read",
 })
@@ -102,13 +110,84 @@ FREE_READS = frozenset({
     "context/usage",
     "input/read",
     "input/readAsset",
+    "model/discoverCustom",
     "project/gitContext",
     "toolCall/readContent",
     "toolCall/readText",
+    "workspace/findFiles",
     "workspace/listDirectory",
     "workspace/readAsset",
     "workspace/readFileForFind",
     "workspace/readFilePreview",
+})
+
+TEAM_READS = frozenset({
+    "team/memberChanges",
+    "team/messages",
+})
+
+TEAM_WRITES = frozenset({
+    "team/post",
+    "team/removeMember",
+    "team/setStatus",
+    "team/stopMembers",
+    "team/taskUpdate",
+    "team/updateSettings",
+})
+
+BROWSER_WRITES = frozenset({
+    "browser/clearExtensionToken",
+    "browser/clearProfile",
+    "browser/close",
+    "browser/open",
+    "browser/setExtensionToken",
+    "browser/setTarget",
+})
+
+PLAN_WRITES = frozenset({
+    "plan/edit",
+    "plan/read",
+})
+
+EXCLUSIVE_WRITES = frozenset({
+    "agent/definitionRemove",
+    "agent/definitionSave",
+    "channel/save",
+    "data/backup",
+    "guardrails/save",
+    "mcp/connection",
+    "mcp/create",
+    "mcp/remove",
+    "mcp/setEnabled",
+    "mcp/update",
+    "memory/edit",
+    "memory/policy",
+    "model/create",
+    "model/delete",
+    "model/qoder",
+    "model/update",
+    "personalization/save",
+    "plugin/activate",
+    "plugin/builtin",
+    "plugin/import",
+    "plugin/remove",
+    "plugin/setEnabled",
+    "plugin/setHookTrust",
+    "project/create",
+    "project/createFolders",
+    "project/delete",
+    "project/update",
+    "resource/retry",
+    "resource/cleanup",
+    "schedule/execute",
+    "schedule/refresh",
+    "schedule/runNow",
+    "settings/update",
+    "shellEnvironment/refresh",
+    "shellEnvironment/save",
+    "skill/remove",
+    "skill/setEnabled",
+    "webSearch/save",
 })
 
 # Git mutations share one lane, as before, and are observed by the Session.
@@ -125,11 +204,15 @@ GIT_WRITES = frozenset({
     "session/gitRebaseAbort",
     "session/gitRebaseContinue",
     "session/gitStage",
+    "session/gitStageHunk",
+    "session/gitDiscard",
+    "session/gitUnstage",
     "session/gitSwitchBranch",
 })
 
 # Session lifecycle: Git/Worktree lane plus the Session and the index.
 LIFECYCLE_WRITES = frozenset({
+    "checkpoint/rewind",
     "session/create",
     "session/delete",
     "session/fork",
@@ -161,6 +244,35 @@ RUN_WRITES: Mapping[str, str] = {
     "run/cancel": "runId",
     "run/resume": "runId",
 }
+
+EXPLICITLY_CLASSIFIED_METHODS = frozenset(
+    CONTROL_METHODS
+    | SESSION_READS
+    | INDEX_READS
+    | CONFIG_READS
+    | FREE_READS
+    | TEAM_READS
+    | GIT_WRITES
+    | LIFECYCLE_WRITES
+    | SESSION_WRITES
+    | TEAM_WRITES
+    | BROWSER_WRITES
+    | PLAN_WRITES
+    | EXCLUSIVE_WRITES
+    | set(RUN_WRITES)
+    | {
+        "input/draftRead",
+        "input/draftWrite",
+        "team/read",
+        "team/confirmRoster",
+        "agent/changes",
+        "hook/configuration",
+        "planning/answer",
+        "item/setFeedback",
+        "run/revise",
+        "sidebar/setPinned",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -200,11 +312,45 @@ def classify_request(method: str, params: object) -> RequestClass | None:
         return RequestClass("read", observes=frozenset({CONFIG}))
     if method in FREE_READS:
         return RequestClass("read")
+    if method == "team/read":
+        return RequestClass("read", observes=session | {TEAMS})
+    if method in TEAM_READS:
+        team = _scope("team", values.get("teamId"))
+        return RequestClass("read", observes=team or frozenset({TEAMS}))
+    if method == "agent/changes":
+        return RequestClass("read", observes=_scope("run", values.get("parentRunId")))
+    if method == "hook/configuration":
+        if values.get("action") == "read":
+            return RequestClass("read", observes=frozenset({CONFIG}) | session)
+        return EXCLUSIVE
     if method == "input/draftRead":
         return RequestClass("read", observes=_scope("draft", values.get("key")))
     if method == "input/draftWrite":
         draft = _scope("draft", values.get("key"))
         return RequestClass("keyed", draft, draft) if draft else EXCLUSIVE
+    if method in TEAM_WRITES:
+        team = _scope("team", values.get("teamId"))
+        return RequestClass("keyed", team, team | {TEAMS}) if team else EXCLUSIVE
+    if method == "team/confirmRoster":
+        return RequestClass("keyed", frozenset({TEAMS}), frozenset({TEAMS, SESSIONS}))
+    if method in PLAN_WRITES:
+        plan = _scope("plan", values.get("planId"))
+        return RequestClass("keyed", plan, plan | {SESSIONS}) if plan else EXCLUSIVE
+    if method == "planning/answer":
+        planning = _scope("planning", values.get("requestId"))
+        return RequestClass("keyed", planning, planning | {SESSIONS}) if planning else EXCLUSIVE
+    if method == "item/setFeedback":
+        item = _scope("item", values.get("itemId"))
+        return RequestClass("keyed", item, item) if item else EXCLUSIVE
+    if method == "run/revise":
+        run = _scope("run", values.get("sourceRunId"))
+        return RequestClass("keyed", run, frozenset({SESSIONS})) if run else EXCLUSIVE
+    if method == "sidebar/setPinned":
+        return RequestClass("keyed", frozenset({SESSIONS}), frozenset({SESSIONS}))
+    if method in BROWSER_WRITES:
+        return RequestClass("keyed", frozenset({BROWSER}), frozenset({BROWSER, CONFIG}))
+    if method in EXCLUSIVE_WRITES:
+        return EXCLUSIVE
     if method in GIT_WRITES:
         return RequestClass("keyed", frozenset({GIT}), session)
     if method in LIFECYCLE_WRITES:
@@ -460,8 +606,22 @@ class RequestDispatcher:
 
 __all__ = [
     "APPROVAL_RESPONSE",
+    "BROWSER_WRITES",
+    "CONFIG_READS",
     "CONTROL_METHODS",
     "EXCLUSIVE",
+    "EXCLUSIVE_WRITES",
+    "EXPLICITLY_CLASSIFIED_METHODS",
+    "FREE_READS",
+    "GIT_WRITES",
+    "INDEX_READS",
+    "LIFECYCLE_WRITES",
+    "PLAN_WRITES",
+    "RUN_WRITES",
+    "SESSION_READS",
+    "SESSION_WRITES",
+    "TEAM_READS",
+    "TEAM_WRITES",
     "RequestAdmission",
     "RequestClass",
     "RequestDispatcher",

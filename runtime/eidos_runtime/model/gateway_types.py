@@ -11,6 +11,7 @@ from eidos_runtime.models import EidosFrozenStrictModel
 class WireAPI(StrEnum):
     OPENAI_CHAT_COMPLETIONS = "openai_chat_completions"
     OPENAI_RESPONSES = "openai_responses"
+    ANTHROPIC_MESSAGES = "anthropic_messages"
 
 
 class RetryPolicy(EidosFrozenStrictModel):

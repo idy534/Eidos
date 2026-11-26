@@ -30,7 +30,7 @@ class AutomationRepository(Repository):
         return Automation.model_validate_json(row[0])
 
     def read(self, task_id: str) -> Automation:
-        with self.lock:
+        with self.database.read_scope(), self.lock:
             return self.read_in(self._connection(), task_id)
 
     def replay(self, operation_id: str, request: dict[str, object]) -> Automation | None:
@@ -38,7 +38,7 @@ class AutomationRepository(Repository):
         return Automation.model_validate(value) if value is not None else None
 
     def list(self, after: int = 0, limit: int = 20) -> list[tuple[int, Automation]]:
-        with self.lock:
+        with self.database.read_scope(), self.lock:
             return [(row[0], Automation.model_validate_json(row[1])) for row in self._connection().execute(
                 "SELECT sequence, config_json FROM scheduled_tasks WHERE sequence>? ORDER BY sequence LIMIT ?", (after, limit),
             ).fetchall()]
@@ -86,8 +86,10 @@ class AutomationRepository(Repository):
         def write(connection: sqlite3.Connection) -> CommittedMutation[Automation]:
             if cancel():
                 raise AutomationError("automation_canceled", "对话已停止，任务没有修改。")
+            previous_status: str | None = None
             if expected is not None:
                 current = self.read_in(connection, task.id)
+                previous_status = current.status
                 if current.revision != expected:
                     raise AutomationError("automation_revision_conflict", "任务已被修改，请重新查看后再更新。")
                 if current.deleted_at is not None:
@@ -97,6 +99,11 @@ class AutomationRepository(Repository):
             if task.deleted_at is None and task.status == "ACTIVE":
                 self.validate_binding_in(connection, task.target)
             event = self.save_in(connection, task)
+            if task.deleted_at is None:
+                if expected is None:
+                    _reset_automation_guardrail_cycle(connection, task.id, created_at=task.created_at, increment_cycle=False)
+                elif previous_status == "PAUSED" and task.status == "ACTIVE":
+                    _reset_automation_guardrail_cycle(connection, task.id, created_at=now_ms(), increment_cycle=True)
             return CommittedMutation(task, (event,))
         return self._write_committed(
             write, operation_id=operation_id, operation_scope="automation/mutate", operation_request=request,
@@ -104,14 +111,14 @@ class AutomationRepository(Repository):
         )
 
     def origin(self, run_id: str) -> AutomationOrigin | None:
-        with self.lock:
+        with self.database.read_scope(), self.lock:
             row = self._connection().execute("SELECT origin_json FROM automation_run_origins WHERE run_id=?", (run_id,)).fetchone()
         return AutomationOrigin.model_validate_json(row[0]) if row else None
 
     def origins_for_runs(self, run_ids: list[str]) -> dict[str, AutomationOrigin]:
         if not run_ids:
             return {}
-        with self.lock:
+        with self.database.read_scope(), self.lock:
             rows = self._connection().execute(
                 "SELECT run_id,origin_json FROM automation_run_origins WHERE run_id IN (" + ",".join("?" for _ in run_ids) + ")", run_ids,
             ).fetchall()
@@ -137,7 +144,7 @@ class AutomationRepository(Repository):
         ).fetchone() is not None
 
     def history(self, task_id: str, after: int = 0) -> tuple[list[AutomationOccurrence], str | None]:
-        with self.lock:
+        with self.database.read_scope(), self.lock:
             rows = self._connection().execute("SELECT o.*,r.status AS run_status,r.reconciliation_required FROM scheduled_occurrences o LEFT JOIN runs r ON r.id=o.run_id WHERE o.task_id=? AND (?=0 OR o.sequence<?) ORDER BY o.sequence DESC LIMIT 21", (task_id, after, after)).fetchall()
         return [self._occurrence(row) for row in rows[:20]], str(rows[19]["sequence"]) if len(rows) > 20 else None
 
@@ -245,3 +252,121 @@ class AutomationRepository(Repository):
             else:
                 append_event(connection, EventType.AUTOMATION_CHANGED, now_ms(), {"id": task.id})
             return run, item
+
+
+def _reset_automation_guardrail_cycle(
+    connection: sqlite3.Connection,
+    automation_id: str,
+    *,
+    created_at: int,
+    increment_cycle: bool,
+) -> None:
+    try:
+        max_seq = int(connection.execute("SELECT coalesce(max(creation_seq), 0) FROM runs").fetchone()[0])
+        if not increment_cycle:
+            connection.execute(
+                "INSERT OR IGNORE INTO automation_guardrail_state"
+                "(automation_id, cycle, consecutive_idle_runs, cycle_after_run_seq, cycle_started_at, progress_json) "
+                "VALUES(?,1,0,?,?,?)",
+                (automation_id, max_seq, created_at, "[]"),
+            )
+            return
+        connection.execute(
+            "INSERT INTO automation_guardrail_state"
+            "(automation_id, cycle, consecutive_idle_runs, cycle_after_run_seq, cycle_started_at, progress_json) "
+            "VALUES(?,1,0,?,?,?) "
+            "ON CONFLICT(automation_id) DO UPDATE SET "
+            "cycle=automation_guardrail_state.cycle+1, "
+            "consecutive_idle_runs=0, "
+            "cycle_after_run_seq=excluded.cycle_after_run_seq, "
+            "cycle_started_at=excluded.cycle_started_at, "
+            "progress_json='[]'",
+            (automation_id, max_seq, created_at, "[]"),
+        )
+    except sqlite3.OperationalError as error:
+        if "no such table" in str(error).lower():
+            return
+        raise
+
+
+def settle_automation_run(connection: sqlite3.Connection, run_id: str, status: str) -> None:
+    row = connection.execute("SELECT origin_json FROM automation_run_origins WHERE run_id=?", (run_id,)).fetchone()
+    if row is None:
+        return
+    origin = AutomationOrigin.model_validate_json(row[0])
+    try:
+        task = AutomationRepository.read_in(connection, origin.automation_id)
+    except AutomationError:
+        return
+    if task.deleted_at is not None or task.status != "ACTIVE":
+        return
+    try:
+        state = connection.execute(
+            "SELECT cycle, consecutive_idle_runs, cycle_after_run_seq, cycle_started_at, progress_json "
+            "FROM automation_guardrail_state WHERE automation_id=?",
+            (task.id,),
+        ).fetchone()
+    except sqlite3.OperationalError as error:
+        if "no such table" in str(error).lower():
+            return
+        raise
+    if state is None:
+        # Automations saved before schema v57 have no cycle yet. Start it at
+        # this Run so earlier history never counts against a new guardrail.
+        run_row = connection.execute("SELECT creation_seq FROM runs WHERE id=?", (run_id,)).fetchone()
+        cycle_after_seq = max(0, int(run_row[0]) - 1) if run_row is not None else 0
+        consecutive_idle = 0
+        connection.execute(
+            "INSERT INTO automation_guardrail_state"
+            "(automation_id, cycle, consecutive_idle_runs, cycle_after_run_seq, cycle_started_at, progress_json) "
+            "VALUES(?,1,0,?,?,?)",
+            (task.id, cycle_after_seq, now_ms(), "[]"),
+        )
+    else:
+        cycle_after_seq = int(state["cycle_after_run_seq"])
+        consecutive_idle = int(state["consecutive_idle_runs"])
+
+    from eidos_runtime.persistence.guardrails import GuardrailSettingsRepository
+
+    policy = GuardrailSettingsRepository.read_in(connection).policy
+    cycle_usage = connection.execute(
+        """WITH owned(id) AS (
+            SELECT a.run_id FROM automation_run_origins a
+            JOIN runs r ON r.id=a.run_id
+            WHERE json_extract(a.origin_json,'$.automationId')=? AND r.creation_seq>?
+            UNION
+            SELECT r2.id FROM automation_run_origins a
+            JOIN runs r1 ON r1.id=a.run_id
+            JOIN agent_delegations d ON d.parent_run_id=r1.id
+            JOIN runs r2 ON r2.session_id=d.child_session_id
+            WHERE json_extract(a.origin_json,'$.automationId')=? AND r1.creation_seq>?
+        ) SELECT
+            coalesce(sum(coalesce(json_extract(m.usage_json,'$.input_tokens'),0)+coalesce(json_extract(m.usage_json,'$.output_tokens'),0)),0),
+            coalesce(sum(coalesce(json_extract(m.usage_json,'$.credits_usage.amount'),0.0)),0.0)
+        FROM model_attempts m JOIN steps s ON s.id=m.step_id JOIN owned o ON o.id=s.run_id""",
+        (task.id, cycle_after_seq, task.id, cycle_after_seq),
+    ).fetchone()
+    cycle_tokens = int(cycle_usage[0] or 0)
+    cycle_cost = float(cycle_usage[1] or 0.0)
+
+    # A scheduled Run that succeeds did its job even when it found nothing new
+    # (a report, a check with no change). Only consecutive unsuccessful Runs
+    # count toward the idle guardrail; user cancellation does not count.
+    if status in {"canceled", "interrupted"}:
+        idle = consecutive_idle
+    else:
+        idle = 0 if status == "succeeded" else consecutive_idle + 1
+    connection.execute(
+        "UPDATE automation_guardrail_state SET consecutive_idle_runs=? WHERE automation_id=?",
+        (idle, task.id),
+    )
+
+    pause_reason: str | None = None
+    if policy.max_tokens_per_cycle is not None and cycle_tokens >= policy.max_tokens_per_cycle:
+        pause_reason = "guardrail_tokens_exceeded"
+    elif policy.max_cost_credits_per_cycle is not None and cycle_cost >= policy.max_cost_credits_per_cycle:
+        pause_reason = "guardrail_cost_exceeded"
+    elif status not in {"canceled", "interrupted"} and policy.max_idle_rounds is not None and idle >= policy.max_idle_rounds:
+        pause_reason = "guardrail_idle_runs"
+    if pause_reason is not None:
+        AutomationRepository.pause_in(connection, task, pause_reason)

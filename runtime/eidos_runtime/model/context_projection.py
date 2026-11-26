@@ -189,6 +189,74 @@ def recovery_context(context: tuple[dict[str, object], ...], byte_limit: int, *,
     return tuple(result)
 
 
+def hard_floor_recovery_context(
+    context: tuple[dict[str, object], ...],
+    *,
+    current_goal_id: str | None = None,
+    max_item_bytes: int = 512,
+) -> tuple[dict[str, object], ...]:
+    """Deterministic minimal fallback when maximum progressive reduction still exceeds capacity.
+
+    Like ``recovery_context`` it keeps protected layers verbatim: preferences
+    (the builder fits them to the budget afterwards), project rules, selected
+    Skills, the custom Agent and the current goal. Only history is cut.
+    """
+    messages = [item for item in context if item.get("type") in {"user", "context"}]
+    goals = [item for item in messages if item.get("type") == "user" and not item.get("sectionId")]
+    primary_goal = (
+        next((item for item in goals if item.get("sourceItemId") == current_goal_id), None)
+        if current_goal_id is not None
+        else (goals[-1] if goals else None)
+    )
+    if primary_goal is None and goals:
+        primary_goal = goals[-1]
+    latest_feedback = next(
+        (item for item in reversed(messages) if item.get("sectionId") == "runtime-feedback"),
+        None,
+    )
+    result: list[dict[str, object]] = []
+    seen_guards: set[tuple[tuple[str, int], ...]] = set()
+    for item in context:
+        if item.get("sectionId") == "memory-evidence-guard" and item.get("memoryEpochs"):
+            epochs = tuple(sorted((str(k), int(v)) for k, v in dict(item["memoryEpochs"]).items()))
+            if epochs not in seen_guards:
+                seen_guards.add(epochs)
+                result.append({
+                    "type": "context",
+                    "sectionId": "memory-evidence-guard",
+                    "content": "Saved memory evidence guard",
+                    "memoryEpochs": item["memoryEpochs"],
+                })
+        elif _protected_personalization(item) or _protected_guidance(item):
+            result.append(dict(item))
+        elif _protected_continuity(item):
+            result.append({
+                **dict(item),
+                "content": text_preview(
+                    str(item.get("content", "")),
+                    max_item_bytes,
+                    continuation="Use saved session continuity if needed.",
+                ),
+            })
+    for candidate in (primary_goal, latest_feedback):
+        if candidate is None:
+            continue
+        compact: dict[str, object] = {
+            "type": candidate.get("type", "user"),
+            "content": text_preview(
+                str(candidate.get("content", "")),
+                max_item_bytes,
+                continuation="Original item remains saved in session.",
+            ),
+        }
+        if candidate.get("sectionId"):
+            compact["sectionId"] = candidate["sectionId"]
+        if candidate.get("sourceItemId"):
+            compact["sourceItemId"] = candidate["sourceItemId"]
+        result.append(compact)
+    return tuple(result)
+
+
 def generated_summary_view(value: object) -> object:
     if isinstance(value, dict):
         return {key: (item if key == "task_goal" else generated_summary_view(item)) for key, item in value.items()}

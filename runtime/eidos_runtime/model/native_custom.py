@@ -53,7 +53,7 @@ from eidos_runtime.model.retry_transport import (
     RetryTransportClient,
 )
 from eidos_runtime.model.reasoning_summary import emit_reasoning_summary
-from eidos_runtime.model.request_scope import run_model_request
+from eidos_runtime.model.request_scope import current_prompt_cache_key, run_model_request
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.protocol_diagnostics import undeclared_tool_feedback
 
@@ -377,6 +377,7 @@ class OpenAIResponsesModelClient:
         async_kernel: RuntimeAsyncKernel,
         parallel_tool_calls: bool | None = True,
         reasoning_effort: str | None = None,
+        prompt_cache_key: str | None = None,
     ) -> None:
         if profile_snapshot.wire_api != "openai_responses":
             raise ValueError("responses_client_requires_responses_profile")
@@ -387,6 +388,7 @@ class OpenAIResponsesModelClient:
         self._async_kernel = async_kernel
         self._parallel_tool_calls = parallel_tool_calls
         self._reasoning_effort = reasoning_effort
+        self._prompt_cache_key = prompt_cache_key
         self._lock = threading.RLock()
         self._closed = False
 
@@ -522,6 +524,9 @@ class OpenAIResponsesModelClient:
                 # A summary is the only reasoning text the live Feed may show.
                 reasoning_request["summary"] = "auto"
             request_kwargs["reasoning"] = reasoning_request
+        cache_key = self._prompt_cache_key or current_prompt_cache_key()
+        if cache_key:
+            request_kwargs["prompt_cache_key"] = cache_key
         retry_scope = (
             self._retry_transport.request_scope(cancel, retry_tracker)
             if self._retry_transport is not None else nullcontext()

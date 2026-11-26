@@ -21,6 +21,10 @@ export type Method =
   | "session/gitStatus"
   | "session/gitDiff"
   | "session/gitStage"
+  | "session/gitUnstage"
+  | "session/gitDiscard"
+  | "session/gitStageHunk"
+  | "session/gitSuggestCommitMessage"
   | "session/gitCommit"
   | "session/gitSwitchBranch"
   | "session/gitCreateBranch"
@@ -40,6 +44,10 @@ export type Parameters =
   | SessionGitStatusRequestDto
   | SessionGitDiffRequestDto
   | SessionGitStageRequestDto
+  | SessionGitUnstageRequestDto
+  | SessionGitDiscardRequestDto
+  | SessionGitStageHunkRequestDto
+  | SessionGitSuggestCommitMessageRequestDto
   | SessionGitCommitRequestDto
   | SessionGitSwitchBranchRequestDto
   | SessionGitCreateBranchRequestDto
@@ -91,48 +99,72 @@ export type Paths = [string, ...string[]];
 export type Operationid3 = string | null;
 export type Rootid7 = string | null;
 export type Sessionid6 = string;
-export type Message = string;
-export type Sessionid7 = string;
-export type Projectid2 = string | null;
-export type Operationid4 = string;
+/**
+ * @minItems 1
+ * @maxItems 512
+ */
+export type Paths1 = [string, ...string[]];
+export type Operationid4 = string | null;
 export type Rootid8 = string | null;
+export type Sessionid7 = string;
+/**
+ * @minItems 1
+ * @maxItems 512
+ */
+export type Paths2 = [string, ...string[]];
+export type Operationid5 = string | null;
+export type Rootid9 = string | null;
+export type Sessionid8 = string;
+export type Patch = string;
+export type Reverse = boolean;
+export type Rootid10 = string | null;
+export type Sessionid9 = string;
+export type Includeunstaged = boolean;
+export type Operationid6 = string | null;
+export type Rootid11 = string | null;
+export type Sessionid10 = string;
+export type Message = string;
+export type Sessionid11 = string;
+export type Projectid2 = string | null;
+export type Operationid7 = string;
+export type Rootid12 = string | null;
 export type Branch = string;
 export type Expectedbranch = string | null;
 export type Expectedhead = string | null;
-export type Operationid5 = string;
-export type Rootid9 = string | null;
-export type Sessionid8 = string;
-export type Branch1 = string;
-export type Rootid10 = string | null;
-export type Sessionid9 = string;
-export type Operationid6 = string;
-export type Rootid11 = string | null;
-export type Sessionid10 = string;
-export type Remote = string | null;
-export type Operationid7 = string;
-export type Rootid12 = string | null;
-export type Sessionid11 = string;
 export type Operationid8 = string;
 export type Rootid13 = string | null;
 export type Sessionid12 = string;
-export type Remote1 = string | null;
-export type Operationid9 = string;
+export type Branch1 = string;
 export type Rootid14 = string | null;
 export type Sessionid13 = string;
-export type Target = string;
-export type Operationid10 = string;
+export type Operationid9 = string;
 export type Rootid15 = string | null;
 export type Sessionid14 = string;
-export type Operationid11 = string;
+export type Remote = string | null;
+export type Operationid10 = string;
 export type Rootid16 = string | null;
 export type Sessionid15 = string;
-export type Target1 = string;
-export type Operationid12 = string;
+export type Operationid11 = string;
 export type Rootid17 = string | null;
 export type Sessionid16 = string;
-export type Operationid13 = string;
+export type Remote1 = string | null;
+export type Operationid12 = string;
 export type Rootid18 = string | null;
 export type Sessionid17 = string;
+export type Target = string;
+export type Operationid13 = string;
+export type Rootid19 = string | null;
+export type Sessionid18 = string;
+export type Operationid14 = string;
+export type Rootid20 = string | null;
+export type Sessionid19 = string;
+export type Target1 = string;
+export type Operationid15 = string;
+export type Rootid21 = string | null;
+export type Sessionid20 = string;
+export type Operationid16 = string;
+export type Rootid22 = string | null;
+export type Sessionid21 = string;
 export type Response =
   | ReviewCommentListResponseDto
   | ReviewCommentCreateResponseDto
@@ -140,6 +172,10 @@ export type Response =
   | SessionGitStatusResponseDto
   | SessionGitDiffResponseDto
   | SessionGitStageResponseDto
+  | SessionGitUnstageResponseDto
+  | SessionGitDiscardResponseDto
+  | SessionGitStageHunkResponseDto
+  | SessionGitSuggestCommitMessageResponseDto
   | SessionGitCommitResponseDto
   | SessionGitSwitchBranchResponseDto
   | SessionGitCreateBranchResponseDto
@@ -153,7 +189,7 @@ export type Response =
   | SessionGitRebaseContinueResponseDto
   | SessionGitRebaseAbortResponseDto;
 export type Id2 = string;
-export type Sessionid18 = string;
+export type Sessionid22 = string;
 export type Path4 = string;
 export type Scope3 = "head" | "baseline";
 export type Side1 = "old" | "new";
@@ -203,62 +239,70 @@ export type Head2 = string;
 export type Branch3 = string | null;
 export type Head3 = string;
 export type Branch4 = string | null;
-export type Commit = string;
 export type Head4 = string;
 export type Branch5 = string | null;
 export type Head5 = string;
 export type Branch6 = string | null;
+export type Message1 = string;
+export type Source = "heuristic" | "model";
+export type Head6 = string;
 export type Branch7 = string | null;
+export type Commit = string;
+export type Head7 = string;
+export type Branch8 = string | null;
+export type Head8 = string;
+export type Branch9 = string | null;
+export type Branch10 = string | null;
 export type Name1 = string;
 export type Remotes = GitRemoteDto[];
 export type Remote2 = string;
-export type Branch8 = string;
+export type Branch11 = string;
 export type Ahead = number | null;
 export type Behind = number | null;
-export type Branch9 = string | null;
+export type Branch12 = string | null;
 export type Remotes1 = GitRemoteDto[];
 export type Ahead1 = number | null;
 export type Behind1 = number | null;
 export type Remote3 = string;
-export type Head6 = string;
-export type Branch10 = string | null;
+export type Head9 = string;
+export type Branch13 = string | null;
 export type Remotes2 = GitRemoteDto[];
 export type Ahead2 = number | null;
 export type Behind2 = number | null;
 export type Remote4 = string;
-export type Head7 = string;
-export type Branch11 = string | null;
+export type Head10 = string;
+export type Branch14 = string | null;
 export type Remotes3 = GitRemoteDto[];
 export type Ahead3 = number | null;
 export type Behind3 = number | null;
 export type Remote5 = string;
-export type Head8 = string;
-export type Head9 = string;
-export type Branch12 = string | null;
-export type Operationstate = "none" | "merge" | "rebase";
-export type Conflictfiles1 = string[];
-export type Head10 = string;
-export type Branch13 = string | null;
-export type Operationstate1 = "none" | "merge" | "rebase";
-export type Conflictfiles2 = string[];
 export type Head11 = string;
-export type Branch14 = string | null;
-export type Operationstate2 = "none" | "merge" | "rebase";
-export type Conflictfiles3 = string[];
 export type Head12 = string;
 export type Branch15 = string | null;
-export type Operationstate3 = "none" | "merge" | "rebase";
-export type Conflictfiles4 = string[];
+export type Operationstate = "none" | "merge" | "rebase";
+export type Conflictfiles1 = string[];
 export type Head13 = string;
 export type Branch16 = string | null;
+export type Operationstate1 = "none" | "merge" | "rebase";
+export type Conflictfiles2 = string[];
+export type Head14 = string;
+export type Branch17 = string | null;
+export type Operationstate2 = "none" | "merge" | "rebase";
+export type Conflictfiles3 = string[];
+export type Head15 = string;
+export type Branch18 = string | null;
+export type Operationstate3 = "none" | "merge" | "rebase";
+export type Conflictfiles4 = string[];
+export type Head16 = string;
+export type Branch19 = string | null;
 export type Operationstate4 = "none" | "merge" | "rebase";
 export type Conflictfiles5 = string[];
 export type Workspaceroot1 = string | null;
 export type Projectid3 = string | null;
-export type Rootid19 = string | null;
+export type Rootid23 = string | null;
 export type Gitavailable1 = boolean;
 export type Currentbranch = string | null;
-export type Head14 = string | null;
+export type Head17 = string | null;
 export type Branches = string[];
 export type Dirty2 = boolean;
 export type Changedfilecount = number;
@@ -267,7 +311,7 @@ export type Switchblockedreason = ("dirty" | "busy" | "operation" | "unborn") | 
 export type Occupiedbranches = string[] | null;
 export type Projectid4 = string;
 export type Projectid5 = string;
-export type Operationid14 = string;
+export type Operationid17 = string;
 export type Expectedrevision = number;
 export type Name2 = string | null;
 /**
@@ -278,7 +322,7 @@ export type Roots1 = [ProjectRootInput, ...ProjectRootInput[]];
 export type Id3 = string;
 export type Path6 = string;
 export type Primaryrootid1 = string;
-export type Operationid15 = string;
+export type Operationid18 = string;
 export type Name3 = string | null;
 /**
  * @minItems 1
@@ -366,81 +410,105 @@ export interface SessionGitStageRequestDto {
   sessionId: Sessionid5;
   paths: Paths;
 }
-export interface SessionGitCommitRequestDto {
+export interface SessionGitUnstageRequestDto {
   operationId?: Operationid3;
   rootId?: Rootid7;
   sessionId: Sessionid6;
+  paths: Paths1;
+}
+export interface SessionGitDiscardRequestDto {
+  operationId?: Operationid4;
+  rootId?: Rootid8;
+  sessionId: Sessionid7;
+  paths: Paths2;
+}
+export interface SessionGitStageHunkRequestDto {
+  operationId?: Operationid5;
+  rootId?: Rootid9;
+  sessionId: Sessionid8;
+  patch: Patch;
+  reverse?: Reverse;
+}
+export interface SessionGitSuggestCommitMessageRequestDto {
+  rootId?: Rootid10;
+  sessionId: Sessionid9;
+  includeUnstaged?: Includeunstaged;
+}
+export interface SessionGitCommitRequestDto {
+  operationId?: Operationid6;
+  rootId?: Rootid11;
+  sessionId: Sessionid10;
   message: Message;
 }
 export interface SessionGitSwitchBranchRequestDto {
-  sessionId: Sessionid7;
+  sessionId: Sessionid11;
   projectId?: Projectid2;
-  operationId: Operationid4;
-  rootId?: Rootid8;
+  operationId: Operationid7;
+  rootId?: Rootid12;
   branch: Branch;
   expectedBranch?: Expectedbranch;
   expectedHead?: Expectedhead;
 }
 export interface SessionGitCreateBranchRequestDto {
-  operationId: Operationid5;
-  rootId?: Rootid9;
-  sessionId: Sessionid8;
-  branch: Branch1;
-}
-export interface SessionGitRemoteStatusRequestDto {
-  rootId?: Rootid10;
-  sessionId: Sessionid9;
-}
-export interface SessionGitFetchRequestDto {
-  operationId: Operationid6;
-  rootId?: Rootid11;
-  sessionId: Sessionid10;
-  remote?: Remote;
-}
-export interface SessionGitPullRequestDto {
-  operationId: Operationid7;
-  rootId?: Rootid12;
-  sessionId: Sessionid11;
-}
-export interface SessionGitPushRequestDto {
   operationId: Operationid8;
   rootId?: Rootid13;
   sessionId: Sessionid12;
+  branch: Branch1;
+}
+export interface SessionGitRemoteStatusRequestDto {
+  rootId?: Rootid14;
+  sessionId: Sessionid13;
+}
+export interface SessionGitFetchRequestDto {
+  operationId: Operationid9;
+  rootId?: Rootid15;
+  sessionId: Sessionid14;
+  remote?: Remote;
+}
+export interface SessionGitPullRequestDto {
+  operationId: Operationid10;
+  rootId?: Rootid16;
+  sessionId: Sessionid15;
+}
+export interface SessionGitPushRequestDto {
+  operationId: Operationid11;
+  rootId?: Rootid17;
+  sessionId: Sessionid16;
   remote?: Remote1;
 }
 export interface SessionGitMergeRequestDto {
-  operationId: Operationid9;
-  rootId?: Rootid14;
-  sessionId: Sessionid13;
+  operationId: Operationid12;
+  rootId?: Rootid18;
+  sessionId: Sessionid17;
   target: Target;
 }
 export interface SessionGitMergeAbortRequestDto {
-  operationId: Operationid10;
-  rootId?: Rootid15;
-  sessionId: Sessionid14;
+  operationId: Operationid13;
+  rootId?: Rootid19;
+  sessionId: Sessionid18;
 }
 export interface SessionGitRebaseRequestDto {
-  operationId: Operationid11;
-  rootId?: Rootid16;
-  sessionId: Sessionid15;
+  operationId: Operationid14;
+  rootId?: Rootid20;
+  sessionId: Sessionid19;
   target: Target1;
 }
 export interface SessionGitRebaseContinueRequestDto {
-  operationId: Operationid12;
-  rootId?: Rootid17;
-  sessionId: Sessionid16;
+  operationId: Operationid15;
+  rootId?: Rootid21;
+  sessionId: Sessionid20;
 }
 export interface SessionGitRebaseAbortRequestDto {
-  operationId: Operationid13;
-  rootId?: Rootid18;
-  sessionId: Sessionid17;
+  operationId: Operationid16;
+  rootId?: Rootid22;
+  sessionId: Sessionid21;
 }
 export interface ReviewCommentListResponseDto {
   comments: Comments;
 }
 export interface ReviewCommentDto {
   id: Id2;
-  sessionId: Sessionid18;
+  sessionId: Sessionid22;
   path: Path4;
   scope: Scope3;
   side: Side1;
@@ -502,24 +570,43 @@ export interface SessionGitStageResponseDto {
   branch?: Branch3;
   status: SessionGitStatusResponseDto;
 }
-export interface SessionGitCommitResponseDto {
+export interface SessionGitUnstageResponseDto {
   head: Head3;
   branch?: Branch4;
   status: SessionGitStatusResponseDto;
-  commit: Commit;
 }
-export interface SessionGitSwitchBranchResponseDto {
+export interface SessionGitDiscardResponseDto {
   head: Head4;
   branch?: Branch5;
   status: SessionGitStatusResponseDto;
 }
-export interface SessionGitCreateBranchResponseDto {
+export interface SessionGitStageHunkResponseDto {
   head: Head5;
   branch?: Branch6;
   status: SessionGitStatusResponseDto;
 }
-export interface SessionGitRemoteStatusResponseDto {
+export interface SessionGitSuggestCommitMessageResponseDto {
+  message: Message1;
+  source?: Source;
+}
+export interface SessionGitCommitResponseDto {
+  head: Head6;
   branch?: Branch7;
+  status: SessionGitStatusResponseDto;
+  commit: Commit;
+}
+export interface SessionGitSwitchBranchResponseDto {
+  head: Head7;
+  branch?: Branch8;
+  status: SessionGitStatusResponseDto;
+}
+export interface SessionGitCreateBranchResponseDto {
+  head: Head8;
+  branch?: Branch9;
+  status: SessionGitStatusResponseDto;
+}
+export interface SessionGitRemoteStatusResponseDto {
+  branch?: Branch10;
   remotes: Remotes;
   upstream?: GitUpstreamDto | null;
   ahead?: Ahead;
@@ -530,68 +617,68 @@ export interface GitRemoteDto {
 }
 export interface GitUpstreamDto {
   remote: Remote2;
-  branch: Branch8;
+  branch: Branch11;
 }
 export interface SessionGitFetchResponseDto {
-  branch?: Branch9;
+  branch?: Branch12;
   remotes: Remotes1;
   upstream?: GitUpstreamDto | null;
   ahead?: Ahead1;
   behind?: Behind1;
   remote: Remote3;
-  head: Head6;
+  head: Head9;
 }
 export interface SessionGitPullResponseDto {
-  branch?: Branch10;
+  branch?: Branch13;
   remotes: Remotes2;
   upstream?: GitUpstreamDto | null;
   ahead?: Ahead2;
   behind?: Behind2;
   remote: Remote4;
-  head: Head7;
+  head: Head10;
   status: SessionGitStatusResponseDto;
 }
 export interface SessionGitPushResponseDto {
-  branch?: Branch11;
+  branch?: Branch14;
   remotes: Remotes3;
   upstream?: GitUpstreamDto | null;
   ahead?: Ahead3;
   behind?: Behind3;
   remote: Remote5;
-  head: Head8;
+  head: Head11;
   status: SessionGitStatusResponseDto;
 }
 export interface SessionGitMergeResponseDto {
-  head: Head9;
-  branch?: Branch12;
+  head: Head12;
+  branch?: Branch15;
   status: SessionGitStatusResponseDto;
   operationState: Operationstate;
   conflictFiles: Conflictfiles1;
 }
 export interface SessionGitMergeAbortResponseDto {
-  head: Head10;
-  branch?: Branch13;
+  head: Head13;
+  branch?: Branch16;
   status: SessionGitStatusResponseDto;
   operationState: Operationstate1;
   conflictFiles: Conflictfiles2;
 }
 export interface SessionGitRebaseResponseDto {
-  head: Head11;
-  branch?: Branch14;
+  head: Head14;
+  branch?: Branch17;
   status: SessionGitStatusResponseDto;
   operationState: Operationstate2;
   conflictFiles: Conflictfiles3;
 }
 export interface SessionGitRebaseContinueResponseDto {
-  head: Head12;
-  branch?: Branch15;
+  head: Head15;
+  branch?: Branch18;
   status: SessionGitStatusResponseDto;
   operationState: Operationstate3;
   conflictFiles: Conflictfiles4;
 }
 export interface SessionGitRebaseAbortResponseDto {
-  head: Head13;
-  branch?: Branch16;
+  head: Head16;
+  branch?: Branch19;
   status: SessionGitStatusResponseDto;
   operationState: Operationstate4;
   conflictFiles: Conflictfiles5;
@@ -599,12 +686,12 @@ export interface SessionGitRebaseAbortResponseDto {
 export interface GitContextRequestDto {
   workspaceRoot?: Workspaceroot1;
   projectId?: Projectid3;
-  rootId?: Rootid19;
+  rootId?: Rootid23;
 }
 export interface GitContextResponseDto {
   gitAvailable: Gitavailable1;
   currentBranch: Currentbranch;
-  head: Head14;
+  head: Head17;
   branches: Branches;
   dirty: Dirty2;
   changedFileCount: Changedfilecount;
@@ -617,7 +704,7 @@ export interface ProjectReadRequest {
 }
 export interface ProjectUpdateRequest {
   projectId: Projectid5;
-  operationId: Operationid14;
+  operationId: Operationid17;
   expectedRevision: Expectedrevision;
   name?: Name2;
   roots: Roots1;
@@ -628,7 +715,7 @@ export interface ProjectRootInput {
   path: Path6;
 }
 export interface ProjectCreateFoldersRequest {
-  operationId: Operationid15;
+  operationId: Operationid18;
   name?: Name3;
   roots: Roots2;
   primaryRootId: Primaryrootid2;

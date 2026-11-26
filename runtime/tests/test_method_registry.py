@@ -31,6 +31,7 @@ from eidos_runtime.protocol.channels import ChannelResponse
 from eidos_runtime.protocol.shell_environment import ShellEnvironmentResponse
 from eidos_runtime.protocol.web_search import WebSearchResponse
 from eidos_runtime.protocol.personalization import PersonalizationResponse
+from eidos_runtime.protocol.guardrails import GuardrailsResponse
 from eidos_runtime.protocol.schemas import ProjectDto
 from eidos_runtime.domain.goal import GoalView
 from eidos_runtime.models.browser import BrowserExtensionTokenResponse
@@ -231,6 +232,7 @@ def test_production_method_registrations_do_not_use_generic_object_models(
         ShellEnvironmentResponse,
         WebSearchResponse,
         PersonalizationResponse,
+        GuardrailsResponse,
         ProjectDto,
         method_dtos.SessionReadResponseDto,
         GoalView,

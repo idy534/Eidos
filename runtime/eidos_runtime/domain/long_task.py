@@ -43,6 +43,16 @@ class ResumeOutcome(StrEnum):
     CANNOT_RESUME = "cannot_resume"
 
 
+# The Run rebuilds Context from SQLite before its next model step and keeps
+# the repository generation it captured, so changed rules, plans or indexes
+# do not stop a resume. Identity, Git, permission, approval and model changes do.
+RESUMABLE_OUTCOMES = frozenset({
+    ResumeOutcome.SAFE_RESUME,
+    ResumeOutcome.REBUILD_CONTEXT,
+    ResumeOutcome.REINDEX_REQUIRED,
+})
+
+
 class ResumeVerification(EidosFrozenStrictModel):
     run_id: str = Field(min_length=1)
     outcome: ResumeOutcome

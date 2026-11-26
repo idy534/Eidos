@@ -6,6 +6,12 @@ import { Tooltip } from "../Tooltip.js";
 import { SettingRow } from "../SettingRow.js";
 import { SettingSection } from "../SettingSection.js";
 import { ToastContainer } from "../ToastContainer.js";
+import { getPreferredTerminalShell, setPreferredTerminalShell } from "../terminal-shell-preference.js";
+
+const WINDOWS_CLIENT = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
+const SHELL_PRESET_VALUES = WINDOWS_CLIENT
+  ? ["pwsh", "powershell", "git-bash", "wsl", "cmd"]
+  : ["zsh", "bash", "fish", "sh"];
 
 function Help({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -31,6 +37,13 @@ export function ShellEnvironmentSettings({ onShowToast }: {
   const [working, setWorking] = useState<"save" | "refresh" | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [preferredShell, setPreferredShell] = useState<string>(getPreferredTerminalShell);
+  const isCustomShell = Boolean(preferredShell) && !SHELL_PRESET_VALUES.includes(preferredShell);
+  const [customShellInput, setCustomShellInput] = useState<string>(() => (
+    getPreferredTerminalShell() && !SHELL_PRESET_VALUES.includes(getPreferredTerminalShell())
+      ? getPreferredTerminalShell()
+      : ""
+  ));
   const busy = useRef(false);
   const mounted = useRef(true);
 
@@ -135,6 +148,69 @@ export function ShellEnvironmentSettings({ onShowToast }: {
           </Button>
         }
       />
+      <SettingRow
+        title="默认终端 Shell"
+        description="新开交互式终端标签页时使用的 Shell，修改后自动保存"
+        action={
+          <Select
+            aria-label="默认终端 Shell"
+            className="shell-environment-select"
+            value={isCustomShell ? "__custom__" : preferredShell}
+            onChange={(event) => {
+              const next = event.target.value;
+              if (next === "__custom__") {
+                setPreferredShell(customShellInput || "custom");
+                if (customShellInput.trim()) {
+                  setPreferredTerminalShell(customShellInput);
+                }
+                return;
+              }
+              setPreferredShell(next);
+              setPreferredTerminalShell(next);
+              onShowToast?.("默认终端 Shell 已更新", "success");
+            }}
+          >
+            <option value="">自动探测（默认）</option>
+            {WINDOWS_CLIENT ? (
+              <>
+                <option value="pwsh">PowerShell 7</option>
+                <option value="powershell">Windows PowerShell</option>
+                <option value="git-bash">Git Bash</option>
+                <option value="wsl">WSL</option>
+                <option value="cmd">命令提示符 (cmd)</option>
+              </>
+            ) : (
+              <>
+                <option value="zsh">zsh</option>
+                <option value="bash">bash</option>
+                <option value="fish">fish</option>
+                <option value="sh">sh</option>
+              </>
+            )}
+            <option value="__custom__">自定义路径</option>
+          </Select>
+        }
+      />
+      {isCustomShell && (
+        <SettingRow
+          title="自定义 Shell 路径"
+          action={
+            <input
+              type="text"
+              aria-label="自定义 Shell 路径"
+              className="settings-input"
+              placeholder={WINDOWS_CLIENT ? "例如 C:\\Program Files\\Git\\bin\\bash.exe" : "例如 /opt/homebrew/bin/fish"}
+              value={customShellInput}
+              onChange={(event) => {
+                const value = event.target.value;
+                setCustomShellInput(value);
+                setPreferredShell(value || "__custom__");
+                setPreferredTerminalShell(value);
+              }}
+            />
+          }
+        />
+      )}
     </SettingSection>
   );
 }

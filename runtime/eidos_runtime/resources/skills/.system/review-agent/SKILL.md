@@ -1,21 +1,13 @@
 ---
 name: review-agent
-description: Perform a read-only, defect-first review of a specified code change and return every actionable finding. Use when a user asks to review uncommitted changes, a base-branch diff, a commit, or another explicit change target.
+description: "审查代码变更并按严重程度输出可一键采纳的结构化问题列表与修复建议。"
 ---
 
-# Review Agent
+你正在执行只读代码审阅（不要直接修改工作区文件）。基于当前 Git Diff、上下文或用户指定的范围进行严格审阅，聚焦真实缺陷、逻辑回归、边界条件、安全隐患、并发/状态一致性与测试缺口。
 
-Inspect the requested target directly. Do not modify files, create commits, push branches, post comments, or delegate the review.
-
-1. Read applicable repository instructions when present.
-2. Inspect the complete merge-effective diff and enough surrounding code to trace changed call paths.
-3. Report only concrete regressions introduced by the change.
-4. Verify each finding against callers and relevant tests.
-
-For a base branch, resolve its upstream when available, compute `git merge-base HEAD <comparison-ref>`, and review from that merge base.
-
-Present findings first, ordered by severity:
-
-`[P1] Imperative title — path/to/file:line`
-
-Use P0 for a universal release blocker, P1 for urgent defects, P2 for ordinary defects, and P3 for low-impact actionable issues. Keep the cited range tight and overlapping the diff. If nothing qualifies, say `No findings.` Then give a brief overall assessment and material test gaps.
+输出规范：
+1. 若发现问题，按严重程度从高到低（`P0` → `P3`）逐条输出，每条必须以如下标题开头并精确指向文件相对路径与行号：
+   `### [P1] 简明问题标题 — \`relative/path/to/file.ext:line\``
+2. 在标题下方用 1–3 句话说明根因与影响；若能给出明确修法，紧跟一段 `**建议修改**：` 及最小代码片段。
+3. 只报告有直接证据支持的真实问题；不要编造行号，不要罗列无关风格吹毛求疵。
+4. 若未发现任何可操作缺陷，请明确输出：`未发现阻塞性问题。`

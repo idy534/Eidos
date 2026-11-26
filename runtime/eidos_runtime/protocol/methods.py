@@ -280,6 +280,11 @@ class WorkspaceListDirectoryRequestDto(_WorkspaceSessionRequest):
     limit: StrictInt = Field(default=500, ge=1, le=2_000)
 
 
+class WorkspaceFindFilesRequestDto(_WorkspaceSessionRequest):
+    query: StrictStr = Field(default="", max_length=256)
+    limit: StrictInt = Field(default=100, ge=1, le=500)
+
+
 class WorkspaceReadFilePreviewRequestDto(_WorkspaceSessionRequest):
     path: StrictStr = Field(min_length=1, max_length=4096)
 
@@ -320,6 +325,37 @@ class _SessionGitPathsRequest(_GitRootRequest, _OperationRequest):
 
 class SessionGitStageRequestDto(_SessionGitPathsRequest):
     pass
+
+
+class SessionGitUnstageRequestDto(_SessionGitPathsRequest):
+    pass
+
+
+class SessionGitDiscardRequestDto(_SessionGitPathsRequest):
+    pass
+
+
+class SessionGitStageHunkRequestDto(_GitRootRequest, _OperationRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    patch: StrictStr = Field(min_length=1, max_length=262_144)
+    reverse: bool = False
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+    @field_validator("patch")
+    @classmethod
+    def _validate_patch(cls, value: str) -> str:
+        if "\x00" in value or "@@" not in value:
+            raise ValueError("Git patch is invalid")
+        return value
+
+
+class SessionGitSuggestCommitMessageRequestDto(_GitRootRequest, _CanonicalIdRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    include_unstaged: bool = Field(default=True, alias="includeUnstaged")
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
 
 
 class SessionGitCommitRequestDto(_GitRootRequest, _OperationRequest):
@@ -769,6 +805,16 @@ class ToolContentReadResponseDto(MethodResultDto):
     sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class DeclaredOutputSummaryDto(ClosedModel):
+    path: StrictStr = Field(min_length=1, max_length=512)
+    execution_root: StrictStr = Field(alias="executionRoot", min_length=1, max_length=4096)
+    version: StrictStr = Field(pattern=r"^[a-f0-9]{64}$")
+    size_bytes: StrictInt = Field(alias="sizeBytes", ge=0)
+    run_id: StrictStr = Field(alias="runId", min_length=1)
+    item_id: StrictStr = Field(alias="itemId", min_length=1)
+    title: StrictStr | None = Field(default=None, min_length=1, max_length=120)
+
+
 class SessionReadResponseDto(MethodResultDto):
     inherited_history: list[InheritedHistoryEntry] | None = Field(default=None, alias="inheritedHistory")
     session: SessionDto
@@ -779,6 +825,7 @@ class SessionReadResponseDto(MethodResultDto):
     through_event_id: StrictInt | None = Field(default=None, alias="throughEventId")
     context_compactions: list[ContextCompactionActivity] = Field(default_factory=list, alias="contextCompactions")
     model_retries: list[ModelRetryActivity] = Field(default_factory=list, alias="modelRetries")
+    declared_outputs: list[DeclaredOutputSummaryDto] | None = Field(default=None, alias="declaredOutputs")
 
     def to_json_value(self) -> dict[str, JsonValue]:
         value = super().to_json_value()
@@ -884,6 +931,14 @@ class WorkspaceListDirectoryResponseDto(MethodResultDto):
         return self.model_dump(mode="json", by_alias=True, exclude_none=True)
 
 
+class WorkspaceFindFilesResponseDto(MethodResultDto):
+    entries: list[WorkspaceDirectoryEntryDto]
+    truncated: bool
+
+    def to_json_value(self) -> dict[str, JsonValue]:
+        return self.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+
 class WorkspaceReadFilePreviewResponseDto(MethodResultDto):
     path: StrictStr
     kind: Literal["text", "markdown", "code", "image", "pdf", "html", "unavailable"]
@@ -915,6 +970,23 @@ class SessionGitMutationResponseDto(MethodResultDto):
 
 class SessionGitStageResponseDto(SessionGitMutationResponseDto):
     pass
+
+
+class SessionGitUnstageResponseDto(SessionGitMutationResponseDto):
+    pass
+
+
+class SessionGitDiscardResponseDto(SessionGitMutationResponseDto):
+    pass
+
+
+class SessionGitStageHunkResponseDto(SessionGitMutationResponseDto):
+    pass
+
+
+class SessionGitSuggestCommitMessageResponseDto(MethodResultDto):
+    message: StrictStr
+    source: Literal["heuristic", "model"] = "heuristic"
 
 
 class SessionGitCommitResponseDto(SessionGitMutationResponseDto):
@@ -1148,6 +1220,9 @@ class ModelOptionDto(ClosedModel):
     model_id: StrictStr | None = Field(default=None, alias="modelId")
     context_window_tokens: int | None = Field(default=None, alias="contextWindowTokens")
     max_output_tokens: int | None = Field(default=None, alias="maxOutputTokens")
+    input_modalities: list[Literal["text", "image", "audio", "video"]] | None = Field(
+        default=None, alias="inputModalities"
+    )
 
 
 class ModelListResponseDto(MethodResultDto):
@@ -1179,10 +1254,21 @@ class PresetModelDto(ClosedModel):
     supports_images: bool = Field(alias="supportsImages")
     supports_reasoning: bool = Field(alias="supportsReasoning")
     reasoning: ModelReasoningDto | None = None
+    input_modalities: list[Literal["text", "image", "audio", "video"]] | None = Field(
+        default=None, alias="inputModalities"
+    )
 
 
 class ProviderPresetDto(ClosedModel):
-    id: Literal["deepseek", "minimax", "kimi", "volcengine"]
+    id: Literal[
+        "deepseek",
+        "minimax",
+        "kimi",
+        "volcengine",
+        "openai",
+        "anthropic",
+        "gemini",
+    ]
     name: StrictStr
     models: list[PresetModelDto]
 
@@ -1273,3 +1359,48 @@ class ExtensionReadResponseDto(MethodResultDto):
 
 class ExtensionReadEventsResponseDto(EventListResponseDto):
     pass
+
+
+class CheckpointListRequestDto(_CanonicalIdRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
+
+
+class CheckpointRewindRequestDto(MethodRequestDto):
+    session_id: StrictStr = Field(alias="sessionId")
+    checkpoint_id: StrictStr = Field(alias="checkpointId", min_length=1, max_length=128)
+    operation_id: StrictStr | None = Field(default=None, alias="operationId", min_length=1, max_length=128)
+
+    @field_validator("session_id")
+    @classmethod
+    def _validate_session_id(cls, value: str) -> str:
+        try:
+            if str(uuid.UUID(value)) != value:
+                raise ValueError
+        except ValueError as error:
+            raise ValueError("session_id must be a canonical UUID") from error
+        return value
+
+
+class CheckpointDto(ClosedModel):
+    id: StrictStr
+    run_id: StrictStr = Field(alias="runId")
+    item_ordinal: StrictInt = Field(alias="itemOrdinal", ge=0)
+    creation_seq: StrictInt = Field(alias="creationSeq", ge=0)
+    workspace_identity_hash: StrictStr = Field(alias="workspaceIdentityHash")
+    git_head: StrictStr | None = Field(default=None, alias="gitHead")
+    git_snapshot_id: StrictStr | None = Field(default=None, alias="gitSnapshotId")
+    reconciliation_required: bool = Field(alias="reconciliationRequired")
+    created_at: StrictInt = Field(alias="createdAt", ge=0)
+
+
+class CheckpointListResponseDto(MethodResultDto):
+    checkpoints: list[CheckpointDto]
+
+
+class CheckpointRewindResponseDto(MethodResultDto):
+    checkpoint_id: StrictStr = Field(alias="checkpointId")
+    session_id: StrictStr = Field(alias="sessionId")
+    run_id: StrictStr = Field(alias="runId")
+    git_head: StrictStr = Field(alias="gitHead")
+    restored_at: StrictInt = Field(alias="restoredAt", ge=0)

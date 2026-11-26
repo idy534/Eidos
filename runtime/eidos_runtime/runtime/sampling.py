@@ -126,7 +126,10 @@ class SamplingRuntime:
                 if record.next_retry_at is not None:
                     if cancel.wait(max(0, (record.next_retry_at - time.time_ns() // 1_000_000) / 1000)):
                         raise SamplingCancelled("sampling_canceled")
-                with foreground_request(record.deadline_at):
+                with foreground_request(
+                    record.deadline_at,
+                    prompt_cache_key=f"eidos:{step.session_id}",
+                ):
                     outcome = self._sample(step, cancel)
             except Exception:
                 self._writer.abort()

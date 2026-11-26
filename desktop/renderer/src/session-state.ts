@@ -238,6 +238,26 @@ export class SnapshotReadCoordinator {
   }
 }
 
+function applyItemDeltaToContent(
+  kind: Item["kind"],
+  status: Item["status"],
+  content: string,
+  delta: string,
+  offset: number | undefined,
+): string {
+  if (kind === "assistant_message" && status !== "in_progress") return content;
+  if (offset !== undefined) {
+    if (offset < content.length) {
+      if (offset + delta.length <= content.length) {
+        return content;
+      }
+      return content + delta.slice(content.length - offset);
+    }
+    return content + delta;
+  }
+  return content + delta;
+}
+
 export function applyNotification(
   snapshot: SessionSnapshot | undefined,
   notification: RuntimeNotification,
@@ -277,25 +297,23 @@ export function applyNotification(
     return { ...snapshot, runs: upsertRun(snapshot.runs, notification.params.run) };
   }
   if (notification.method === "item/delta") {
-    return {
-      ...snapshot,
-      items: snapshot.items.map((item) => {
-        if (item.id !== notification.params.itemId) return item;
-        const { delta, offset } = notification.params;
-        const content = item.content ?? "";
-        if (item.kind === "assistant_message" && item.status !== "in_progress") return item;
-        if (offset !== undefined) {
-          if (offset < content.length) {
-            if (offset + delta.length <= content.length) {
-              return item;
-            }
-            return { ...item, content: content + delta.slice(content.length - offset) };
-          }
-          return { ...item, content: content + delta };
-        }
-        return { ...item, content: content + delta };
-      }),
-    };
+    let changed = false;
+    const nextItems = snapshot.items.map((item) => {
+      if (item.id !== notification.params.itemId) return item;
+      const content = item.content ?? "";
+      const nextContent = applyItemDeltaToContent(
+        item.kind,
+        item.status,
+        content,
+        notification.params.delta,
+        notification.params.offset,
+      );
+      if (nextContent === content && item.content !== undefined) return item;
+      if (nextContent === content) return item;
+      changed = true;
+      return { ...item, content: nextContent };
+    });
+    return changed ? { ...snapshot, items: nextItems } : snapshot;
   }
   if (
     notification.method === "approval/requested"
@@ -327,6 +345,70 @@ export function applyNotification(
     merged = { ...merged, toolCall: mergedToolCall };
   }
   return { ...snapshot, items: upsertItem(snapshot.items, merged) };
+}
+
+type DeltaNotification = Extract<RuntimeNotification, { method: "item/delta" }>;
+
+function flushDeltaBatch(
+  snapshot: SessionSnapshot | undefined,
+  deltas: readonly DeltaNotification[],
+): SessionSnapshot | undefined {
+  if (!snapshot || deltas.length === 0) return snapshot;
+  const grouped = new Map<string, DeltaNotification[]>();
+  for (const notice of deltas) {
+    if (notice.params.sessionId !== snapshot.session.id) continue;
+    let bucket = grouped.get(notice.params.itemId);
+    if (!bucket) {
+      bucket = [];
+      grouped.set(notice.params.itemId, bucket);
+    }
+    bucket.push(notice);
+  }
+  if (grouped.size === 0) return snapshot;
+  let changed = false;
+  const nextItems = snapshot.items.map((item) => {
+    const itemDeltas = grouped.get(item.id);
+    if (!itemDeltas) return item;
+    const initial = item.content ?? "";
+    let content = initial;
+    for (const notice of itemDeltas) {
+      content = applyItemDeltaToContent(
+        item.kind,
+        item.status,
+        content,
+        notice.params.delta,
+        notice.params.offset,
+      );
+    }
+    if (content === initial) return item;
+    changed = true;
+    return { ...item, content };
+  });
+  return changed ? { ...snapshot, items: nextItems } : snapshot;
+}
+
+export function applyNotifications(
+  snapshot: SessionSnapshot | undefined,
+  notifications: readonly RuntimeNotification[],
+): SessionSnapshot | undefined {
+  if (notifications.length === 0) return snapshot;
+  let current = snapshot;
+  let pendingDeltas: DeltaNotification[] = [];
+  for (const notification of notifications) {
+    if (notification.method === "item/delta") {
+      pendingDeltas.push(notification);
+      continue;
+    }
+    if (pendingDeltas.length > 0) {
+      current = flushDeltaBatch(current, pendingDeltas);
+      pendingDeltas = [];
+    }
+    current = applyNotification(current, notification);
+  }
+  if (pendingDeltas.length > 0) {
+    current = flushDeltaBatch(current, pendingDeltas);
+  }
+  return current;
 }
 
 export function isQueuedMessage(run: Run): boolean {

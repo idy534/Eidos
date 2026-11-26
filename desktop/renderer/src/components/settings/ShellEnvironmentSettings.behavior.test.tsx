@@ -77,4 +77,14 @@ describe("Runtime sandbox environment settings", () => {
     await waitFor(() => expect(screen.getByLabelText("环境继承方式")).toBeEnabled());
     expect(screen.getByLabelText("环境继承方式")).toHaveValue("all");
   });
+
+  it("saves the default terminal shell preference cleanly", async () => {
+    const user = userEvent.setup();
+    render(<RuntimeSettings runtime={runtime} />);
+    const select = screen.getByLabelText("默认终端 Shell");
+    await user.selectOptions(select, "zsh");
+    expect(window.localStorage.getItem("eidos.terminal.defaultShell")).toBe("zsh");
+    await user.selectOptions(select, "");
+    expect(window.localStorage.getItem("eidos.terminal.defaultShell")).toBeNull();
+  });
 });

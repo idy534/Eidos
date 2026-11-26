@@ -15,6 +15,8 @@ from eidos_runtime.domain.project import Project
 from eidos_runtime.domain.session import SessionExecutionMode, SessionProjection
 from eidos_runtime.git.errors import WorktreeError
 from eidos_runtime.protocol.methods import (
+    WorkspaceFindFilesRequestDto,
+    WorkspaceFindFilesResponseDto,
     WorkspaceReadAssetRequestDto,
     WorkspaceReadAssetResponseDto,
     WorkspaceListDirectoryRequestDto,
@@ -96,6 +98,34 @@ class WorkspaceExplorerApplication:
                     for entry in listing.entries
                 ],
                 "truncated": listing.truncated,
+            })
+        except (WorkspacePathError, DiscoveryScopeError) as error:
+            raise ApplicationError(_workspace_error_code(error)) from error
+
+    def find_files(
+        self, request: WorkspaceFindFilesRequestDto
+    ) -> WorkspaceFindFilesResponseDto:
+        try:
+            identity = self._execution_identity(
+                request.session_id, request.workspace_root, request.project_id
+            )
+            self._ensure_watch(request.session_id, identity.path)
+            with WorkspaceReader(identity) as reader:
+                result = reader.find_files(request.query, limit=request.limit)
+            return WorkspaceFindFilesResponseDto.model_validate({
+                "entries": [
+                    {
+                        "name": entry.name,
+                        "relativePath": entry.relative_path,
+                        "kind": entry.kind,
+                        **(
+                            {"sizeBytes": entry.size_bytes}
+                            if entry.size_bytes is not None else {}
+                        ),
+                    }
+                    for entry in result.entries
+                ],
+                "truncated": result.truncated,
             })
         except (WorkspacePathError, DiscoveryScopeError) as error:
             raise ApplicationError(_workspace_error_code(error)) from error

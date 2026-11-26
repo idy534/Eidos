@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -40,6 +41,141 @@ export interface TerminalSpawnOptions {
   name: string;
 }
 
+export interface ResolvedTerminalShell {
+  file: string;
+  args: string[];
+}
+
+export interface ResolveTerminalShellOptions {
+  platform?: NodeJS.Platform;
+  environment: NodeJS.ProcessEnv;
+  preferredShell?: string | undefined;
+  fileExists?: (filePath: string) => boolean;
+}
+
+function shellArgsFor(filePath: string, windows: boolean): string[] {
+  const base = (windows ? path.win32.basename(filePath) : path.posix.basename(filePath)).toLowerCase();
+  if (base === "pwsh.exe" || base === "pwsh" || base === "powershell.exe" || base === "powershell") {
+    return ["-NoLogo"];
+  }
+  if (base === "cmd.exe" || base === "cmd" || base === "wsl.exe" || base === "wsl" || base === "sh") {
+    return [];
+  }
+  if (base === "zsh" || base === "bash" || base === "bash.exe" || base === "fish") {
+    return ["-l"];
+  }
+  return windows ? [] : ["-l"];
+}
+
+function findExecutableOnPath(
+  executable: string,
+  pathEnv: string | undefined,
+  delimiter: string,
+  pathImpl: typeof path.win32 | typeof path.posix,
+  fileExists: (filePath: string) => boolean,
+): string | undefined {
+  if (!pathEnv) return undefined;
+  for (const segment of pathEnv.split(delimiter)) {
+    const dir = segment.trim().replace(/^"|"$/g, "");
+    if (!dir) continue;
+    const candidate = pathImpl.join(dir, executable);
+    if (fileExists(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+export function resolveTerminalShell(options: ResolveTerminalShellOptions): ResolvedTerminalShell {
+  const platform = options.platform ?? globalThis.process.platform;
+  const windows = platform === "win32";
+  const env = options.environment;
+  const fileExists = options.fileExists ?? existsSync;
+  const preferred = options.preferredShell?.trim();
+  if (preferred && /[\0\r\n]/.test(preferred)) {
+    throw new Error("Shell 路径无效。");
+  }
+
+  if (windows) {
+    const systemRoot = env.SystemRoot;
+    const validSystemRoot = Boolean(systemRoot && path.win32.isAbsolute(systemRoot));
+    const programFiles = env.ProgramFiles;
+    const programFilesX86 = env["ProgramFiles(x86)"];
+    const pwshCandidates = [
+      ...(programFiles ? [path.win32.join(programFiles, "PowerShell", "7", "pwsh.exe")] : []),
+      ...(findExecutableOnPath("pwsh.exe", env.PATH ?? env.Path, ";", path.win32, fileExists)
+        ? [findExecutableOnPath("pwsh.exe", env.PATH ?? env.Path, ";", path.win32, fileExists)!]
+        : []),
+    ];
+    const powershellCandidates = validSystemRoot
+      ? [path.win32.join(systemRoot!, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")]
+      : [];
+    const gitBashCandidates = [
+      ...(programFiles ? [path.win32.join(programFiles, "Git", "bin", "bash.exe")] : []),
+      ...(programFilesX86 ? [path.win32.join(programFilesX86, "Git", "bin", "bash.exe")] : []),
+    ];
+    const wslCandidates = validSystemRoot
+      ? [path.win32.join(systemRoot!, "System32", "wsl.exe")]
+      : [];
+    const cmdCandidates = [
+      ...(env.COMSPEC && path.win32.isAbsolute(env.COMSPEC) ? [env.COMSPEC] : []),
+      ...(validSystemRoot ? [path.win32.join(systemRoot!, "System32", "cmd.exe")] : []),
+    ];
+
+    if (preferred) {
+      const aliasMap: Record<string, string[]> = {
+        pwsh: pwshCandidates,
+        powershell: powershellCandidates,
+        "git-bash": gitBashCandidates,
+        wsl: wslCandidates,
+        cmd: cmdCandidates,
+      };
+      const mapped = aliasMap[preferred.toLowerCase()];
+      if (mapped) {
+        const hit = mapped.find((candidate) => fileExists(candidate));
+        if (hit) return { file: hit, args: shellArgsFor(hit, true) };
+      } else if (path.win32.isAbsolute(preferred) && fileExists(preferred)) {
+        return { file: preferred, args: shellArgsFor(preferred, true) };
+      }
+    }
+
+    const candidates = [
+      ...pwshCandidates,
+      ...powershellCandidates,
+      ...gitBashCandidates,
+      ...cmdCandidates,
+    ];
+    const resolved = candidates.find((candidate) => fileExists(candidate));
+    if (resolved) return { file: resolved, args: shellArgsFor(resolved, true) };
+    if (validSystemRoot && powershellCandidates[0]) {
+      return { file: powershellCandidates[0], args: shellArgsFor(powershellCandidates[0], true) };
+    }
+    throw new Error("Windows 系统目录不可用。");
+  }
+
+  const posixFallbacks = ["/bin/zsh", "/bin/bash", "/bin/sh"];
+  if (preferred) {
+    const aliasMap: Record<string, string[]> = {
+      zsh: ["/bin/zsh", "/usr/bin/zsh", "/opt/homebrew/bin/zsh"],
+      bash: ["/bin/bash", "/usr/bin/bash", "/opt/homebrew/bin/bash"],
+      fish: ["/opt/homebrew/bin/fish", "/usr/local/bin/fish", "/usr/bin/fish", "/bin/fish"],
+      sh: ["/bin/sh"],
+    };
+    const mapped = aliasMap[preferred.toLowerCase()];
+    if (mapped) {
+      const hit = mapped.find((candidate) => fileExists(candidate));
+      if (hit) return { file: hit, args: shellArgsFor(hit, false) };
+    } else if (path.posix.isAbsolute(preferred) && fileExists(preferred)) {
+      return { file: preferred, args: shellArgsFor(preferred, false) };
+    }
+  }
+
+  const envShell = env.SHELL?.trim();
+  if (envShell && path.posix.isAbsolute(envShell) && fileExists(envShell)) {
+    return { file: envShell, args: shellArgsFor(envShell, false) };
+  }
+  const fallback = posixFallbacks.find((candidate) => fileExists(candidate)) ?? "/bin/zsh";
+  return { file: fallback, args: shellArgsFor(fallback, false) };
+}
+
 export interface TerminalManagerDependencies {
   readSession(sessionId: string): Promise<SessionSnapshot>;
   resolveProjectRoot?(projectId: string): Promise<string>;
@@ -47,6 +183,8 @@ export interface TerminalManagerDependencies {
   resolveDirectory?(root: string): Promise<string>;
   environment?: NodeJS.ProcessEnv;
   createId?(): string;
+  platform?: NodeJS.Platform;
+  fileExists?: (filePath: string) => boolean;
 }
 
 interface TerminalEntry {
@@ -100,11 +238,15 @@ export class TerminalManager {
   private readonly resolveDirectory: (root: string) => Promise<string>;
   private readonly environment: NodeJS.ProcessEnv;
   private readonly createId: () => string;
+  private readonly platform: NodeJS.Platform;
+  private readonly fileExists: (filePath: string) => boolean;
 
   constructor(private readonly deps: TerminalManagerDependencies) {
     this.resolveDirectory = deps.resolveDirectory ?? resolveDirectory;
     this.environment = deps.environment ?? process.env;
     this.createId = deps.createId ?? randomUUID;
+    this.platform = deps.platform ?? globalThis.process.platform;
+    this.fileExists = deps.fileExists ?? existsSync;
   }
 
   async create(
@@ -112,6 +254,7 @@ export class TerminalManager {
     sessionId: string,
     workspaceRoot?: string,
     projectId?: string,
+    preferredShell?: string,
   ): Promise<TerminalSessionInfo> {
     validateIdentifier(sessionId, "Session ");
     if (owner.isDestroyed()) throw new Error("终端窗口已经关闭。");
@@ -133,15 +276,13 @@ export class TerminalManager {
       validateIdentifier(terminalId, "Terminal ");
       if (this.entries.has(terminalId)) throw new Error("终端标识冲突。");
 
-      const windows = globalThis.process.platform === "win32";
-      const systemRoot = this.environment.SystemRoot;
-      if (windows && (!systemRoot || !path.win32.isAbsolute(systemRoot))) {
-        throw new Error("Windows 系统目录不可用。");
-      }
-      const file = windows
-        ? path.win32.join(systemRoot!, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-        : "/bin/zsh";
-      const process = this.deps.spawn(file, windows ? ["-NoLogo"] : ["-l"], {
+      const { file, args } = resolveTerminalShell({
+        platform: this.platform,
+        environment: this.environment,
+        preferredShell,
+        fileExists: this.fileExists,
+      });
+      const process = this.deps.spawn(file, args, {
         cwd,
         cols: DEFAULT_COLUMNS,
         rows: DEFAULT_ROWS,
@@ -207,8 +348,7 @@ export class TerminalManager {
 
   private executionRoot(snapshot: SessionSnapshot): string {
     const { session } = snapshot;
-    if (session.projectless) throw new Error("Projectless 会话不提供终端。");
-    if (session.executionMode !== "worktree") {
+    if (session.projectless || session.executionMode !== "worktree") {
       if (!session.workspaceRoot) throw new Error("Workspace 当前不可用。");
       return session.workspaceRoot;
     }
@@ -229,8 +369,7 @@ export class TerminalManager {
     workspaceRoot: string | undefined,
     projectId: string | undefined,
   ): Promise<string> {
-    if (!projectId) throw new Error("Projectless 会话不提供终端。");
-    const root = this.deps.resolveProjectRoot
+    const root = projectId && this.deps.resolveProjectRoot
       ? await this.deps.resolveProjectRoot(projectId)
       : workspaceRoot;
     if (!root) throw new Error("Workspace 当前不可用。");

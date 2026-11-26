@@ -41,25 +41,11 @@ export interface ModelSelectorProps {
   onChange: (selection: ModelReasoningSelection | undefined) => void;
 }
 
-const FULL_MULTIMODAL_MODELS = new Set([
-  "glm-5.3-flash",
-  "minimax-m3",
-  "MiniMax-M3",
-  "kimi-k3",
-  "kimi-k2.7-code-highspeed",
-]);
-
-const MODEL_CONTEXT_LIMITS: Record<string, string> = {
-  "deepseek-v4.1-flash": "1M",
-  "glm-5.3-flash": "1M",
-  "glm-5.3": "1M",
-  "deepseek-v4-flash-ga-260731": "1M",
-  "deepseek-v4-pro-ga-260813": "1M",
-  "deepseek-flash": "800K",
-  "minimax-m3": "1M",
-  "MiniMax-M3": "1M",
-  "kimi-k3": "1M",
-  "kimi-k2.7-code-highspeed": "256K",
+const INPUT_MODALITY_LABELS: Record<"text" | "image" | "audio" | "video", string> = {
+  text: "文本",
+  image: "图像",
+  audio: "音频",
+  video: "视频",
 };
 
 function getModelProviderDisplay(model: ModelOption): string {
@@ -67,9 +53,8 @@ function getModelProviderDisplay(model: ModelOption): string {
 }
 
 function getModelInputDisplay(model: ModelOption): string {
-  if (model.custom) return model.supportsImages ? "文本, 图像" : "文本";
-  if (FULL_MULTIMODAL_MODELS.has(model.id)) {
-    return "文本, 图像, 视频, PDF";
+  if (model.inputModalities && model.inputModalities.length > 0) {
+    return model.inputModalities.map((modality) => INPUT_MODALITY_LABELS[modality] ?? modality).join(", ");
   }
   if (model.supportsImages) {
     return "文本, 图像";
@@ -87,7 +72,7 @@ function getModelReasoningDisplay(model: ModelOption): string {
 
 function getModelContextDisplay(model: ModelOption): string {
   if (model.contextWindowTokens) return formatTokenCount(model.contextWindowTokens);
-  return MODEL_CONTEXT_LIMITS[model.id] ?? "128K";
+  return "--";
 }
 
 function easeOutQuart(x: number): number {

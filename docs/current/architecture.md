@@ -55,7 +55,7 @@ Run 环境接口用 `None` 表示没有持久模型配置或注入模型。Appli
 
 网页搜索使用 `typed IPC → webSearch/read、webSearch/save → WebSearchApplication → WebSearchRepository / SecretFiles`。Schema v34 保存配置和 Run 搜索快照。RunResources 按用户明确选择的默认服务发布内置 `web_search`。用户配置提供该服务的调用授权，搜索不再逐次审批。搜索经过现有 Controller 的参数校验和 Durable Intent，再由 RuntimeAsyncKernel 托管官方 HTTPS 请求。网络等待不持有 Run 的提交窗口，搜索不增加 Shell 网络 Grant，也不自动切换服务。具体字段、迁移和结果边界见[当前网页搜索](features/web-search.md)。
 
-渠道支持钉钉、飞书和企业微信。各平台 SDK 将文字消息交给 `ChannelApplication → SQLite 接收记录 → SessionApplication / RunApplication → 普通 Run → 持久化回复`。钉钉和飞书通过 HTTPS API 回复，企业微信通过原长连接发送并等待回执。Desktop 通过“设置 → 助理”、typed IPC 和 stdio JSON-RPC 管理配置。渠道服务与准备任务由现有 AnyIO Kernel 和 Supervisor 管理。Schema v30 引入渠道表；三平台配置复用这些表，当前主库版本是 v41。具体边界见 [当前渠道接入](features/channels.md)。
+渠道支持钉钉、飞书和企业微信。各平台 SDK 将文字消息交给 `ChannelApplication → SQLite 接收记录 → SessionApplication / RunApplication → 普通 Run → 持久化回复`。钉钉和飞书通过 HTTPS API 回复，企业微信通过原长连接发送并等待回执。Desktop 通过“设置 → 助理”、typed IPC 和 stdio JSON-RPC 管理配置。渠道服务与准备任务由现有 AnyIO Kernel 和 Supervisor 管理。Schema v30 引入渠道表；三平台配置复用这些表，当前主库版本是 v57。具体边界见 [当前渠道接入](features/channels.md)。
 
 本地定时任务采用 `typed IPC → schedule/execute → AutomationApplication → AutomationRepository → SQLite → 普通 Run`。Schema v28 新增计划、触发与执行来源。调度由现有 AnyIO Kernel 和 Supervisor 管理，不增加常驻线程、额外执行器或全局 Run 配额。具体持久化、工具分类、恢复和来源规则见 [当前本地定时任务](features/automations.md)。
 
@@ -75,7 +75,7 @@ Renderer 的新建会话继续使用 `AppShell → useSessionController` 的草�
 
 `session/read` 将继承记录放在 `inheritedHistory` 中，并与真实 Item 共用分页游标。Main 在验证协议后把历史记录加入展示列表，并添加仅供界面使用的 `inherited` 标记。历史 Run 不进入 `runs` 表、调度、恢复和授权。Context Repository 将继承事实与自有事实合并，继续使用现有预算和压缩校验。模型响应回放只进入模型上下文。界面看不到私有回放。
 
-Local 与 Projectless 分叉可以共享当前目录。独立 Worktree 分叉复用 Git Backend、WorktreeManager、WorktreeSnapshotService 和 durable lifecycle。快照固定分叉时的 Git 状态，并在新 Worktree 中恢复和核验。该流程不改变来源目录。来源删除不会删除目标持有的历史资源。原 `checkpoint/fork` 继续保留自己的 Checkpoint、Run 和重放语义。
+Local 与 Projectless 分叉可以共享当前目录。独立 Worktree 分叉复用 Git Backend、WorktreeManager、WorktreeSnapshotService 和 durable lifecycle。快照固定分叉时的 Git 状态，并在新 Worktree 中恢复和核验。该流程不改变来源目录。来源删除不会删除目标持有的历史资源。原 `checkpoint/fork` 保留快照结构，同时 `RuntimeEngine → CheckpointApplication → CheckpointRepository` 在每次 Git 会话 Run 启动前自动捕获轻量级工作区快照（`checkpoints`），并在 `checkpoint/list`、`checkpoint/rewind` 与 `ExecutionFeed` 回退操作完成后写入 `checkpoint_actions` 审计记录。
 
 分叉是已持久化的正常 Session。创建事务同时保存来源标题和 Session created Event。分叉没有自己的 Run 时，侧栏也会展示它，空 Session 清理也不会删除它。v26→v27 是数据迁移。迁移按创建顺序补齐未命名分叉的标题，并在同一事务中提交 Title updated Event/Outbox。嵌套分叉会使用已补齐的父标题。来源已删除时，迁移使用“新会话”。现有非空标题不变。
 
@@ -172,7 +172,7 @@ Python Runtime 的 stdout 只输出有界的 JSON-RPC 行。Runtime 日志写入
 
 Windows 的 `initialize` 请求限时 60 秒，覆盖 Runtime 进程启动、NTFS 文件校验和首次部署内置 Skill。Windows 的 `browser/open`、`browser/status`、`browser/close` 和 `browser/clearProfile` 限时 90 秒，覆盖最长 45 秒的 Chrome 启动和 Job Object 停止；`browser/status` 会等待启动中的 Chrome 持有的 BrowserHost 锁。macOS 的这些请求及其他 RPC 请求继续使用 30 秒限时。
 
-`RunSupervisor.start_managed_task()` 在 AnyIO worker 中完成登记等待、目标执行、错误记录和资源清理。任务清理不再在 AnyIO 事件循环中获取 Supervisor 的同步锁。提交线程仍在锁内通过 BlockingPortal 登记任务；worker 中的清理等待不会挡住 portal 的调度。受保护的等待保留已接纳任务的资源所有权，取消继续通过 `threading.Event` 协作传播，系统不会丢弃仍在执行的线程来冒充资源静止。这项死锁修订尚未进入测试阶段。
+`RunSupervisor.start_managed_task()` 在 AnyIO worker 中完成登记等待、目标执行、错误记录和资源清理。任务清理不再在 AnyIO 事件循环中获取 Supervisor 的同步锁。提交线程仍在锁内通过 BlockingPortal 登记任务；worker 中的清理等待不会挡住 portal 的调度。受保护的等待保留已接纳任务的资源所有权，取消继续通过 `threading.Event` 协作传播，系统不会丢弃仍在执行的线程来冒充资源静止；并发提交与快速完成防死锁已由 `runtime/tests/test_async_kernel_deadlock.py` 回归覆盖。
 
 `runtime/eidos_runtime/runtime/loop.py` 只导出 `RuntimeEngine` 的兼容名称。它不是当前 Runtime Loop 的第二套实现。
 
@@ -184,7 +184,7 @@ Renderer 的本地 CSS 由 `desktop/renderer/src/styles.css` 统一导入。该�
 
 滚动条外观统一由 `styles/scrollbars.css` 管理。Renderer 使用 Chromium 的 `::-webkit-scrollbar-*` 定义 6px 滑块、透明轨道和角落；这些部位不显示边框、阴影和箭头。公共层将标准 `scrollbar-width` 与 `scrollbar-color` 保持为 `auto`，避免它们覆盖自定义外观。模块只保留隐藏滚动条和代码、Diff 悬停显示滑块的规则。灰色滑块与悬停颜色来自有效的颜色变量，变量不引用自身。
 
-公共控件负责 Button 的颜色、交互状态、焦点和禁用样式。产品不绘制焦点环：`--focus-ring` 统一为 `none`，键盘与鼠标聚焦都不出现绿色轮廓。Chromium 会把弹窗还原的焦点判成 `:focus-visible`，所以这个 token 是移除残留绿圈的唯一入口，各模块只引用它，不再各自定义轮廓。焦点位置改由悬停、选中和边框颜色表达。审批和计划模块只补充按钮排列与尺寸。Composer 的模型与审批模式选择器共用触发按钮和浮层基础规则。列表与选择卡使用 `--surface-selected`，普通悬停使用 `--surface-hover`；危险操作继续使用危险颜色。代码与 Mermaid 共用标题标签和复制控件。聊天专用 `.eidos-chat-prose` 保留独立范围，文件预览与其他 Markdown 不启用该范围。
+公共控件负责 Button 的颜色、交互状态、焦点和禁用样式。键盘导航使用 `:focus-visible` 呈现统一的 `--focus-ring` 焦点指示；Theme 系统支持浅色、暗色（`data-theme="dark"`）与跟随系统外观切换。审批和计划模块只补充按钮排列与尺寸。Composer 的模型与审批模式选择器共用触发按钮和浮层基础规则。列表与选择卡使用 `--surface-selected`，普通悬停使用 `--surface-hover`；危险操作继续使用危险颜色。代码与 Mermaid 共用标题标签和复制控件。聊天专用 `.eidos-chat-prose` 保留独立范围，文件预览与其他 Markdown 不启用该范围。
 
 Workspace Dock 独立维护 Session 内容列和环境浮层。居中 Session 沿用原构建实际生效的单列布局，并由 `--session-content-width` 限制回答与 Composer 宽度。规划样式不再重复定义环境浮层，技能样式不再修改整个设置窗口。样式测试按统一入口读取模块；原生 Electron 定向检查验证最终计算样式和响应式布局。
 
@@ -362,7 +362,7 @@ Compactor 只向验证层提供摘要覆盖的 ToolCall 与工作区变更来源
 
 ## 7. Model Gateway
 
-Runtime 锁定 `pydantic-ai-slim[openai,retries]==2.57.0` 和 `openai==3.26.0`。OpenAI SDK 版本满足 Pydantic AI 的最低要求。锁文件只同步升级必需的 `pydantic-graph` 与 `genai-prices`。新建 `ModelProfileSnapshot` 记录 Pydantic AI 2.57.0；读取历史快照时，Runtime 保留其中已记录的版本。该升级不修改 SQLite Schema、模型配置格式或 Eidos Loop。
+Runtime 锁定 `pydantic-ai-slim[openai,anthropic,retries]==2.57.0`、`openai==3.26.0` 和 `anthropic==1.17.0`。OpenAI 与 Anthropic SDK 版本满足 Pydantic AI 的最低要求。锁文件只同步升级必需的 `pydantic-graph`、`genai-prices` 与 `anthropic` 传递依赖。新建 `ModelProfileSnapshot` 记录 Pydantic AI 2.57.0；读取历史快照时，Runtime 保留其中已记录的版本。该升级不修改 SQLite Schema、模型配置格式或 Eidos Loop。
 
 ModelConfigStore 使用受保护的 `models.json` 保存本地配置。默认位置是 `~/.eidos/models.json`，显式数据目录会改变 Runtime-owned 数据位置。文件按 owner-only 权限保存。
 
@@ -377,6 +377,9 @@ kimi:    kimi-k3, kimi-k2.7-code-highspeed
 volcengine: deepseek-v4.1-flash,
             deepseek-v4-pro-ga-260813, deepseek-v4-flash-ga-260731,
             glm-5.3, glm-5.3-flash, kimi-k3.1-pro, minimax-m3
+openai:   gpt-6.2-astra, gpt-6.2-sol, gpt-6-luna
+anthropic: claude-fable-5-2, claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5
+gemini:   gemini-4-carbon, gemini-4-neon, gemini-4-hydrogen
 ```
 
 Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启用 thinking；`思考`表示启用 thinking，但不提供强度档位。表中的档位是 Eidos 的选择项，不代表不同 Provider 使用相同的请求字段。
@@ -394,6 +397,18 @@ Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启�
 | Volcengine Agent Plan | `glm-5.3` | 固定思考，无强度选择 | 思考 |
 | Volcengine Agent Plan | `kimi-k3.1-pro` | Low、High、Max；固定思考 | Max |
 | Volcengine Agent Plan | `minimax-m3` | 不提供 Eidos 控制 | Provider 默认值 |
+| OpenAI | `gpt-6.2-astra` | Low、Medium、High、XHigh、Max | High |
+| OpenAI | `gpt-6.2-sol` | Low、Medium、High、XHigh、Max | Medium |
+| OpenAI | `gpt-6-luna` | 关闭、Low、Medium、High、XHigh、Max | Medium |
+| Anthropic | `claude-fable-5-2` | Low、Medium、High、XHigh、Max | High |
+| Anthropic | `claude-opus-5-5` | Low、Medium、High、XHigh、Max | Medium |
+| Anthropic | `claude-sonnet-5-5` | Low、Medium、High、XHigh、Max | High |
+| Anthropic | `claude-haiku-5-5` | Low、Medium、High、XHigh、Max | Medium |
+| Google Gemini | `gemini-4-carbon` | Low、Medium、High | Medium |
+| Google Gemini | `gemini-4-neon` | Low、Medium、High、XHigh | High |
+| Google Gemini | `gemini-4-hydrogen` | Low、Medium、High、XHigh | High |
+
+内置海外 Provider 分别通过各自对应协议接入：OpenAI 经 Responses API（`wire_api="openai_responses"`）发送 `reasoning.effort` 并启用 `supports_custom_tools` / `supports_tool_grammar`；Anthropic 经 Pydantic AI 原生 `AnthropicModel` / `AnthropicProvider` 调用 `/v1/messages`（`wire_api="anthropic_messages"`），原生启用 `anthropic_thinking={"type": "adaptive"}`、`output_config.effort`、Prompt Caching 及带签名的思考块回放；Claude 5.x 拒绝强制 `tool_choice`，因此该协议下模型辅助压缩只在指令中点名 `submit_context_summary`，不强制工具选择，结果仍按单一工具调用校验，失败时使用确定性压缩；Google Gemini 经 OpenAI 兼容 Chat Completions 端点发送 `reasoning_effort`（支持 `low`–`xhigh`）。
 
 直连 Provider 的公开文档分别说明了不同能力。DeepSeek 使用 `thinking` 开关和 `reasoning_effort`；Low、High、Max 是有效档位，`minimal`、`medium`、`xhigh`、`ultra` 会映射到重复的实际档位。Kimi K3 使用顶层 `reasoning_effort`，可选 Low、High、Max，默认 Max，并且不能关闭思考。Kimi K2.7 Code HighSpeed 固定开启思考，没有公开的强度档位。MiniMax M3 使用 `thinking.type` 开关，`adaptive` 表示启用，`disabled` 表示关闭，省略时默认启用；没有离散 effort 档位。MiniMax 的 `reasoning_split` 只控制思考内容的返回格式，不控制思考开关。参考：[DeepSeek Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/)、[Kimi Reasoning Effort](https://platform.kimi.ai/docs/guide/use-reasoning-effort)、[Kimi K2.7 Code](https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart)、[MiniMax OpenAI SDK](https://platform.minimax.io/docs/api-reference/text-openai-api)。
 
@@ -618,7 +633,7 @@ ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。
 
 本地 JSONL 日志保存脱敏后的异常消息和调用位置，包括显式 cause 与未抑制的 context。普通消息最多 16 KiB，异常消息最多 4 KiB，调用栈最多 16 KiB；每个异常最多记录 32 个调用位置，异常链最多记录 8 层。日志不保存局部变量和源码行。日志字段使用现有凭据扫描并补充私钥正文、Authorization 与密钥赋值脱敏；诊断生成失败时只保存固定占位信息。该信息不进入 Session 正文，也不参与业务状态和恢复判断。
 
-当前 `SCHEMA_VERSION` 是 54。v53→v54 为记忆笔记增加上次读取时间和读取次数。v49→v53 的变更见各功能说明。v48→v49 为 `events`、`context_plans`、`context_snapshots` 和 `model_attempts` 补充会话快照、事件游标、上下文压缩记录与上下文详情查询索引，消除大事件表上的全表扫描。v47→v48 新增会话级浏览器授权与目标配置表。v44→v47 保存多目录项目绑定、Session `project_id` 与根快照，以及 Worktree 私有 gitdir 身份。v43→v44 新增全局个性化设置表，并保留已有数据。v42→v43 保留已有笔记、历史版本、模式和撤销记录，新增归档状态并调整聊天来源触发器。v41→v42 删除会话级临时记忆字段和接口，保留笔记与原来源撤销状态，并让原临时会话按所属范围的模式工作。v40→v41 保留现有笔记，在事务中修复历史自动版本的来源撤销触发器，并补充撤销旧版遗漏的上下文。v39→v40 在事务中重置记忆表，撤销旧记忆上下文，并保留聊天、执行记录及其他配置；文件清理由可重试的启动标记完成。v25→v26 增加 `session_forks`、`session_history_entries`、`session_history_resources` 和 Worktree 生命周期请求校验值。迁移使用事务，旧 Session 没有继承历史。v16→v17 在事务内新增记忆作用域、版本、证据、任务、预算及隐私撤销表和索引。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
+当前 `SCHEMA_VERSION` 是 57。v56→v57 新增 `background_guardrail_settings` 与 `automation_guardrail_state`（支持 Goal / 自动化定时任务的设置页护栏配置及恢复后重置计数）；v55→v56 支持 Agent 团队与协作表；v54→v55 新增子 Agent 隔离工作区及其交付与集成记录；v53→v54 为记忆笔记增加上次读取时间和读取次数。v49→v53 的变更见各功能说明。v48→v49 为 `events`、`context_plans`、`context_snapshots` 和 `model_attempts` 补充会话快照、事件游标、上下文压缩记录与上下文详情查询索引，消除大事件表上的全表扫描。v47→v48 新增会话级浏览器授权与目标配置表。v44→v47 保存多目录项目绑定、Session `project_id` 与根快照，以及 Worktree 私有 gitdir 身份。v43→v44 新增全局个性化设置表，并保留已有数据。v42→v43 保留已有笔记、历史版本、模式和撤销记录，新增归档状态并调整聊天来源触发器。v41→v42 删除会话级临时记忆字段和接口，保留笔记与原来源撤销状态，并让原临时会话按所属范围的模式工作。v40→v41 保留现有笔记，在事务中修复历史自动版本的来源撤销触发器，并补充撤销旧版遗漏的上下文。v39→v40 在事务中重置记忆表，撤销旧记忆上下文，并保留聊天、执行记录及其他配置；文件清理由可重试的启动标记完成。v25→v26 增加 `session_forks`、`session_history_entries`、`session_history_resources` 和 Worktree 生命周期请求校验值。迁移使用事务，旧 Session 没有继承历史。v16→v17 在事务内新增记忆作用域、版本、证据、任务、预算及隐私撤销表和索引。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
 
 Outbox 投递失败不会删除事实。Runtime 重启会从 `state.sqlite`、Outbox、Long Task 和 Resource 状态恢复或记录实际中断与未知结果。其他数据库和文件不参与跨库业务 transaction。
 

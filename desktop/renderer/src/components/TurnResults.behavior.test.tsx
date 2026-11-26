@@ -6,6 +6,7 @@ import type { Item, Run } from "../contracts.js";
 import { ArtifactProvider } from "./ArtifactContext.js";
 import {
   collectOutputArtifacts,
+  mergeOutputArtifacts,
   OutputContent,
   projectTurnResults,
   TurnResults,
@@ -655,5 +656,36 @@ describe("TurnResults", () => {
 
     expect(screen.getByRole("button", { name: "打开 1.txt" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /展开|收起/ })).not.toBeInTheDocument();
+  });
+
+  it("merges backend declaredOutputs summaries with live session items and skips eager pagination when disabled", async () => {
+    const readSession = vi.fn();
+    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { readSession } });
+
+    function LazyOutput() {
+      const result = useCompleteSessionItems("session-lazy", [], "older-cursor", [], false);
+      return <OutputContent artifacts={[]} loading={result.loading} error={result.error} />;
+    }
+
+    try {
+      render(<LazyOutput />);
+      expect(readSession).not.toHaveBeenCalled();
+    } finally {
+      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+
+    const merged = mergeOutputArtifacts(
+      [
+        { path: "old.pdf", executionRoot: "/workspace", version: "a".repeat(64), sizeBytes: 10, runId: "r0", itemId: "i0", title: "Old" },
+        { path: "report.md", executionRoot: "/workspace", version: "b".repeat(64), sizeBytes: 20, runId: "r0", itemId: "i1", title: "Draft" },
+      ],
+      [declaredItem("item-new", [{ path: "report.md", title: "Final" }])],
+    );
+    expect(merged).toMatchObject([
+      { path: "old.pdf", kind: "pdf", title: "Old" },
+      { path: "report.md", kind: "file", itemId: "item-new", title: "Final" },
+    ]);
   });
 });

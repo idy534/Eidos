@@ -31,7 +31,7 @@ mac:
   category: public.app-category.developer-tools
   icon: packaging/icon.icns
   entitlements: packaging/entitlements.mac.plist
-  entitlementsInherit: packaging/entitlements.mac.plist
+  entitlementsInherit: packaging/entitlements.mac.inherit.plist
   sign: scripts/macos-sign.mjs
   hardenedRuntime: false
   notarize: false

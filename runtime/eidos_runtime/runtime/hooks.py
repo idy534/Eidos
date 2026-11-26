@@ -36,9 +36,15 @@ from eidos_runtime.sandbox.permissions import (
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
 from eidos_runtime.sandbox.shell import prepare_shell_launch_for_execution, run_shell_process
 from eidos_runtime.sandbox.workspace_manifest import capture_workspace_roots_manifest, diff_workspace_manifests
+
 from eidos_runtime.model.client import CustomToolPayload, ModelToolCall
 from eidos_runtime.tools.contracts import RunShellInput
 from eidos_runtime.runtime.hook_transcript import write_transcript
+
+
+def _hook_host_is_windows() -> bool:
+    """Selects `commandWindows`; a seam so tests need not flip the whole platform."""
+    return local_files.WINDOWS
 
 
 class HookService:
@@ -201,6 +207,10 @@ class HookService:
             if not self.repository.allowed(binding):
                 self.repository.complete(invocation_id, HookResult(status="skipped", error_code="hook_not_trusted"))
                 return HookResult(status="skipped", error_code="hook_not_trusted")
+            if binding.definition.handler_type != "mcp_tool" and not binding.definition.command_for_platform(windows=_hook_host_is_windows()):
+                skipped = HookResult(status="skipped", error_code="hook_platform_command_missing")
+                self.repository.complete(invocation_id, skipped)
+                return skipped
             launch_scope.enter_context(self.launch_window(cancel))
             if binding.source_kind == "plugin":
                 self.catalog.package(binding.plugin_id, expected_hash=binding.plugin_hash)
@@ -256,7 +266,8 @@ class HookService:
                 with self._mcp_lock:
                     raw = hook_output(self.mcp_execute(binding, invocation_id, arguments, cancel))
             else:
-                launch = prepare_shell_launch_for_execution(workspace, binding.definition.command, workspace, attempt,
+                command = binding.definition.command_for_platform(windows=_hook_host_is_windows())
+                launch = prepare_shell_launch_for_execution(workspace, command, workspace, attempt,
                     active_skill_roots=(root, *(Path(value) for value in transcript_roots)), dependency_environment=dependency_environment,
                     environment_policy=ShellEnvironmentRepository(self.store.database).read().policy)
                 environment = {**launch.environment, "PLUGIN_ROOT": str(root), "PLUGIN_DATA": str(data),

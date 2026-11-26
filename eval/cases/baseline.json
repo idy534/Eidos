@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "repo-comprehension-01",
+      "category": "repo_comprehension",
+      "description": "Read configuration and answer exact port value.",
+      "files": {
+        "config.py": "SERVER_PORT = 8443\nENABLE_TLS = True\n",
+        "app.py": "from config import SERVER_PORT\n\ndef main():\n    return SERVER_PORT\n"
+      },
+      "turns": [
+        {
+          "userInput": "What value is SERVER_PORT set to in config.py?"
+        }
+      ],
+      "scriptedSteps": [
+        {
+          "toolCalls": [
+            { "callId": "c1", "name": "read_file", "arguments": { "path": "config.py" } }
+          ]
+        },
+        {
+          "text": "SERVER_PORT is set to 8443 in config.py."
+        }
+      ],
+      "graders": {
+        "answerContains": ["8443"],
+        "fileAssertions": []
+      }
+    },
+    {
+      "id": "code-delivery-01",
+      "category": "code_delivery",
+      "description": "Fix addition bug in calc.py via file tool and confirm.",
+      "files": {
+        "calc.py": "def add(a: int, b: int) -> int:\n    return a - b\n"
+      },
+      "turns": [
+        {
+          "userInput": "Fix add(a, b) in calc.py so it returns a + b."
+        }
+      ],
+      "scriptedSteps": [
+        {
+          "toolCalls": [
+            { "callId": "c1", "name": "read_file", "arguments": { "path": "calc.py" } }
+          ]
+        },
+        {
+          "toolCalls": [
+            {
+              "callId": "c2",
+              "name": "apply_patch",
+              "arguments": {
+                "patch": "*** Begin Patch\n*** Update File: calc.py\n@@\n def add(a: int, b: int) -> int:\n-    return a - b\n+    return a + b\n*** End Patch"
+              }
+            }
+          ]
+        },
+        {
+          "text": "Fixed add(a, b) in calc.py to return a + b."
+        }
+      ],
+      "graders": {
+        "answerContains": ["calc.py"],
+        "fileContains": {
+          "calc.py": "return a + b"
+        }
+      }
+    },
+    {
+      "id": "multi-turn-verify-01",
+      "category": "multi_turn",
+      "description": "Two-turn session: summarize first, then produce structured checklist.",
+      "files": {
+        "README.md": "# Demo Service\nStatus: active\n"
+      },
+      "turns": [
+        {
+          "userInput": "Read README.md and tell me the service status."
+        },
+        {
+          "userInput": "Write a status.txt file containing ACTIVE."
+        }
+      ],
+      "scriptedSteps": [
+        {
+          "toolCalls": [
+            { "callId": "c1", "name": "read_file", "arguments": { "path": "README.md" } }
+          ]
+        },
+        {
+          "text": "The service status in README.md is active."
+        },
+        {
+          "toolCalls": [
+            {
+              "callId": "c2",
+              "name": "apply_patch",
+              "arguments": {
+                "patch": "*** Begin Patch\n*** Add File: status.txt\n+ACTIVE\n*** End Patch"
+              }
+            }
+          ]
+        },
+        {
+          "text": "Created status.txt with ACTIVE."
+        }
+      ],
+      "graders": {
+        "answerContains": ["status.txt", "ACTIVE"],
+        "fileContains": {
+          "status.txt": "ACTIVE"
+        }
+      }
+    }
+  ]
+}

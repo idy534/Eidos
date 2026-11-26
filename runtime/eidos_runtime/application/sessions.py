@@ -118,6 +118,14 @@ from eidos_runtime.protocol.methods import (
     SessionGitRebaseResponseDto,
     SessionGitStageRequestDto,
     SessionGitStageResponseDto,
+    SessionGitUnstageRequestDto,
+    SessionGitUnstageResponseDto,
+    SessionGitDiscardRequestDto,
+    SessionGitDiscardResponseDto,
+    SessionGitStageHunkRequestDto,
+    SessionGitStageHunkResponseDto,
+    SessionGitSuggestCommitMessageRequestDto,
+    SessionGitSuggestCommitMessageResponseDto,
     SessionGitMutationResponseDto,
     SessionGitStatusRequestDto,
     SessionGitStatusResponseDto,
@@ -1594,6 +1602,60 @@ class SessionApplication:
             preflight=lambda: self._git_workflow.preflight_stage(request),
             execute=self._git_workflow.stage,
         )
+
+    def git_unstage(
+        self, request: SessionGitUnstageRequestDto
+    ) -> SessionGitUnstageResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError(
+                "INTERNAL_ERROR", "Session Git workflow boundary is unavailable"
+            )
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitUnstage",
+            result_type=SessionGitUnstageResponseDto,
+            preflight=lambda: self._git_workflow.preflight_unstage(request),
+            execute=self._git_workflow.unstage,
+        )
+
+    def git_discard(
+        self, request: SessionGitDiscardRequestDto
+    ) -> SessionGitDiscardResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError(
+                "INTERNAL_ERROR", "Session Git workflow boundary is unavailable"
+            )
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitDiscard",
+            result_type=SessionGitDiscardResponseDto,
+            preflight=lambda: self._git_workflow.preflight_discard(request),
+            execute=self._git_workflow.discard,
+        )
+
+    def git_stage_hunk(
+        self, request: SessionGitStageHunkRequestDto
+    ) -> SessionGitStageHunkResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError(
+                "INTERNAL_ERROR", "Session Git workflow boundary is unavailable"
+            )
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitStageHunk",
+            result_type=SessionGitStageHunkResponseDto,
+            preflight=lambda: self._git_workflow.preflight_stage_hunk(request),
+            execute=self._git_workflow.stage_hunk,
+        )
+
+    def git_suggest_commit_message(
+        self, request: SessionGitSuggestCommitMessageRequestDto
+    ) -> SessionGitSuggestCommitMessageResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError(
+                "INTERNAL_ERROR", "Session Git workflow boundary is unavailable"
+            )
+        return self._git_workflow.suggest_commit_message(request)
 
     def git_commit(
         self, request: SessionGitCommitRequestDto

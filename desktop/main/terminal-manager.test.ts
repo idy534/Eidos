@@ -80,6 +80,8 @@ function harness(options: {
   snapshot?: SessionSnapshot;
   resolveDirectory?: (root: string) => Promise<string>;
   environment?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  fileExists?: (filePath: string) => boolean;
 } = {}) {
   const processes: FakeTerminalProcess[] = [];
   const spawns: Array<{
@@ -91,6 +93,8 @@ function harness(options: {
   const manager = new TerminalManager({
     readSession: async () => options.snapshot ?? session(),
     resolveDirectory: options.resolveDirectory ?? (async (root) => `/real${root}`),
+    platform: options.platform ?? "darwin",
+    fileExists: options.fileExists ?? ((filePath) => filePath === "/bin/zsh"),
     environment: options.environment ?? {
       HOME: "/Users/test",
       USER: "test",
@@ -153,12 +157,14 @@ test("an active managed Worktree terminal uses its Worktree root", async () => {
   assert.equal(h.spawns[0]?.options.cwd, "/real/managed/worktree");
 });
 
-test("projectless and unavailable Worktree sessions cannot create user terminals", async () => {
-  const projectless = harness({ snapshot: session({ projectless: true }) });
-  await assert.rejects(
-    projectless.manager.create(owner(), "session-1"),
-    /Projectless 会话不提供终端/,
-  );
+test("projectless session opens terminal at workspace root while unavailable Worktree is still rejected", async () => {
+  const projectless = harness({
+    snapshot: session({ projectless: true, workspaceRoot: "/projectless-root" }),
+    fileExists: (filePath) => filePath === "/bin/fish",
+  });
+  await projectless.manager.create(owner(), "session-1");
+  assert.equal(projectless.spawns[0]?.file, "/bin/fish");
+  assert.equal(projectless.spawns[0]?.options.cwd, "/real/projectless-root");
 
   for (const state of ["missing", "invalid", "deleted"] as const) {
     const unavailable = harness({
@@ -182,6 +188,28 @@ test("projectless and unavailable Worktree sessions cannot create user terminals
       /Worktree 当前不可用/,
     );
   }
+});
+
+test("Windows auto-detects PowerShell 7 / Git Bash / Windows PowerShell and honors preferredShell", async () => {
+  const winAuto = harness({
+    platform: "win32",
+    resolveDirectory: async (root) => `D:\\${root.replace(/^\/+/, "")}`,
+    environment: {
+      SystemRoot: "C:\\Windows",
+      ProgramFiles: "C:\\Program Files",
+      COMSPEC: "C:\\Windows\\System32\\cmd.exe",
+    },
+    fileExists: (filePath) => filePath === "C:\\Program Files\\PowerShell\\7\\pwsh.exe"
+      || filePath === "C:\\Program Files\\Git\\bin\\bash.exe"
+      || filePath === "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  });
+  await winAuto.manager.create(owner(1), "session-1");
+  assert.equal(winAuto.spawns[0]?.file, "C:\\Program Files\\PowerShell\\7\\pwsh.exe");
+  assert.deepEqual(winAuto.spawns[0]?.args, ["-NoLogo"]);
+
+  await winAuto.manager.create(owner(2), "session-1", undefined, undefined, "git-bash");
+  assert.equal(winAuto.spawns[1]?.file, "C:\\Program Files\\Git\\bin\\bash.exe");
+  assert.deepEqual(winAuto.spawns[1]?.args, ["-l"]);
 });
 
 test("a stale Worktree binding and a missing workspace are rejected before spawn", async () => {

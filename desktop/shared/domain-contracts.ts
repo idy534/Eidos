@@ -148,6 +148,31 @@ export interface SessionGitCommitResult extends SessionGitMutationResult {
   commit: string;
 }
 
+export interface SessionGitSuggestCommitMessageResult {
+  message: string;
+  source: "heuristic" | "model";
+}
+
+export interface SessionCheckpoint {
+  id: string;
+  runId: string;
+  itemOrdinal: number;
+  creationSeq: number;
+  workspaceIdentityHash: string;
+  gitHead: string | null;
+  gitSnapshotId: string | null;
+  reconciliationRequired: boolean;
+  createdAt: number;
+}
+
+export interface CheckpointRewindResult {
+  checkpointId: string;
+  sessionId: string;
+  runId: string;
+  gitHead: string;
+  restoredAt: number;
+}
+
 export interface GitRemoteStatus {
   branch: string | null;
   remotes: Array<{ name: string }>;
@@ -228,6 +253,11 @@ export interface WorkspaceDirectoryEntry {
 
 export interface WorkspaceDirectoryListing {
   path: string;
+  entries: WorkspaceDirectoryEntry[];
+  truncated: boolean;
+}
+
+export interface WorkspaceFileSearchResult {
   entries: WorkspaceDirectoryEntry[];
   truncated: boolean;
 }
@@ -405,6 +435,16 @@ export interface Item {
   toolCall?: ToolCall;
 }
 
+export interface DeclaredOutputSummary {
+  path: string;
+  executionRoot: string;
+  version: string;
+  sizeBytes: number;
+  runId: string;
+  itemId: string;
+  title?: string;
+}
+
 export interface SessionSnapshot {
   contextCompactions?: ContextCompactionActivity[];
   modelRetries?: ModelRetryActivity[];
@@ -415,6 +455,7 @@ export interface SessionSnapshot {
   stepResolutions: StepResolutionReview[];
   previousItemId?: string;
   throughEventId?: number;
+  declaredOutputs?: DeclaredOutputSummary[];
 }
 
 export interface RuleSourceReview {
@@ -493,6 +534,7 @@ export interface ModelOption {
   modelId?: string | null;
   contextWindowTokens?: number | null;
   maxOutputTokens?: number | null;
+  inputModalities?: readonly ("text" | "image" | "audio" | "video")[] | null;
   id: ModelId;
   name: string;
   vendor: string;
@@ -513,7 +555,7 @@ export interface ModelListResult {
 export interface ModelPresetModel extends Omit<ModelOption, "vendor" | "provider"> {}
 
 export interface ModelProviderPreset {
-  id: "deepseek" | "minimax" | "kimi" | "volcengine";
+  id: "deepseek" | "minimax" | "kimi" | "volcengine" | "openai" | "anthropic" | "gemini";
   name: string;
   models: ModelPresetModel[];
 }
@@ -761,6 +803,7 @@ export type RuntimeNotification =
   | { method: "goal/updated"; params: import("./goals.generated.js").GoalChangedNotice }
   | { method: "team/updated"; params: import("./teams.generated.js").TeamChangedNotice }
   | { method: "memory/changed"; params: import("./memory.generated.js").MemoryChangedNotice }
+  | { method: "channel/updated"; params: { channel: "dingtalk" | "feishu" | "wecom" } }
   | { method: "context/compactionUpdated"; params: { sessionId: string; activity: ContextCompactionActivity } }
   | { method: "model/retryUpdated"; params: { sessionId: string; activity: ModelRetryActivity } }
   | { method: "automation/changed"; params: { id: string } }
@@ -818,7 +861,14 @@ export interface BrowserPageState {
   url: string;
   title: string;
   loading: boolean;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
   error?: string;
+}
+export interface BrowserStateEvent {
+  sessionId: string;
+  browserId: string;
+  state: BrowserPageState;
 }
 export interface BrowserBounds { x: number; y: number; width: number; height: number }
 export interface BrowserAnnotationElement { tag: string; text: string; x: number; y: number; width: number; height: number }

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 import time
 
 from eidos_runtime.db.database import Repository
 from eidos_runtime.db.events import append_event
 from eidos_runtime.runtime.state_machine import EventType
 from eidos_runtime.domain.long_task import (
+    RESUMABLE_OUTCOMES,
     LongTaskProgress,
     LongTaskStatus,
     ResumeVerification,
@@ -18,6 +20,7 @@ from eidos_runtime.persistence.errors import (
     ConditionalUpdateFailed,
     PersistenceCorruptionError,
 )
+from eidos_runtime.sandbox.permissions import AdditionalPermissionProfile
 
 
 CONTROL_SCOPE = "long_task/control"
@@ -157,6 +160,9 @@ class LongTaskRepository(Repository):
         index_snapshot_id: str | None = None,
         context_plan_id: str | None = None,
         context_snapshot_id: str | None = None,
+        rule_snapshot_id: str | None = None,
+        git_head: str | None = None,
+        permission_snapshot_hash: str | None = None,
         safe_point: SafePoint | None = None,
     ) -> LongTaskProgress:
         current = self._require(run_id)
@@ -168,6 +174,9 @@ class LongTaskRepository(Repository):
             ("index_snapshot_id", index_snapshot_id),
             ("context_plan_id", context_plan_id),
             ("context_snapshot_id", context_snapshot_id),
+            ("rule_snapshot_id", rule_snapshot_id),
+            ("git_head", git_head),
+            ("permission_snapshot_hash", permission_snapshot_hash),
         ):
             if value is not None:
                 changes[name] = value
@@ -235,7 +244,7 @@ class LongTaskRepository(Repository):
         if (
             current.status is not LongTaskStatus.RESUME_REQUESTED
             or current.last_verification is None
-            or current.last_verification.outcome is not ResumeOutcome.SAFE_RESUME
+            or current.last_verification.outcome not in RESUMABLE_OUTCOMES
         ):
             raise ConditionalUpdateFailed("resume requires verified state")
         return self._update(
@@ -244,6 +253,18 @@ class LongTaskRepository(Repository):
             safe_point=SafePoint.BEFORE_MODEL,
             resumed_at=_now_ms(),
         )
+
+    def decline_resume(self, run_id: str) -> LongTaskProgress:
+        """Return a blocked resume to PAUSED so it can be retried or canceled."""
+
+        current = self._require(run_id)
+        if (
+            current.status is not LongTaskStatus.RESUME_REQUESTED
+            or current.last_verification is None
+            or current.last_verification.outcome in RESUMABLE_OUTCOMES
+        ):
+            raise ConditionalUpdateFailed("resume decline requires a blocking verification")
+        return self._update(current, status=LongTaskStatus.PAUSED)
 
     def request_cancel(self, run_id: str) -> LongTaskProgress:
         current = self._require(run_id)
@@ -451,6 +472,38 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def compute_permission_snapshot_hash(
+    approval_mode: str, grants: AdditionalPermissionProfile
+) -> str:
+    """Return a canonical digest covering approval mode and active Run grants."""
+    entries = sorted(
+        (
+            {
+                "access": entry.access.value,
+                "path": entry.path,
+                "recursive": entry.recursive,
+            }
+            for entry in grants.file_system
+        ),
+        key=lambda item: (str(item["path"]), str(item["access"]), bool(item["recursive"])),
+    )
+    return _hash({
+        "approvalMode": approval_mode,
+        "fileSystem": entries,
+        "network": grants.network.enabled if grants.network is not None else None,
+    })
+
+
+def observe_git_head(workspace: Path) -> str | None:
+    """Read the workspace HEAD for the resume baseline; None outside Git."""
+    from eidos_runtime.git.backend import DulwichGitBackend
+
+    try:
+        return DulwichGitBackend().head(workspace)
+    except Exception:
+        return None
+
+
 def _hash(value: object) -> str:
     return hashlib.sha256(
         json.dumps(
@@ -463,4 +516,6 @@ __all__ = [
     "LongTaskRepository",
     "RestartVerifier",
     "ResumeVerifier",
+    "compute_permission_snapshot_hash",
+    "observe_git_head",
 ]

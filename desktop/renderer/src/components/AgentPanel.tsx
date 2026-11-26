@@ -297,7 +297,7 @@ export function AgentTranscript({
   expiredApprovalIds?: ReadonlySet<string>;
   errorsByApprovalId?: Readonly<Record<string, string>>;
   onApprove: (request: ApprovalRequest) => void;
-  onReject: (request: ApprovalRequest) => void;
+  onReject: (request: ApprovalRequest, feedback?: string) => void;
   onOpenFile?: ((path: string) => void) | undefined;
   onOpenPlan?: (() => void) | undefined;
   workspaceRoot?: string | undefined;
@@ -524,7 +524,7 @@ export function AgentWorkspacePanel({
   expiredApprovalIds?: ReadonlySet<string>;
   errorsByApprovalId?: Readonly<Record<string, string>>;
   onApprove: (request: ApprovalRequest) => void;
-  onReject: (request: ApprovalRequest) => void;
+  onReject: (request: ApprovalRequest, feedback?: string) => void;
   onOpenFile?: ((path: string) => void) | undefined;
   onOpenPlan?: (() => void) | undefined;
   workspaceRoot?: string | undefined;

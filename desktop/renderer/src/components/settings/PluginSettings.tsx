@@ -20,6 +20,7 @@ import { PluginMarketplaceDialog } from "./PluginMarketplaceDialog.js";
 import { PluginsSettingsIcon, githubIcon } from "./SettingsIcons.js";
 import { ChevronDownIcon } from "./MemoryIcons.js";
 import { mcpCommandLabel } from "./mcpCommand.js";
+import { hookCommandText } from "./hook-command.js";
 
 interface PluginSettingsProps {
   sessionId?: string | undefined;
@@ -362,7 +363,7 @@ export function PluginSettings({
             <p>安装目录：<code>{review.plugin.hookReview?.installedRoot}</code><br />可写数据目录：<code>{review.plugin.hookReview?.dataDirectory}</code></p>
             {review.plugin.hookReview?.definitions?.map((hook) => <div key={hook.key}>
               <strong>{hook.event}{hook.matcher ? ` · ${hook.matcher}` : ""}</strong>
-              <pre className="plugin-hook-command">{hook.handlerType === "mcp_tool" ? JSON.stringify({ server: hook.mcpServer, tool: hook.mcpTool, input: hook.mcpInput }, null, 2) : hook.command || `处理器：${hook.handlerType}`}</pre>
+              <pre className="plugin-hook-command">{hookCommandText(hook)}</pre>
             </div>)}
             {!review.enable && review.plugin.hookReview?.latest && <p>最近结果：{review.plugin.hookReview.latest.systemMessage || review.plugin.hookReview.latest.message || review.plugin.hookReview.latest.errorCode || "脚本已完成。"}</p>}
           </>}

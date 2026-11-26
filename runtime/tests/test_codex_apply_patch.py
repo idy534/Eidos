@@ -624,3 +624,120 @@ def test_next_model_step_sees_the_syntax_errors_of_its_patch(tmp_path: Path) -> 
         }]
     finally:
         store.close()
+
+
+@pytest.mark.parametrize(
+    ("file_text", "chunk_body", "expected_after"),
+    [
+        (
+            "def f():   \n    return 1  \n",
+            "@@ def f():\n-    return 1\n+    return 2\n",
+            "def f():   \n    return 2\n",
+        ),
+        (
+            "    def f():\n        return 1\n",
+            "@@ def f():\n-return 1\n+        return 3\n",
+            "    def f():\n        return 3\n",
+        ),
+        (
+            "msg = \u201chello\u2014world\u00a0!\u201d\nval = 1\n",
+            '@@ msg = "hello-world !"\n-val = 1\n+val = 2\n',
+            "msg = \u201chello\u2014world\u00a0!\u201d\nval = 2\n",
+        ),
+    ],
+)
+def test_tiered_tolerant_matching_applies_unique_match(
+    tmp_path: Path, file_text: str, chunk_body: str, expected_after: str
+) -> None:
+    (tmp_path / "sample.py").write_text(file_text, encoding="utf-8")
+    with _executor(tmp_path) as executor:
+        prepared = executor.prepare_file_change(
+            "apply_patch",
+            {
+                "patch": (
+                    "*** Begin Patch\n"
+                    "*** Update File: sample.py\n"
+                    f"{chunk_body}"
+                    "*** End Patch\n"
+                )
+            },
+            threading.Event(),
+        )
+    assert not isinstance(prepared, dict), prepared
+    assert len(prepared.changes) == 1
+    assert prepared.changes[0].content.decode("utf-8").replace("\r\n", "\n") == expected_after
+
+
+def test_tiered_tolerant_matching_rejects_ambiguous_matches_and_reports_nearby_lines(
+    tmp_path: Path,
+) -> None:
+    original = (
+        "def a():   \n"
+        "    return 1\n\n"
+        "def b():\t\n"
+        "    return 1\n"
+    )
+    (tmp_path / "dup.py").write_text(original, encoding="utf-8")
+    with _executor(tmp_path) as executor:
+        ambiguous = executor.prepare_file_change(
+            "apply_patch",
+            {
+                "patch": (
+                    "*** Begin Patch\n"
+                    "*** Update File: dup.py\n"
+                    "@@\n"
+                    "-  return 1\n"
+                    "+    return 2\n"
+                    "*** End Patch\n"
+                )
+            },
+            threading.Event(),
+        )
+        assert isinstance(ambiguous, dict)
+        assert ambiguous["outcome"] == "error"
+        assert ambiguous["code"] == "patch_context_mismatch"
+        assert "Multiple tolerant matches found" in str(ambiguous.get("summary", ""))
+
+        mismatch = executor.prepare_file_change(
+            "apply_patch",
+            {
+                "patch": (
+                    "*** Begin Patch\n"
+                    "*** Update File: dup.py\n"
+                    "@@\n"
+                    " def missing():\n"
+                    "-    return 999\n"
+                    "+    return 2\n"
+                    "*** End Patch\n"
+                )
+            },
+            threading.Event(),
+        )
+        assert isinstance(mismatch, dict)
+        assert mismatch["outcome"] == "error"
+        assert "L1:" in str(mismatch.get("summary", ""))
+        assert (tmp_path / "dup.py").read_text(encoding="utf-8") == original
+
+
+def test_openai_codex_profile_enables_custom_patch_grammar(tmp_path: Path) -> None:
+    from eidos_runtime.model.config import MODEL_CATALOG
+    from eidos_runtime.tools.workspace import builtin_tool_registry
+
+    profile = MODEL_CATALOG.profile("gpt-6.2-astra")
+    assert profile.wire_api == "openai_responses"
+    assert profile.supports_custom_tools is True
+    assert profile.supports_tool_grammar is True
+    with ToolExecutor(
+        tmp_path,
+        supports_custom_tools=profile.supports_custom_tools,
+        supports_tool_grammar=profile.supports_tool_grammar,
+    ) as executor:
+        registry = builtin_tool_registry(
+            executor,
+            supports_custom_tools=profile.supports_custom_tools,
+            supports_tool_grammar=profile.supports_tool_grammar,
+        )
+        apply_spec = next(entry.spec for entry in registry._entries if entry.spec.name == "apply_patch")
+        assert apply_spec.input_kind == "custom"
+        assert apply_spec.input_schema is None
+        assert apply_spec.description.startswith("This is a FREEFORM tool.")

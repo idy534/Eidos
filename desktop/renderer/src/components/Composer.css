@@ -468,6 +468,12 @@ button.composer-context-project--empty:hover:not(:disabled) {
   font-variant-numeric: tabular-nums;
 }
 
+.context-hero-cache {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--status-success, #246845);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Multi-segmented progress bar */
 .context-progress-bar {
   width: 100%;

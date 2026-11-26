@@ -161,3 +161,55 @@ test("packaged Runtime smoke allows cold startup and clears its exit timer", asy
   assert.match(smoke, /const RUNTIME_PROTOCOL_TIMEOUT_MS = 30_000;/);
   assert.match(smoke, /clearTimeout\(exitTimer\)/);
 });
+
+
+test("macOS Hardened Runtime entitlements declare minimal required keys", async () => {
+  const { builderConfig } = await readPackagingFiles();
+  assert.match(builderConfig, /^mac:[\s\S]*^  entitlements:\s+packaging\/entitlements\.mac\.plist\s*$/m);
+  assert.match(builderConfig, /^mac:[\s\S]*^  entitlementsInherit:\s+packaging\/entitlements\.mac\.inherit\.plist\s*$/m);
+
+  const requiredKeys = [
+    "com.apple.security.cs.allow-jit",
+    "com.apple.security.cs.allow-unsigned-executable-memory",
+    "com.apple.security.cs.disable-library-validation",
+  ];
+  const forbiddenKeys = [
+    "com.apple.security.get-task-allow",
+    "com.apple.security.cs.allow-dyld-environment-variables",
+  ];
+
+  for (const relativePlist of [
+    path.join("packaging", "entitlements.mac.plist"),
+    path.join("packaging", "entitlements.mac.inherit.plist"),
+  ]) {
+    const content = await readFile(path.join(root, relativePlist), "utf8");
+    for (const key of requiredKeys) {
+      assert.match(
+        content,
+        new RegExp(`<key>${key.replaceAll(".", "\\.")}</key>\\s*<true/>`),
+        `${relativePlist} must enable ${key}`,
+      );
+    }
+    for (const key of forbiddenKeys) {
+      assert.doesNotMatch(
+        content,
+        new RegExp(key.replaceAll(".", "\\.")),
+        `${relativePlist} must not enable ${key}`,
+      );
+    }
+  }
+});
+
+
+test("macOS Runtime bundle script requires browser sandbox and plugin resources", async () => {
+  const { runtimeBuilder } = await readPackagingFiles();
+  for (const required of [
+    "eidos_runtime/sandbox/mcp_browser.sbpl",
+    "eidos_runtime/sandbox/mcp_browser_extension.sbpl",
+    "eidos_runtime/resources/plugins/browser/plugin.json",
+    "eidos_runtime/resources/plugins/browser/mcp.json",
+    "eidos_runtime/resources/plugins/browser/skills/browser/SKILL.md",
+  ]) {
+    assert.ok(runtimeBuilder.includes(`"${required}"`), `missing required_resources entry: ${required}`);
+  }
+});

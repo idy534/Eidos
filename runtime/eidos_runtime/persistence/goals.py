@@ -153,8 +153,36 @@ def settle_goal_run(connection: sqlite3.Connection, run_id: str, status: str, re
     fresh = set(observed) - set(known)
     idle = 0 if fresh else goal.consecutive_idle_runs + 1
     connection.execute("UPDATE session_goals SET progress_json=? WHERE id=?", (json.dumps(list(dict.fromkeys([*known, *observed]))[-256:]), goal.id))
-    goal = _save(connection, goal.model_copy(update={"consecutive_idle_runs": idle,
-        **({"status": "blocked", "status_reason": "idle_runs"} if idle >= 3 else {})}), revise=idle >= 3, run_id=run_id)
+    from eidos_runtime.persistence.guardrails import GuardrailSettingsRepository
+
+    policy = GuardrailSettingsRepository.read_in(connection).policy
+    cycle_usage = connection.execute(
+        """WITH owned(id) AS (
+            SELECT run_id FROM goal_runs WHERE goal_id=? AND activation=?
+            UNION SELECT r.id FROM goal_runs g JOIN agent_delegations d ON d.parent_run_id=g.run_id
+            JOIN runs r ON r.session_id=d.child_session_id WHERE g.goal_id=? AND g.activation=?
+        ) SELECT
+            coalesce(sum(coalesce(json_extract(a.usage_json,'$.input_tokens'),0)+coalesce(json_extract(a.usage_json,'$.output_tokens'),0)),0),
+            coalesce(sum(coalesce(json_extract(a.usage_json,'$.credits_usage.amount'),0.0)),0.0)
+        FROM model_attempts a JOIN steps s ON s.id=a.step_id JOIN owned o ON o.id=s.run_id""",
+        (goal.id, goal.activation, goal.id, goal.activation),
+    ).fetchone()
+    cycle_tokens = int(cycle_usage[0] or 0)
+    cycle_cost = float(cycle_usage[1] or 0.0)
+    pause_reason: str | None = None
+    pause_detail: str | None = None
+    if policy.max_tokens_per_cycle is not None and cycle_tokens >= policy.max_tokens_per_cycle:
+        pause_reason = "guardrail_tokens_exceeded"
+        pause_detail = f"本轮已使用 {cycle_tokens:,} Token，达到上限 {policy.max_tokens_per_cycle:,}。恢复后将从 0 重新计数。"
+    elif policy.max_cost_credits_per_cycle is not None and cycle_cost >= policy.max_cost_credits_per_cycle:
+        pause_reason = "guardrail_cost_exceeded"
+        pause_detail = f"本轮累计 {cycle_cost:g} Credits，达到上限 {policy.max_cost_credits_per_cycle:g}。恢复后将从 0 重新计数。"
+    elif policy.max_idle_rounds is not None and idle >= policy.max_idle_rounds:
+        pause_reason = "idle_runs"
+    updates: dict[str, object] = {"consecutive_idle_runs": idle}
+    if pause_reason is not None:
+        updates.update(status="paused", status_reason=pause_reason, status_detail=pause_detail)
+    goal = _save(connection, goal.model_copy(update=updates), revise=pause_reason is not None, run_id=run_id)
     _intend(connection, goal, "continuation", run_id)
 
 
@@ -206,17 +234,17 @@ class GoalRepository(Repository):
     def origins_for_runs(self, run_ids: list[str]) -> dict[str, GoalRunOrigin]:
         if not run_ids:
             return {}
-        with self.lock:
+        with self.database.read_scope(), self.lock:
             return {row["run_id"]: GoalRunOrigin(goal_id=row["goal_id"], trigger=row["trigger"], sequence=row["sequence"])
                 for row in self._connection().execute("SELECT run_id,goal_id,trigger,sequence FROM goal_runs WHERE run_id IN (" + ",".join("?" for _ in run_ids) + ")", run_ids)}
 
     def view(self, session_id: str) -> GoalView:
-        with self.lock:
+        with self.database.read_scope(), self.lock:
             connection = self._connection()
             return _view(connection, _current(connection, session_id))
 
     def for_run(self, run_id: str) -> GoalView:
-        with self.lock:
+        with self.database.read_scope(), self.lock:
             connection = self._connection()
             row = connection.execute("SELECT goal_id FROM goal_runs WHERE run_id=?", (run_id,)).fetchone()
             return _view(connection, _goal(connection, row[0]) if row else None)

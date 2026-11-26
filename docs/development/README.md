@@ -482,7 +482,7 @@ PYTHONPATH=runtime uv run --locked python scripts/evaluate-memory-cases.py --mod
 
 开发者可以用重复的 `--group` 或 `--case` 缩小范围，用 `--repeats` 调整次数。检查只读取状态、工具调用和回答文字，结论前仍需阅读回答与笔记。
 
-离线恢复接受 `eidos-data-backup-v2` 和 schema v40 至 v54。恢复会逐级升级为 v54，并保留归档笔记和历史。目标目录必须不存在，不能与运行数据合并：
+离线恢复接受 `eidos-data-backup-v2` 和 schema v40 至 v57。恢复会逐级升级为 v57，并保留归档笔记和历史。目标目录必须不存在，不能与运行数据合并：
 
 ```bash
 uv run --locked python -m eidos_runtime.db.backup /absolute/path/backup.zip /absolute/path/new-eidos-data
@@ -708,7 +708,7 @@ Runtime 启动日志包含 `Runtime startup phase=... duration_ms=... outcome=..
 
 `EIDOS_DATA_DIR` 可以把 SQLite、Runtime lock、reserve file、Extension 数据和其他 Runtime-owned 数据放到独立目录。目录应当是明确的私有临时目录，不要把 Workspace 根目录作为数据目录。
 
-持久化布局包含 `state.sqlite`、`repository.sqlite`、`thread_history.sqlite`、`logs.sqlite`、`memories.sqlite`，以及 `blobs/`、`history/`、`logs/` 和 `memories/`。`state.sqlite` 是唯一业务状态权威。其他数据库保存 projection、可重建索引或文件 metadata。旧 `eidos.db` 会在启动时自动升级。迁移前应退出其他 Eidos Runtime，并保留整个数据目录的备份。
+持久化布局包含 `state.sqlite`、`repository.sqlite`、`thread_history.sqlite`、`logs.sqlite`、`memories.sqlite`，以及 `blobs/`、`history/`、`logs/` 和 `memories/`。`logs/` 归 Runtime 所有，必须是 0700 私有目录，否则存储进入 `health_only`。Desktop Main 的轮转日志写在同级的 `desktop-logs/`（目录 0700、文件 0600），本地崩溃转储写在 `crash-dumps/`，诊断包从这两处读取。`state.sqlite` 是唯一业务状态权威。其他数据库保存 projection、可重建索引或文件 metadata。旧 `eidos.db` 会在启动时自动升级。迁移前应退出其他 Eidos Runtime，并保留整个数据目录的备份。
 
 Schema v22 在 ModelAttempt 上新增内部思考回放 Blob 引用。v21 数据库会通过事务新增 nullable 列；迁移不会改写历史 Item 或补造思考正文。Blob 清理保留这些 Blob。思考回放验证应覆盖多厂商 mocked wire、同一响应中的正文和多工具调用、重启、取消后的迟到结果、旧会话缺少思考、上下文部分保留、升级失败回滚和 Session Feed 隔离。
 

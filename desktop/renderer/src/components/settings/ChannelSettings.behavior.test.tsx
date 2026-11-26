@@ -415,3 +415,34 @@ it.each(["feishu", "wecom"] as const)("saves %s credentials independently and re
     config: expect.objectContaining({ clientId: "other-app", approvalMode: "full_access" }),
   })));
 });
+
+it("does not poll on a timer and refreshes a channel only on channel/updated push", async () => {
+  vi.useFakeTimers();
+  let listener: ((notice: { method: string; params: { channel?: string } }) => void) | undefined;
+  const readChannel = vi.fn().mockResolvedValue({ state: "disabled" });
+  window.eidosRuntime = {
+    readChannel,
+    listProjects: vi.fn().mockResolvedValue({ items: [] }),
+    onNotification: vi.fn((cb: (notice: { method: string; params: { channel?: string } }) => void) => {
+      listener = cb;
+      return vi.fn();
+    }),
+  } as unknown as EidosRuntimeAPI;
+
+  render(<ChannelSettings modelList={{ models: [model] }} />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(readChannel).toHaveBeenCalledTimes(3);
+
+  await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
+  expect(readChannel).toHaveBeenCalledTimes(3);
+
+  readChannel.mockResolvedValueOnce({ connection, state: "connected", deliveries: [] });
+  await act(async () => {
+    listener?.({ method: "channel/updated", params: { channel: "dingtalk" } });
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(readChannel).toHaveBeenCalledTimes(4);
+  expect(readChannel).toHaveBeenLastCalledWith({ channel: "dingtalk" });
+  expect(screen.getByText("已连接")).toBeInTheDocument();
+  vi.useRealTimers();
+});

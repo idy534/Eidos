@@ -50,6 +50,8 @@ class ContextDetails(EidosFrozenStrictModel):
     cleared_tool_results: int = Field(default=0, ge=0)
     calibration_samples: int = Field(default=0, ge=0)
     last_estimation_error_percent: float | None = None
+    cache_read_tokens: int | None = Field(default=None, ge=0)
+    cache_hit_rate_percent: float | None = Field(default=None, ge=0, le=100)
     compaction: ContextCompactionRecord | None = None
     manual_pending: bool = False
     plan_id: str | None = None

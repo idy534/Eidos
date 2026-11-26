@@ -50,6 +50,17 @@ export function _resetResourceCacheForTest(): void {
 
 const AUTO_DOWNLOAD_STORAGE_KEY = "eidos.managed_resources.auto_download";
 
+function hasActiveResourceWork(result: ResourceStatus): boolean {
+  if (!result.available) return false;
+  return (result.packs ?? []).some(
+    (pack) =>
+      pack.phase === "checking"
+      || pack.phase === "downloading"
+      || pack.phase === "verifying"
+      || pack.phase === "extracting",
+  );
+}
+
 function getInitialAutoDownload(): boolean {
   try {
     const saved = localStorage.getItem(AUTO_DOWNLOAD_STORAGE_KEY);
@@ -65,17 +76,24 @@ export function ManagedResourceSettings({ onShowToast }: {
   const [status, setStatus] = useState<ResourceStatus | null>(() => cachedStatus);
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState<string>();
+  const [cleaning, setCleaning] = useState(false);
   const [autoDownload, setAutoDownload] = useState<boolean>(getInitialAutoDownload);
   const mounted = useRef(false);
   const autoTriggeredPacks = useRef<Set<string>>(new Set());
+  const triggerRefreshRef = useRef<(() => void) | undefined>(undefined);
 
   useEffect(() => {
     mounted.current = true;
     let active = true;
     const api = window.eidosRuntime;
     if (!api?.getResourceStatus) return () => { mounted.current = false; };
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     async function refresh() {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      let shouldScheduleNext = false;
       try {
         const result = await api.getResourceStatus();
         if (active) {
@@ -83,16 +101,40 @@ export function ManagedResourceSettings({ onShowToast }: {
           setStatus(result);
           setError(undefined);
           // The process is closing or this Runtime has no managed resources.
-          if (!result.available) active = false;
+          if (!result.available) {
+            active = false;
+          } else {
+            shouldScheduleNext = hasActiveResourceWork(result);
+          }
         }
       } catch (cause) {
-        if (active) setError(userFacingError(cause));
+        if (active) {
+          setError(userFacingError(cause));
+          shouldScheduleNext = true;
+        }
       } finally {
-        if (active) timer = setTimeout(() => void refresh(), 2000);
+        if (active && shouldScheduleNext && (typeof document === "undefined" || document.visibilityState !== "hidden")) {
+          timer = setTimeout(() => void refresh(), 2000);
+        }
       }
     }
+    triggerRefreshRef.current = () => {
+      if (active) void refresh();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible" && active) {
+        void refresh();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
     void refresh();
-    return () => { active = false; mounted.current = false; clearTimeout(timer); };
+    return () => {
+      active = false;
+      mounted.current = false;
+      triggerRefreshRef.current = undefined;
+      document.removeEventListener("visibilitychange", handleVisibility);
+      if (timer !== undefined) clearTimeout(timer);
+    };
   }, []);
 
   async function prepare(packId: string) {
@@ -103,6 +145,7 @@ export function ManagedResourceSettings({ onShowToast }: {
       const next = await window.eidosRuntime.getResourceStatus();
       cachedStatus = next;
       if (mounted.current) { setStatus(next); setError(undefined); }
+      if (hasActiveResourceWork(next)) triggerRefreshRef.current?.();
     } catch (cause) {
       if (mounted.current) setError(userFacingError(cause));
     } finally {
@@ -131,6 +174,33 @@ export function ManagedResourceSettings({ onShowToast }: {
     if (next) {
       autoTriggeredPacks.current.clear();
       onShowToast?.("已开启自动预下载，缺失组件将自动在后台下载", "info");
+    }
+  }
+
+  async function handleCleanupLegacy(): Promise<void> {
+    const cleanup = window.eidosRuntime?.cleanupResources;
+    if (!cleanup) return;
+    setCleaning(true);
+    try {
+      const result = await cleanup();
+      const next = await window.eidosRuntime.getResourceStatus();
+      cachedStatus = next;
+      if (mounted.current) {
+        setStatus(next);
+        setError(undefined);
+      }
+      if (result.removedCount === 0) {
+        onShowToast?.("未发现可清理的旧版组件缓存", "info");
+      } else {
+        const mb = (result.freedBytes / (1024 * 1024)).toFixed(1);
+        onShowToast?.(`已清理 ${result.removedCount} 个旧版缓存（释放 ${mb} MB）`, "success");
+      }
+    } catch (cause) {
+      const message = userFacingError(cause);
+      if (mounted.current) setError(message);
+      onShowToast?.(message, "error");
+    } finally {
+      if (mounted.current) setCleaning(false);
     }
   }
 
@@ -197,6 +267,18 @@ export function ManagedResourceSettings({ onShowToast }: {
 
         <div className="managed-resources-content" aria-label="文档组件状态">
           {error && <p role="status" className="managed-resources-error">{error}</p>}
+          {typeof window !== "undefined" && typeof window.eidosRuntime?.cleanupResources === "function" && (
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.5rem" }}>
+              <button
+                type="button"
+                className="managed-resource-btn"
+                disabled={cleaning || Boolean(pending)}
+                onClick={() => void handleCleanupLegacy()}
+              >
+                {cleaning ? "正在清理…" : "清理旧版缓存"}
+              </button>
+            </div>
+          )}
 
           <div className="managed-resources-groups">
             {groupedPacks.map((group) => {

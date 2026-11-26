@@ -103,8 +103,8 @@ describe("GitWorkflowControls", () => {
     await waitFor(() => expect(screen.getByRole('button', {name: '获取'})).toBeEnabled());
     expect(screen.getByRole('button', {name: '推送'})).toBeEnabled();
     expect(screen.getByRole('button', {name: '拉取'})).toBeDisabled();
-    expect(screen.getByRole('button', {name: 'Merge'})).toBeDisabled();
-    expect(screen.getByRole('button', {name: 'Rebase'})).toBeDisabled();
+    expect(screen.getByRole("button", { name: "合并" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "变基" })).toBeDisabled();
     fireEvent.change(screen.getByRole('textbox', {name: '提交信息'}), {target: {value: 'Keep working'}});
     expect(screen.getByRole('button', {name: '提交', exact: true})).toBeEnabled();
   });
@@ -307,17 +307,17 @@ describe("GitWorkflowControls", () => {
     const { merge, rebase } = renderControls();
     openWorkflow();
     fireEvent.click(screen.getByText("高级 Git"));
-    const selector = await screen.findByRole("combobox", { name: "Git target" });
+    const selector = await screen.findByRole("combobox", { name: "合并或变基目标分支" });
     expect(selector).toHaveTextContent("main");
     expect(selector).toHaveTextContent("release");
     expect(selector).not.toHaveTextContent("feature/review");
 
     fireEvent.change(selector, { target: { value: "release" } });
-    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    fireEvent.click(screen.getByRole("button", { name: "合并" }));
     await waitFor(() => expect(merge).toHaveBeenCalledWith(
       "session-a", "release", expect.any(String),
     ));
-    fireEvent.click(screen.getByRole("button", { name: "Rebase" }));
+    fireEvent.click(screen.getByRole("button", { name: "变基" }));
     await waitFor(() => expect(rebase).toHaveBeenCalledWith(
       "session-a", "release", expect.any(String),
     ));
@@ -338,9 +338,9 @@ describe("GitWorkflowControls", () => {
     openWorkflow();
     fireEvent.click(screen.getByText("高级 Git"));
 
-    fireEvent.click(await screen.findByRole("button", { name: "Rebase" }));
+    fireEvent.click(await screen.findByRole("button", { name: "变基" }));
     expect(await screen.findByText("conflict.txt")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Continue Rebase" }));
+    fireEvent.click(screen.getByRole("button", { name: "继续变基" }));
     await waitFor(() => expect(rebaseContinue).toHaveBeenCalledWith(
       "session-a", expect.any(String),
     ));
@@ -360,8 +360,8 @@ describe("GitWorkflowControls", () => {
     openWorkflow();
     fireEvent.click(screen.getByText("高级 Git"));
 
-    fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Abort Merge" }));
+    fireEvent.click(await screen.findByRole("button", { name: "合并" }));
+    fireEvent.click(await screen.findByRole("button", { name: "中止合并" }));
     await waitFor(() => expect(mergeAbort).toHaveBeenCalledWith(
       "session-a", expect.any(String),
     ));
@@ -373,8 +373,8 @@ describe("GitWorkflowControls", () => {
     renderControls({ rebase, rebaseAbort });
     openWorkflow();
     fireEvent.click(screen.getByText("高级 Git"));
-    fireEvent.click(await screen.findByRole("button", { name: "Rebase" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Abort Rebase" }));
+    fireEvent.click(await screen.findByRole("button", { name: "变基" }));
+    fireEvent.click(await screen.findByRole("button", { name: "中止变基" }));
     await waitFor(() => expect(rebaseAbort).toHaveBeenCalledWith(
       "session-a", expect.any(String),
     ));
@@ -411,8 +411,8 @@ describe("GitWorkflowControls", () => {
     expect(await screen.findByRole("button", { name: "获取" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "拉取" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "推送" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Merge" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Rebase" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "合并" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "变基" })).toBeDisabled();
   });
 
   it("renders compact pill button with glyph and switches branch via dropdown", async () => {
