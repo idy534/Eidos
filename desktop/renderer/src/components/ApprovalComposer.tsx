@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import type { ApprovalFileSystemAccess, ApprovalRequest, CommandApprovalRequest, Run } from "../../../shared/domain-contracts.js";
 import { Button } from "./Button.js";
 import { ToastContainer } from "./ToastContainer.js";
@@ -13,6 +13,8 @@ export interface ApprovalComposerProps {
   errorsByApprovalId?: Readonly<Record<string, string>> | undefined;
   onApprove: (approval: ApprovalRequest) => void;
   onReject: (approval: ApprovalRequest, feedback?: string) => void;
+  /** Take focus when nothing else holds it, e.g. after replacing the message composer. */
+  autoFocus?: boolean | undefined;
 }
 
 function ShieldIcon({ className = "" }: { className?: string }) {
@@ -44,8 +46,9 @@ function ChevronIcon({ className = "" }: { className?: string }) {
 export function ApprovalComposer({
   run, approval, respondingApprovalIds,
   respondingKindByApprovalId, expiredApprovalIds, errorsByApprovalId,
-  onApprove, onReject,
+  onApprove, onReject, autoFocus = false,
 }: ApprovalComposerProps) {
+  const cardRef = useRef<HTMLElement>(null);
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedback, setFeedback] = useState("");
   const isExpired = Boolean(expiredApprovalIds?.has(approval.id));
@@ -66,21 +69,28 @@ export function ApprovalComposer({
   }, [approval.id]);
 
   useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
-      const target = event.target instanceof HTMLElement ? event.target : null;
-      if (target?.closest('[role="dialog"], [role="alertdialog"]')) return;
-      if (event.key === "Enter" && canApprove && !isDangerous) {
-        event.preventDefault();
-        onApprove(approval);
-      } else if (event.key === "Backspace" && canReject) {
-        event.preventDefault();
-        onReject(approval, feedback.trim() || undefined);
-      }
+    if (!autoFocus) return;
+    const active = document.activeElement;
+    // Never pull focus away from another input, the terminal or a dialog.
+    if (!active || active === document.body) cardRef.current?.focus({ preventScroll: true });
+  }, [approval.id, autoFocus]);
+
+  // Shortcuts only act on the card that holds focus, so several pending
+  // approvals can never be decided by one keystroke, and text editing keys
+  // (Cmd+Backspace deletes to line start on macOS) keep working in inputs.
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (target?.closest('[role="dialog"], [role="alertdialog"]')) return;
+    if (target && (target.isContentEditable || target.closest("input, textarea, select"))) return;
+    if (event.key === "Enter" && canApprove && !isDangerous) {
+      event.preventDefault();
+      onApprove(approval);
+    } else if (event.key === "Backspace" && canReject) {
+      event.preventDefault();
+      onReject(approval, feedback.trim() || undefined);
     }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [approval, canApprove, canReject, feedback, isDangerous, onApprove, onReject]);
+  }
 
   return (
     <article
@@ -91,6 +101,9 @@ export function ApprovalComposer({
         isDangerous ? "approval-card--danger" : "",
       ].filter(Boolean).join(" ")}
       aria-labelledby={`approval-${approval.id}`}
+      ref={cardRef}
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
     >
       <div className="approval-heading">
         <div className="approval-heading-left">

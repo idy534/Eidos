@@ -36,7 +36,7 @@ export function ComposerSlot({
       );
     }
     return approval
-      ? <ApprovalComposer {...props} run={run} approval={approval} />
+      ? <ApprovalComposer {...props} run={run} approval={approval} autoFocus />
       : (
         <ApprovalStatusBanner
           mode="manual"

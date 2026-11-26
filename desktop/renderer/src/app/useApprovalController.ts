@@ -310,7 +310,9 @@ export function useApprovalController(): [ApprovalControllerState, ApprovalContr
 
     try {
       const trimmed = feedback?.trim();
-      const accepted = await window.eidosRuntime.respondApproval(request.id, "reject", trimmed || undefined);
+      const accepted = trimmed
+        ? await window.eidosRuntime.respondApproval(request.id, "reject", trimmed)
+        : await window.eidosRuntime.respondApproval(request.id, "reject");
       if (!accepted) {
         dispatch({
           type: "response_expired",

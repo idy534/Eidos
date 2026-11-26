@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { ApprovalComposer } from "./ApprovalComposer.js";
 import { ComposerSlot } from "./ComposerSlot.js";
 import type { ApprovalRequest, Run } from "../../../shared/domain-contracts.js";
 
@@ -193,12 +194,62 @@ describe("Approval rejection feedback and keyboard shortcuts", () => {
       <textarea aria-label="message" />
     </ComposerSlot>);
 
-    fireEvent.keyDown(window, { key: "Enter", ctrlKey: true });
+    // The card replaced the composer, so it holds focus for its shortcuts.
+    const card = screen.getByRole("article");
+    expect(card).toHaveFocus();
+    fireEvent.keyDown(card, { key: "Enter", ctrlKey: true });
     expect(onApprove).toHaveBeenCalledWith(approval);
 
     await user.click(screen.getByText("附带拒绝原因"));
     await user.type(screen.getByLabelText("拒绝原因（可选）"), "改用局部路径");
-    fireEvent.keyDown(window, { key: "Backspace", ctrlKey: true });
+    fireEvent.keyDown(screen.getByRole("button", { name: "拒绝" }), { key: "Backspace", ctrlKey: true });
     expect(onReject).toHaveBeenCalledWith(approval, "改用局部路径");
+  });
+
+  it("ignores shortcuts outside the card and keeps text editing keys inside inputs", async () => {
+    const onApprove = vi.fn();
+    const onReject = vi.fn();
+    const user = userEvent.setup();
+    render(<ComposerSlot run={run} approval={approval} onApprove={onApprove} onReject={onReject}>
+      <textarea aria-label="message" />
+    </ComposerSlot>);
+
+    fireEvent.keyDown(window, { key: "Enter", ctrlKey: true });
+    fireEvent.keyDown(document.body, { key: "Backspace", metaKey: true });
+    await user.click(screen.getByText("附带拒绝原因"));
+    const input = screen.getByLabelText("拒绝原因（可选）");
+    await user.type(input, "保留这段");
+    fireEvent.keyDown(input, { key: "Backspace", metaKey: true });
+
+    expect(onApprove).not.toHaveBeenCalled();
+    expect(onReject).not.toHaveBeenCalled();
+
+    // Enter in the reason box submits the rejection; it never approves.
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+    expect(onApprove).not.toHaveBeenCalled();
+    expect(onReject).toHaveBeenCalledWith(approval, "保留这段");
+  });
+
+  it("decides only the focused approval when several are shown", () => {
+    const second: ApprovalRequest = { ...approval, id: "approval-2" };
+    const onApprove = vi.fn();
+    render(<>
+      <ApprovalComposer run={run} approval={approval} onApprove={onApprove} onReject={vi.fn()} />
+      <ApprovalComposer run={run} approval={second} onApprove={onApprove} onReject={vi.fn()} />
+    </>);
+
+    const [, secondCard] = screen.getAllByRole("article");
+    fireEvent.keyDown(secondCard!, { key: "Enter", ctrlKey: true });
+
+    expect(onApprove).toHaveBeenCalledTimes(1);
+    expect(onApprove).toHaveBeenCalledWith(second);
+  });
+
+  it("does not take focus from another input when an approval appears", () => {
+    render(<><input aria-label="terminal" autoFocus />
+      <ComposerSlot run={run} approval={approval} onApprove={vi.fn()} onReject={vi.fn()}><textarea /></ComposerSlot>
+    </>);
+
+    expect(screen.getByLabelText("terminal")).toHaveFocus();
   });
 });

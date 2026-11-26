@@ -18,6 +18,11 @@
   box-shadow: 0 4px 20px -2px rgba(25, 30, 26, 0.08), 0 16px 40px -4px rgba(25, 30, 26, 0.09);
 }
 
+/* The card takes focus only to scope its shortcuts; its controls show the ring. */
+.approval-card:focus {
+  outline: none;
+}
+
 .approval-card--unsandboxed {
   border-color: rgba(145, 61, 52, 0.35);
   box-shadow: 0 4px 20px -2px rgba(145, 61, 52, 0.1), 0 14px 36px -4px rgba(145, 61, 52, 0.1);
