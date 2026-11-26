@@ -2,6 +2,9 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { describe, expect, it, vi } from "vitest";
 
 import type { Item, Run } from "../contracts.js";
+import type { InputReference } from "../../../shared/input-context.js";
+import { QUERY_CLIPBOARD_MIME, buildQueryClipboardPayload, serializeQueryClipboardPayload } from "../../../shared/query-clipboard.js";
+import { clearQueryClipboardMirror, readQueryFromClipboardEvent, writeQueryToClipboard } from "../query-clipboard.js";
 import { ArtifactProvider } from "./ArtifactContext.js";
 import { ExecutionFeed } from "./ExecutionFeed.js";
 import { InputContextProvider } from "./InputContext.js";
@@ -3025,6 +3028,670 @@ describe("Targeted tool feed improvements", () => {
     } finally {
       if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
       else Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
+    }
+  });
+
+  it("copies mixed shelf and inline references from CopyButton and reference-only messages", async () => {
+    clearQueryClipboardMirror();
+    const clipboardDesc = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const runtimeDesc = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: writeTextMock } });
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { readInput: vi.fn().mockResolvedValue({ text: "x" }) } });
+
+    try {
+      const fileRef: InputReference = {
+        id: "aaaa1111bbbb" + "0".repeat(52),
+        kind: "file",
+        label: "report.md",
+        source: "/ws/report.md",
+        sha256: "a".repeat(64),
+        status: "content",
+        size: 16,
+      };
+      const agentRef: InputReference = {
+        id: "cccc2222dddd" + "1".repeat(52),
+        kind: "agent",
+        label: "researcher",
+        source: "researcher",
+        sha256: "b".repeat(64),
+        status: "selection",
+        size: 16,
+      };
+
+      const { rerender } = renderFeed(
+        shellItem({
+          id: "user-mixed",
+          kind: "user_message",
+          status: "completed",
+          toolCall: undefined,
+          content: `[@researcher](ref:${agentRef.id.slice(0, 12)}) 查看附件`,
+          references: [fileRef, agentRef],
+        }),
+        { ...baseRun, status: "succeeded" },
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "复制内容" }));
+      await waitFor(() => {
+        expect(writeTextMock).toHaveBeenCalledWith("[文件: report.md]\n@researcher 查看附件");
+      });
+
+      const store = new Map<string, string>([["text/plain", "[文件: report.md]\n@researcher 查看附件"]]);
+      const restored = readQueryFromClipboardEvent({
+        preventDefault: vi.fn(),
+        clipboardData: {
+          getData: (type: string) => store.get(type) ?? "",
+          setData: (type: string, data: string) => { store.set(type, data); },
+        },
+      });
+      expect(restored?.references.map((r) => r.id)).toEqual([fileRef.id, agentRef.id]);
+
+      // Reference-only message with empty content still renders CopyButton
+      writeTextMock.mockClear();
+      rerender(
+        <ExecutionFeed
+          items={[
+            shellItem({
+              id: "user-refs-only",
+              kind: "user_message",
+              status: "completed",
+              toolCall: undefined,
+              content: "",
+              references: [fileRef],
+            }),
+          ]}
+          runs={[{ ...baseRun, status: "succeeded" }]}
+          approvals={[]}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "复制内容" }));
+      await waitFor(() => {
+        expect(writeTextMock).toHaveBeenCalledWith("[文件: report.md]");
+      });
+    } finally {
+      clearQueryClipboardMirror();
+      if (clipboardDesc) Object.defineProperty(navigator, "clipboard", clipboardDesc);
+      else delete (navigator as Partial<Navigator>).clipboard;
+      if (runtimeDesc) Object.defineProperty(window, "eidosRuntime", runtimeDesc);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+
+  it("handles bubble selection copy for inline/shelf selections while preserving partial plain-text selection", () => {
+    clearQueryClipboardMirror();
+    const runtimeDesc = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { readInput: vi.fn().mockResolvedValue({ text: "x" }) } });
+
+    try {
+      const fileRef: InputReference = {
+        id: "aaaa1111bbbb" + "0".repeat(52),
+        kind: "file",
+        label: "spec.md",
+        source: "/ws/spec.md",
+        sha256: "a".repeat(64),
+        status: "content",
+        size: 16,
+      };
+      const agentRef: InputReference = {
+        id: "cccc2222dddd" + "1".repeat(52),
+        kind: "agent",
+        label: "researcher",
+        source: "researcher",
+        sha256: "b".repeat(64),
+        status: "selection",
+        size: 16,
+      };
+      const { container } = renderFeed(
+        shellItem({
+          id: "user-sel",
+          kind: "user_message",
+          status: "completed",
+          toolCall: undefined,
+          content: `请 [@researcher](ref:${agentRef.id.slice(0, 12)}) 分析`,
+          references: [fileRef, agentRef],
+        }),
+        { ...baseRun, status: "succeeded" },
+      );
+
+      const bubble = container.querySelector(".user-message-bubble") as HTMLElement;
+      const prose = bubble.querySelector(".eidos-inline-reference-prose") as HTMLElement;
+      const card = bubble.querySelector("[data-shelf-ref-id]") as HTMLElement;
+      const selection = window.getSelection()!;
+
+      // 1. Select from shelf card through end of prose -> captures both shelf and inline ref
+      const fullRange = document.createRange();
+      fullRange.setStart(card, 0);
+      fullRange.setEnd(prose, prose.childNodes.length);
+      selection.removeAllRanges();
+      selection.addRange(fullRange);
+
+      const fullStore = new Map<string, string>();
+      fireEvent.copy(bubble, {
+        clipboardData: {
+          getData: (t: string) => fullStore.get(t) ?? "",
+          setData: (t: string, v: string) => { fullStore.set(t, v); },
+        },
+      });
+      expect(fullStore.get("text/plain")).toBe("[文件: spec.md]\n请 @researcher 分析");
+      expect(JSON.parse(fullStore.get(QUERY_CLIPBOARD_MIME)!).references.map((r: InputReference) => r.id))
+        .toEqual([fileRef.id, agentRef.id]);
+
+      // 2. Select partial substring inside the pill label -> does not hijack native copy
+      const labelSpan = prose.querySelector(".input-reference__label")!;
+      const partialRange = document.createRange();
+      partialRange.setStart(labelSpan.firstChild!, 2);
+      partialRange.setEnd(labelSpan.firstChild!, 6);
+      selection.removeAllRanges();
+      selection.addRange(partialRange);
+
+      const partialStore = new Map<string, string>();
+      fireEvent.copy(bubble, {
+        clipboardData: {
+          getData: (t: string) => partialStore.get(t) ?? "",
+          setData: (t: string, v: string) => { partialStore.set(t, v); },
+        },
+      });
+      expect(partialStore.has(QUERY_CLIPBOARD_MIME)).toBe(false);
+
+      // 3. Select plain text only ("分析") -> does not hijack native copy
+      const textOnlyRange = document.createRange();
+      const trailingText = prose.lastChild!;
+      textOnlyRange.setStart(trailingText, 0);
+      textOnlyRange.setEnd(trailingText, (trailingText.textContent ?? "").length);
+      selection.removeAllRanges();
+      selection.addRange(textOnlyRange);
+
+      const textOnlyStore = new Map<string, string>();
+      fireEvent.copy(bubble, {
+        clipboardData: {
+          getData: (t: string) => textOnlyStore.get(t) ?? "",
+          setData: (t: string, v: string) => { textOnlyStore.set(t, v); },
+        },
+      });
+      expect(textOnlyStore.has(QUERY_CLIPBOARD_MIME)).toBe(false);
+    } finally {
+      window.getSelection()?.removeAllRanges();
+      clearQueryClipboardMirror();
+      if (runtimeDesc) Object.defineProperty(window, "eidosRuntime", runtimeDesc);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+
+  it("restores valid references and degrades stale ones when pasting into UserMessage edit mode", async () => {
+    clearQueryClipboardMirror();
+    const runtimeDesc = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    const validAgent: InputReference = {
+      id: "111122223333" + "a".repeat(52),
+      kind: "agent",
+      label: "researcher",
+      source: "researcher",
+      sha256: "b".repeat(64),
+      status: "selection",
+      size: 16,
+    };
+    const deletedAgent: InputReference = {
+      id: "444455556666" + "c".repeat(52),
+      kind: "agent",
+      label: "retired",
+      source: "retired",
+      sha256: "d".repeat(64),
+      status: "selection",
+      size: 16,
+    };
+    const validFile: InputReference = {
+      id: "777788889999" + "e".repeat(52),
+      kind: "file",
+      label: "data.csv",
+      source: "/ws/data.csv",
+      sha256: "f".repeat(64),
+      status: "content",
+      size: 20,
+    };
+    const refById = new Map([validFile, validAgent, deletedAgent].map((r) => [r.id, r]));
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: {
+        readInput: vi.fn(async (id: string) => {
+          const matched = refById.get(id);
+          if (!matched) throw new Error("RESOURCE_NOT_FOUND");
+          return { reference: matched, text: "col1,col2" };
+        }),
+        listAgentTypes: vi.fn().mockResolvedValue({
+          agents: [
+            { name: "researcher", source: "researcher.toml", enabled: true, available: true, definitionVersion: validAgent.sha256 },
+          ],
+        }),
+      },
+    });
+
+    try {
+      const onEditResend = vi.fn().mockResolvedValue(true);
+      const userItem = shellItem({
+        id: "user-edit",
+        kind: "user_message",
+        status: "completed",
+        toolCall: undefined,
+        content: "原始问题",
+      });
+      const { container } = render(
+        <ExecutionFeed
+          items={[userItem]}
+          runs={[{ ...baseRun, status: "succeeded" }]}
+          approvals={[]}
+          onEditResend={onEditResend}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "编辑并重新发送" }));
+      const textarea = screen.getByRole("textbox", { name: "编辑最近一次提问" }) as HTMLTextAreaElement;
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+      const payload = buildQueryClipboardPayload(
+        ` [@researcher](ref:${validAgent.id.slice(0, 12)}) 和 [@retired](ref:${deletedAgent.id.slice(0, 12)})`,
+        [validFile, validAgent, deletedAgent],
+      );
+
+      fireEvent.paste(textarea, {
+        clipboardData: {
+          getData: (type: string) => type === QUERY_CLIPBOARD_MIME ? serializeQueryClipboardPayload(payload) : "",
+          setData: vi.fn(),
+          files: [],
+        },
+      });
+
+      await waitFor(() => {
+        expect(container.querySelector(".user-message-editor .composer-rich-editor")).not.toBeNull();
+      });
+      expect(screen.getByText("部分引用已更新或不可用，已降级为纯文本。")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "移除 data.csv" })).toBeInTheDocument();
+      expect(container.querySelector(`[data-shelf-ref-id="${validFile.id}"]`)).not.toBeNull();
+      expect(container.querySelector(".user-message-editor .composer-rich-editor")?.textContent).toContain("@retired");
+
+      fireEvent.click(screen.getByRole("button", { name: "发送" }));
+      expect(onEditResend).toHaveBeenCalledWith(
+        expect.objectContaining({ id: baseRun.id }),
+        `原始问题 [@researcher](ref:${validAgent.id.slice(0, 12)}) 和 @retired`,
+        [validFile.id, validAgent.id],
+      );
+    } finally {
+      clearQueryClipboardMirror();
+      if (runtimeDesc) Object.defineProperty(window, "eidosRuntime", runtimeDesc);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+
+  it("does not hijack cross-bubble selections and clears mirror when copying plain messages", async () => {
+    clearQueryClipboardMirror();
+    const clipboardDesc = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const runtimeDesc = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: writeTextMock } });
+
+    try {
+      const agentRef: InputReference = {
+        id: "123412341234" + "a".repeat(52),
+        kind: "agent",
+        label: "researcher",
+        source: "researcher",
+        sha256: "b".repeat(64),
+        status: "selection",
+        size: 16,
+      };
+      const userItem = shellItem({
+        id: "user-cross",
+        kind: "user_message",
+        status: "completed",
+        toolCall: undefined,
+        content: `[@researcher](ref:${agentRef.id.slice(0, 12)}) 问题文本`,
+        references: [agentRef],
+      });
+      const assistantItem = shellItem({
+        id: "assistant-cross",
+        kind: "assistant_message",
+        ordinal: 2,
+        status: "completed",
+        toolCall: undefined,
+        content: `[@researcher](ref:${agentRef.id.slice(0, 12)}) 问题文本`,
+      });
+      // Make assistant content identical to user plain text so mirror-collision would trigger if not cleared
+      assistantItem.content = "@researcher 问题文本";
+
+      const { container } = render(
+        <ExecutionFeed
+          items={[userItem, assistantItem]}
+          runs={[{ ...baseRun, status: "succeeded" }]}
+          approvals={[]}
+        />,
+      );
+
+      // 1. Cross-bubble selection from UserMessage bubble into AssistantMessage must not hijack onCopy
+      const userBubble = container.querySelector(".user-message-bubble") as HTMLElement;
+      const assistantEl = document.getElementById("item-assistant-cross")!;
+      const crossRange = document.createRange();
+      crossRange.setStart(userBubble, 0);
+      crossRange.setEnd(assistantEl, assistantEl.childNodes.length);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(crossRange);
+
+      const store = new Map<string, string>();
+      fireEvent.copy(userBubble, {
+        clipboardData: {
+          getData: (t: string) => store.get(t) ?? "",
+          setData: (t: string, v: string) => { store.set(t, v); },
+        },
+      });
+      expect(store.has(QUERY_CLIPBOARD_MIME)).toBe(false);
+
+      // 2. Copy user message with CopyButton (populates mirror), then copy plain assistant message -> mirror cleared
+      const copyButtons = screen.getAllByRole("button", { name: "复制内容" });
+      fireEvent.click(copyButtons[0]!);
+      await waitFor(() => expect(writeTextMock).toHaveBeenCalledWith("@researcher 问题文本"));
+
+      fireEvent.click(copyButtons[1]!);
+      await waitFor(() => expect(writeTextMock).toHaveBeenCalledTimes(2));
+
+      const readAfterPlain = readQueryFromClipboardEvent({
+        preventDefault: vi.fn(),
+        clipboardData: {
+          getData: (t: string) => t === "text/plain" ? "@researcher 问题文本" : "",
+          setData: vi.fn(),
+        },
+      });
+      expect(readAfterPlain).toBeUndefined();
+    } finally {
+      window.getSelection()?.removeAllRanges();
+      clearQueryClipboardMirror();
+      if (clipboardDesc) Object.defineProperty(navigator, "clipboard", clipboardDesc);
+      else delete (navigator as Partial<Navigator>).clipboard;
+      if (runtimeDesc) Object.defineProperty(window, "eidosRuntime", runtimeDesc);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+
+  it("handles UserMessage edit-mode mid-sentence caret, skill re-validation, submit guard, and cancel/re-enter race", async () => {
+    clearQueryClipboardMirror();
+    const runtimeDesc = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    const updatedSkill: InputReference = {
+      id: "aaaa9999bbbb" + "0".repeat(52),
+      kind: "skill",
+      label: "docx",
+      source: "skills/docx",
+      sha256: "1".repeat(64),
+      status: "selection",
+      size: 16,
+    };
+    const validAgent: InputReference = {
+      id: "cccc8888dddd" + "2".repeat(52),
+      kind: "agent",
+      label: "researcher",
+      source: "researcher",
+      sha256: "3".repeat(64),
+      status: "selection",
+      size: 16,
+    };
+    let resolveAgentList: ((value: unknown) => void) | undefined;
+    const refById = new Map([updatedSkill, validAgent].map((r) => [r.id, r]));
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: {
+        readInput: vi.fn(async (id: string) => {
+          const matched = refById.get(id);
+          if (!matched) throw new Error("RESOURCE_NOT_FOUND");
+          return { reference: matched, text: "ok" };
+        }),
+        listSkills: vi.fn().mockResolvedValue({
+          skills: [{ qualifiedId: "skills/docx", name: "docx", enabled: false, available: true, contentHash: "new" }],
+        }),
+        listAgentTypes: vi.fn().mockImplementation(
+          () => new Promise((resolve) => { resolveAgentList = resolve; }),
+        ),
+      },
+    });
+
+    let firstView: ReturnType<typeof render> | undefined;
+    try {
+      const onEditResend = vi.fn().mockResolvedValue(true);
+      const userItem = shellItem({
+        id: "user-edit-race",
+        kind: "user_message",
+        status: "completed",
+        toolCall: undefined,
+        content: "前面后面",
+        references: [updatedSkill],
+      });
+      firstView = render(
+        <ExecutionFeed
+          items={[userItem]}
+          runs={[{ ...baseRun, status: "succeeded" }]}
+          approvals={[]}
+          onEditResend={onEditResend}
+        />,
+      );
+      const { container } = firstView;
+
+      // 1. Paste of disabled skill from item.references degrades it instead of blindly exempting it
+      fireEvent.click(screen.getByRole("button", { name: "编辑并重新发送" }));
+      const richEditor = container.querySelector(".user-message-editor .composer-rich-editor") as HTMLDivElement;
+      const skillPayload = buildQueryClipboardPayload(
+        `[$docx](ref:${updatedSkill.id.slice(0, 12)})`,
+        [updatedSkill],
+      );
+      fireEvent.paste(richEditor, {
+        clipboardData: {
+          getData: (type: string) => type === QUERY_CLIPBOARD_MIME ? serializeQueryClipboardPayload(skillPayload) : "",
+          setData: vi.fn(),
+          files: [],
+        },
+      });
+      await waitFor(() => {
+        expect(screen.getByText("部分引用已更新或不可用，已降级为纯文本。")).toBeInTheDocument();
+      });
+
+      // 2. Async agent paste disables submit while in flight, and cancelling/re-entering drops stale result
+      const agentPayload = buildQueryClipboardPayload(
+        `[@researcher](ref:${validAgent.id.slice(0, 12)})`,
+        [validAgent],
+      );
+      fireEvent.paste(richEditor, {
+        clipboardData: {
+          getData: (type: string) => type === QUERY_CLIPBOARD_MIME ? serializeQueryClipboardPayload(agentPayload) : "",
+          setData: vi.fn(),
+          files: [],
+        },
+      });
+      expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+
+      // Cancel and re-enter edit mode before agent validation resolves
+      fireEvent.click(screen.getByRole("button", { name: "取消" }));
+      fireEvent.click(screen.getByRole("button", { name: "编辑并重新发送" }));
+
+      resolveAgentList?.({
+        agents: [
+          { name: "researcher", source: "r.toml", enabled: true, available: true, definitionVersion: validAgent.sha256 },
+        ],
+      });
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "发送" })).toBeEnabled();
+      });
+      expect(container.querySelector(".user-message-editor .composer-rich-editor")?.textContent).toBe("docx 前面后面");
+      fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    } finally {
+      firstView?.unmount();
+      clearQueryClipboardMirror();
+      if (runtimeDesc) Object.defineProperty(window, "eidosRuntime", runtimeDesc);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+
+    // 3. Separate plain userItem: mid-sentence paste from textarea -> InlineRichEditor keeps caret right after pasted token
+    clearQueryClipboardMirror();
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: {
+        readInput: vi.fn().mockResolvedValue({ reference: validAgent, text: "ok" }),
+        listAgentTypes: vi.fn().mockResolvedValue({
+          agents: [
+            { name: "researcher", source: "r.toml", enabled: true, available: true, definitionVersion: validAgent.sha256 },
+          ],
+        }),
+      },
+    });
+    try {
+      const plainItem = shellItem({
+        id: "user-edit-caret",
+        kind: "user_message",
+        status: "completed",
+        toolCall: undefined,
+        content: "前面后面",
+      });
+      const { container } = render(
+        <ExecutionFeed
+          items={[plainItem]}
+          runs={[{ ...baseRun, status: "succeeded" }]}
+          approvals={[]}
+          onEditResend={vi.fn().mockResolvedValue(true)}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "编辑并重新发送" }));
+      const textarea = screen.getByRole("textbox", { name: "编辑最近一次提问" }) as HTMLTextAreaElement;
+      textarea.setSelectionRange(2, 2);
+
+      const agentPayload = buildQueryClipboardPayload(
+        `[@researcher](ref:${validAgent.id.slice(0, 12)})`,
+        [validAgent],
+      );
+      fireEvent.paste(textarea, {
+        clipboardData: {
+          getData: (type: string) => type === QUERY_CLIPBOARD_MIME ? serializeQueryClipboardPayload(agentPayload) : "",
+          setData: vi.fn(),
+          files: [],
+        },
+      });
+
+      await waitFor(() => {
+        expect(container.querySelector(".user-message-editor .composer-rich-editor")).not.toBeNull();
+      });
+      const richEditor = container.querySelector(".user-message-editor .composer-rich-editor") as HTMLDivElement;
+      const sel = window.getSelection()!;
+      expect(sel.rangeCount).toBeGreaterThan(0);
+      const range = sel.getRangeAt(0);
+      expect(range.collapsed).toBe(true);
+      // Caret must sit right before "后面" (NOT at the end of "后面")
+      expect(range.startContainer).toBe(richEditor.lastChild);
+      expect(range.startOffset).toBe(0);
+    } finally {
+      window.getSelection()?.removeAllRanges();
+      clearQueryClipboardMirror();
+      if (runtimeDesc) Object.defineProperty(window, "eidosRuntime", runtimeDesc);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+
+  it("keeps async paste and submit button alive in UserMessage edit mode when item.references refreshes in flight", async () => {
+    clearQueryClipboardMirror();
+    const runtimeDesc = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    const existingFile: InputReference = {
+      id: "61".repeat(32),
+      kind: "file",
+      label: "context.md",
+      source: "/ws/context.md",
+      sha256: "a".repeat(64),
+      status: "content",
+      size: 32,
+    };
+    const validAgent: InputReference = {
+      id: "62".repeat(32),
+      kind: "agent",
+      label: "researcher",
+      source: "researcher",
+      sha256: "b".repeat(64),
+      status: "selection",
+      size: 16,
+    };
+    let resolveAgentList: ((value: unknown) => void) | undefined;
+    const refById = new Map([existingFile, validAgent].map((r) => [r.id, r]));
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: {
+        readInput: vi.fn(async (id: string) => {
+          const matched = refById.get(id);
+          if (!matched) throw new Error("RESOURCE_NOT_FOUND");
+          return { reference: matched, text: "ok" };
+        }),
+        listAgentTypes: vi.fn().mockImplementation(
+          () => new Promise((resolve) => { resolveAgentList = resolve; }),
+        ),
+      },
+    });
+
+    try {
+      const onEditResend = vi.fn().mockResolvedValue(true);
+      const userItem = shellItem({
+        id: "user-edit-refresh",
+        kind: "user_message",
+        status: "completed",
+        toolCall: undefined,
+        content: "原有提问 ",
+        references: [existingFile],
+      });
+      const { container, rerender } = render(
+        <ExecutionFeed
+          items={[userItem]}
+          runs={[{ ...baseRun, status: "succeeded" }]}
+          approvals={[]}
+          onEditResend={onEditResend}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "编辑并重新发送" }));
+      const textarea = screen.getByRole("textbox", { name: "编辑最近一次提问" }) as HTMLTextAreaElement;
+      textarea.setSelectionRange(5, 5);
+
+      const agentPayload = buildQueryClipboardPayload(
+        `[@researcher](ref:${validAgent.id.slice(0, 12)})`,
+        [validAgent],
+      );
+      fireEvent.paste(textarea, {
+        clipboardData: {
+          getData: (type: string) => type === QUERY_CLIPBOARD_MIME ? serializeQueryClipboardPayload(agentPayload) : "",
+          setData: vi.fn(),
+          files: [],
+        },
+      });
+      expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+
+      // Simulate background refreshCompletedSession replacing item.references array identity
+      rerender(
+        <ExecutionFeed
+          items={[{ ...userItem, references: [{ ...existingFile }] }]}
+          runs={[{ ...baseRun, status: "succeeded" }]}
+          approvals={[]}
+          onEditResend={onEditResend}
+        />,
+      );
+
+      resolveAgentList?.({
+        agents: [
+          { name: "researcher", source: "r.toml", enabled: true, available: true, definitionVersion: validAgent.sha256 },
+        ],
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "发送" })).toBeEnabled();
+      });
+      expect(container.querySelector(".user-message-editor .composer-rich-editor")?.textContent).toContain("researcher");
+
+      fireEvent.click(screen.getByRole("button", { name: "发送" }));
+      expect(onEditResend).toHaveBeenCalledWith(
+        expect.objectContaining({ id: baseRun.id }),
+        `原有提问 [@researcher](ref:${validAgent.id.slice(0, 12)})`,
+        [existingFile.id, validAgent.id],
+      );
+    } finally {
+      window.getSelection()?.removeAllRanges();
+      clearQueryClipboardMirror();
+      if (runtimeDesc) Object.defineProperty(window, "eidosRuntime", runtimeDesc);
+      else delete (window as Partial<Window>).eidosRuntime;
     }
   });
 });

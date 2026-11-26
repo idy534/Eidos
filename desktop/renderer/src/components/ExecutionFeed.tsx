@@ -1,8 +1,20 @@
 import { highlightText, clearHighlights } from "./find-text.js";
+import type { InputReference } from "../../../shared/input-context.js";
+import { removeInlineReferenceTokenById } from "../../../shared/inline-references.js";
 import {
-  formatInlineReferencesAsPlainText,
-  removeInlineReferenceTokenById,
-} from "../../../shared/inline-references.js";
+  formatDegradationNotice,
+  mergePastedQueryIntoDraft,
+  type QueryClipboardPayload,
+} from "../../../shared/query-clipboard.js";
+import {
+  clearQueryClipboardMirror,
+  consumeRecentShiftPaste,
+  extractSelectedQueryFromBubble,
+  markShiftPasteIfMatching,
+  readQueryFromClipboardEvent,
+  resolvePastedQueryReferences,
+  writeQueryToClipboard,
+} from "../query-clipboard.js";
 import {
   InlineReferenceProse,
   InputReferenceCards,
@@ -55,6 +67,7 @@ import { ConfirmDialog } from "./ConfirmDialog.js";
 import { DiffViewer, parseMultiFileDiff } from "./DiffViewer.js";
 import { AutomationToolCard } from "./automations/AutomationToolCard.js";
 import { Tooltip } from "./Tooltip.js";
+import { ToastContainer } from "./ToastContainer.js";
 import { SkillIcon, AgentIcon as SubagentToolIcon, MemoryIcon, ChatHistoryIcon } from "./InputPicker.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 import { useFeedScroll } from "./useFeedScroll.js";
@@ -992,14 +1005,19 @@ export function formatItemTime(timestampMs?: number): string {
   return `${month}月${day}日 ${hours}:${minutes}`;
 }
 
-function CopyButton({ content }: { content: string }) {
+function CopyButton({ content, references }: { content: string; references?: readonly InputReference[] | undefined }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
-    if (!content) return;
+    if (!content && !references?.length) return;
     try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(content);
+      if (references && references.length > 0) {
+        await writeQueryToClipboard(content, references);
+      } else {
+        if (navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(content);
+        }
+        clearQueryClipboardMirror();
       }
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -1115,9 +1133,24 @@ function UserMessage({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.content ?? "");
   const [draftReferences, setDraftReferences] = useState(item.references ?? []);
+  const [editPendingCaret, setEditPendingCaret] = useState<number | null>(null);
+  const [editNotice, setEditNotice] = useState<string>();
+  const [editPasting, setEditPasting] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [isOverflowing, setIsOverflowing] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const draftReferencesRef = useRef(draftReferences);
+  draftReferencesRef.current = draftReferences;
+  const editPastingCountRef = useRef(0);
+  const editSessionRef = useRef(0);
+  const editApplyCountRef = useRef(0);
+  const lastEditPasteCaretRef = useRef<number | null>(null);
+  const editSelectionRef = useRef<{ start: number; end: number } | undefined>(undefined);
 
   useEffect(() => {
     if (isSearchTarget) {
@@ -1153,12 +1186,40 @@ function UserMessage({
   };
 
   useEffect(() => {
-    if (!editing) { setDraft(item.content ?? ""); setDraftReferences(item.references ?? []); }
+    editSessionRef.current += 1;
+    editPastingCountRef.current = 0;
+    setEditPasting(false);
+    lastEditPasteCaretRef.current = null;
+    editSelectionRef.current = undefined;
+    return () => {
+      editSessionRef.current += 1;
+    };
+  }, [editing, item.id]);
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft(item.content ?? "");
+      setDraftReferences(item.references ?? []);
+      setEditPendingCaret(null);
+      setEditNotice(undefined);
+    }
   }, [editing, item.content, item.references]);
+
+  useLayoutEffect(() => {
+    if (editing && !draftReferences.some(isInlineReference) && editPendingCaret !== null && !revisionSubmitting) {
+      const el = editTextareaRef.current;
+      if (el) {
+        el.focus();
+        const pos = Math.max(0, Math.min(el.value.length, editPendingCaret));
+        el.setSelectionRange(pos, pos);
+      }
+      setEditPendingCaret(null);
+    }
+  }, [editing, draftReferences, editPendingCaret, revisionSubmitting, draft]);
 
   async function submitEdit(): Promise<void> {
     const value = draft.trim();
-    if ((!value && !draftReferences.length) || revisionSubmitting) return;
+    if ((!value && !draftReferences.length) || revisionSubmitting || editPasting) return;
     const accepted = await onEditResend(run, value, draftReferences.map((reference) => reference.id));
     if (accepted !== false) setEditing(false);
   }
@@ -1171,15 +1232,99 @@ function UserMessage({
     dialogs: inlineActivationDialogs,
   } = useReferenceActivation();
   const removeDraftReference = (id: string) => {
-    setDraft((previous) => removeInlineReferenceTokenById(previous, id));
-    setDraftReferences((previous) => previous.filter((reference) => reference.id !== id));
+    lastEditPasteCaretRef.current = null;
+    setDraft((previous) => {
+      const next = removeInlineReferenceTokenById(previous, id);
+      draftRef.current = next;
+      return next;
+    });
+    setDraftReferences((previous) => {
+      const next = previous.filter((reference) => reference.id !== id);
+      draftReferencesRef.current = next;
+      return next;
+    });
+  };
+
+  const applyEditMergedQuery = (
+    text: string,
+    refs: readonly InputReference[],
+    degradedCount: number,
+    range: { start: number; end: number },
+  ) => {
+    const merged = mergePastedQueryIntoDraft(
+      { text: draftRef.current, references: draftReferencesRef.current },
+      { text, references: refs },
+      range,
+    );
+    draftRef.current = merged.draft.text;
+    draftReferencesRef.current = merged.draft.references;
+    editApplyCountRef.current += 1;
+    lastEditPasteCaretRef.current = merged.caretOffset;
+    setDraft(merged.draft.text);
+    setDraftReferences(merged.draft.references);
+    setEditPendingCaret(merged.caretOffset);
+    const noticeText = formatDegradationNotice(degradedCount, merged.overflowDegradedCount);
+    if (noticeText) setEditNotice(noticeText);
+  };
+
+  const handleEditPasteQuery = async (
+    payload: QueryClipboardPayload,
+    range: { start: number; end: number },
+  ) => {
+    setEditNotice(undefined);
+    const editSession = editSessionRef.current;
+    const baseDraftText = draftRef.current;
+    const startApplyCount = editApplyCountRef.current;
+    const exemptIds = new Set([
+      ...(item.references ?? [])
+        .filter((reference) => reference.kind === "agent")
+        .map((reference) => reference.id),
+      ...draftReferencesRef.current
+        .filter((reference) => reference.status !== "selection" && reference.kind !== "history")
+        .map((reference) => reference.id),
+    ]);
+    if (payload.references.every((reference) => exemptIds.has(reference.id))) {
+      applyEditMergedQuery(payload.text, payload.references, 0, range);
+      return;
+    }
+    editPastingCountRef.current += 1;
+    setEditPasting(true);
+    try {
+      const resolved = await resolvePastedQueryReferences(payload, { exemptReferenceIds: exemptIds });
+      if (!editingRef.current || editSession !== editSessionRef.current) return;
+      let effectiveRange = range;
+      if (editApplyCountRef.current !== startApplyCount && lastEditPasteCaretRef.current !== null) {
+        effectiveRange = { start: lastEditPasteCaretRef.current, end: lastEditPasteCaretRef.current };
+      } else if (draftRef.current !== baseDraftText) {
+        effectiveRange = editSelectionRef.current ?? { start: draftRef.current.length, end: draftRef.current.length };
+      }
+      applyEditMergedQuery(resolved.text, resolved.references, resolved.degradedCount, effectiveRange);
+    } finally {
+      if (editSession === editSessionRef.current) {
+        editPastingCountRef.current = Math.max(0, editPastingCountRef.current - 1);
+        setEditPasting(editPastingCountRef.current > 0);
+      }
+    }
   };
 
   return (
     <div id={`item-${item.id}`} className="feed-item feed-item--user">
       {run.channelOrigin && <p className="feed-label">{run.channelOrigin.channel === "feishu" ? "飞书" : run.channelOrigin.channel === "wecom" ? "企业微信" : "钉钉"}消息</p>}
       {run.automationOrigin && <p className="feed-label">定时任务自动执行</p>}
-      <div className="user-message-bubble">
+      <div
+        className="user-message-bubble"
+        onCopy={(event) => {
+          if (editing || !item.references?.length) return;
+          const extracted = extractSelectedQueryFromBubble(
+            event.currentTarget,
+            item.content ?? "",
+            item.references,
+          );
+          if (extracted) {
+            void writeQueryToClipboard(extracted.text, extracted.references, event);
+          }
+        }}
+      >
         {shelfReferences.length > 0 ? (
           <InputReferenceCards
             references={shelfReferences}
@@ -1190,6 +1335,17 @@ function UserMessage({
         ) : null}
         {editing ? (
           <div className="user-message-editor">
+            {editNotice && (
+              <ToastContainer
+                toasts={[{
+                  id: `user-message-edit-notice-${editNotice}`,
+                  message: editNotice,
+                  type: "warning",
+                  duration: 4000,
+                }]}
+                onDismiss={() => setEditNotice(undefined)}
+              />
+            )}
             {inlineReferences.length > 0 ? (
               <>
                 <InlineRichEditor
@@ -1198,9 +1354,22 @@ function UserMessage({
                   inlineReferences={inlineReferences}
                   disabled={revisionSubmitting}
                   ariaLabel="编辑最近一次提问"
-                  onChange={(nextValue) => setDraft(nextValue)}
+                  pendingCaretOffset={editPendingCaret}
+                  onPendingCaretConsumed={() => setEditPendingCaret(null)}
+                  onSelectionChange={(range) => {
+                    editSelectionRef.current = range;
+                  }}
+                  onChange={(nextValue) => {
+                    lastEditPasteCaretRef.current = null;
+                    draftRef.current = nextValue;
+                    setDraft(nextValue);
+                  }}
                   onRemoveReference={removeDraftReference}
                   onActivateReference={(reference) => void activateInlineReference(reference)}
+                  onPasteQuery={(payload, range) => {
+                    void handleEditPasteQuery(payload, range);
+                    return true;
+                  }}
                   onSubmit={() => void submitEdit()}
                   onEscape={() => setEditing(false)}
                 />
@@ -1208,12 +1377,51 @@ function UserMessage({
               </>
             ) : (
               <textarea
+                ref={editTextareaRef}
                 autoFocus
                 value={draft}
                 disabled={revisionSubmitting}
                 aria-label="编辑最近一次提问"
-                onChange={(event) => setDraft(event.target.value)}
+                onSelect={(event) => {
+                  editSelectionRef.current = {
+                    start: event.currentTarget.selectionStart,
+                    end: event.currentTarget.selectionEnd,
+                  };
+                }}
+                onChange={(event) => {
+                  lastEditPasteCaretRef.current = null;
+                  draftRef.current = event.target.value;
+                  editSelectionRef.current = {
+                    start: event.target.selectionStart,
+                    end: event.target.selectionEnd,
+                  };
+                  setDraft(event.target.value);
+                }}
+                onClick={(event) => {
+                  editSelectionRef.current = {
+                    start: event.currentTarget.selectionStart,
+                    end: event.currentTarget.selectionEnd,
+                  };
+                }}
+                onKeyUp={(event) => {
+                  editSelectionRef.current = {
+                    start: event.currentTarget.selectionStart,
+                    end: event.currentTarget.selectionEnd,
+                  };
+                }}
+                onPaste={(event) => {
+                  const preferPlainText = consumeRecentShiftPaste();
+                  const queryPayload = readQueryFromClipboardEvent(event, { preferPlainText });
+                  if (queryPayload) {
+                    event.preventDefault();
+                    void handleEditPasteQuery(queryPayload, {
+                      start: event.currentTarget.selectionStart,
+                      end: event.currentTarget.selectionEnd,
+                    });
+                  }
+                }}
                 onKeyDown={(event) => {
+                  markShiftPasteIfMatching(event);
                   if (event.key === "Escape") setEditing(false);
                   if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                     event.preventDefault();
@@ -1227,7 +1435,7 @@ function UserMessage({
               <button
                 type="button"
                 className="user-message-editor-submit"
-                disabled={revisionSubmitting || (!draft.trim() && !draftReferences.length)}
+                disabled={revisionSubmitting || editPasting || (!draft.trim() && !draftReferences.length)}
                 onClick={() => void submitEdit()}
               >
                 {revisionSubmitting ? "发送中…" : "发送"}
@@ -1270,7 +1478,9 @@ function UserMessage({
       {!editing && (
         <div className="feed-item-footer response-footer">
           <div className="response-actions-left">
-            {item.content && <CopyButton content={formatInlineReferencesAsPlainText(item.content)} />}
+            {(item.content || item.references?.length) && (
+              <CopyButton content={item.content ?? ""} references={item.references} />
+            )}
             {canEdit && (item.content || item.references?.length) && (
               <ActionButton
                 label="编辑并重新发送"
@@ -1653,7 +1863,20 @@ const ProcessItem = memo(function ProcessItem({
     return (
       <div id={`item-${item.id}`} className="process-steering" data-status={item.status}>
         <p className="feed-label">引导对话</p>
-        <div className="user-message-bubble">
+        <div
+          className="user-message-bubble"
+          onCopy={(event) => {
+            if (steeringReferences.length === 0) return;
+            const extracted = extractSelectedQueryFromBubble(
+              event.currentTarget,
+              item.content ?? "",
+              steeringReferences,
+            );
+            if (extracted) {
+              void writeQueryToClipboard(extracted.text, extracted.references, event);
+            }
+          }}
+        >
           {steeringShelf.length > 0 ? (
             <InputReferenceCards
               references={steeringShelf}

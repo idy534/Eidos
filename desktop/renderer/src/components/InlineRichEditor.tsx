@@ -13,12 +13,21 @@ import type { InputReference, InputReferenceKind } from "../../../shared/input-c
 import {
   canonicalizeInlineText,
   containsInlineReferenceToken,
-  formatInlineReferencesAsPlainText,
   parseInlineSegments,
   type InlineSegment,
 } from "../../../shared/inline-references.js";
+import {
+  formatQueryAsPlainText,
+  type QueryClipboardPayload,
+} from "../../../shared/query-clipboard.js";
+import {
+  clearQueryClipboardMirror,
+  consumeRecentShiftPaste,
+  markShiftPasteIfMatching,
+  readQueryFromClipboardEvent,
+  writeQueryToClipboard,
+} from "../query-clipboard.js";
 
-const INLINE_CLIPBOARD_MIME = "application/x-eidos-inline-draft";
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 export interface InlineRichEditorProps {
@@ -45,6 +54,7 @@ export interface InlineRichEditorProps {
   onSubmit?: (() => void) | undefined;
   onEscape?: (() => void) | undefined;
   onPasteFiles?: ((files: File[]) => boolean) | undefined;
+  onPasteQuery?: ((payload: QueryClipboardPayload, range: { start: number; end: number }) => boolean) | undefined;
 }
 
 export function getInlineReferenceTitle(reference: InputReference): string {
@@ -421,6 +431,7 @@ export const InlineRichEditor = forwardRef<HTMLDivElement, InlineRichEditorProps
       onSubmit,
       onEscape,
       onPasteFiles,
+      onPasteQuery,
     },
     forwardedRef,
   ) {
@@ -525,7 +536,7 @@ export const InlineRichEditor = forwardRef<HTMLDivElement, InlineRichEditorProps
     ]);
 
     useEffect(() => {
-      if (!autoFocus || disabled) return;
+      if (!autoFocus || disabled || pendingCaretOffset != null) return;
       const root = editorRef.current;
       if (!root) return;
       root.focus();
@@ -620,6 +631,7 @@ export const InlineRichEditor = forwardRef<HTMLDivElement, InlineRichEditorProps
     const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
       if (disabled) return;
       if (event.nativeEvent.isComposing || isComposingRef.current) return;
+      markShiftPasteIfMatching(event);
 
       if (event.key === "Escape" && onEscape) {
         event.preventDefault();
@@ -713,9 +725,16 @@ export const InlineRichEditor = forwardRef<HTMLDivElement, InlineRichEditorProps
       const selection = getInlineEditorSelectionOffsets(root);
       if (!selection || selection.start === selection.end) return;
       const rawSlice = canonicalValue.slice(selection.start, selection.end);
-      event.preventDefault();
-      event.clipboardData.setData("text/plain", formatInlineReferencesAsPlainText(rawSlice));
-      event.clipboardData.setData(INLINE_CLIPBOARD_MIME, rawSlice);
+      const selectedRefs = inlineReferences.filter((ref) =>
+        containsInlineReferenceToken(rawSlice, ref.id),
+      );
+      if (selectedRefs.length === 0) {
+        event.preventDefault();
+        event.clipboardData.setData("text/plain", rawSlice);
+        clearQueryClipboardMirror();
+        return;
+      }
+      void writeQueryToClipboard(rawSlice, selectedRefs, event);
     };
 
     const handleCut = (event: ClipboardEvent<HTMLDivElement>) => {
@@ -725,30 +744,54 @@ export const InlineRichEditor = forwardRef<HTMLDivElement, InlineRichEditorProps
       const selection = getInlineEditorSelectionOffsets(root);
       if (!selection || selection.start === selection.end) return;
       const rawSlice = canonicalValue.slice(selection.start, selection.end);
-      event.preventDefault();
-      event.clipboardData.setData("text/plain", formatInlineReferencesAsPlainText(rawSlice));
-      event.clipboardData.setData(INLINE_CLIPBOARD_MIME, rawSlice);
+      const selectedRefs = inlineReferences.filter((ref) =>
+        containsInlineReferenceToken(rawSlice, ref.id),
+      );
+      if (selectedRefs.length === 0) {
+        event.preventDefault();
+        event.clipboardData.setData("text/plain", rawSlice);
+        clearQueryClipboardMirror();
+      } else {
+        void writeQueryToClipboard(rawSlice, selectedRefs, event);
+      }
       const nextText = `${canonicalValue.slice(0, selection.start)}${canonicalValue.slice(selection.end)}`;
       applyTextReplacement(nextText, selection.start);
     };
 
     const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
       if (disabled) return;
-      const files = Array.from(event.clipboardData.files);
+      const files = Array.from(event.clipboardData?.files ?? []);
       if (files.length > 0 && onPasteFiles?.(files)) {
         event.preventDefault();
         return;
       }
-      event.preventDefault();
-      const pasted =
-        event.clipboardData.getData(INLINE_CLIPBOARD_MIME)
-        || event.clipboardData.getData("text/plain");
-      if (!pasted) return;
+      const preferPlainText = consumeRecentShiftPaste();
+      const queryPayload = readQueryFromClipboardEvent(event, { preferPlainText });
       const root = editorRef.current;
       const selection = (root && getInlineEditorSelectionOffsets(root)) ?? {
         start: canonicalValue.length,
         end: canonicalValue.length,
       };
+      if (queryPayload) {
+        if (onPasteQuery?.(queryPayload, selection)) {
+          event.preventDefault();
+          return;
+        }
+        event.preventDefault();
+        const allPresent = queryPayload.references.every((ref) =>
+          inlineReferences.some((existing) => existing.id === ref.id),
+        );
+        const fallbackText = allPresent
+          ? queryPayload.text
+          : formatQueryAsPlainText(queryPayload.text, queryPayload.references);
+        if (!fallbackText) return;
+        const nextText = `${canonicalValue.slice(0, selection.start)}${fallbackText}${canonicalValue.slice(selection.end)}`;
+        applyTextReplacement(nextText, selection.start + fallbackText.length);
+        return;
+      }
+      event.preventDefault();
+      const pasted = event.clipboardData?.getData("text/plain") ?? "";
+      if (!pasted) return;
       const nextText = `${canonicalValue.slice(0, selection.start)}${pasted}${canonicalValue.slice(selection.end)}`;
       applyTextReplacement(nextText, selection.start + pasted.length);
     };

@@ -3,6 +3,8 @@ import { createContext, Fragment, useCallback, useContext, useEffect, useId, use
 import { createPortal } from "react-dom";
 import type { InputPrepareRequest, InputPreview, InputReference } from "../../../shared/input-context.js";
 import { isInlineReference, isShelfReference, parseInlineSegments } from "../../../shared/inline-references.js";
+import { formatDegradationNotice, type QueryClipboardPayload } from "../../../shared/query-clipboard.js";
+import { resolvePastedQueryReferences } from "../query-clipboard.js";
 import type { McpServerRecord } from "../contracts.js";
 import { runtimeBusinessCode, userFacingError } from "../session-state.js";
 import { ImageLightbox } from "./ImageLightbox.js";
@@ -27,12 +29,15 @@ interface InputContextValue {
   projectId: string | undefined;
   busy: boolean;
   error: string | undefined;
+  notice?: string | undefined;
   clearError?: () => void;
+  clearNotice?: () => void;
   add(request: InputPrepareRequest, range?: { start: number; end: number }): Promise<void>;
   paths(paths: string[]): Promise<void>;
   /** Like `paths`, for pasted files: a rejected image file is retried as a clipboard image. */
   pastePaths(paths: string[]): Promise<void>;
   paste(): Promise<void>;
+  pasteQuery?: ((payload: QueryClipboardPayload, range?: { start: number; end: number }) => Promise<void>) | undefined;
   settings(section?: string): void;
   reuse(reference: InputReference): void;
   navigateToSession?: ((sessionId: string) => void) | undefined;
@@ -51,6 +56,9 @@ export function InputContextProvider({
   ready,
   onAdd,
   onInsert,
+  onPasteQuery,
+  currentText,
+  currentReferences,
   onSettings,
   onNavigateToSession,
   children,
@@ -63,19 +71,45 @@ export function InputContextProvider({
   ready: boolean;
   onAdd(id: string, reference: InputReference): void;
   onInsert?: ((id: string, reference: InputReference, range?: { start: number; end: number }) => number | undefined) | undefined;
+  onPasteQuery?: ((
+    id: string,
+    pasted: { text: string; references: readonly InputReference[] },
+    range?: { start: number; end: number },
+  ) => { caretOffset: number; overflowDegradedCount: number } | undefined) | undefined;
+  currentText?: string | undefined;
+  currentReferences?: readonly InputReference[] | undefined;
   onSettings(section?: string): void;
   onNavigateToSession?: ((sessionId: string) => void) | undefined;
   children: ReactNode;
 }) {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
+  const [notices, setNotices] = useState<Record<string, string | undefined>>({});
   const addRef = useRef(onAdd);
   addRef.current = onAdd;
   const insertRef = useRef(onInsert);
   insertRef.current = onInsert;
+  const pasteQueryRef = useRef(onPasteQuery);
+  pasteQueryRef.current = onPasteQuery;
+  const currentTextRef = useRef(currentText);
+  currentTextRef.current = currentText;
+  const currentReferencesRef = useRef(currentReferences);
+  currentReferencesRef.current = currentReferences;
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
   const editorBridgeRef = useRef<InputEditorSelectionBridge | null>(null);
+  const pasteGenerationRef = useRef(0);
+  const pasteApplyCountRef = useRef(0);
+  const lastPasteCaretRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    pasteGenerationRef.current += 1;
+    lastPasteCaretRef.current = null;
+  }, [sessionId]);
+
+  useEffect(() => {
+    lastPasteCaretRef.current = null;
+  }, [currentText]);
 
   const commitReference = useCallback((
     owner: string,
@@ -164,9 +198,81 @@ export function InputContextProvider({
     }
   }, [sessionId]);
 
+  const clearNotice = useCallback(() => {
+    if (sessionId) {
+      setNotices((previous) => ({ ...previous, [sessionId]: undefined }));
+    }
+  }, [sessionId]);
+
+  const applyResolvedQuery = useCallback((
+    owner: string,
+    text: string,
+    refs: readonly InputReference[],
+    degradedCount: number,
+    explicitRange?: { start: number; end: number },
+  ) => {
+    if (!pasteQueryRef.current) return;
+    const range =
+      explicitRange
+      ?? (owner === sessionIdRef.current ? editorBridgeRef.current?.getSelectionRange() : undefined);
+    const outcome = pasteQueryRef.current(owner, { text, references: refs }, range);
+    if (!outcome) return;
+    pasteApplyCountRef.current += 1;
+    if (owner === sessionIdRef.current) {
+      lastPasteCaretRef.current = outcome.caretOffset;
+      editorBridgeRef.current?.onInsertedCaret(outcome.caretOffset);
+    }
+    const noticeText = formatDegradationNotice(degradedCount, outcome.overflowDegradedCount);
+    if (noticeText) {
+      setNotices((previous) => ({ ...previous, [owner]: noticeText }));
+    }
+  }, []);
+
+  const pasteQuery = useCallback(async (
+    payload: QueryClipboardPayload,
+    explicitRange?: { start: number; end: number },
+  ) => {
+    if (!sessionId || !pasteQueryRef.current) return;
+    if (!ready) {
+      setErrors((previous) => ({ ...previous, [sessionId]: "草稿尚未恢复，请稍后再添加引用。" }));
+      return;
+    }
+    const owner = sessionId;
+    const generation = pasteGenerationRef.current;
+    const baseText = currentTextRef.current;
+    const initialRange = explicitRange ?? editorBridgeRef.current?.getSelectionRange();
+    const startApplyCount = pasteApplyCountRef.current;
+    setNotices((previous) => ({ ...previous, [owner]: undefined }));
+    const exemptReferenceIds = new Set(
+      (currentReferencesRef.current ?? [])
+        .filter((reference) => reference.status !== "selection" && reference.kind !== "history")
+        .map((reference) => reference.id),
+    );
+    if (payload.references.every((reference) => exemptReferenceIds.has(reference.id))) {
+      applyResolvedQuery(owner, payload.text, payload.references, 0, initialRange);
+      return;
+    }
+    setCounts((previous) => ({ ...previous, [owner]: (previous[owner] ?? 0) + 1 }));
+    try {
+      const resolved = await resolvePastedQueryReferences(payload, { exemptReferenceIds });
+      if (owner !== sessionIdRef.current || generation !== pasteGenerationRef.current) return;
+      let effectiveRange = initialRange;
+      if (pasteApplyCountRef.current !== startApplyCount && lastPasteCaretRef.current !== null) {
+        effectiveRange = { start: lastPasteCaretRef.current, end: lastPasteCaretRef.current };
+      } else if (baseText !== undefined && currentTextRef.current !== baseText) {
+        effectiveRange = editorBridgeRef.current?.getSelectionRange();
+      }
+      applyResolvedQuery(owner, resolved.text, resolved.references, resolved.degradedCount, effectiveRange);
+    } finally {
+      setCounts((previous) => ({ ...previous, [owner]: Math.max(0, (previous[owner] ?? 1) - 1) }));
+    }
+  }, [sessionId, ready, applyResolvedQuery]);
+
   return <Context.Provider value={sessionId ? {
-    sessionId, workspaceRoot: workspaceRoot ?? "", workspaceRoots: workspaceRoots ?? (workspaceRoot ? [workspaceRoot] : []), workspaceRevision, projectId, busy: Boolean(counts[sessionId]), error: errors[sessionId], clearError, add, paths, pastePaths,
-    paste: () => work(() => window.eidosRuntime.pasteInputImage()), settings: onSettings,
+    sessionId, workspaceRoot: workspaceRoot ?? "", workspaceRoots: workspaceRoots ?? (workspaceRoot ? [workspaceRoot] : []), workspaceRevision, projectId, busy: Boolean(counts[sessionId]), error: errors[sessionId], notice: notices[sessionId], clearError, clearNotice, add, paths, pastePaths,
+    paste: () => work(() => window.eidosRuntime.pasteInputImage()),
+    pasteQuery: onPasteQuery ? pasteQuery : undefined,
+    settings: onSettings,
     reuse: (reference) => { if (ready) commitReference(sessionId, reference); },
     navigateToSession: onNavigateToSession,
     registerEditor,
@@ -336,6 +442,9 @@ export function InlineReferenceProse({
           return (
             <span
               key={`ref-${reference.id}-${index}`}
+              data-inline-ref-id={reference.id}
+              data-inline-ref-raw={segment.raw}
+              data-inline-ref-label={reference.label}
               className={`input-reference input-reference--${variant} input-reference--kind-${reference.kind} input-reference--inline-token`}
             >
               <button
@@ -409,6 +518,7 @@ export function InputReferenceCards({
             <div
               className={`input-reference input-reference--${variant} input-reference--kind-${reference.kind} ${zoneClass}`}
               key={reference.id}
+              {...(shelf ? { "data-shelf-ref-id": reference.id } : {})}
             >
               <button
                 type="button"
