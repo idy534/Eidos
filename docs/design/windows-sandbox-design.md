@@ -173,7 +173,7 @@ ToolOrchestrator → shell_orchestration → prepare_shell_launch
 
 - 归属：Eidos 的 `ProcessJob` 持有 helper；MXC 在 helper 内把工作负载放进嵌套的 kill-on-close Job。结束父 Job 会同时结束嵌套 Job 中的进程，取消和超时继续由 Runtime 现有逻辑结束 Eidos Job（V3 验证）。
 - PIPE 的 Ctrl-C 沿用现有行为，结束整个进程树。PTY 由 `ConPtyProcess` 启动 helper 并加 `--pty`，Ctrl-C 交给控制台（V7 验证）。
-- 前台命令结束后，剩余后代进程会被结束，后台常驻服务无法存活。这与 macOS 结束整个进程组的行为一致，写入用户文档。
+- 前台命令结束后，MXC 的 `wait()` 会结束容器 Job 中的剩余进程，后台常驻服务无法存活。macOS 会把仍在进程组中的后台进程留在会话里，Windows 沙盒做不到。这些进程在 helper 退出前已被结束，Runtime 观察不到，因此结果不带 `backgroundProcesses`；用户文档和 Windows 上的 `run_shell` 工具说明写明这一差异。
 - 每次执行都是一次性容器，没有常驻容器、ACL 残留或沙盒账户，Runtime 重启时不需要额外清理。PSEC 环境是否会因 helper 被强杀而残留，由 V3 确认。
 - `-EncodedCommand` 受 Windows 32767 字符命令行限制。该限制在无沙盒时已经存在，本方案不改变，超长时返回明确错误。
 
