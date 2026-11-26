@@ -105,9 +105,8 @@ def test_workspace_find_files_application_and_rpc_dispatch(tmp_path: Path) -> No
         store.close()
 
     output = io.StringIO()
-    rpc_data = tmp_path / "rpc_data"
-    rpc_data.mkdir()
-    server = RuntimeServer(output, rpc_data)
+    # The store creates its private data directory; a pre-made 0755 one is rejected.
+    server = RuntimeServer(output, tmp_path / "rpc_data")
     server.store.initialize()
     server.model_config.initialize()
     server.initialized = True

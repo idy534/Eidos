@@ -17,17 +17,20 @@ function packagedFileTypes(paths: string[]): (candidate: string) => RuntimePathT
 }
 
 
+// These cases pin the macOS layout, so they name the platform and use POSIX
+// joins; the Windows layout has its own case below. Both run on every host.
 test("development runtime paths use the repository Python by default", () => {
   const paths = resolveRuntimePaths({
     isPackaged: false,
+    platform: "darwin",
     appPath: "/workspace/eidos",
     resourcesPath: "/unused/resources",
     environment: {},
   });
 
   assert.deepEqual(paths, {
-    pythonExecutable: path.join("/workspace/eidos", ".venv", "bin", "python"),
-    runtimeRoot: path.join("/workspace/eidos", "runtime"),
+    pythonExecutable: path.posix.join("/workspace/eidos", ".venv", "bin", "python"),
+    runtimeRoot: path.posix.join("/workspace/eidos", "runtime"),
   });
 });
 
@@ -35,6 +38,7 @@ test("development runtime paths use the repository Python by default", () => {
 test("development runtime paths keep the repository runtime with EIDOS_PYTHON override", () => {
   const paths = resolveRuntimePaths({
     isPackaged: false,
+    platform: "darwin",
     appPath: "/workspace/eidos",
     resourcesPath: "/unused/resources",
     environment: { EIDOS_PYTHON: "/custom/python" },
@@ -42,28 +46,29 @@ test("development runtime paths keep the repository runtime with EIDOS_PYTHON ov
 
   assert.deepEqual(paths, {
     pythonExecutable: "/custom/python",
-    runtimeRoot: path.join("/workspace/eidos", "runtime"),
+    runtimeRoot: path.posix.join("/workspace/eidos", "runtime"),
   });
 });
 
 
 test("packaged runtime paths use Resources and never the app path or environment override", () => {
   const resourcesPath = "/Applications/Eidos.app/Contents/Resources";
-  const runtimeRoot = path.join(resourcesPath, "runtime");
+  const runtimeRoot = path.posix.join(resourcesPath, "runtime");
   const paths = resolveRuntimePaths({
     isPackaged: true,
+    platform: "darwin",
     appPath: "/Applications/Eidos.app/Contents/Resources/app.asar",
     resourcesPath,
     environment: { EIDOS_PYTHON: "/should/not/be-used" },
     pathType: packagedFileTypes([
-      path.join(runtimeRoot, "python", "bin", "python3"),
-      path.join(runtimeRoot, "app", "eidos_runtime"),
+      path.posix.join(runtimeRoot, "python", "bin", "python3"),
+      path.posix.join(runtimeRoot, "app", "eidos_runtime"),
     ]),
   });
 
   assert.deepEqual(paths, {
-    pythonExecutable: path.join(runtimeRoot, "python", "bin", "python3"),
-    runtimeRoot: path.join(runtimeRoot, "app"),
+    pythonExecutable: path.posix.join(runtimeRoot, "python", "bin", "python3"),
+    runtimeRoot: path.posix.join(runtimeRoot, "app"),
   });
 });
 
@@ -72,6 +77,7 @@ test("packaged runtime resolution fails closed when the bundled interpreter is m
   assert.throws(
     () => resolveRuntimePaths({
       isPackaged: true,
+      platform: "darwin",
       appPath: "/Applications/Eidos.app/Contents/Resources/app.asar",
       resourcesPath: "/Applications/Eidos.app/Contents/Resources",
       pathType: () => "missing",

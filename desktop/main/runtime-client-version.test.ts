@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildInitializeParams } from "./runtime-client.js";
+import { buildInitializeParams, UNSPECIFIED_CLIENT_VERSION } from "./runtime-client.js";
 import { clearRuntimeState, type PendingApprovalEntry, type RuntimeActiveRunEntry } from "./runtime-process-state.js";
 
 test("buildInitializeParams uses supplied clientVersion instead of hardcoded 0.3.0", () => {
@@ -9,6 +9,7 @@ test("buildInitializeParams uses supplied clientVersion instead of hardcoded 0.3
     client: { name: "eidos-desktop", version: "0.5.7" },
     protocolVersion: 1,
   });
+  assert.equal(buildInitializeParams("").client.version, UNSPECIFIED_CLIENT_VERSION);
 });
 
 test("clearRuntimeState clears active runs and settles pending approvals", () => {

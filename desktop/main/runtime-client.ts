@@ -448,12 +448,16 @@ export class RuntimeShutdownError extends Error {
   }
 }
 
+// Main passes app.getVersion(); only tests and tools construct a client without it.
+// A dev marker cannot be mistaken for a release the way a copied number can.
+export const UNSPECIFIED_CLIENT_VERSION = "0.0.0-dev";
+
 export function buildInitializeParams(clientVersion: string): {
   client: { name: string; version: string };
   protocolVersion: 1;
 } {
   return {
-    client: { name: "eidos-desktop", version: clientVersion || "0.5.7" },
+    client: { name: "eidos-desktop", version: clientVersion || UNSPECIFIED_CLIENT_VERSION },
     protocolVersion: 1,
   };
 }
@@ -471,7 +475,7 @@ export class RuntimeClient {
   private shutdownRequested = false;
 
   constructor(options: RuntimeClientOptions) {
-    this.clientVersion = options.clientVersion ?? "0.5.7";
+    this.clientVersion = options.clientVersion || UNSPECIFIED_CLIENT_VERSION;
     const environment = buildRuntimeEnvironment({
       runtimeRoot: options.runtimeRoot,
       baseEnvironment: process.env,

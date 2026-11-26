@@ -2,10 +2,23 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-
-from eval.runner import EvalCase, EvalGraders, EvalScriptedStep, EvalTurn, redact_secrets, run_eval_case, run_eval_suite
+import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# `eval/` lives at the repository root, outside the `runtime` pytest path.
+# Append it last so root folders never shadow installed packages.
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+from eval.runner import (  # noqa: E402
+    EvalCase,
+    EvalGraders,
+    EvalScriptedStep,
+    EvalTurn,
+    redact_secrets,
+    run_eval_case,
+    run_eval_suite,
+)
 BASELINE_SUITE = REPO_ROOT / "eval" / "cases" / "baseline.json"
 
 
