@@ -104,7 +104,7 @@ def test_hook_service_executes_command_windows_when_running_on_windows(
     )
     seen_commands: list[str] = []
     try:
-        monkeypatch.setattr(runtime_hooks.local_files, "WINDOWS", True)
+        monkeypatch.setattr(runtime_hooks, "_hook_host_is_windows", lambda: True)
 
         def fake_prepare(ws, command, cwd, attempt, **_kwargs):
             del ws, cwd, attempt
@@ -134,7 +134,7 @@ def test_hook_service_skips_windows_only_hook_cleanly_on_posix(
         {"PreToolUse": [{"hooks": [{"type": "command", "commandWindows": "Write-Output only-win"}]}]},
     )
     try:
-        monkeypatch.setattr(runtime_hooks.local_files, "WINDOWS", False)
+        monkeypatch.setattr(runtime_hooks, "_hook_host_is_windows", lambda: False)
 
         def fail_prepare(*_args, **_kwargs):
             raise AssertionError("shell must not be prepared when host platform command is absent")

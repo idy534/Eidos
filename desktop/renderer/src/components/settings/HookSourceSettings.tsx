@@ -13,6 +13,7 @@ import { Toggle } from "../Toggle.js";
 import { HookHistoryDialog } from "./HookHistoryDialog.js";
 import { ChevronDownIcon } from "./MemoryIcons.js";
 import { CodeIcon, FinderIcon } from "../MenuIcons.js";
+import { hookCommandText } from "./hook-command.js";
 
 function getHookSourceTitle(source: HookSourceReview): string {
   if (source.scope === "user") {
@@ -301,9 +302,7 @@ export function HookSourceSettings({ sessionId }: { sessionId?: string | undefin
                     {hook.background && <span className="hook-bg-tag">后台</span>}
                   </div>
                   <pre className="plugin-hook-command">
-                    {hook.handlerType === "mcp_tool"
-                      ? JSON.stringify({ server: hook.mcpServer, tool: hook.mcpTool, input: hook.mcpInput }, null, 2)
-                      : hook.command || `处理器：${hook.handlerType}（不执行）`}
+                    {hookCommandText(hook, "（不执行）")}
                   </pre>
                 </div>
               ))}
