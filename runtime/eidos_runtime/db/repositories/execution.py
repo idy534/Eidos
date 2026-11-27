@@ -350,7 +350,20 @@ class ExecutionRepository(Repository):
             tool_row = self._connection().execute(
                 "SELECT * FROM tool_calls WHERE item_id = ?", (item_id,)
             ).fetchone()
-        return _item_from_row(row, tool_row)
+            review_json: str | None = None
+            if tool_row is not None and tool_row["approval_status"] is not None:
+                review_row = self._connection().execute(
+                    """
+                    SELECT review_json FROM approvals
+                    WHERE item_id = ? AND review_json IS NOT NULL
+                    ORDER BY COALESCE(decided_at, created_at) DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (item_id,),
+                ).fetchone()
+                if review_row is not None:
+                    review_json = review_row["review_json"]
+        return _item_from_row(row, tool_row, approval_review_json=review_json)
 
     def read_tool_output(
         self,

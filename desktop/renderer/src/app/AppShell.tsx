@@ -74,6 +74,11 @@ import { McpPluginNamesContext } from "../components/McpToolDetails.js";
 import { useGitReviewController } from "./useGitReviewController.js";
 import { useDraftGit } from "./useDraftGit.js";
 import { applyThinking, clearThinking, type LiveThinkingMap } from "../live-thinking.js";
+import {
+  applyApprovalReviewProgress,
+  clearApprovalReview,
+  type LiveApprovalReviewMap,
+} from "../live-approval-review.js";
 import { applyNotifications, applyQueuedRunChange, isQueuedMessage, userFacingError } from "../session-state.js";
 import type { RuntimeNotification } from "../contracts.js";
 import { IPC } from "../../../shared/ipc-channels.js";
@@ -193,6 +198,7 @@ export function AppShell({ runtime }: AppShellProps) {
   const latestRun = sessionState.snapshot?.runs.filter((run) => !run.inherited).at(-1);
   // Live-only reasoning summaries: not part of the snapshot, dropped when the Run ends.
   const [liveThinking, setLiveThinking] = useState<LiveThinkingMap>({});
+  const [liveApprovalReview, setLiveApprovalReview] = useState<LiveApprovalReviewMap>({});
   const endedThinkingRuns = useRef(new Set<string>());
   const [forkSelection, setForkSelection] = useState<{ session: Session; item: Item } | null>(null);
   const [forkTarget, setForkTarget] = useState<"same_workspace" | "new_worktree">("same_workspace");
@@ -711,12 +717,28 @@ export function AppShell({ runtime }: AppShellProps) {
         }
         return;
       }
+      if (notification.method === "run/approvalReviewProgress") {
+        if (!endedThinkingRuns.current.has(notification.params.runId)) {
+          setLiveApprovalReview((prev) => applyApprovalReviewProgress(prev, notification.params));
+        }
+        if (drained.length > 0) {
+          sessionActions.setSnapshot((prev) => applyNotifications(prev, drained));
+        }
+        return;
+      }
+      if (
+        notification.method === "run/updated"
+        && notification.params.run.status !== "waiting_approval"
+      ) {
+        setLiveApprovalReview((prev) => clearApprovalReview(prev, notification.params.run.id));
+      }
       if (
         (notification.method === "run/updated" || notification.method === "run/completed")
         && ENDED_RUN_STATUSES.has(notification.params.run.status)
       ) {
         endedThinkingRuns.current.add(notification.params.run.id);
         setLiveThinking((prev) => clearThinking(prev, notification.params.run.id));
+        setLiveApprovalReview((prev) => clearApprovalReview(prev, notification.params.run.id));
       }
       if (notification.method === "project/updated") {
         void sessionActions.loadProjects();
@@ -742,6 +764,7 @@ export function AppShell({ runtime }: AppShellProps) {
         || notification.method === "approval/canceled"
       ) {
         approvalActions.removeApproval(notification.params.approvalId);
+        setLiveApprovalReview((prev) => clearApprovalReview(prev, notification.params.runId));
       }
       const batch = drained.length > 0 ? [...drained, notification] : [notification];
       sessionActions.setSnapshot((prev) => applyNotifications(prev, batch));
@@ -2351,6 +2374,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   modelRetries={currentSnapshot.modelRetries}
                   goalActivities={goals.view.activities}
                   liveThinking={liveThinking}
+                  liveApprovalReview={liveApprovalReview}
                   onOpenModelSettings={handleOpenModelSettings}
                   runs={feedVisibleRuns}
                   models={feedModels}

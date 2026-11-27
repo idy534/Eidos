@@ -2458,7 +2458,8 @@ describe("ExecutionFeed collapsed bodies", () => {
       />,
     );
     expect(pending.container.querySelector<HTMLDetailsElement>("details.tool-group")!.open).toBe(true);
-    expect(pending.container).toHaveTextContent("需要批准");
+    expect(pending.container).toHaveTextContent("待批准");
+    expect(pending.container.querySelector(".feed-label")).toBeNull();
   });
 });
 

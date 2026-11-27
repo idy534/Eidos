@@ -112,18 +112,19 @@ export function ApprovalComposer({
           </div>
           <div className="approval-heading-text">
             <h3 id={`approval-${approval.id}`}>{isDangerous ? "高危操作，需要你的确认" : approvalTitle(approval)}</h3>
-            <span className="approval-heading-divider" aria-hidden="true">·</span>
-            <span className="approval-heading-tag">
-              <span className="approval-status-pulse" />
-              <p className="feed-label">{isExpired ? "审批已失效" : "需要你的批准"}</p>
-            </span>
           </div>
         </div>
         <span className="approval-heading-badge">
-          {isExpired ? "已过期" : approval.kind === "file_change" ? "文件变更" : approval.kind === "browser_access" || (approval.kind === "external_tool" && approval.permissionProfile === "browser") ? "浏览器" : approval.kind === "external_tool" ? "MCP 工具" : approval.kind === "network_access" ? "网络访问" : approval.kind === "permission_request" ? "权限申请" : "Shell 命令"}
+          {isExpired ? "审批已失效" : approval.kind === "file_change" ? "文件变更" : approval.kind === "browser_access" || (approval.kind === "external_tool" && approval.permissionProfile === "browser") ? "浏览器" : approval.kind === "external_tool" ? "MCP 工具" : approval.kind === "network_access" ? "网络访问" : approval.kind === "permission_request" ? "权限申请" : "Shell 命令"}
         </span>
       </div>
       <div className="approval-body">
+        {approval.reviewFallback && (
+          <div className="approval-fallback-note" role="status">
+            <AlertTriangleIcon className="approval-fallback-icon" />
+            <span>{approval.reviewFallback} 可在此手动决定。</span>
+          </div>
+        )}
         {warning && <div className="approval-warning" role={isDangerous ? "alert" : "note"}>
           <AlertTriangleIcon className="approval-warning-icon" />
           <span>{warning}</span>
@@ -140,37 +141,41 @@ export function ApprovalComposer({
           }]}
         />
       )}
-      {approval.reviewFallback && <p className="approval-fallback-note" role="status">{approval.reviewFallback} 可在此手动决定。</p>}
-      <div className="approval-actions">
-        <div className="approval-actions-hint" aria-hidden="true">
-          <ShieldIcon className="approval-actions-hint-icon" />
-          <span>核对命令及授权范围后再行决定</span>
+      {showFeedback && (
+        <div className="approval-reject-drawer">
+          <input
+            type="text"
+            className="approval-feedback-input"
+            aria-label="拒绝原因（可选）"
+            placeholder="输入拒绝原因或替代要求，按 Enter 提交拒绝…"
+            maxLength={4000}
+            disabled={!canReject}
+            autoFocus
+            value={feedback}
+            onChange={(event) => setFeedback(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && canReject) {
+                event.preventDefault();
+                onReject(approval, feedback.trim() || undefined);
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                setShowFeedback(false);
+              }
+            }}
+          />
         </div>
-        <details
-          className="approval-feedback-details"
-          open={showFeedback}
-          onToggle={(event) => setShowFeedback(event.currentTarget.open)}
+      )}
+      <div className="approval-actions">
+        <Button
+          variant="ghost"
+          size="small"
+          className={`btn-approval-feedback${showFeedback ? " is-active" : ""}`}
+          aria-expanded={showFeedback}
+          disabled={!canReject}
+          onClick={() => setShowFeedback((value) => !value)}
         >
-          <summary className="approval-feedback-summary">附带拒绝原因</summary>
-          {showFeedback && (
-            <input
-              type="text"
-              className="approval-feedback-input"
-              aria-label="拒绝原因（可选）"
-              placeholder="输入拒绝原因或替代要求，按 Enter 提交拒绝…"
-              maxLength={4000}
-              disabled={!canReject}
-              value={feedback}
-              onChange={(event) => setFeedback(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && canReject) {
-                  event.preventDefault();
-                  onReject(approval, feedback.trim() || undefined);
-                }
-              }}
-            />
-          )}
-        </details>
+          附带拒绝原因
+        </Button>
         <div className="approval-actions-buttons">
           <Button
             variant="secondary"

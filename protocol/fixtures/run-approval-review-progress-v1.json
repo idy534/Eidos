@@ -1,0 +1,44 @@
+{
+  "preparingNotification": {
+    "jsonrpc": "2.0",
+    "method": "run/approvalReviewProgress",
+    "params": {
+      "sessionId": "session-1",
+      "runId": "run-1",
+      "itemId": "item-1",
+      "stage": "preparing",
+      "stepIndex": 1,
+      "totalSteps": 3,
+      "actionTitle": "在联网审批下重跑探测（联网）",
+      "preview": "curl -sS -I https://api.github.com"
+    }
+  },
+  "evaluatingNotification": {
+    "jsonrpc": "2.0",
+    "method": "run/approvalReviewProgress",
+    "params": {
+      "sessionId": "session-1",
+      "runId": "run-1",
+      "itemId": "item-1",
+      "stage": "evaluating",
+      "stepIndex": 2,
+      "totalSteps": 3,
+      "actionTitle": "在联网审批下重跑探测（联网）",
+      "preview": "curl -sS -I https://api.github.com",
+      "attempt": 1
+    }
+  },
+  "finishedNotification": {
+    "jsonrpc": "2.0",
+    "method": "run/approvalReviewProgress",
+    "params": {
+      "sessionId": "session-1",
+      "runId": "run-1",
+      "itemId": "item-1",
+      "stage": "finished",
+      "stepIndex": 3,
+      "totalSteps": 3,
+      "actionTitle": "在联网审批下重跑探测（联网）"
+    }
+  }
+}

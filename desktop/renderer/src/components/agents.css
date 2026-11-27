@@ -876,7 +876,7 @@
   margin: 4px 14px 8px;
   padding: 10px 12px;
   background: var(--status-warning-bg);
-  border: 1px solid rgba(138, 103, 35, 0.24);
+  border: 1px solid color-mix(in srgb, var(--status-warning) 28%, transparent);
   border-radius: var(--radius);
   flex-shrink: 0;
 }

@@ -1,9 +1,26 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import type { Run } from "../contracts.js";
+import type { ApprovalRequest, Run } from "../contracts.js";
 import type { UserInputRequest } from "../../../shared/planning.generated.js";
 import { ComposerSlot } from "./ComposerSlot.js";
+
+const noopApprove = vi.fn();
+const noopReject = vi.fn();
+
+const pendingApproval: ApprovalRequest = {
+  id: "app-1",
+  sessionId: "session-1",
+  runId: "run-1",
+  itemId: "item-1",
+  toolCallId: "tc-1",
+  kind: "command_execution",
+  summary: "Run command",
+  command: "curl https://example.com",
+  cwd: ".",
+  networkEnabled: true,
+  timeoutSeconds: 30,
+};
 
 const baseRun: Run = {
   id: "run-1",
@@ -91,5 +108,46 @@ describe("ComposerSlot", () => {
     expect(screen.queryByTestId("default-composer")).not.toBeInTheDocument();
     expect(screen.getByText("正在准备澄清问题…")).toBeInTheDocument();
     expect(screen.getByText("正在同步需要补充的信息")).toBeInTheDocument();
+  });
+
+  it("keeps the session composer usable during auto_review and approval sync, and switches for fallback/dangerous confirmation", () => {
+    const view = render(
+      <ComposerSlot
+        run={{ ...baseRun, status: "waiting_approval", approvalMode: "auto_review", allowedActions: ["approve", "reject"] }}
+        approval={pendingApproval}
+        onApprove={noopApprove}
+        onReject={noopReject}
+      >
+        <div data-testid="default-composer">Normal Composer</div>
+      </ComposerSlot>,
+    );
+    expect(screen.getByTestId("default-composer")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "批准" })).toBeNull();
+
+    view.rerender(
+      <ComposerSlot
+        run={{ ...baseRun, status: "waiting_approval", approvalMode: "manual", allowedActions: ["approve", "reject"] }}
+        approval={undefined}
+        onApprove={noopApprove}
+        onReject={noopReject}
+      >
+        <div data-testid="default-composer">Normal Composer</div>
+      </ComposerSlot>,
+    );
+    expect(screen.getByTestId("default-composer")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "批准" })).toBeNull();
+
+    view.rerender(
+      <ComposerSlot
+        run={{ ...baseRun, status: "waiting_approval", approvalMode: "auto_review", allowedActions: ["approve", "reject"] }}
+        approval={{ ...pendingApproval, reviewFallback: "自动审批超时" }}
+        onApprove={noopApprove}
+        onReject={noopReject}
+      >
+        <div data-testid="default-composer">Normal Composer</div>
+      </ComposerSlot>,
+    );
+    expect(screen.queryByTestId("default-composer")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "批准" })).toBeEnabled();
   });
 });

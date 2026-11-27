@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import logging
 import threading
 from typing import Callable
 
@@ -18,6 +19,9 @@ from eidos_runtime.protocol.tool_text import project_approval_diff
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.fault_injection import hit_fault
+from eidos_runtime.sandbox.sensitive import default_scanner
+
+logger = logging.getLogger("eidos.runtime")
 
 
 APPROVAL_REJECTION_GUIDANCE = (
@@ -221,11 +225,35 @@ class ApprovalCoordinator:
             if human_confirmation and mode == "auto_review" and pending is None and self.reviewer is not None:
                 # The model may only decline a reserved request the user did not
                 # ask for. Anything it allows, or cannot judge, goes to the user.
+                action_title, preview = self._approval_progress_meta(human_description, tool_call)
                 try:
-                    triage = review_approval(self.reviewer, self._review_evidence(
-                        user_evidence, item, request, diff, base_sha256), cancel)
+                    self._publish_review_progress(
+                        str(pending_item["sessionId"]), run_id, str(pending_item["id"]),
+                        stage="preparing", step_index=1,
+                        action_title=action_title, preview=preview,
+                    )
+                    evidence = self._review_evidence(user_evidence, item, request, diff, base_sha256)
+                    triage = review_approval(
+                        self.reviewer,
+                        evidence,
+                        cancel,
+                        on_stage=lambda stage, attempt: self._publish_review_progress(
+                            str(pending_item["sessionId"]), run_id, str(pending_item["id"]),
+                            stage=stage,
+                            step_index=3 if stage == "deciding" else 2,
+                            action_title=action_title,
+                            preview=preview,
+                            attempt=attempt,
+                        ),
+                    )
                 except Exception:  # Triage is advisory: any failure asks the user.
                     triage = None
+                finally:
+                    self._publish_review_progress(
+                        str(pending_item["sessionId"]), run_id, str(pending_item["id"]),
+                        stage="finished", step_index=3,
+                        action_title=action_title,
+                    )
             if (triage is not None and triage.decision == "reject"
                     and triage.reason_code == "auto_review_rejected" and triage.risk != "unknown"):
                 self.last_review = triage
@@ -253,8 +281,33 @@ class ApprovalCoordinator:
                     self.last_review = ApprovalReview(source="model", decision="reject",
                         reason_code="auto_review_unavailable", rationale="自动审批模型不可用，操作没有执行。")
                 else:
-                    self.last_review = review_approval(self.reviewer, self._review_evidence(
-                        user_evidence, item, request, diff, base_sha256), cancel)
+                    action_title, preview = self._approval_progress_meta(human_description, tool_call)
+                    try:
+                        self._publish_review_progress(
+                            str(pending_item["sessionId"]), run_id, str(pending_item["id"]),
+                            stage="preparing", step_index=1,
+                            action_title=action_title, preview=preview,
+                        )
+                        evidence = self._review_evidence(user_evidence, item, request, diff, base_sha256)
+                        self.last_review = review_approval(
+                            self.reviewer,
+                            evidence,
+                            cancel,
+                            on_stage=lambda stage, attempt: self._publish_review_progress(
+                                str(pending_item["sessionId"]), run_id, str(pending_item["id"]),
+                                stage=stage,
+                                step_index=3 if stage == "deciding" else 2,
+                                action_title=action_title,
+                                preview=preview,
+                                attempt=attempt,
+                            ),
+                        )
+                    finally:
+                        self._publish_review_progress(
+                            str(pending_item["sessionId"]), run_id, str(pending_item["id"]),
+                            stage="finished", step_index=3,
+                            action_title=action_title,
+                        )
                     if (previous_unknown and self.last_review.reason_code == "auto_review_rejected"
                             and self.last_review.risk == "unknown"):
                         self.last_review = self.last_review.model_copy(update={
@@ -326,6 +379,86 @@ class ApprovalCoordinator:
             ),
             item=pending_item,
         )
+
+    @staticmethod
+    def _approval_progress_meta(
+        description: dict[str, object],
+        tool_call: dict[str, object],
+    ) -> tuple[str, str | None]:
+        scanner = default_scanner()
+        kind = description.get("kind")
+        raw_preview: str | None = None
+        if kind == "command_execution":
+            intent = description.get("displayIntent") or tool_call.get("displayIntent")
+            title = intent.strip() if isinstance(intent, str) and intent.strip() else "执行命令"
+            if description.get("executionMode") == "unsandboxed":
+                if "沙盒外" not in title:
+                    title += "（沙盒外）"
+            elif description.get("networkEnabled") and "联网" not in title:
+                title += "（联网）"
+            cmd = description.get("command")
+            if isinstance(cmd, str) and cmd.strip():
+                raw_preview = " ".join(cmd.strip().splitlines())
+        elif kind == "file_change":
+            title = "文件变更"
+            access = description.get("additionalFileSystemAccess")
+            if isinstance(access, list) and access and isinstance(access[0], dict):
+                path = access[0].get("path")
+                if isinstance(path, str) and path.strip():
+                    raw_preview = path.strip()
+        elif kind == "permission_request":
+            title = "权限申请"
+            cmd = description.get("command")
+            if isinstance(cmd, str) and cmd.strip():
+                raw_preview = " ".join(cmd.strip().splitlines())
+        elif kind == "browser_access":
+            title = "浏览器访问"
+        elif kind == "network_access":
+            title = "网络访问"
+            target = description.get("target")
+            if isinstance(target, str) and target.strip():
+                raw_preview = target.strip()
+        else:
+            tool_name = description.get("toolName") or tool_call.get("toolName")
+            title = f"外部工具 · {tool_name}" if isinstance(tool_name, str) and tool_name.strip() else "外部工具调用"
+
+        redacted_title = " ".join(scanner.redact_for_presentation(title).text.split())[:80] or "操作"
+        redacted_preview: str | None = None
+        if raw_preview:
+            cleaned = scanner.redact_for_presentation(raw_preview).text.strip()
+            if cleaned:
+                redacted_preview = cleaned[:240]
+        return redacted_title, redacted_preview
+
+    def _publish_review_progress(
+        self,
+        session_id: str,
+        run_id: str,
+        item_id: str,
+        *,
+        stage: str,
+        step_index: int,
+        action_title: str,
+        preview: str | None = None,
+        attempt: int | None = None,
+    ) -> None:
+        try:
+            params: dict[str, object] = {
+                "sessionId": session_id,
+                "runId": run_id,
+                "itemId": item_id,
+                "stage": stage,
+                "stepIndex": step_index,
+                "totalSteps": 3,
+                "actionTitle": action_title,
+            }
+            if preview:
+                params["preview"] = preview
+            if attempt is not None and attempt >= 1:
+                params["attempt"] = attempt
+            self.events.publish_transient("run/approvalReviewProgress", params)
+        except Exception:
+            logger.warning("Approval review progress notification was not published", exc_info=True)
 
     @staticmethod
     def _review_evidence(

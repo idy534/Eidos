@@ -77,12 +77,15 @@ vi.mock("../components/InputContext.js", () => ({
 vi.mock("../components/ExecutionFeed.js", async () => {
   const { MarkdownContent } = await import("../components/MarkdownContent.js");
   const { TurnResults } = await import("../components/TurnResults.js");
-  return { ExecutionFeed: ({ runs, items, liveThinking, onFork, onRegenerate, onEditResend }: {
-    runs: Run[]; items: Item[]; liveThinking?: Record<string, { title: string }>; onFork?: (item: Item) => void;
+  return { ExecutionFeed: ({ runs, items, liveThinking, liveApprovalReview, onFork, onRegenerate, onEditResend }: {
+    runs: Run[]; items: Item[]; liveThinking?: Record<string, { title: string }>;
+    liveApprovalReview?: Record<string, { itemId: string; stage: string; stepIndex: number; totalSteps: number; actionTitle: string }>;
+    onFork?: (item: Item) => void;
     onRegenerate?: (run: Run) => void;
     onEditResend?: (run: Run, input: string) => void;
   }) => <>
     {Object.entries(liveThinking ?? {}).map(([runId, value]) => <p key={runId} data-testid="live-thinking">{`${runId}:${value.title}`}</p>)}
+    {Object.entries(liveApprovalReview ?? {}).map(([runId, value]) => <p key={runId} data-testid="live-approval-review">{`${runId}:${value.stage}:${value.stepIndex}/${value.totalSteps}:${value.actionTitle}`}</p>)}
     {runs.map((run) => <div key={run.id}>
       <button onClick={() => onRegenerate?.(run)}>重新回答</button>
       <button onClick={() => onEditResend?.(run, "edited question")}>编辑并重新发送</button>
@@ -544,6 +547,41 @@ describe("AppShell live thinking", () => {
     expect(screen.queryByTestId("live-thinking")).not.toBeInTheDocument();
     act(() => notify!(thinking("rs:1", "迟到的摘要")));
     expect(screen.queryByTestId("live-thinking")).not.toBeInTheDocument();
+  });
+
+  it("streams run/approvalReviewProgress to the Feed while preserving the Composer and clears on finished", () => {
+    let notify: ((notification: RuntimeNotification) => void) | undefined;
+    window.eidosRuntime.onNotification = vi.fn((callback: (notification: RuntimeNotification) => void) => {
+      notify = callback;
+      return () => undefined;
+    }) as typeof window.eidosRuntime.onNotification;
+    const snapshot = fixture.snapshot!;
+    const run: Run = {
+      id: "review-run", sessionId: snapshot.session.id, status: "waiting_approval", approvalMode: "auto_review",
+      modelId: "test-model", modelStepCount: 1, createdAt: 1, updatedAt: 1, startedAt: 1,
+    };
+    snapshot.runs = [run];
+    renderShell();
+    expect(screen.getByRole("button", { name: "发送输入" })).toBeInTheDocument();
+
+    act(() => notify!({
+      method: "run/approvalReviewProgress",
+      params: {
+        sessionId: snapshot.session.id, runId: run.id, itemId: "item-1",
+        stage: "evaluating", stepIndex: 2, totalSteps: 3, actionTitle: "检查网络接口",
+      },
+    }));
+    expect(screen.getByTestId("live-approval-review")).toHaveTextContent("review-run:evaluating:2/3:检查网络接口");
+    expect(screen.getByRole("button", { name: "发送输入" })).toBeInTheDocument();
+
+    act(() => notify!({
+      method: "run/approvalReviewProgress",
+      params: {
+        sessionId: snapshot.session.id, runId: run.id, itemId: "item-1",
+        stage: "finished", stepIndex: 3, totalSteps: 3, actionTitle: "检查网络接口",
+      },
+    }));
+    expect(screen.queryByTestId("live-approval-review")).not.toBeInTheDocument();
   });
 });
 

@@ -291,6 +291,9 @@ import type {
   SkillDetail,
   SkillRemoval,
   SkillMetadata,
+  ToolApprovalReview,
+  ApprovalReviewProgressStage,
+  RunApprovalReviewProgressParams,
   ToolCall,
   ToolProvenance,
   ExtensionSnapshot as ExtensionSnapshotResult,
@@ -339,6 +342,9 @@ export type {
   SessionSnapshot,
   SkillListResult,
   SkillMetadata,
+  ToolApprovalReview,
+  ApprovalReviewProgressStage,
+  RunApprovalReviewProgressParams,
   ToolCall,
   ToolProvenance,
   ExtensionSnapshotResult,
@@ -1878,6 +1884,20 @@ function isNotification(value: unknown): value is RuntimeNotification {
       && typeof params.title === "string" && params.title.length > 0 && params.title.length <= 200
       && (params.body === undefined || (typeof params.body === "string" && params.body.length <= 2000));
   }
+  if (value.method === "run/approvalReviewProgress") {
+    return hasOnlyKeys(params, [
+      "sessionId", "runId", "itemId", "stage", "stepIndex", "totalSteps", "actionTitle", "preview", "attempt",
+    ])
+      && typeof params.sessionId === "string" && params.sessionId.length > 0 && params.sessionId.length <= 256
+      && typeof params.runId === "string" && params.runId.length > 0 && params.runId.length <= 256
+      && typeof params.itemId === "string" && params.itemId.length > 0 && params.itemId.length <= 256
+      && typeof params.stage === "string" && ["preparing", "evaluating", "retrying", "deciding", "finished"].includes(params.stage)
+      && isPositiveInteger(params.totalSteps) && params.totalSteps <= 10
+      && isPositiveInteger(params.stepIndex) && params.stepIndex <= params.totalSteps
+      && typeof params.actionTitle === "string" && params.actionTitle.length >= 1 && params.actionTitle.length <= 120
+      && (params.preview === undefined || (typeof params.preview === "string" && params.preview.length <= 300))
+      && (params.attempt === undefined || (isPositiveInteger(params.attempt) && params.attempt <= 10));
+  }
   if (value.method === "model/retryUpdated") {
     return hasOnlyKeys(params, ["sessionId", "activity"])
       && typeof params.sessionId === "string"
@@ -2819,6 +2839,19 @@ function hasTextReference(value: Record<string, unknown>, prefix: string): boole
     || isNonNegativeInteger(bytes) && typeof hash === "string" && /^[a-f0-9]{64}$/.test(hash);
 }
 
+function isToolApprovalReview(value: unknown): value is ToolApprovalReview {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["source", "decision", "reasonCode", "rationale", "risk", "durationMs"])
+    && typeof value.source === "string" && ["model", "mode", "manual", "hook"].includes(value.source)
+    && typeof value.decision === "string" && ["approve", "reject"].includes(value.decision)
+    && typeof value.reasonCode === "string" && value.reasonCode.length >= 1 && value.reasonCode.length <= 100
+    && typeof value.rationale === "string" && value.rationale.length >= 1 && value.rationale.length <= 1500
+    && typeof value.risk === "string" && ["low", "medium", "high", "critical", "unknown"].includes(value.risk)
+    && (value.durationMs === undefined || isNonNegativeInteger(value.durationMs))
+  );
+}
+
 function isToolCall(value: unknown): value is ToolCall {
   if (
     !isRecord(value)
@@ -2840,6 +2873,7 @@ function isToolCall(value: unknown): value is ToolCall {
       "approvalStatus",
       "approvalDecision",
       "approvalFeedback",
+      "approvalReview",
       "changeDiff",
       "changeDiffBytes", "changeDiffHash", "resultBytes", "resultHash",
       "baseSha256",
@@ -2867,6 +2901,7 @@ function isToolCall(value: unknown): value is ToolCall {
     && (value.approvalStatus === undefined || ["pending", "resolved", "canceled"].includes(String(value.approvalStatus)))
     && (value.approvalDecision === undefined || ["approve", "reject"].includes(String(value.approvalDecision)))
     && (value.approvalFeedback === undefined || typeof value.approvalFeedback === "string")
+    && (value.approvalReview === undefined || isToolApprovalReview(value.approvalReview))
     && (value.changeDiff === undefined || typeof value.changeDiff === "string")
     && hasTextReference(value, "changeDiff") && hasTextReference(value, "result")
     && (value.baseSha256 === undefined || typeof value.baseSha256 === "string")

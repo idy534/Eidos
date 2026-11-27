@@ -1,0 +1,2961 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-platform="macos" data-view="new" data-width="standard" data-reduced-motion="false">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eidos · 审批体验重构原型</title>
+<style>
+  /* ==========================================================================
+     1. Eidos Design Tokens (Aligned with desktop/renderer/src/styles/tokens.css)
+     ========================================================================== */
+  :root {
+    color-scheme: light;
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+    --font-code: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Cascadia Mono", "PingFang SC", "Microsoft YaHei UI", monospace;
+
+    --font-size-xs: 11px;
+    --font-size-caption: 12px;
+    --font-size-sidebar: 13px;
+    --font-size-code: 12.5px;
+    --font-size-body: 14px;
+    --font-size-title: 16px;
+    --line-height-code: 19px;
+    --line-height-body: 22px;
+
+    /* Surface & Text (Light) */
+    --page-bg: #e9ecf1;
+    --surface: #f8f9fb;
+    --surface-raised: #ffffff;
+    --surface-muted: #f0f2f5;
+    --surface-footer: #f4f5f7;
+    --surface-hover: #f3f3f6;
+    --surface-selected: #e5e8ec;
+    --surface-header: rgba(248, 249, 251, 0.9);
+    --surface-overlay: rgba(255, 255, 255, 0.88);
+    --code-inline-bg: #eef0f2;
+
+    --text: #1d1d1f;
+    --text-secondary: #48484a;
+    --muted: #5a5e66;
+    --text-tertiary: #6e737b;
+    --text-on-accent: #ffffff;
+
+    --line: rgba(0, 0, 0, 0.07);
+    --border-strong: rgba(0, 0, 0, 0.13);
+    --hover-tint: rgba(0, 0, 0, 0.045);
+    --active-tint: rgba(0, 0, 0, 0.085);
+
+    /* Primary & Danger */
+    --accent: #2e624c;
+    --accent-soft: #e5ede8;
+    --accent-glow: rgba(46, 98, 76, 0.22);
+    --action-primary-hover: #274e3c;
+    --action-primary-active: #1e3d2f;
+    --primary-action-bg: var(--accent-soft);
+    --primary-action-bg-hover: #dbe5df;
+    --primary-action-bg-active: #d1ded6;
+    --primary-action-text: #204535;
+    --primary-action-icon: #385d4c;
+    --primary-action-border: rgba(46, 98, 76, 0.15);
+
+    --danger: #913d34;
+    --danger-soft: #fbf0ee;
+    --action-danger-hover: #7a3028;
+    --action-danger-active: #65251e;
+
+    /* Semantic Status */
+    --status-success: #246845;
+    --status-success-bg: #eaf5ee;
+    --status-warning: #8a6723;
+    --status-warning-bg: #fcf6e8;
+    --status-danger: #9e352b;
+    --status-danger-bg: #fceceb;
+    --status-info: #235882;
+    --status-info-bg: #e9f2f9;
+    --status-neutral: #50555c;
+    --status-neutral-bg: #f0f0f3;
+
+    /* Tool Group & Feed */
+    --tg-text: #6b706c;
+    --tg-text-strong: #3d423e;
+    --tg-rail: rgba(0, 0, 0, 0.09);
+    --diff-add-bg: rgba(36, 104, 69, 0.09);
+    --diff-add-text: #1f5a3b;
+    --diff-del-bg: rgba(158, 53, 43, 0.08);
+    --diff-del-text: #8a3027;
+
+    /* Radii & Shadows */
+    --radius-xs: 4px;
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-menu: 9px;
+    --radius: 10px;
+    --radius-lg: 14px;
+    --radius-xl: 16px;
+    --radius-pill: 9999px;
+
+    --apple-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+    --apple-shadow-md: 0 6px 20px -3px rgba(0, 0, 0, 0.07), 0 2px 6px rgba(0, 0, 0, 0.03);
+    --apple-shadow-lg: 0 14px 36px -6px rgba(0, 0, 0, 0.1), 0 4px 12px rgba(0, 0, 0, 0.05);
+    --shadow-popover: 0 0.7rem 2rem rgb(25 30 26 / 16%);
+
+    /* Motion */
+    --apple-spring: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --focus-ring: 2px solid rgba(46, 98, 76, 0.45);
+    --scrollbar-thumb: rgba(106, 111, 103, 0.28);
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page-bg: #0c0e11;
+    --surface: #141619;
+    --surface-raised: #1c1f24;
+    --surface-muted: #22262c;
+    --surface-footer: #181b20;
+    --surface-hover: #252930;
+    --surface-selected: #2d323b;
+    --surface-header: rgba(20, 22, 25, 0.9);
+    --surface-overlay: rgba(28, 31, 36, 0.92);
+    --code-inline-bg: #262b33;
+
+    --text: #eceef1;
+    --text-secondary: #c4c8ce;
+    --muted: #9aa0a6;
+    --text-tertiary: #8c929a;
+
+    --line: rgba(255, 255, 255, 0.10);
+    --border-strong: rgba(255, 255, 255, 0.16);
+    --hover-tint: rgba(255, 255, 255, 0.06);
+    --active-tint: rgba(255, 255, 255, 0.11);
+
+    --accent: #3d8b6b;
+    --accent-soft: rgba(61, 139, 107, 0.20);
+    --accent-glow: rgba(61, 139, 107, 0.28);
+    --action-primary-hover: #357a5e;
+    --action-primary-active: #2c674f;
+    --primary-action-bg: var(--accent-soft);
+    --primary-action-bg-hover: rgba(61, 139, 107, 0.28);
+    --primary-action-bg-active: rgba(61, 139, 107, 0.36);
+    --primary-action-text: #a7e3c8;
+    --primary-action-icon: #8ed8b7;
+    --primary-action-border: rgba(142, 216, 183, 0.22);
+
+    --danger: #e06c60;
+    --danger-soft: rgba(224, 108, 96, 0.14);
+    --action-danger-hover: #c5554a;
+    --action-danger-active: #a8443a;
+
+    --status-success: #5cc98f;
+    --status-success-bg: rgba(92, 201, 143, 0.14);
+    --status-warning: #e0b458;
+    --status-warning-bg: rgba(224, 180, 88, 0.14);
+    --status-danger: #f07b6e;
+    --status-danger-bg: rgba(240, 123, 110, 0.14);
+    --status-info: #7ab0ff;
+    --status-info-bg: rgba(122, 176, 255, 0.14);
+    --status-neutral: #aeb4bc;
+    --status-neutral-bg: #252930;
+
+    --tg-text: #9aa0a6;
+    --tg-text-strong: #d4d8de;
+    --tg-rail: rgba(255, 255, 255, 0.12);
+    --diff-add-bg: rgba(92, 201, 143, 0.14);
+    --diff-add-text: #85ddb0;
+    --diff-del-bg: rgba(240, 123, 110, 0.14);
+    --diff-del-text: #f39a90;
+
+    --apple-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.25);
+    --apple-shadow-md: 0 10px 28px -4px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.25);
+    --apple-shadow-lg: 0 18px 42px -8px rgba(0, 0, 0, 0.56);
+    --shadow-popover: 0 0.75rem 2.2rem rgb(0 0 0 / 55%);
+    --focus-ring: 2px solid rgba(236, 238, 241, 0.52);
+  }
+
+  :root[data-platform="windows"] {
+    --surface-header: var(--surface);
+    --surface-overlay: var(--surface-raised);
+  }
+
+  /* ==========================================================================
+     2. Page Shell & Top Control Bar
+     ========================================================================== */
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--page-bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: var(--font-size-body);
+    line-height: var(--line-height-body);
+    -webkit-font-smoothing: antialiased;
+    transition: background-color 180ms ease, color 180ms ease;
+  }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px 16px;
+    padding: 10px 24px;
+    background: var(--surface-overlay);
+    border-bottom: 1px solid var(--line);
+    backdrop-filter: blur(18px) saturate(160%);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+  }
+  :root[data-platform="windows"] .topbar {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .topbar-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13.5px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text);
+  }
+  .topbar-mark {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    display: grid;
+    place-items: center;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border: 1px solid var(--primary-action-border);
+  }
+  .topbar-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  .seg {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px;
+    gap: 2px;
+    background: var(--surface-muted);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+  }
+  .seg button {
+    font: inherit;
+    font-size: var(--font-size-caption);
+    font-weight: 500;
+    border: 0;
+    border-radius: var(--radius-sm);
+    padding: 3px 9px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease, transform 110ms var(--ease-out);
+  }
+  .seg button:hover { color: var(--text); }
+  .seg button:active { transform: scale(0.97); }
+  .seg button[aria-pressed="true"] {
+    background: var(--surface-raised);
+    color: var(--text);
+    box-shadow: var(--apple-shadow-sm);
+  }
+  .seg button[data-view-btn="new"][aria-pressed="true"] {
+    color: var(--primary-action-text);
+    background: var(--accent-soft);
+  }
+  .seg button:focus-visible,
+  .ctrl-toggle:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
+  }
+  .ctrl-toggle {
+    font: inherit;
+    font-size: var(--font-size-caption);
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--line);
+    background: var(--surface-raised);
+    color: var(--muted);
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease, transform 110ms var(--ease-out);
+  }
+  .ctrl-toggle:hover { color: var(--text); background: var(--surface-hover); }
+  .ctrl-toggle:active { transform: scale(0.97); }
+  .ctrl-toggle[aria-pressed="true"] {
+    background: var(--accent-soft);
+    color: var(--primary-action-text);
+    border-color: var(--primary-action-border);
+  }
+
+  /* Two-column Workspace Layout */
+  .layout {
+    max-width: 1220px;
+    margin: 0 auto;
+    padding: 24px 24px 56px;
+    display: grid;
+    grid-template-columns: minmax(0, 50rem) minmax(300px, 21rem);
+    gap: 24px;
+    align-items: start;
+    justify-content: center;
+  }
+  @media (max-width: 1060px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  /* ==========================================================================
+     3. Simulated Eidos Session Window
+     ========================================================================== */
+  .window-stage {
+    display: flex;
+    justify-content: center;
+    min-width: 0;
+  }
+  .window {
+    width: 100%;
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-strong);
+    box-shadow: var(--apple-shadow-lg);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: width 220ms var(--apple-spring);
+  }
+  :root[data-width="narrow"] .window {
+    width: 460px;
+    max-width: 100%;
+  }
+
+  .window-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    height: 44px;
+    padding: 0 16px;
+    background: var(--surface-header);
+    border-bottom: 1px solid var(--line);
+    flex: none;
+  }
+  .window-header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+  .traffic-lights {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    flex: none;
+  }
+  .traffic-lights span {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    display: block;
+    border: 0.5px solid rgba(0, 0, 0, 0.12);
+  }
+  .tl-red { background: #ff5f57; }
+  .tl-yellow { background: #febc2e; }
+  .tl-green { background: #28c840; }
+  :root[data-platform="windows"] .traffic-lights { display: none; }
+
+  .window-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .window-header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+  }
+  .mode-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: var(--radius-pill);
+    font-size: var(--font-size-xs);
+    font-weight: 550;
+    background: var(--surface-muted);
+    color: var(--text-secondary);
+    border: 1px solid var(--line);
+  }
+  .mode-pill--auto {
+    background: var(--accent-soft);
+    color: var(--primary-action-text);
+    border-color: var(--primary-action-border);
+  }
+  .mode-pill--danger {
+    background: var(--status-danger-bg);
+    color: var(--status-danger);
+    border-color: color-mix(in srgb, var(--danger) 28%, transparent);
+  }
+
+  /* Recovery Banner Slot */
+  .recovery-slot { flex: none; }
+
+  /* Feed Area */
+  .feed {
+    padding: 20px 28px 18px;
+    min-height: 360px;
+    max-height: 600px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+  :root[data-width="narrow"] .feed { padding: 16px 14px 14px; }
+
+  .user-bubble {
+    margin: 0 0 18px auto;
+    width: fit-content;
+    max-width: 82%;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    background: var(--surface-muted);
+    color: var(--text);
+    font-size: var(--font-size-body);
+    line-height: var(--line-height-body);
+  }
+
+  /* Process Group */
+  .process-group { margin: 0 0 14px; }
+  .process-group > summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 0 10px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--line);
+    color: var(--muted);
+    font-size: var(--font-size-body);
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+  .process-group > summary::-webkit-details-marker { display: none; }
+  .process-group > summary::after {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 150ms var(--ease-out);
+  }
+  .process-group[open] > summary::after {
+    transform: rotate(45deg) translate(-1px, -1px);
+  }
+
+  .process-text {
+    margin: 0 0 12px;
+    color: var(--text);
+    font-size: var(--font-size-body);
+    line-height: var(--line-height-body);
+  }
+  .process-text code,
+  .prose code {
+    font-family: var(--font-code);
+    font-size: 12.5px;
+    background: var(--code-inline-bg);
+    padding: 1px 5px;
+    border-radius: var(--radius-xs);
+    color: var(--text);
+  }
+
+  /* Tool Items & Shell Items (Matches ExecutionFeed.css) */
+  .tool-item {
+    margin: 0 0 10px;
+    color: var(--tg-text);
+  }
+  .tool-item > summary {
+    display: grid;
+    grid-template-columns: 1.15rem minmax(0, max-content) auto auto;
+    gap: 6px;
+    align-items: center;
+    width: fit-content;
+    max-width: 100%;
+    padding: 2px 6px 2px 2px;
+    margin-left: -2px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: var(--font-size-body);
+    line-height: var(--line-height-body);
+    list-style: none;
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  .tool-item > summary::-webkit-details-marker { display: none; }
+  .tool-item > summary:hover {
+    background: var(--hover-tint);
+    color: var(--tg-text-strong);
+  }
+  .tool-summary-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tool-chevron {
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid var(--text-tertiary);
+    border-bottom: 1.5px solid var(--text-tertiary);
+    transform: rotate(-45deg);
+    transition: transform 160ms var(--apple-spring);
+    margin-left: 2px;
+  }
+  .tool-item[open] .tool-chevron {
+    transform: rotate(45deg) translate(-1px, -1px);
+  }
+  .tool-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.15rem;
+    height: 1.15rem;
+    color: var(--tg-text);
+    flex: none;
+  }
+  .tool-icon svg { width: 14px; height: 14px; display: block; }
+
+  .tool-item--quiet-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 10px;
+    color: var(--tg-text);
+    font-size: var(--font-size-body);
+    line-height: var(--line-height-body);
+  }
+  .tool-item--quiet-row .tool-icon { color: var(--accent); }
+
+  /* Shell Card Body */
+  .shell-result {
+    position: relative;
+    margin: 6px 0 8px 1.4rem;
+    padding: 0 0 26px;
+  }
+  .shell-command-zone {
+    position: relative;
+    margin: 0 0 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--surface-muted);
+    overflow: hidden;
+  }
+  .shell-command {
+    margin: 0;
+    padding: 8px 36px 8px 11px;
+    font: var(--font-size-code)/var(--line-height-code) var(--font-code);
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .shell-command-prompt { color: var(--text-tertiary); user-select: none; }
+  .shell-output {
+    margin: 0 0 6px;
+    padding: 0 4px;
+    font: var(--font-size-code)/var(--line-height-code) var(--font-code);
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .shell-status {
+    position: absolute;
+    right: 4px;
+    bottom: 2px;
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--font-size-caption);
+    color: var(--tg-text);
+  }
+  .shell-status-audit {
+    color: var(--text-tertiary);
+    font-size: 11.5px;
+  }
+  .shell-status--success { color: var(--status-success); }
+
+  .copy-mini {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 24px;
+    height: 24px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--muted);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
+  }
+  .shell-command-zone:hover .copy-mini,
+  .approval-code-wrap:hover .copy-mini,
+  .copy-mini.is-copied {
+    opacity: 1;
+  }
+  .copy-mini:hover { background: var(--hover-tint); color: var(--text); }
+  .copy-mini.is-copied { color: var(--status-success); }
+
+  /* ==========================================================================
+     4. OLD ("现状") Styles - Faithfully reproducing current pain points
+     ========================================================================== */
+  .old-feed-label {
+    margin: 0 0 4px !important;
+    color: var(--accent);
+    font-size: var(--font-size-caption);
+    font-weight: 750;
+    line-height: 19px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .old-run-notice-warning {
+    margin: 4px 0 6px;
+    color: #8a6723;
+    font-size: var(--font-size-caption);
+  }
+  .old-recovery-naked {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px;
+    font-size: 13px;
+    color: var(--text);
+    border-bottom: 1px dashed var(--line);
+  }
+  .old-recovery-naked button {
+    font: inherit;
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface-raised);
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  /* Old ApprovalStatusBanner (replaces Composer) */
+  .old-status-banner {
+    width: min(calc(100% - 2.5rem), 48rem);
+    margin: 0 auto 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 15px;
+    border-radius: 12px;
+    border: 1px solid rgba(49, 95, 74, 0.16);
+    background: linear-gradient(135deg, rgba(223, 233, 226, 0.45) 0%, var(--surface) 100%);
+    box-shadow: 0 2px 10px rgba(25, 30, 26, 0.05);
+  }
+  .old-status-banner-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .old-status-banner-icon {
+    width: 28px; height: 28px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--accent-soft); color: var(--accent); flex: none;
+  }
+  .old-spinner { animation: spin 0.9s linear infinite; }
+  .old-status-banner-title { font-size: 12.5px; font-weight: 500; color: var(--text); display: block; }
+  .old-status-banner-hint { font-size: 11px; color: var(--text-tertiary); display: block; }
+  .old-status-banner-badge {
+    padding: 2px 8px; border-radius: var(--radius-pill);
+    font-size: 10.5px; font-weight: 600;
+    color: var(--accent); background: var(--accent-soft); flex: none;
+  }
+
+  /* Old ApprovalComposer Card */
+  .old-approval-card {
+    width: min(calc(100% - 2.5rem), 48rem);
+    margin: 0 auto 16px;
+    border: 1px solid rgba(49, 95, 74, 0.16);
+    border-radius: var(--radius-xl);
+    background: var(--surface);
+    box-shadow: 0 4px 20px -2px rgba(25, 30, 26, 0.08), 0 16px 40px -4px rgba(25, 30, 26, 0.09);
+    overflow: hidden;
+  }
+  .old-approval-card--danger {
+    border-color: rgba(145, 61, 52, 0.35);
+  }
+  .old-approval-heading {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 10px 18px;
+    background: linear-gradient(180deg, rgba(223, 233, 226, 0.55) 0%, rgba(223, 233, 226, 0.18) 100%);
+    border-bottom: 1px solid rgba(49, 95, 74, 0.12);
+  }
+  .old-approval-card--danger .old-approval-heading {
+    background: linear-gradient(180deg, rgba(244, 226, 223, 0.75) 0%, rgba(244, 226, 223, 0.25) 100%);
+    border-bottom-color: rgba(145, 61, 52, 0.18);
+  }
+  .old-approval-heading-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .old-approval-heading-icon {
+    width: 30px; height: 30px; border-radius: 8px;
+    display: grid; place-items: center;
+    background: rgba(49, 95, 74, 0.12); color: var(--accent); flex: none;
+  }
+  .old-approval-card--danger .old-approval-heading-icon {
+    background: var(--danger-soft); color: var(--danger);
+  }
+  .old-approval-heading-text { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+  .old-approval-heading-text h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--text); }
+  .old-approval-heading-tag { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--accent); }
+  .old-approval-card--danger .old-approval-heading-tag { color: var(--danger); }
+  .old-pulse { width: 5px; height: 5px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 2px var(--accent-glow); }
+  .old-approval-badge {
+    padding: 3px 9px; border-radius: var(--radius-pill);
+    border: 1px solid rgba(49, 95, 74, 0.2); background: rgba(49, 95, 74, 0.06);
+    color: var(--accent); font-size: 11px; font-weight: 600; flex: none;
+  }
+  .old-approval-card--danger .old-approval-badge {
+    color: var(--danger); border-color: rgba(145, 61, 52, 0.25); background: rgba(145, 61, 52, 0.07);
+  }
+  .old-approval-body { padding: 16px 20px; background: var(--surface); }
+  .old-approval-warning {
+    display: flex; align-items: flex-start; gap: 8px;
+    margin: 0 0 14px; padding: 11px 14px; border-radius: 9px;
+    border: 1px solid rgba(145, 61, 52, 0.25);
+    background: linear-gradient(135deg, rgba(244, 226, 223, 0.5) 0%, rgba(255, 255, 255, 0.9) 100%);
+    color: #913d34; font-size: 12.5px; font-weight: 500;
+  }
+  .old-approval-details {
+    margin: 0; border: 1px solid rgba(0, 0, 0, 0.07); border-radius: 10px;
+    background: #fbfcfb; color: #20241f; font-size: 13px; overflow: hidden;
+  }
+  .old-approval-details > div {
+    display: grid; grid-template-columns: 5.5rem 1fr; gap: 12px;
+    padding: 9px 14px; border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  }
+  .old-approval-details > div:last-child { border-bottom: 0; }
+  .old-approval-details dt { color: #6a6f67; font-size: 12px; }
+  .old-approval-details dd { margin: 0; }
+  .old-approval-footer {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 20px; background: var(--surface); border-top: 1px solid var(--line);
+  }
+  .old-approval-hint { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .old-feedback-raw summary { font-size: 12.5px; color: var(--text); cursor: pointer; }
+  .old-feedback-raw input { margin-top: 6px; padding: 4px 8px; font-size: 12px; }
+
+  /* ==========================================================================
+     5. NEW DESIGN: LiveActivityLine + Auto-Review Progress + Popover
+     ========================================================================== */
+  .live-activity {
+    position: relative;
+    margin: 4px 0 8px;
+  }
+  .live-activity-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    max-width: 100%;
+    margin-left: -8px;
+    padding: 3px 9px 3px 8px;
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--tg-text);
+    font: inherit;
+    font-size: var(--font-size-body);
+    line-height: var(--line-height-body);
+    text-align: left;
+    cursor: default;
+    transition: background-color 120ms ease, color 120ms ease;
+    animation: live-in 240ms var(--apple-spring) both;
+  }
+  button.live-activity-row { cursor: pointer; }
+  button.live-activity-row:hover,
+  button.live-activity-row[aria-expanded="true"] {
+    background: var(--hover-tint);
+    color: var(--tg-text-strong);
+  }
+  button.live-activity-row:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
+  }
+  .live-activity-lead {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    flex: none;
+    color: var(--accent);
+  }
+  .live-activity-lead svg { width: 15px; height: 15px; overflow: visible; }
+  .live-track { stroke: currentColor; opacity: 0.22; }
+  .live-trace {
+    stroke: currentColor;
+    stroke-dasharray: 28 72;
+    stroke-linecap: round;
+    animation: trace-loop 1.7s linear infinite;
+  }
+  .live-activity-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: transparent;
+    background: linear-gradient(90deg, var(--tg-text) 30%, var(--text-tertiary) 50%, var(--tg-text) 70%) 0 0 / 220% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    animation: shimmer-loop 1.85s ease-in-out infinite;
+  }
+  .live-activity-text.is-swapping {
+    animation: shimmer-loop 1.85s ease-in-out infinite, live-text-in 260ms var(--apple-spring);
+  }
+  .live-step-count {
+    flex: none;
+    font-size: var(--font-size-caption);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-tertiary);
+    padding-left: 2px;
+  }
+  .live-activity-more {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid var(--text-tertiary);
+    border-bottom: 1.5px solid var(--text-tertiary);
+    transform: rotate(-135deg) translate(-1px, -1px);
+    opacity: 0;
+    transition: opacity 120ms ease, transform 160ms var(--apple-spring);
+  }
+  button.live-activity-row:hover .live-activity-more,
+  button.live-activity-row[aria-expanded="true"] .live-activity-more {
+    opacity: 1;
+  }
+  button.live-activity-row[aria-expanded="true"] .live-activity-more {
+    transform: rotate(45deg) translate(-1px, -1px);
+  }
+
+  /* Popover opens upward without shifting Feed or Composer */
+  .live-activity-popover {
+    position: absolute;
+    left: -8px;
+    bottom: calc(100% + 6px);
+    z-index: 20;
+    width: min(27.5rem, calc(100% + 8px));
+    padding: 12px 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    background: var(--surface-raised);
+    box-shadow: var(--shadow-popover);
+    transform-origin: 1.1rem 100%;
+    animation: pop-up 180ms var(--apple-spring) both;
+  }
+  .live-activity-popover[hidden] { display: none; }
+  .pop-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .pop-caption {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-size: var(--font-size-caption);
+    color: var(--text-tertiary);
+  }
+  .pop-caption::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .pop-mode-badge {
+    font-size: var(--font-size-xs);
+    font-weight: 550;
+    padding: 1px 7px;
+    border-radius: var(--radius-pill);
+    background: var(--accent-soft);
+    color: var(--primary-action-text);
+  }
+  .pop-op-title {
+    margin: 0 0 6px;
+    font-size: var(--font-size-sidebar);
+    font-weight: 600;
+    color: var(--text);
+  }
+  .pop-cmd {
+    margin: 0 0 10px;
+    padding: 6px 9px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--line);
+    background: var(--surface-muted);
+    font: var(--font-size-xs)/17px var(--font-code);
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pop-steps {
+    margin: 0;
+    padding: 8px 0 0;
+    border-top: 1px solid var(--line);
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .pop-steps li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--font-size-caption);
+    color: var(--text-tertiary);
+  }
+  .pop-steps li[data-state="done"] { color: var(--text-secondary); }
+  .pop-steps li[data-state="active"] { color: var(--text); font-weight: 550; }
+  .pop-step-dot {
+    width: 14px;
+    height: 14px;
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    font-size: 11px;
+  }
+  .pop-steps li[data-state="done"] .pop-step-dot { color: var(--status-success); }
+  .pop-steps li[data-state="active"] .pop-step-dot { color: var(--accent); }
+  .pop-step-time {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+  }
+
+  /* ==========================================================================
+     6. NEW DESIGN: Inline Approval Badge & Rail Outcomes in Feed
+     ========================================================================== */
+  .approval-inline-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 7px;
+    border-radius: var(--radius-pill);
+    font-size: 11.5px;
+    font-weight: 500;
+    line-height: 18px;
+    white-space: nowrap;
+    flex: none;
+  }
+  .approval-inline-badge--success {
+    color: var(--status-success);
+    background: var(--status-success-bg);
+  }
+  .approval-inline-badge--danger {
+    color: var(--status-danger);
+    background: var(--status-danger-bg);
+  }
+  .approval-inline-badge--warning {
+    color: var(--status-warning);
+    background: var(--status-warning-bg);
+  }
+  .approval-inline-badge--neutral {
+    color: var(--status-neutral);
+    background: var(--status-neutral-bg);
+  }
+
+  /* Outcome Row with --tg-rail guide (used for Rejected / Failed / Timeout) */
+  .approval-outcome {
+    margin: 2px 0 12px;
+  }
+  .approval-outcome-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 24px;
+    color: var(--text);
+    font-size: var(--font-size-body);
+  }
+  .approval-outcome-icon {
+    width: 1.15rem;
+    height: 1.15rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+  }
+  .approval-outcome--rejected .approval-outcome-icon { color: var(--status-danger); }
+  .approval-outcome--warning .approval-outcome-icon { color: var(--status-warning); }
+  .approval-outcome-title {
+    font-weight: 550;
+    color: var(--text);
+    min-width: 0;
+  }
+  .approval-outcome-rail {
+    margin: 4px 0 0 0.55rem;
+    padding: 2px 0 2px 0.95rem;
+    border-left: 1px solid var(--tg-rail);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .approval-outcome-reason {
+    margin: 0;
+    font-size: var(--font-size-sidebar);
+    line-height: 19px;
+    color: var(--text-secondary);
+  }
+  .approval-outcome-cmd {
+    font-size: var(--font-size-caption);
+    color: var(--muted);
+  }
+  .approval-outcome-cmd > summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    list-style: none;
+    padding: 1px 6px;
+    margin-left: -6px;
+    border-radius: var(--radius-sm);
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  .approval-outcome-cmd > summary::-webkit-details-marker { display: none; }
+  .approval-outcome-cmd > summary:hover { background: var(--hover-tint); color: var(--text); }
+  .approval-outcome-cmd > summary::after {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-right: 1.4px solid currentColor;
+    border-bottom: 1.4px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 150ms var(--ease-out);
+  }
+  .approval-outcome-cmd[open] > summary::after {
+    transform: rotate(45deg) translate(-1px, -1px);
+  }
+  .approval-outcome-cmd pre {
+    margin: 6px 0 0;
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--line);
+    background: var(--surface-muted);
+    font: var(--font-size-code)/var(--line-height-code) var(--font-code);
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  /* ==========================================================================
+     7. NEW DESIGN: ApprovalComposer Card (.approval-sheet)
+     ========================================================================== */
+  .composer-slot {
+    flex: none;
+    padding: 0 24px 16px;
+  }
+  :root[data-width="narrow"] .composer-slot { padding: 0 12px 12px; }
+
+  .approval-sheet {
+    width: 100%;
+    margin: 0 auto;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-xl);
+    background: var(--surface-raised);
+    box-shadow: var(--apple-shadow-md);
+    overflow: hidden;
+    animation: sheet-enter 200ms var(--apple-spring) both;
+  }
+  .approval-sheet--danger {
+    border-color: color-mix(in srgb, var(--danger) 32%, var(--line));
+  }
+  .approval-sheet--expired {
+    opacity: 0.72;
+    filter: grayscale(0.2);
+  }
+
+  .approval-sheet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-raised);
+  }
+  .approval-sheet--danger .approval-sheet-head {
+    background: color-mix(in srgb, var(--status-danger-bg) 45%, var(--surface-raised));
+  }
+  .approval-sheet-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+  }
+  .approval-sheet-icon {
+    width: 26px;
+    height: 26px;
+    border-radius: var(--radius-md);
+    display: grid;
+    place-items: center;
+    flex: none;
+    background: var(--accent-soft);
+    color: var(--primary-action-text);
+  }
+  .approval-sheet--danger .approval-sheet-icon {
+    background: var(--status-danger-bg);
+    color: var(--status-danger);
+  }
+  .approval-sheet--expired .approval-sheet-icon {
+    background: var(--status-neutral-bg);
+    color: var(--status-neutral);
+  }
+  .approval-sheet-title {
+    margin: 0;
+    font-size: var(--font-size-body);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .approval-sheet-tags {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
+    flex: none;
+  }
+  .scope-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: var(--radius-pill);
+    font-size: var(--font-size-xs);
+    font-weight: 550;
+    line-height: 16px;
+    background: var(--surface-muted);
+    color: var(--text-secondary);
+    border: 1px solid var(--line);
+  }
+  .scope-chip--accent {
+    background: var(--accent-soft);
+    color: var(--primary-action-text);
+    border-color: var(--primary-action-border);
+  }
+  .scope-chip--warn {
+    background: var(--status-warning-bg);
+    color: var(--status-warning);
+    border-color: color-mix(in srgb, var(--status-warning) 22%, transparent);
+  }
+  .scope-chip--danger {
+    background: var(--status-danger-bg);
+    color: var(--status-danger);
+    border-color: color-mix(in srgb, var(--status-danger) 24%, transparent);
+  }
+
+  .approval-sheet-body {
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 310px;
+    overflow-y: auto;
+  }
+
+  /* Flat Semantic Danger Note (No harsh gradient) */
+  .approval-danger-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 9px 12px;
+    border-radius: var(--radius);
+    border: 1px solid color-mix(in srgb, var(--danger) 24%, transparent);
+    background: var(--status-danger-bg);
+    color: var(--status-danger);
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: 18px;
+  }
+  .approval-danger-note svg { flex: none; margin-top: 2px; }
+
+  .approval-code-wrap {
+    position: relative;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+    overflow: hidden;
+  }
+  .approval-code {
+    margin: 0;
+    padding: 10px 36px 10px 12px;
+    font: var(--font-size-code)/20px var(--font-code);
+    color: var(--text);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 140px;
+    overflow-y: auto;
+  }
+
+  /* Diff Block */
+  .diff-card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+    overflow: hidden;
+    font-family: var(--font-code);
+    font-size: 12px;
+    line-height: 19px;
+  }
+  .diff-card-file {
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--line);
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+    display: flex;
+    justify-content: space-between;
+    background: var(--surface-footer);
+  }
+  .diff-lines { padding: 6px 0; overflow-x: auto; }
+  .diff-line { padding: 0 12px; white-space: pre; }
+  .diff-line--add { background: var(--diff-add-bg); color: var(--diff-add-text); }
+  .diff-line--del { background: var(--diff-del-bg); color: var(--diff-del-text); }
+  .diff-line--ctx { color: var(--text-secondary); }
+
+  /* Compact Hairline Property List */
+  .kv-table {
+    margin: 0;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .kv-row {
+    display: grid;
+    grid-template-columns: 5rem minmax(0, 1fr);
+    gap: 10px;
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--line);
+    font-size: var(--font-size-caption);
+    line-height: 18px;
+    align-items: baseline;
+  }
+  .kv-row:last-child { border-bottom: 0; }
+  .kv-row dt { color: var(--text-tertiary); font-weight: 500; }
+  .kv-row dd {
+    margin: 0;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+  .kv-mono { font-family: var(--font-code); font-size: 12px; }
+
+  .more-params > summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: var(--font-size-caption);
+    color: var(--text-tertiary);
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+  .more-params > summary::-webkit-details-marker { display: none; }
+  .more-params > summary:hover { color: var(--text); }
+  .more-params > summary::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-right: 1.4px solid currentColor;
+    border-bottom: 1.4px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 150ms var(--ease-out);
+  }
+  .more-params[open] > summary::before {
+    transform: rotate(45deg) translate(-1px, -1px);
+  }
+  .more-params-body {
+    margin-top: 6px;
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--line);
+    background: var(--surface);
+    font-size: var(--font-size-caption);
+    color: var(--muted);
+    line-height: 18px;
+  }
+
+  /* Feedback Drawer inside Sheet */
+  .reject-drawer {
+    padding: 10px 16px;
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .reject-drawer[hidden] { display: none; }
+  .reject-input {
+    flex: 1;
+    min-width: 0;
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    color: var(--text);
+    font: inherit;
+    font-size: var(--font-size-caption);
+  }
+  .reject-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-glow);
+  }
+
+  /* Sheet Footer */
+  .approval-sheet-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--line);
+    background: var(--surface-footer);
+  }
+  .foot-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+  }
+
+  /* ==========================================================================
+     8. Unified Buttons & Keycaps (Aligned with common.css & ui-overhaul-plan)
+     ========================================================================== */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 13px;
+    border-radius: var(--radius);
+    font: inherit;
+    font-size: var(--font-size-sidebar);
+    font-weight: 500;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    transition: background-color 130ms ease, border-color 130ms ease, transform 110ms var(--ease-out);
+  }
+  .btn:active:not(:disabled) { transform: scale(0.97); }
+  .btn:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn--sm { height: 28px; padding: 0 10px; font-size: var(--font-size-caption); border-radius: var(--radius-md); }
+
+  .btn--primary {
+    background: var(--accent);
+    color: var(--text-on-accent);
+    border: 1px solid var(--accent);
+  }
+  .btn--primary:hover:not(:disabled) {
+    background: var(--action-primary-hover);
+    border-color: var(--action-primary-hover);
+  }
+  .btn--primary:active:not(:disabled) { background: var(--action-primary-active); }
+
+  .btn--secondary {
+    background: var(--surface-raised);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    box-shadow: var(--apple-shadow-sm);
+  }
+  .btn--secondary:hover:not(:disabled) { background: var(--surface-hover); }
+  .btn--secondary:active:not(:disabled) { background: var(--surface-selected); }
+
+  .btn--ghost {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid transparent;
+  }
+  .btn--ghost:hover:not(:disabled) { background: var(--hover-tint); color: var(--text); }
+  .btn--ghost.is-active { background: var(--surface-selected); color: var(--text); }
+
+  .btn--danger {
+    background: var(--danger);
+    color: var(--text-on-accent);
+    border: 1px solid var(--danger);
+  }
+  .btn--danger:hover:not(:disabled) {
+    background: var(--action-danger-hover);
+    border-color: var(--action-danger-hover);
+  }
+  .btn--danger:active:not(:disabled) { background: var(--action-danger-active); }
+
+  .kbd {
+    font-family: var(--font-code);
+    font-size: 10.5px;
+    line-height: 1;
+    padding: 2px 5px;
+    border-radius: var(--radius-xs);
+    background: rgba(255, 255, 255, 0.16);
+    color: inherit;
+    opacity: 0.85;
+  }
+  .btn--secondary .kbd {
+    background: var(--surface-muted);
+    color: var(--muted);
+    border: 1px solid var(--line);
+  }
+
+  /* ==========================================================================
+     9. Session Composer Capsule (Always preserved during Auto-Review!)
+     ========================================================================== */
+  .composer {
+    width: 100%;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-xl);
+    background: var(--surface-raised);
+    box-shadow: var(--apple-shadow-sm);
+    padding: 10px 12px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .composer textarea {
+    width: 100%;
+    min-height: 36px;
+    max-height: 84px;
+    border: 0;
+    padding: 2px 4px;
+    resize: none;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: var(--font-size-body);
+    line-height: 20px;
+    outline: none;
+  }
+  .composer textarea::placeholder { color: var(--text-tertiary); }
+  .composer-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .composer-bar-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .composer-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: var(--radius-md);
+    background: var(--surface-muted);
+    color: var(--text-secondary);
+    font-size: var(--font-size-caption);
+    border: 1px solid var(--line);
+  }
+  .composer-chip--accent {
+    background: var(--accent-soft);
+    color: var(--primary-action-text);
+    border-color: var(--primary-action-border);
+  }
+  .composer-send {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 1px solid var(--primary-action-border);
+    background: var(--primary-action-bg);
+    color: var(--primary-action-icon);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    flex: none;
+    transition: background-color 120ms ease, transform 110ms var(--ease-out);
+  }
+  .composer-send:hover { background: var(--primary-action-bg-hover); color: var(--primary-action-text); }
+  .composer-send:active { transform: scale(0.95); }
+
+  /* ==========================================================================
+     10. NEW DESIGN: Recovery Banner (Scenario 7)
+     ========================================================================== */
+  .recovery-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 12px 24px 0;
+    padding: 9px 12px;
+    border-radius: var(--radius);
+    border: 1px solid color-mix(in srgb, var(--status-warning) 28%, transparent);
+    background: var(--status-warning-bg);
+    color: var(--status-warning);
+    font-size: var(--font-size-sidebar);
+  }
+  .recovery-banner-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .recovery-banner-main svg { flex: none; }
+  .recovery-banner-text {
+    color: var(--text);
+    font-size: var(--font-size-caption);
+    line-height: 18px;
+  }
+  .recovery-banner--ok {
+    border-color: color-mix(in srgb, var(--status-success) 26%, transparent);
+    background: var(--status-success-bg);
+    color: var(--status-success);
+  }
+
+  /* ==========================================================================
+     11. Right Sidebar: Scenarios, Notes & Swatches
+     ========================================================================== */
+  .aside {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+  }
+  .panel {
+    background: var(--surface-raised);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--apple-shadow-sm);
+    padding: 14px 16px;
+  }
+  .panel-title {
+    margin: 0 0 10px;
+    font-size: var(--font-size-sidebar);
+    font-weight: 600;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .scenario-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .scenario-btn {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 12.5px;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease, transform 110ms var(--ease-out);
+  }
+  .scenario-btn:hover { background: var(--surface-hover); color: var(--text); }
+  .scenario-btn:active { transform: scale(0.985); }
+  .scenario-btn[aria-pressed="true"] {
+    background: var(--accent-soft);
+    color: var(--primary-action-text);
+    border-color: var(--primary-action-border);
+    font-weight: 550;
+  }
+  .scenario-tag {
+    font-size: 10.5px;
+    color: var(--text-tertiary);
+    flex: none;
+  }
+  .scenario-btn[aria-pressed="true"] .scenario-tag {
+    color: var(--primary-action-icon);
+  }
+
+  .demo-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .demo-inline-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+
+  .ba-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 12.5px;
+    line-height: 18px;
+  }
+  .ba-item {
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    border: 1px solid var(--line);
+  }
+  .ba-item b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 2px; }
+  .ba-before b { color: var(--status-danger); }
+  .ba-after b { color: var(--status-success); }
+  .ba-item span { color: var(--text-secondary); }
+
+  .swatch-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .swatch {
+    padding: 9px 11px;
+    border-radius: var(--radius);
+    background: var(--surface);
+    border: 1px solid var(--line);
+  }
+  .swatch-label {
+    display: block;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-bottom: 5px;
+  }
+
+  /* ==========================================================================
+     12. Animations & Reduced Motion
+     ========================================================================== */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes trace-loop { to { stroke-dashoffset: -100; } }
+  @keyframes shimmer-loop {
+    from { background-position: 120% 0; }
+    to { background-position: -120% 0; }
+  }
+  @keyframes live-in {
+    from { opacity: 0; transform: translateY(3px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes live-text-in {
+    from { opacity: 0; transform: translateY(4px); filter: blur(1px); }
+    to { opacity: 1; transform: none; filter: none; }
+  }
+  @keyframes pop-up {
+    from { opacity: 0; transform: translateY(6px) scale(0.97); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes sheet-enter {
+    from { opacity: 0; transform: translateY(6px) scale(0.985); }
+    to { opacity: 1; transform: none; }
+  }
+
+  :root[data-reduced-motion="true"] *,
+  :root[data-reduced-motion="true"] *::before,
+  :root[data-reduced-motion="true"] *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  :root[data-reduced-motion="true"] .live-activity-text {
+    color: var(--tg-text);
+    background: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .live-trace, .old-spinner { animation: none; }
+    .live-activity-text { animation: none; color: var(--tg-text); background: none; }
+    .live-activity-row, .live-activity-popover, .approval-sheet { animation: none; }
+    .btn:active:not(:disabled), .seg button:active { transform: none; }
+  }
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-brand">
+      <span class="topbar-mark" aria-hidden="true">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M5 2.5H11A2.5 2.5 0 0 1 13.5 5V10L10 13.5H5A2.5 2.5 0 0 1 2.5 11V5A2.5 2.5 0 0 1 5 2.5Z" />
+        </svg>
+      </span>
+      <span>Eidos · 审批体验重构原型</span>
+    </div>
+    <div class="topbar-controls">
+      <div class="seg" role="group" aria-label="视图模式">
+        <button type="button" data-view-btn="new" aria-pressed="true">新设计</button>
+        <button type="button" data-view-btn="old" aria-pressed="false">改造前 (现状)</button>
+      </div>
+      <div class="seg" role="group" aria-label="主题色">
+        <button type="button" data-theme-btn="light" aria-pressed="true">浅色</button>
+        <button type="button" data-theme-btn="dark" aria-pressed="false">深色</button>
+      </div>
+      <div class="seg" role="group" aria-label="桌面平台">
+        <button type="button" data-platform-btn="macos" aria-pressed="true">macOS</button>
+        <button type="button" data-platform-btn="windows" aria-pressed="false">Windows</button>
+      </div>
+      <div class="seg" role="group" aria-label="窗口宽度">
+        <button type="button" data-width-btn="standard" aria-pressed="true">标准</button>
+        <button type="button" data-width-btn="narrow" aria-pressed="false">窄窗 460px</button>
+      </div>
+      <button type="button" class="ctrl-toggle" id="reduced-motion-btn" aria-pressed="false">减弱动效</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="window-stage" aria-label="模拟会话窗口">
+      <div class="window" id="app-window">
+        <header class="window-header">
+          <div class="window-header-left">
+            <div class="traffic-lights" aria-hidden="true">
+              <span class="tl-red"></span>
+              <span class="tl-yellow"></span>
+              <span class="tl-green"></span>
+            </div>
+            <span class="window-title" id="win-title">联网探测与代理排查</span>
+          </div>
+          <div class="window-header-right" id="win-mode-pill"></div>
+        </header>
+
+        <div class="recovery-slot" id="recovery-slot"></div>
+        <div class="feed" id="feed"></div>
+        <div class="composer-slot" id="composer-slot"></div>
+      </div>
+    </section>
+
+    <aside class="aside">
+      <div class="panel">
+        <h2 class="panel-title">交互场景</h2>
+        <div class="scenario-list" id="scenario-list"></div>
+        <div class="demo-actions" id="scenario-controls"></div>
+      </div>
+
+      <div class="panel">
+        <h2 class="panel-title">当前场景重构要点</h2>
+        <div class="ba-list" id="scenario-notes"></div>
+      </div>
+
+      <div class="panel">
+        <h2 class="panel-title">新设计微组件一览</h2>
+        <div class="swatch-grid">
+          <div class="swatch">
+            <span class="swatch-label">1. 自动审批进度行（与思考过程同位）</span>
+            <div class="live-activity" style="margin:0;">
+              <div class="live-activity-row" style="margin-left:-6px;">
+                <span class="live-activity-lead" aria-hidden="true">
+                  <svg viewBox="0 0 16 16" fill="none" stroke-width="1.45">
+                    <path class="live-track" pathLength="100" d="M8 2 13 4.1V8.1C13 11.1 10.8 13.4 8 14.3 5.2 13.4 3 11.1 3 8.1V4.1Z" />
+                    <path class="live-trace" pathLength="100" d="M8 2 13 4.1V8.1C13 11.1 10.8 13.4 8 14.3 5.2 13.4 3 11.1 3 8.1V4.1Z" />
+                  </svg>
+                </span>
+                <span class="live-activity-text">正在自动审批 · 评估联网访问风险</span>
+                <span class="live-step-count">2/3</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="swatch">
+            <span class="swatch-label">2. 人工批准工具行（内联克制徽标）</span>
+            <div style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--tg-text);">
+              <span class="tool-icon" aria-hidden="true">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 4.5 7 8l-3.5 3.5M8.5 11.5h4"/></svg>
+              </span>
+              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">已完成 · 重跑联网探测</span>
+              <span class="approval-inline-badge approval-inline-badge--success">✓ 已批准</span>
+            </div>
+          </div>
+
+          <div class="swatch">
+            <span class="swatch-label">3. 审批未通过 / 范围胶囊</span>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+              <span class="approval-inline-badge approval-inline-badge--danger">自动审批未通过</span>
+              <span class="approval-inline-badge approval-inline-badge--warning">自动审批未完成</span>
+              <span class="scope-chip scope-chip--accent">联网</span>
+              <span class="scope-chip scope-chip--danger">沙盒外 · 高风险</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+<script>
+(function () {
+  "use strict";
+
+  const ICONS = {
+    shieldTrace: '<svg viewBox="0 0 16 16" fill="none" stroke-width="1.45" aria-hidden="true"><path class="live-track" pathLength="100" d="M8 2 13 4.1V8.1C13 11.1 10.8 13.4 8 14.3 5.2 13.4 3 11.1 3 8.1V4.1Z"/><path class="live-trace" pathLength="100" d="M8 2 13 4.1V8.1C13 11.1 10.8 13.4 8 14.3 5.2 13.4 3 11.1 3 8.1V4.1Z"/></svg>',
+    markTrace: '<svg viewBox="0 0 16 16" fill="none" stroke-width="1.5" aria-hidden="true"><path class="live-track" pathLength="100" d="M5 2.5H11A2.5 2.5 0 0 1 13.5 5V10L10 13.5H5A2.5 2.5 0 0 1 2.5 11V5A2.5 2.5 0 0 1 5 2.5Z"/><path class="live-trace" pathLength="100" d="M5 2.5H11A2.5 2.5 0 0 1 13.5 5V10L10 13.5H5A2.5 2.5 0 0 1 2.5 11V5A2.5 2.5 0 0 1 5 2.5Z"/></svg>',
+    shell: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 4.5 7 8l-3.5 3.5"/><path d="M8.5 11.5h4"/></svg>',
+    shield: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2 13 4.1V8.1C13 11.1 10.8 13.4 8 14.3 5.2 13.4 3 11.1 3 8.1V4.1Z"/></svg>',
+    shieldCheck: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2 13 4.1V8.1C13 11.1 10.8 13.4 8 14.3 5.2 13.4 3 11.1 3 8.1V4.1Z"/><path d="m5.8 8.2 1.5 1.5 3-3.2"/></svg>',
+    shieldX: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2 13 4.1V8.1C13 11.1 10.8 13.4 8 14.3 5.2 13.4 3 11.1 3 8.1V4.1Z"/><path d="m6.2 6.3 3.6 3.6M9.8 6.3 6.2 9.9"/></svg>',
+    shieldWarn: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2 13 4.1V8.1C13 11.1 10.8 13.4 8 14.3 5.2 13.4 3 11.1 3 8.1V4.1Z"/><path d="M8 5.6v3.1M8 10.9h.01"/></svg>',
+    alertTriangle: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    spinner: '<svg class="old-spinner" viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-opacity="0.25" stroke-width="1.8"/><path d="M8 2.5C11.04 2.5 13.5 4.96 13.5 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    copy: '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5H3A1.5 1.5 0 0 1 1.5 9V3A1.5 1.5 0 0 1 3 1.5h6A1.5 1.5 0 0 1 10.5 3v.5"/></svg>',
+    check: '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3.2 8.4 3 3 6.6-6.8"/></svg>',
+    arrowUp: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12.5V3.5M4 7.5 8 3.5l4 4"/></svg>',
+  };
+
+  const SCENARIOS = [
+    {
+      id: "auto_progress",
+      name: "1. 自动审批进行中",
+      tag: "思考区进度",
+      title: "联网探测与代理排查",
+      mode: { label: "替我审批", cls: "mode-pill--auto" },
+      before: "底部 Composer 被强行替换成渐变横幅，无法打字排队；思考区消失；Feed 底部额外多出一条黄色“等待批准”。",
+      after: "底部保留完整输入胶囊；自动审批进度融入思考过程区，展示盾牌描边动画、步骤计数（1/3→3/3）及可点开的向上进度浮层。"
+    },
+    {
+      id: "auto_approved",
+      name: "2. 自动审批正常通过",
+      tag: "静默零噪音",
+      title: "联网探测与代理排查",
+      mode: { label: "替我审批", cls: "mode-pill--auto" },
+      before: "工具行上方突兀漂浮绿色全大写粗体 `已批准 · RUN_SHELL`（对应你截图红框中的样式）。",
+      after: "自动审批正常通过后不在主信息流额外刷屏，工具直接展示完成状态；仅在展开命令详情后于右下角保留极轻注脚。"
+    },
+    {
+      id: "auto_rejected",
+      name: "3. 自动审批未通过",
+      tag: "拒绝 / 超时",
+      title: "清理缓存与外部脚本检查",
+      mode: { label: "替我审批", cls: "mode-pill--auto" },
+      before: "拒绝状态与原因（含发给模型的英文指令废话）被直接塞进绿色全大写 `.feed-label` 里。",
+      after: "对齐 `--tg-rail` 竖轨结构，区分「自动审批未通过（砖红）」与「自动审批未完成（琥珀）」，仅展示清晰中文理由与可折叠命令。"
+    },
+    {
+      id: "manual_normal",
+      name: "4. 人工审批 · 普通请求",
+      tag: "可交互审批卡",
+      title: "API 连通性排查",
+      mode: { label: "请求审批", cls: "" },
+      before: "浅绿渐变头部 + 4 重冗余提示 + 长属性表占满视觉焦点 + 浏览器原生丑陋 `<details>▸ 附带拒绝原因</details>`。",
+      after: "无渐变中性卡片对齐 Composer；载荷优先（命令/Diff），紧致属性表，页脚集成「+ 拒绝原因」抽屉与带键帽的操作按钮。"
+    },
+    {
+      id: "manual_danger",
+      name: "5. 人工审批 · 高危/转交",
+      tag: "高危拦截",
+      title: "系统环境变量诊断",
+      mode: { label: "替我审批 · 转交", cls: "mode-pill--danger" },
+      before: "粉白斜向渐变警告条与硬编码浅色底框在暗色模式失效，且按钮文案层级不够克制。",
+      after: "语义砖红边框与平实警示说明条，明确展示自动审查升级原因，危险主按钮移除 `⌘↩` 快捷键以防误触。"
+    },
+    {
+      id: "manual_outcome",
+      name: "6. 人工审批结果回显",
+      tag: "通过与拒绝",
+      title: "联网探测与本地对照",
+      mode: { label: "请求审批", cls: "" },
+      before: "不论通过还是拒绝都渲染一行独立粗体绿色全大写 `已批准 · RUN_SHELL`，拒绝理由也是绿色全大写。",
+      after: "人工批准温柔收进工具行尾部 `[✓ 已批准]` 胶囊；人工拒绝使用 `--tg-rail` 竖轨呈现拒绝原因与被拒命令。"
+    },
+    {
+      id: "banners_edge",
+      name: "7. 提示信息与异常边界",
+      tag: "恢复 / 失效",
+      title: "会话恢复与边界状态",
+      mode: { label: "请求审批", cls: "" },
+      before: "`ApprovalRecoveryBanner` 完全没有 CSS 样式；同步请求时直接替换掉输入框；底部存在孤立 `等待批准` 提示。",
+      after: "全框细描边恢复横幅（支持加载态切换），同步请求放在思考行，过期卡片呈现清晰的禁用降灰与状态标识。"
+    }
+  ];
+
+  const state = {
+    view: "new",
+    theme: "light",
+    platform: "macos",
+    width: "standard",
+    reducedMotion: false,
+    scenario: "auto_progress",
+    // Scenario 1 interactive auto-review demo
+    autoStep: 2, // 1..3
+    autoOutcome: "running", // running | approved | rejected | escalated
+    popoverOpen: false,
+    autoTimer: null,
+    // Scenario 4 interactive state
+    normalVariant: "shell", // shell | diff
+    normalDecision: null, // null | approved | rejected
+    normalFeedbackOpen: false,
+    normalFeedbackText: "",
+    // Scenario 5 interactive state
+    dangerDecision: null,
+    dangerFeedbackOpen: false,
+    dangerFeedbackText: "",
+    // Scenario 7 interactive state
+    recoveryStatus: "error", // error | loading | recovered
+    showExpiredCard: false,
+    // Draft text preserved in composer
+    composerDraft: "",
+  };
+
+  function esc(str) {
+    return String(str).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+  }
+
+  function clearAutoTimer() {
+    if (state.autoTimer) {
+      clearInterval(state.autoTimer);
+      clearTimeout(state.autoTimer);
+      state.autoTimer = null;
+    }
+  }
+
+  function renderComposer(placeholder = "继续输入指令，或在任务执行中排队引导…") {
+    const modeLabel = state.scenario === "manual_normal" || state.scenario === "manual_outcome" || state.scenario === "banners_edge"
+      ? "请求审批"
+      : "替我审批";
+    return `
+      <div class="composer">
+        <textarea id="session-composer-input" placeholder="${esc(placeholder)}">${esc(state.composerDraft)}</textarea>
+        <div class="composer-bar">
+          <div class="composer-bar-left">
+            <span class="composer-chip">工作区 · eidos-desktop</span>
+            <span class="composer-chip ${modeLabel === "替我审批" ? "composer-chip--accent" : ""}">${modeLabel} ▾</span>
+            <span class="composer-chip">Gemini 4 Neon</span>
+          </div>
+          <button type="button" class="composer-send" aria-label="发送消息">${ICONS.arrowUp}</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderApprovalSheet({
+    idPrefix,
+    title,
+    danger = false,
+    expired = false,
+    chips = [],
+    warningText = "",
+    payloadKind = "command",
+    command = "",
+    kvRows = [],
+    moreText = "",
+    feedbackOpen = false,
+    feedbackText = "",
+  }) {
+    const icon = danger || expired ? ICONS.alertTriangle : ICONS.shield;
+    const chipHtml = chips.map((c) => `<span class="scope-chip ${c.cls || ""}">${esc(c.text)}</span>`).join("");
+    const diffHtml = `
+      <div class="diff-card">
+        <div class="diff-card-file"><span>~/.config/eidos-probe/endpoints.json</span><span>+2  -1</span></div>
+        <div class="diff-lines">
+          <div class="diff-line diff-line--ctx">  "timeoutMs": 5000,</div>
+          <div class="diff-line diff-line--del">- "proxy": "http://127.0.0.1:10808",</div>
+          <div class="diff-line diff-line--add">+ "proxy": null,</div>
+          <div class="diff-line diff-line--add">+ "directFallback": true</div>
+        </div>
+      </div>
+    `;
+    const cmdHtml = `
+      <div class="approval-code-wrap">
+        <pre class="approval-code">$ ${esc(command)}</pre>
+        <button type="button" class="copy-mini" data-copy-text="${esc(command)}" title="复制命令" aria-label="复制命令">${ICONS.copy}</button>
+      </div>
+    `;
+    const rowsHtml = kvRows.map(([k, v, mono]) => `
+      <div class="kv-row"><dt>${esc(k)}</dt><dd class="${mono ? "kv-mono" : ""}">${esc(v)}</dd></div>
+    `).join("");
+
+    return `
+      <article class="approval-sheet ${danger ? "approval-sheet--danger" : ""} ${expired ? "approval-sheet--expired" : ""}" aria-label="${esc(title)}">
+        <header class="approval-sheet-head">
+          <div class="approval-sheet-title-wrap">
+            <span class="approval-sheet-icon" aria-hidden="true">${icon}</span>
+            <h3 class="approval-sheet-title">${esc(title)}</h3>
+          </div>
+          <div class="approval-sheet-tags">${chipHtml}</div>
+        </header>
+        <div class="approval-sheet-body">
+          ${warningText ? `<div class="approval-danger-note" role="alert">${ICONS.alertTriangle}<span>${esc(warningText)}</span></div>` : ""}
+          ${payloadKind === "diff" ? diffHtml : cmdHtml}
+          <dl class="kv-table">${rowsHtml}</dl>
+          ${moreText ? `
+            <details class="more-params">
+              <summary>更多参数</summary>
+              <div class="more-params-body">${esc(moreText)}</div>
+            </details>
+          ` : ""}
+        </div>
+        <div class="reject-drawer" ${feedbackOpen && !expired ? "" : "hidden"}>
+          <input type="text" class="reject-input" id="${idPrefix}-feedback-input" placeholder="补充拒绝原因或替代要求，按 Enter 提交…" value="${esc(feedbackText)}" />
+        </div>
+        <footer class="approval-sheet-foot">
+          <button type="button" class="btn btn--ghost btn--sm ${feedbackOpen ? "is-active" : ""}" data-sheet-action="toggle-feedback" data-sheet="${idPrefix}" ${expired ? "disabled" : ""}>
+            ${feedbackOpen ? "收起原因" : "+ 拒绝原因"}
+          </button>
+          <div class="foot-actions">
+            <button type="button" class="btn btn--secondary" data-sheet-action="reject" data-sheet="${idPrefix}" ${expired ? "disabled" : ""}>
+              拒绝 ${expired ? "" : '<span class="kbd">⌘⌫</span>'}
+            </button>
+            <button type="button" class="btn ${danger ? "btn--danger" : "btn--primary"}" data-sheet-action="approve" data-sheet="${idPrefix}" ${expired ? "disabled" : ""}>
+              ${danger ? "允许并执行" : '批准 <span class="kbd">⌘↩</span>'}
+            </button>
+          </div>
+        </footer>
+      </article>
+    `;
+  }
+
+  function renderOldApprovalCard({ danger = false, expired = false, warningText = "", command = "", title = "批准命令所需权限" }) {
+    return `
+      <article class="old-approval-card ${danger ? "old-approval-card--danger" : ""}" style="${expired ? "opacity:0.72;filter:grayscale(0.25);" : ""}">
+        <div class="old-approval-heading">
+          <div class="old-approval-heading-left">
+            <div class="old-approval-heading-icon">${danger ? ICONS.alertTriangle : ICONS.shield}</div>
+            <div class="old-approval-heading-text">
+              <h3>${esc(title)}</h3>
+              <span style="opacity:.45;font-size:12px;">·</span>
+              <span class="old-approval-heading-tag"><span class="old-pulse"></span><span>${expired ? "审批已失效" : "需要你的批准"}</span></span>
+            </div>
+          </div>
+          <span class="old-approval-badge">${expired ? "已过期" : "Shell 命令"}</span>
+        </div>
+        <div class="old-approval-body">
+          ${warningText ? `<div class="old-approval-warning">${ICONS.alertTriangle}<span>${esc(warningText)}</span></div>` : ""}
+          <pre style="margin:0 0 12px;padding:10px 12px;border-radius:8px;border:1px solid rgba(49,95,74,.15);background:var(--surface-muted);font:12.5px/19px var(--font-code);white-space:pre-wrap;color:var(--text);">${esc(command)}</pre>
+          <dl class="old-approval-details">
+            <div><dt>模型说明</dt><dd>在联网审批下重跑探测，确认授权后能否出网</dd></div>
+            <div><dt>目录</dt><dd>当前工作区</dd></div>
+            <div><dt>执行方式</dt><dd>${danger ? "沙盒外执行" : "沙盒内执行（已扩展权限）"}</dd></div>
+            <div><dt>批准范围</dt><dd>仅本次命令</dd></div>
+          </dl>
+        </div>
+        <div class="old-approval-footer">
+          <span class="old-approval-hint">${ICONS.shield}<span>核对命令及授权范围后再行决定</span></span>
+          <details class="old-feedback-raw">
+            <summary>附带拒绝原因</summary>
+            <input type="text" placeholder="输入拒绝原因…" ${expired ? "disabled" : ""} />
+          </details>
+          <div class="foot-actions">
+            <button type="button" class="btn btn--secondary" ${expired ? "disabled" : ""}>拒绝</button>
+            <button type="button" class="btn ${danger ? "btn--danger" : "btn--primary"}" ${expired ? "disabled" : ""}>${danger ? "允许并执行" : "批准"}</button>
+          </div>
+        </div>
+      </article>
+    `;
+  }
+
+  function renderShellDetails({ summaryText, cmd, out, badgeHtml = "", auditNote = "", open = false }) {
+    return `
+      <details class="tool-item" ${open ? "open" : ""}>
+        <summary>
+          <span class="tool-icon" aria-hidden="true">${ICONS.shell}</span>
+          <span class="tool-summary-text">${esc(summaryText)}</span>
+          ${badgeHtml}
+          <span class="tool-chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="shell-result">
+          <div class="shell-command-zone">
+            <pre class="shell-command"><span class="shell-command-prompt">$ </span>${esc(cmd)}</pre>
+            <button type="button" class="copy-mini" data-copy-text="${esc(cmd)}" title="复制命令" aria-label="复制命令">${ICONS.copy}</button>
+          </div>
+          ${out ? `<pre class="shell-output">${esc(out)}</pre>` : ""}
+          <p class="shell-status shell-status--success">
+            ${auditNote ? `<span class="shell-status-audit">${esc(auditNote)}</span>` : ""}
+            <span>✓ 成功</span>
+          </p>
+        </div>
+      </details>
+    `;
+  }
+
+  /* ==========================================================================
+     Scenario Renderers
+     ========================================================================== */
+  function buildScenarioView() {
+    const isNew = state.view === "new";
+    let recoveryHtml = "";
+    let feedHtml = "";
+    let composerHtml = "";
+
+    // 1. Auto Review In Progress
+    if (state.scenario === "auto_progress") {
+      const steps = [
+        { title: "整理命令与权限证据", statusText: "正在自动审批 · 整理命令与权限证据", time: "0.2s" },
+        { title: "评估联网访问风险", statusText: "正在自动审批 · 评估联网访问风险", time: "0.6s" },
+        { title: "生成判定结果", statusText: "正在自动审批 · 生成判定结果", time: "0.4s" },
+      ];
+      const activeIdx = Math.min(2, Math.max(0, state.autoStep - 1));
+
+      if (!isNew) {
+        feedHtml = `
+          <div class="user-bubble">验证一下当前环境能否访问外网，必要时申请联网并排查失败原因</div>
+          <details class="process-group" open>
+            <summary>正在处理 18s</summary>
+            <p class="process-text">我来发起一次命令级的联网审批，批准后立即用同一套探测做对照。</p>
+            ${renderShellDetails({
+              summaryText: "等待批准 · 在联网审批下重跑探测，确认授权后能否出网",
+              cmd: "curl -sS -I --max-time 6 https://api.github.com",
+              out: ""
+            })}
+          </details>
+          <p class="old-run-notice-warning">等待批准</p>
+        `;
+        composerHtml = `
+          <div class="old-status-banner" role="status">
+            <div class="old-status-banner-main">
+              <div class="old-status-banner-icon">${ICONS.spinner}</div>
+              <div>
+                <span class="old-status-banner-title">模型正在审查操作…</span>
+                <span class="old-status-banner-hint">正在评估工具调用的安全性与潜在风险</span>
+              </div>
+            </div>
+            <span class="old-status-banner-badge">替我审批</span>
+          </div>
+        `;
+        return { recoveryHtml, feedHtml, composerHtml };
+      }
+
+      // New design for Scenario 1
+      let liveOrOutcome = "";
+      let extraTools = "";
+      if (state.autoOutcome === "running") {
+        const currentStep = steps[activeIdx];
+        const stepsListHtml = steps.map((st, idx) => {
+          const stState = idx < activeIdx ? "done" : idx === activeIdx ? "active" : "todo";
+          const dot = stState === "done" ? "✓" : stState === "active" ? "●" : "○";
+          const tm = stState === "done" ? st.time : stState === "active" ? "进行中" : "";
+          return `<li data-state="${stState}"><span class="pop-step-dot">${dot}</span><span>${esc(st.title)}</span><span class="pop-step-time">${esc(tm)}</span></li>`;
+        }).join("");
+
+        liveOrOutcome = `
+          <div class="live-activity" role="status">
+            <div class="live-activity-popover" id="auto-review-popover" role="dialog" aria-label="自动审批进度" ${state.popoverOpen ? "" : "hidden"}>
+              <div class="pop-header">
+                <p class="pop-caption">自动审批 · 实时进度</p>
+                <span class="pop-mode-badge">替我审批</span>
+              </div>
+              <p class="pop-op-title">命令联网探测（低风险）</p>
+              <div class="pop-cmd">$ curl -sS -I --max-time 6 https://api.github.com</div>
+              <ul class="pop-steps">${stepsListHtml}</ul>
+            </div>
+            <button type="button" class="live-activity-row" id="auto-review-trigger" aria-expanded="${state.popoverOpen}" aria-controls="auto-review-popover">
+              <span class="live-activity-lead" aria-hidden="true">${ICONS.shieldTrace}</span>
+              <span class="live-activity-text is-swapping">${esc(currentStep.statusText)}</span>
+              <span class="live-step-count">${state.autoStep}/3</span>
+              <span class="live-activity-more" aria-hidden="true"></span>
+            </button>
+          </div>
+        `;
+        composerHtml = renderComposer();
+      } else if (state.autoOutcome === "approved") {
+        extraTools = renderShellDetails({
+          summaryText: "已完成 · 在联网审批下重跑探测，确认授权后能否出网",
+          cmd: "curl -sS -I --max-time 6 https://api.github.com",
+          out: "HTTP/2 200\nserver: github.com\nx-ratelimit-limit: 60",
+          auditNote: "自动审批通过"
+        });
+        liveOrOutcome = `
+          <div class="live-activity" role="status">
+            <div class="live-activity-row">
+              <span class="live-activity-lead" aria-hidden="true">${ICONS.markTrace}</span>
+              <span class="live-activity-text">正在汇总探测结果并生成答复</span>
+            </div>
+          </div>
+        `;
+        composerHtml = renderComposer();
+      } else if (state.autoOutcome === "rejected") {
+        extraTools = `
+          <div class="approval-outcome approval-outcome--rejected">
+            <div class="approval-outcome-head">
+              <span class="approval-outcome-icon">${ICONS.shieldX}</span>
+              <span class="approval-outcome-title">自动审批未通过 · 删除构建目录外的缓存文件</span>
+              <span class="approval-inline-badge approval-inline-badge--danger">高风险</span>
+            </div>
+            <div class="approval-outcome-rail">
+              <p class="approval-outcome-reason">目标路径位于当前工作区外且为不可逆删除操作，用户请求未授权清理系统级缓存。</p>
+              <details class="approval-outcome-cmd">
+                <summary>查看被拒命令</summary>
+                <pre>$ rm -rf ~/Library/Caches/eidos-build-tmp</pre>
+              </details>
+            </div>
+          </div>
+        `;
+        liveOrOutcome = `
+          <div class="live-activity" role="status">
+            <div class="live-activity-row">
+              <span class="live-activity-lead" aria-hidden="true">${ICONS.markTrace}</span>
+              <span class="live-activity-text">正在改用工作区内安全检查方案</span>
+            </div>
+          </div>
+        `;
+        composerHtml = renderComposer();
+      } else if (state.autoOutcome === "escalated") {
+        composerHtml = renderApprovalSheet({
+          idPrefix: "demo-esc",
+          title: "高危操作，需要你的确认",
+          danger: true,
+          chips: [{ text: "沙盒外", cls: "scope-chip--danger" }, { text: "仅本次" }],
+          warningText: "自动审查评估为高风险：命令将在沙盒外执行并读取受保护路径，需要你手动确认。",
+          command: "curl -sS --noproxy '*' -I https://api.github.com",
+          kvRows: [
+            ["意图", "绕过无效代理并验证直连 HTTPS"],
+            ["目录", "当前工作区"],
+            ["执行环境", "沙盒外执行（宿主机文件与网络权限）"],
+            ["授权范围", "仅本次命令"]
+          ]
+        });
+      }
+
+      feedHtml = `
+        <div class="user-bubble">验证一下当前环境能否访问外网，必要时申请联网并排查失败原因</div>
+        <details class="process-group" open>
+          <summary>正在处理 18s</summary>
+          <p class="process-text">我来发起一次命令级的联网审批，批准后立即用同一套探测做对照。</p>
+          ${extraTools}
+        </details>
+        ${liveOrOutcome}
+      `;
+      return { recoveryHtml, feedHtml, composerHtml };
+    }
+
+    // 2. Auto Review Approved (Reproducing user's screenshot!)
+    if (state.scenario === "auto_approved") {
+      if (!isNew) {
+        feedHtml = `
+          <details class="process-group" open>
+            <summary>已处理 2m 27s</summary>
+            <p class="process-text">我来发起一次命令级的联网审批，批准后立即用同一套探测做对照。</p>
+            <div>
+              <p class="old-feed-label">已批准 · RUN_SHELL</p>
+              ${renderShellDetails({
+                summaryText: "已完成 · 在联网审批下重跑探测，确认授权后能否出网",
+                cmd: "curl -sS -I --max-time 6 https://api.github.com",
+                out: "* Connected to api.github.com (20.205.243.168) port 443\n* Proxy connect aborted (127.0.0.1:10808)"
+              })}
+            </div>
+            <p class="process-text">审批通过了 (<code>networkEnabled: true</code>)，DNS 和 TCP 都已放通，只剩 HTTPS 请求失败——我接着排查这一项。</p>
+            ${renderShellDetails({
+              summaryText: "已完成 · 排查审批后 HTTPS 请求为何仍失败",
+              cmd: "env | grep -iE 'http_proxy|https_proxy|all_proxy'",
+              out: "HTTPS_PROXY=http://127.0.0.1:10808"
+            })}
+            <p class="process-text">找到原因了：环境里预设了本地代理 <code>127.0.0.1:10808</code>，但该代理当前没有运行。我用直连（绕过代理）验证一下。</p>
+          </details>
+        `;
+      } else {
+        feedHtml = `
+          <details class="process-group" open>
+            <summary>已处理 2m 27s</summary>
+            <p class="process-text">我来发起一次命令级的联网审批，批准后立即用同一套探测做对照。</p>
+            ${renderShellDetails({
+              summaryText: "已完成 · 在联网审批下重跑探测，确认授权后能否出网",
+              cmd: "curl -sS -I --max-time 6 https://api.github.com",
+              out: "* Connected to api.github.com (20.205.243.168) port 443\n* Proxy connect aborted (127.0.0.1:10808)",
+              auditNote: "自动审批通过"
+            })}
+            <p class="process-text">审批通过了 (<code>networkEnabled: true</code>)，DNS 和 TCP 都已放通，只剩 HTTPS 请求失败——我接着排查这一项。</p>
+            ${renderShellDetails({
+              summaryText: "已完成 · 排查审批后 HTTPS 请求为何仍失败",
+              cmd: "env | grep -iE 'http_proxy|https_proxy|all_proxy'",
+              out: "HTTPS_PROXY=http://127.0.0.1:10808"
+            })}
+            <p class="process-text">找到原因了：环境里预设了本地代理 <code>127.0.0.1:10808</code>，但该代理当前没有运行。我用直连（绕过代理）验证一下。</p>
+          </details>
+        `;
+      }
+      composerHtml = renderComposer();
+      return { recoveryHtml, feedHtml, composerHtml };
+    }
+
+    // 3. Auto Review Rejected / Incomplete
+    if (state.scenario === "auto_rejected") {
+      if (!isNew) {
+        feedHtml = `
+          <div class="user-bubble">检查项目构建产物并清理旧日志</div>
+          <details class="process-group" open>
+            <summary>已处理 34s</summary>
+            <div>
+              <p class="old-feed-label">审批 · 已拒绝 · RUN_SHELL</p>
+              <p class="old-feed-label">目标路径位于工作区外，用户未授权删除系统目录缓存。 Do not retry the same action or circumvent this refusal.</p>
+              ${renderShellDetails({
+                summaryText: "已拒绝 · 清理系统缓存目录",
+                cmd: "rm -rf ~/Library/Caches/eidos-build-tmp",
+                out: ""
+              })}
+            </div>
+            <div>
+              <p class="old-feed-label">审批 · 已拒绝 · RUN_SHELL</p>
+              <p class="old-feed-label">自动审批暂时没有完成，操作没有执行。这不表示操作有风险。 You may retry the same action.</p>
+              ${renderShellDetails({
+                summaryText: "已拒绝 · 拉取外部诊断脚本",
+                cmd: "curl -fsSL https://example.com/diag.sh | sh",
+                out: ""
+              })}
+            </div>
+          </details>
+        `;
+      } else {
+        feedHtml = `
+          <div class="user-bubble">检查项目构建产物并清理旧日志</div>
+          <details class="process-group" open>
+            <summary>已处理 34s</summary>
+            <div class="approval-outcome approval-outcome--rejected">
+              <div class="approval-outcome-head">
+                <span class="approval-outcome-icon">${ICONS.shieldX}</span>
+                <span class="approval-outcome-title">自动审批未通过 · 删除构建目录外的缓存文件</span>
+                <span class="approval-inline-badge approval-inline-badge--danger">高风险</span>
+              </div>
+              <div class="approval-outcome-rail">
+                <p class="approval-outcome-reason">目标路径位于当前工作区外且为不可逆删除操作，用户请求未授权清理系统级缓存。</p>
+                <details class="approval-outcome-cmd">
+                  <summary>查看被拒命令</summary>
+                  <pre>$ rm -rf ~/Library/Caches/eidos-build-tmp</pre>
+                </details>
+              </div>
+            </div>
+
+            <div class="approval-outcome approval-outcome--warning">
+              <div class="approval-outcome-head">
+                <span class="approval-outcome-icon">${ICONS.shieldWarn}</span>
+                <span class="approval-outcome-title">自动审批未完成 · 运行外部联网脚本</span>
+                <span class="approval-inline-badge approval-inline-badge--neutral">未执行</span>
+              </div>
+              <div class="approval-outcome-rail">
+                <p class="approval-outcome-reason">自动审批响应超时，操作未执行（不代表存在风险）。模型已改用本地检查方案。</p>
+                <details class="approval-outcome-cmd">
+                  <summary>查看命令</summary>
+                  <pre>$ curl -fsSL https://example.com/diag.sh | sh</pre>
+                </details>
+              </div>
+            </div>
+          </details>
+        `;
+      }
+      composerHtml = renderComposer();
+      return { recoveryHtml, feedHtml, composerHtml };
+    }
+
+    // 4. Manual Approval · Normal
+    if (state.scenario === "manual_normal") {
+      const isDiff = state.normalVariant === "diff";
+      if (!isNew) {
+        feedHtml = `
+          <div class="user-bubble">帮我测试并更新探针配置</div>
+          <details class="process-group" open>
+            <summary>正在处理 12s</summary>
+            <p class="process-text">准备发起${isDiff ? "文件修改" : "联网探测"}，请确认授权范围。</p>
+            <p class="old-feed-label">需要批准 · ${isDiff ? "文件变更" : "Shell 命令"} · <span>${isDiff ? "Write files in the requested permission scope" : "Run shell command with expanded sandbox permissions"}</span></p>
+          </details>
+          <p class="old-run-notice-warning">等待批准</p>
+        `;
+        composerHtml = renderOldApprovalCard({
+          danger: false,
+          title: isDiff ? "批准文件写入" : "批准命令所需权限",
+          command: isDiff ? "--- ~/.config/eidos-probe/endpoints.json\n+++ ~/.config/eidos-probe/endpoints.json\n- \"proxy\": \"http://127.0.0.1:10808\",\n+ \"proxy\": null" : "curl -sS -I --max-time 6 https://api.github.com"
+        });
+        return { recoveryHtml, feedHtml, composerHtml };
+      }
+
+      if (state.normalDecision === "approved") {
+        feedHtml = `
+          <div class="user-bubble">帮我测试并更新探针配置</div>
+          <details class="process-group" open>
+            <summary>已处理 16s</summary>
+            <p class="process-text">已获批准，已完成对应操作。</p>
+            ${renderShellDetails({
+              summaryText: isDiff ? "已完成 · 更新工作区外探针配置 endpoints.json" : "已完成 · 在联网审批下重跑探测，确认授权后能否出网",
+              cmd: isDiff ? "apply_patch ~/.config/eidos-probe/endpoints.json" : "curl -sS -I --max-time 6 https://api.github.com",
+              out: isDiff ? "Updated ~/.config/eidos-probe/endpoints.json (+2 -1)" : "HTTP/2 200\nserver: github.com",
+              badgeHtml: '<span class="approval-inline-badge approval-inline-badge--success">✓ 已批准</span>',
+              auditNote: "人工批准"
+            })}
+          </details>
+        `;
+        composerHtml = renderComposer();
+      } else if (state.normalDecision === "rejected") {
+        feedHtml = `
+          <div class="user-bubble">帮我测试并更新探针配置</div>
+          <details class="process-group" open>
+            <summary>已处理 15s</summary>
+            <div class="approval-outcome approval-outcome--rejected">
+              <div class="approval-outcome-head">
+                <span class="approval-outcome-icon">${ICONS.shieldX}</span>
+                <span class="approval-outcome-title">已拒绝 · ${isDiff ? "修改工作区外配置文件" : "执行联网探测命令"}</span>
+              </div>
+              <div class="approval-outcome-rail">
+                <p class="approval-outcome-reason">${esc(state.normalFeedbackText.trim() || "先不要连外网，先用本地 fixture 复现")}</p>
+                <details class="approval-outcome-cmd">
+                  <summary>查看被拒内容</summary>
+                  <pre>${isDiff ? "~/.config/eidos-probe/endpoints.json" : "$ curl -sS -I --max-time 6 https://api.github.com"}</pre>
+                </details>
+              </div>
+            </div>
+          </details>
+        `;
+        composerHtml = renderComposer();
+      } else {
+        feedHtml = `
+          <div class="user-bubble">帮我测试并更新探针配置</div>
+          <details class="process-group" open>
+            <summary>正在处理 12s</summary>
+            <p class="process-text">准备发起${isDiff ? "工作区外配置文件写入" : "命令级联网探测"}，确认后立即执行。</p>
+          </details>
+        `;
+        composerHtml = renderApprovalSheet({
+          idPrefix: "normal",
+          title: isDiff ? "批准文件变更" : "批准执行命令",
+          chips: isDiff
+            ? [{ text: "文件变更" }, { text: "工作区外", cls: "scope-chip--warn" }, { text: "仅本次" }]
+            : [{ text: "Shell" }, { text: "联网", cls: "scope-chip--accent" }, { text: "仅本次" }],
+          payloadKind: isDiff ? "diff" : "command",
+          command: "curl -sS -I --max-time 6 https://api.github.com",
+          kvRows: isDiff
+            ? [
+                ["文件权限", "写入 ~/.config/eidos-probe/endpoints.json（仅此文件）", true],
+                ["授权范围", "仅本次文件操作", false]
+              ]
+            : [
+                ["意图", "在联网审批下重跑探测，确认授权后能否出网", false],
+                ["目录", "当前工作区", false],
+                ["执行环境", "沙盒内执行 · 允许访问网络（不限域名）", false],
+                ["授权范围", "仅本次命令", false]
+              ],
+          moreText: isDiff ? "将校验文件 Base Hash 与写入前后内容一致性。" : "单次调用观察上限 120 秒；继承当前工作区基础只读边界。",
+          feedbackOpen: state.normalFeedbackOpen,
+          feedbackText: state.normalFeedbackText,
+        });
+      }
+      return { recoveryHtml, feedHtml, composerHtml };
+    }
+
+    // 5. Manual Approval · Danger / Escalated
+    if (state.scenario === "manual_danger") {
+      if (!isNew) {
+        feedHtml = `
+          <div class="user-bubble">帮我读取全局代理配置并测试直连</div>
+          <details class="process-group" open>
+            <summary>正在处理 21s</summary>
+            <p class="old-feed-label">需要批准 · Shell 命令 · <span>Run shell command without the Windows sandbox</span></p>
+          </details>
+          <p class="old-run-notice-warning">等待批准</p>
+        `;
+        composerHtml = renderOldApprovalCard({
+          danger: true,
+          title: "高危操作，需要你的确认",
+          warningText: "命令将在沙盒外执行，可访问外部文件和网络。",
+          command: "curl -sS --noproxy '*' -I https://api.github.com && type %USERPROFILE%\\.eidos\\proxy.json"
+        });
+        return { recoveryHtml, feedHtml, composerHtml };
+      }
+
+      if (state.dangerDecision === "approved") {
+        feedHtml = `
+          <div class="user-bubble">帮我读取全局代理配置并测试直连</div>
+          <details class="process-group" open>
+            <summary>已处理 24s</summary>
+            ${renderShellDetails({
+              summaryText: "已完成 · 绕过代理直连验证",
+              cmd: "curl -sS --noproxy '*' -I https://api.github.com",
+              out: "HTTP/2 200\nserver: github.com",
+              badgeHtml: '<span class="approval-inline-badge approval-inline-badge--success">✓ 已手动确认</span>',
+              auditNote: "高危人工确认"
+            })}
+          </details>
+        `;
+        composerHtml = renderComposer();
+      } else if (state.dangerDecision === "rejected") {
+        feedHtml = `
+          <div class="user-bubble">帮我读取全局代理配置并测试直连</div>
+          <details class="process-group" open>
+            <summary>已处理 23s</summary>
+            <div class="approval-outcome approval-outcome--rejected">
+              <div class="approval-outcome-head">
+                <span class="approval-outcome-icon">${ICONS.shieldX}</span>
+                <span class="approval-outcome-title">已拒绝 · 高危沙盒外命令</span>
+              </div>
+              <div class="approval-outcome-rail">
+                <p class="approval-outcome-reason">${esc(state.dangerFeedbackText.trim() || "不要读取用户目录，直接测 curl --noproxy 即可")}</p>
+              </div>
+            </div>
+          </details>
+        `;
+        composerHtml = renderComposer();
+      } else {
+        feedHtml = `
+          <div class="user-bubble">帮我读取全局代理配置并测试直连</div>
+          <details class="process-group" open>
+            <summary>正在处理 21s</summary>
+            <p class="process-text">已触发高危保护边界，自动审批已升级交由你最终确认。</p>
+          </details>
+        `;
+        composerHtml = renderApprovalSheet({
+          idPrefix: "danger",
+          title: "高危操作，需要你的确认",
+          danger: true,
+          chips: [
+            { text: "沙盒外", cls: "scope-chip--danger" },
+            { text: "高风险", cls: "scope-chip--danger" },
+            { text: "仅本次" }
+          ],
+          warningText: "自动审查评估为高风险：命令将在沙盒外执行并读取受保护路径，操作将直接拥有宿主机文件与网络权限。",
+          command: "curl -sS --noproxy '*' -I https://api.github.com && type %USERPROFILE%\\.eidos\\proxy.json",
+          kvRows: [
+            ["目录", "当前工作区", false],
+            ["执行环境", "沙盒外执行（宿主机用户权限）", false],
+            ["升级原因", "涉及用户受保护目录与无沙盒网络访问", false],
+            ["授权范围", "仅本次命令", false]
+          ],
+          moreText: "高危确认不支持 ⌘↩ 快捷提交，避免键盘误触直接放行。",
+          feedbackOpen: state.dangerFeedbackOpen,
+          feedbackText: state.dangerFeedbackText,
+        });
+      }
+      return { recoveryHtml, feedHtml, composerHtml };
+    }
+
+    // 6. Manual Outcomes in Feed
+    if (state.scenario === "manual_outcome") {
+      if (!isNew) {
+        feedHtml = `
+          <details class="process-group" open>
+            <summary>已处理 1m 08s</summary>
+            <div>
+              <p class="old-feed-label">已批准 · RUN_SHELL</p>
+              ${renderShellDetails({
+                summaryText: "已完成 · 在联网审批下重跑探测，确认授权后能否出网",
+                cmd: "curl -sS -I https://api.github.com",
+                out: "HTTP/2 200"
+              })}
+            </div>
+            <div>
+              <p class="old-feed-label">已拒绝 · RUN_SHELL</p>
+              <p class="old-feed-label">先不要连外网，先用本地 fixture 复现</p>
+              ${renderShellDetails({
+                summaryText: "已拒绝 · 上传诊断日志到远程节点",
+                cmd: "curl -X POST https://logs.example.com/upload -d @trace.json",
+                out: ""
+              })}
+            </div>
+          </details>
+        `;
+      } else {
+        feedHtml = `
+          <details class="process-group" open>
+            <summary>已处理 1m 08s</summary>
+            ${renderShellDetails({
+              summaryText: "已完成 · 在联网审批下重跑探测，确认授权后能否出网",
+              cmd: "curl -sS -I https://api.github.com",
+              out: "HTTP/2 200",
+              badgeHtml: '<span class="approval-inline-badge approval-inline-badge--success">✓ 已批准</span>',
+              auditNote: "人工批准"
+            })}
+            <div class="approval-outcome approval-outcome--rejected">
+              <div class="approval-outcome-head">
+                <span class="approval-outcome-icon">${ICONS.shieldX}</span>
+                <span class="approval-outcome-title">已拒绝 · 上传诊断日志到远程节点</span>
+              </div>
+              <div class="approval-outcome-rail">
+                <p class="approval-outcome-reason">先不要连外网，先用本地 fixture 复现</p>
+                <details class="approval-outcome-cmd">
+                  <summary>查看被拒命令</summary>
+                  <pre>$ curl -X POST https://logs.example.com/upload -d @trace.json</pre>
+                </details>
+              </div>
+            </div>
+            <div class="tool-item--quiet-row">
+              <span class="tool-icon" aria-hidden="true">${ICONS.shieldCheck}</span>
+              <span>已授予权限 · 网络访问（仅当前任务）</span>
+            </div>
+          </details>
+        `;
+      }
+      composerHtml = renderComposer();
+      return { recoveryHtml, feedHtml, composerHtml };
+    }
+
+    // 7. Banners & Edge States
+    if (state.scenario === "banners_edge") {
+      if (!isNew) {
+        recoveryHtml = `
+          <div class="old-recovery-naked" role="alert">
+            <span>审批状态加载失败，当前任务可能仍在等待你的处理。</span>
+            <button type="button" data-recovery-retry>重试加载审批</button>
+          </div>
+        `;
+        feedHtml = `
+          <details class="process-group" open>
+            <summary>正在处理 42s</summary>
+            <p class="process-text">正在等待 Runtime 恢复待审批记录…</p>
+          </details>
+          <p class="old-run-notice-warning">等待批准</p>
+        `;
+        composerHtml = state.showExpiredCard
+          ? renderOldApprovalCard({
+              expired: true,
+              title: "批准命令执行",
+              command: "npm run deploy:staging"
+            })
+          : `
+            <div class="old-status-banner" role="status">
+              <div class="old-status-banner-main">
+                <div class="old-status-banner-icon">${ICONS.spinner}</div>
+                <div>
+                  <span class="old-status-banner-title">正在恢复待批准请求…</span>
+                  <span class="old-status-banner-hint">正在同步审批详情与变更内容</span>
+                </div>
+              </div>
+              <span class="old-status-banner-badge">请求审批</span>
+            </div>
+          `;
+      } else {
+        if (state.recoveryStatus === "recovered") {
+          recoveryHtml = `
+            <div class="recovery-banner recovery-banner--ok" role="status">
+              <div class="recovery-banner-main">
+                <span aria-hidden="true">${ICONS.shieldCheck}</span>
+                <span class="recovery-banner-text">审批状态已重新同步。</span>
+              </div>
+              <button type="button" class="btn btn--ghost btn--sm" data-recovery-reset>重置演示</button>
+            </div>
+          `;
+        } else {
+          const isLoading = state.recoveryStatus === "loading";
+          recoveryHtml = `
+            <div class="recovery-banner" role="alert">
+              <div class="recovery-banner-main">
+                <span aria-hidden="true">${ICONS.alertTriangle}</span>
+                <span class="recovery-banner-text">审批状态加载失败，当前任务可能仍在等待处理。</span>
+              </div>
+              <button type="button" class="btn btn--secondary btn--sm" data-recovery-retry ${isLoading ? "disabled" : ""}>
+                ${isLoading ? "同步中…" : "重新加载"}
+              </button>
+            </div>
+          `;
+        }
+        feedHtml = `
+          <details class="process-group" open>
+            <summary>正在处理 42s</summary>
+            <p class="process-text">已连接本地 Runtime，正在校验待决策操作快照…</p>
+          </details>
+          ${!state.showExpiredCard ? `
+            <div class="live-activity" role="status">
+              <div class="live-activity-row">
+                <span class="live-activity-lead" aria-hidden="true">${ICONS.shieldTrace}</span>
+                <span class="live-activity-text">正在同步待审批请求…</span>
+              </div>
+            </div>
+          ` : ""}
+        `;
+        composerHtml = state.showExpiredCard
+          ? renderApprovalSheet({
+              idPrefix: "expired",
+              title: "批准执行命令",
+              expired: true,
+              chips: [{ text: "已失效" }],
+              command: "npm run deploy:staging",
+              kvRows: [
+                ["状态", "该请求已超时或已被其他会话处理", false],
+                ["目录", "当前工作区", false]
+              ]
+            })
+          : renderComposer();
+      }
+      return { recoveryHtml, feedHtml, composerHtml };
+    }
+
+    return { recoveryHtml, feedHtml, composerHtml };
+  }
+
+  function renderScenarioControls() {
+    const el = document.getElementById("scenario-controls");
+    if (state.scenario === "auto_progress") {
+      el.innerHTML = `
+        <button type="button" class="btn btn--secondary btn--sm" data-auto-demo="approved">▶ 演示：自动通过（静默继续）</button>
+        <button type="button" class="btn btn--secondary btn--sm" data-auto-demo="rejected">▶ 演示：自动拒绝（展示原因）</button>
+        <button type="button" class="btn btn--secondary btn--sm" data-auto-demo="escalated">▶ 演示：升级人工（转审批卡）</button>
+        <button type="button" class="btn btn--ghost btn--sm" data-auto-demo="reset">↺ 重置为进行中</button>
+      `;
+      return;
+    }
+    if (state.scenario === "manual_normal") {
+      el.innerHTML = `
+        <div class="demo-inline-row">
+          <button type="button" class="btn btn--sm ${state.normalVariant === "shell" ? "btn--primary" : "btn--secondary"}" data-normal-variant="shell">Shell 联网命令</button>
+          <button type="button" class="btn btn--sm ${state.normalVariant === "diff" ? "btn--primary" : "btn--secondary"}" data-normal-variant="diff">文件变更 Diff</button>
+          <button type="button" class="btn btn--ghost btn--sm" data-normal-reset>↺ 重置</button>
+        </div>
+      `;
+      return;
+    }
+    if (state.scenario === "manual_danger") {
+      el.innerHTML = `
+        <button type="button" class="btn btn--ghost btn--sm" data-danger-reset>↺ 重置高危审批演示</button>
+      `;
+      return;
+    }
+    if (state.scenario === "banners_edge") {
+      el.innerHTML = `
+        <div class="demo-inline-row">
+          <button type="button" class="btn btn--sm ${!state.showExpiredCard ? "btn--primary" : "btn--secondary"}" data-edge-mode="sync">同步中状态</button>
+          <button type="button" class="btn btn--sm ${state.showExpiredCard ? "btn--primary" : "btn--secondary"}" data-edge-mode="expired">已失效审批卡</button>
+        </div>
+      `;
+      return;
+    }
+    el.innerHTML = "";
+  }
+
+  function renderAll() {
+    const root = document.documentElement;
+    root.dataset.view = state.view;
+    root.dataset.theme = state.theme;
+    root.dataset.platform = state.platform;
+    root.dataset.width = state.width;
+    root.dataset.reducedMotion = String(state.reducedMotion);
+
+    const meta = SCENARIOS.find((s) => s.id === state.scenario) || SCENARIOS[0];
+    document.getElementById("win-title").textContent = meta.title;
+    document.getElementById("win-mode-pill").innerHTML = `<span class="mode-pill ${meta.mode.cls}">${esc(meta.mode.label)}</span>`;
+
+    // Scenario List
+    document.getElementById("scenario-list").innerHTML = SCENARIOS.map((s) => `
+      <button type="button" class="scenario-btn" data-scenario="${s.id}" aria-pressed="${s.id === state.scenario}">
+        <span>${esc(s.name)}</span>
+        <span class="scenario-tag">${esc(s.tag)}</span>
+      </button>
+    `).join("");
+
+    // Notes
+    document.getElementById("scenario-notes").innerHTML = `
+      <div class="ba-item ba-before"><b>改造前</b><span>${esc(meta.before)}</span></div>
+      <div class="ba-item ba-after"><b>重构后</b><span>${esc(meta.after)}</span></div>
+    `;
+
+    renderScenarioControls();
+
+    const { recoveryHtml, feedHtml, composerHtml } = buildScenarioView();
+    document.getElementById("recovery-slot").innerHTML = recoveryHtml;
+    document.getElementById("feed").innerHTML = feedHtml;
+    document.getElementById("composer-slot").innerHTML = composerHtml;
+
+    const draftEl = document.getElementById("session-composer-input");
+    if (draftEl) {
+      draftEl.addEventListener("input", (e) => { state.composerDraft = e.target.value; });
+    }
+    const normalFb = document.getElementById("normal-feedback-input");
+    if (normalFb) {
+      normalFb.addEventListener("input", (e) => { state.normalFeedbackText = e.target.value; });
+      normalFb.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { state.normalDecision = "rejected"; renderAll(); }
+      });
+    }
+    const dangerFb = document.getElementById("danger-feedback-input");
+    if (dangerFb) {
+      dangerFb.addEventListener("input", (e) => { state.dangerFeedbackText = e.target.value; });
+      dangerFb.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { state.dangerDecision = "rejected"; renderAll(); }
+      });
+    }
+  }
+
+  function startAutoDemo(outcome) {
+    clearAutoTimer();
+    if (state.view !== "new") state.view = "new";
+    state.autoOutcome = "running";
+    state.autoStep = 1;
+    state.popoverOpen = true;
+    renderAll();
+
+    if (outcome === "reset") return;
+
+    state.autoTimer = setInterval(() => {
+      if (state.autoStep < 3) {
+        state.autoStep += 1;
+        renderAll();
+      } else {
+        clearAutoTimer();
+        state.popoverOpen = false;
+        state.autoOutcome = outcome;
+        renderAll();
+      }
+    }, 950);
+  }
+
+  /* ==========================================================================
+     Global Event Delegation
+     ========================================================================== */
+  document.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+
+    const viewBtn = target.closest("[data-view-btn]");
+    if (viewBtn) {
+      state.view = viewBtn.dataset.viewBtn;
+      document.querySelectorAll("[data-view-btn]").forEach((b) => b.setAttribute("aria-pressed", String(b === viewBtn)));
+      renderAll();
+      return;
+    }
+
+    const themeBtn = target.closest("[data-theme-btn]");
+    if (themeBtn) {
+      state.theme = themeBtn.dataset.themeBtn;
+      document.querySelectorAll("[data-theme-btn]").forEach((b) => b.setAttribute("aria-pressed", String(b === themeBtn)));
+      renderAll();
+      return;
+    }
+
+    const platBtn = target.closest("[data-platform-btn]");
+    if (platBtn) {
+      state.platform = platBtn.dataset.platformBtn;
+      document.querySelectorAll("[data-platform-btn]").forEach((b) => b.setAttribute("aria-pressed", String(b === platBtn)));
+      renderAll();
+      return;
+    }
+
+    const widthBtn = target.closest("[data-width-btn]");
+    if (widthBtn) {
+      state.width = widthBtn.dataset.widthBtn;
+      document.querySelectorAll("[data-width-btn]").forEach((b) => b.setAttribute("aria-pressed", String(b === widthBtn)));
+      renderAll();
+      return;
+    }
+
+    if (target.id === "reduced-motion-btn") {
+      state.reducedMotion = !state.reducedMotion;
+      target.setAttribute("aria-pressed", String(state.reducedMotion));
+      renderAll();
+      return;
+    }
+
+    const scenarioBtn = target.closest("[data-scenario]");
+    if (scenarioBtn) {
+      clearAutoTimer();
+      state.scenario = scenarioBtn.dataset.scenario;
+      state.popoverOpen = false;
+      if (state.scenario === "auto_progress") {
+        state.autoOutcome = "running";
+        state.autoStep = 2;
+      }
+      renderAll();
+      return;
+    }
+
+    const autoDemoBtn = target.closest("[data-auto-demo]");
+    if (autoDemoBtn) {
+      startAutoDemo(autoDemoBtn.dataset.autoDemo);
+      return;
+    }
+
+    if (target.closest("#auto-review-trigger")) {
+      event.stopPropagation();
+      state.popoverOpen = !state.popoverOpen;
+      renderAll();
+      return;
+    }
+
+    const normVarBtn = target.closest("[data-normal-variant]");
+    if (normVarBtn) {
+      state.normalVariant = normVarBtn.dataset.normalVariant;
+      state.normalDecision = null;
+      renderAll();
+      return;
+    }
+    if (target.closest("[data-normal-reset]")) {
+      state.normalDecision = null;
+      state.normalFeedbackOpen = false;
+      state.normalFeedbackText = "";
+      renderAll();
+      return;
+    }
+    if (target.closest("[data-danger-reset]")) {
+      state.dangerDecision = null;
+      state.dangerFeedbackOpen = false;
+      state.dangerFeedbackText = "";
+      renderAll();
+      return;
+    }
+
+    const edgeBtn = target.closest("[data-edge-mode]");
+    if (edgeBtn) {
+      state.showExpiredCard = edgeBtn.dataset.edgeMode === "expired";
+      renderAll();
+      return;
+    }
+
+    if (target.closest("[data-recovery-retry]")) {
+      state.recoveryStatus = "loading";
+      renderAll();
+      setTimeout(() => {
+        state.recoveryStatus = "recovered";
+        renderAll();
+      }, 650);
+      return;
+    }
+    if (target.closest("[data-recovery-reset]")) {
+      state.recoveryStatus = "error";
+      renderAll();
+      return;
+    }
+
+    const sheetAction = target.closest("[data-sheet-action]");
+    if (sheetAction) {
+      const act = sheetAction.dataset.sheetAction;
+      const sheet = sheetAction.dataset.sheet;
+      if (sheet === "normal") {
+        if (act === "toggle-feedback") { state.normalFeedbackOpen = !state.normalFeedbackOpen; renderAll(); document.getElementById("normal-feedback-input")?.focus(); }
+        if (act === "approve") { state.normalDecision = "approved"; renderAll(); }
+        if (act === "reject") { state.normalDecision = "rejected"; renderAll(); }
+      } else if (sheet === "danger") {
+        if (act === "toggle-feedback") { state.dangerFeedbackOpen = !state.dangerFeedbackOpen; renderAll(); document.getElementById("danger-feedback-input")?.focus(); }
+        if (act === "approve") { state.dangerDecision = "approved"; renderAll(); }
+        if (act === "reject") { state.dangerDecision = "rejected"; renderAll(); }
+      } else if (sheet === "demo-esc") {
+        if (act === "approve") { state.autoOutcome = "approved"; renderAll(); }
+        if (act === "reject") { state.autoOutcome = "rejected"; renderAll(); }
+      }
+      return;
+    }
+
+    const copyBtn = target.closest("[data-copy-text]");
+    if (copyBtn) {
+      const txt = copyBtn.dataset.copyText || "";
+      navigator.clipboard?.writeText(txt).catch(() => {});
+      copyBtn.classList.add("is-copied");
+      copyBtn.innerHTML = ICONS.check;
+      setTimeout(() => {
+        copyBtn.classList.remove("is-copied");
+        copyBtn.innerHTML = ICONS.copy;
+      }, 1500);
+      return;
+    }
+
+    if (state.popoverOpen && !target.closest("#auto-review-popover")) {
+      state.popoverOpen = false;
+      renderAll();
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.popoverOpen) {
+      state.popoverOpen = false;
+      renderAll();
+    }
+  });
+
+  renderAll();
+})();
+</script>
+</body>
+</html>

@@ -57,3 +57,37 @@
   color: var(--text);
   background: var(--surface-muted);
 }
+
+.approval-recovery-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0.75rem auto 0;
+  width: min(calc(100% - 3.5rem), var(--session-content-width));
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--status-warning) 28%, transparent);
+  border-radius: var(--radius);
+  padding: 0.55rem 0.85rem;
+  background: var(--status-warning-bg);
+  color: var(--status-warning);
+  font-size: var(--font-size-sidebar);
+  line-height: 1.4;
+}
+
+.approval-recovery-banner__main {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.approval-recovery-banner__icon {
+  flex: none;
+}
+
+.approval-recovery-message {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

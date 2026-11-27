@@ -337,6 +337,15 @@ class ContextUsageSnapshotDto(ClosedModel):
     updated_at: StrictInt = Field(default=0, alias="updatedAt", ge=0)
 
 
+class ApprovalReviewSummaryDto(ClosedModel):
+    source: Literal["model", "mode", "manual", "hook"]
+    decision: Literal["approve", "reject"]
+    reason_code: StrictStr = Field(alias="reasonCode", min_length=1, max_length=100)
+    rationale: StrictStr = Field(min_length=1, max_length=1500)
+    risk: Literal["low", "medium", "high", "critical", "unknown"]
+    duration_ms: StrictInt | None = Field(default=None, alias="durationMs", ge=0)
+
+
 class ToolCallDto(ClosedModel):
     id: StrictStr
     item_id: StrictStr = Field(alias="itemId")
@@ -355,6 +364,7 @@ class ToolCallDto(ClosedModel):
     approval_status: Literal["pending", "resolved", "canceled"] | None = Field(default=None, alias="approvalStatus")
     approval_decision: Literal["approve", "reject"] | None = Field(default=None, alias="approvalDecision")
     approval_feedback: StrictStr | None = Field(default=None, alias="approvalFeedback")
+    approval_review: ApprovalReviewSummaryDto | None = Field(default=None, alias="approvalReview")
     change_diff: StrictStr | None = Field(default=None, alias="changeDiff")
     change_diff_bytes: StrictInt | None = Field(default=None, alias="changeDiffBytes", ge=0)
     change_diff_hash: StrictStr | None = Field(default=None, alias="changeDiffHash", pattern=r"^[0-9a-f]{64}$")

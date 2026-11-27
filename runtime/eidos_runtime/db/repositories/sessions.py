@@ -1192,12 +1192,27 @@ class SessionRepository(Repository):
                     ).fetchall()
                 )
             tool_rows: list[sqlite3.Row] = []
+            reviews_by_item: dict[str, str] = {}
             if item_rows:
                 placeholders = ",".join("?" for _ in item_rows)
+                item_ids = [row["id"] for row in item_rows]
                 tool_rows = connection.execute(
                     f"SELECT * FROM tool_calls WHERE item_id IN ({placeholders})",
-                    [row["id"] for row in item_rows],
+                    item_ids,
                 ).fetchall()
+                review_rows = connection.execute(
+                    f"""
+                    SELECT item_id, review_json FROM approvals
+                    WHERE item_id IN ({placeholders}) AND review_json IS NOT NULL
+                    ORDER BY COALESCE(decided_at, created_at) ASC, id ASC
+                    """,
+                    item_ids,
+                ).fetchall()
+                reviews_by_item = {
+                    review_row["item_id"]: review_row["review_json"]
+                    for review_row in review_rows
+                    if isinstance(review_row["review_json"], str)
+                }
             through_event_id = connection.execute(
                 "SELECT COALESCE(MAX(id), 0) FROM events WHERE session_id = ?",
                 (session_id,),
@@ -1238,7 +1253,11 @@ class SessionRepository(Repository):
         selected_items: list[dict[str, object]] = []
         selected_bytes = _json_bytes(session) + _json_bytes(selected_runs) + 1024
         for row in item_rows[:item_limit]:
-            item = _snapshot_item(row, tools_by_item.get(row["id"]))
+            item = _snapshot_item(
+                row,
+                tools_by_item.get(row["id"]),
+                reviews_by_item.get(row["id"]),
+            )
             run = remaining_runs.get(row["run_id"])
             item_bytes = _json_bytes(item) + (_json_bytes(run) if run else 0)
             if selected_bytes + item_bytes > MAX_SNAPSHOT_BYTES:
