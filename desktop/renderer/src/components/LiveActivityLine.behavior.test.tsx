@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { LiveApprovalReview } from "../live-approval-review.js";
 import { LiveActivityLine } from "./LiveActivityLine.js";
 
 const thinking = { summaryId: "rs:0", title: "确认技能目录", receivedAt: 1, body: "先列出目录，再按名称匹配。", previous: ["上一步"] };
@@ -110,5 +111,50 @@ describe("LiveActivityLine", () => {
     expect(screen.getByRole("status")).toHaveTextContent("第一条");
     act(() => { vi.advanceTimersByTime(900); });
     expect(screen.getByRole("status")).toHaveTextContent("第三条");
+  });
+
+  it("updates auto-review shield stage text immediately without dwell and opens the 3-step progress popover", () => {
+    vi.useFakeTimers();
+    const baseReview: LiveApprovalReview = {
+      itemId: "item-1",
+      stage: "preparing",
+      stepIndex: 1,
+      totalSteps: 3,
+      actionTitle: "检查网络连通性（联网）",
+      preview: "curl -sS -I https://api.github.com",
+      startedAt: 100,
+      updatedAt: 100,
+    };
+
+    const { rerender, container } = render(
+      <LiveActivityLine
+        text="自动审批中 · 准备审查上下文"
+        iconKind="shield"
+        approvalReview={baseReview}
+      />,
+    );
+    expect(container.querySelector(".live-activity-step-count")).toBeNull();
+
+    rerender(
+      <LiveActivityLine
+        text="自动审批中 · 评估「检查网络连通性（联网）」"
+        iconKind="shield"
+        approvalReview={{ ...baseReview, stage: "evaluating", stepIndex: 2, attempt: 1, updatedAt: 150 }}
+      />,
+    );
+    // Shield progress updates synchronously without 1.2s dwell.
+    expect(screen.getByRole("status")).toHaveTextContent("自动审批中 · 评估「检查网络连通性（联网）」");
+    expect(container.querySelector(".live-activity-step-count")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /自动审批中/ }));
+    const dialog = screen.getByRole("dialog", { name: "自动审批进度" });
+    expect(dialog).toHaveTextContent("替我审批");
+    expect(dialog).toHaveTextContent("检查网络连通性（联网）");
+    expect(dialog).toHaveTextContent("curl -sS -I https://api.github.com");
+    const steps = dialog.querySelectorAll("li[data-state]");
+    expect(steps).toHaveLength(3);
+    expect(steps[0]).toHaveAttribute("data-state", "done");
+    expect(steps[1]).toHaveAttribute("data-state", "active");
+    expect(steps[2]).toHaveAttribute("data-state", "pending");
   });
 });

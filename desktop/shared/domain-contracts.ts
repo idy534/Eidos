@@ -381,6 +381,15 @@ export interface ToolContentChunk {
   sha256: string;
 }
 
+export interface ToolApprovalReview {
+  source: "model" | "mode" | "manual" | "hook";
+  decision: "approve" | "reject";
+  reasonCode: string;
+  rationale: string;
+  risk: "low" | "medium" | "high" | "critical" | "unknown";
+  durationMs?: number;
+}
+
 export interface ToolCall {
   id: string;
   itemId: string;
@@ -397,6 +406,7 @@ export interface ToolCall {
   approvalStatus?: "pending" | "resolved" | "canceled";
   approvalDecision?: "approve" | "reject";
   approvalFeedback?: string;
+  approvalReview?: ToolApprovalReview;
   changeDiff?: string;
   changeDiffBytes?: number;
   changeDiffHash?: string;
@@ -799,6 +809,25 @@ export interface RunThinkingParams {
   body?: string;
 }
 
+export type ApprovalReviewProgressStage =
+  | "preparing"
+  | "evaluating"
+  | "retrying"
+  | "deciding"
+  | "finished";
+
+export interface RunApprovalReviewProgressParams {
+  sessionId: string;
+  runId: string;
+  itemId: string;
+  stage: ApprovalReviewProgressStage;
+  stepIndex: number;
+  totalSteps: number;
+  actionTitle: string;
+  preview?: string;
+  attempt?: number;
+}
+
 export type RuntimeNotification =
   | { method: "goal/updated"; params: import("./goals.generated.js").GoalChangedNotice }
   | { method: "team/updated"; params: import("./teams.generated.js").TeamChangedNotice }
@@ -818,6 +847,8 @@ export type RuntimeNotification =
   | { method: "run/completed"; params: { sessionId: string; run: Run } }
   /** Live-only provider reasoning summary: not an Event, never stored or replayed. */
   | { method: "run/thinking"; params: RunThinkingParams }
+  /** Live-only auto-review step progress: not an Event, never stored or replayed. */
+  | { method: "run/approvalReviewProgress"; params: RunApprovalReviewProgressParams }
   | {
       method: "context/compacted";
       params: {

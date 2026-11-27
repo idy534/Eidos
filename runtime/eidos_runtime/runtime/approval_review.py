@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-from eidos_runtime.model.context_projection import model_result_json, text_preview
 import json
+import logging
 import threading
 import time
-from typing import Literal
+from typing import Callable, Literal
 
 from pydantic import Field, ValidationError
 
@@ -15,8 +15,11 @@ from eidos_runtime.model.client import (
     ModelClient,
     ModelRequestError,
 )
+from eidos_runtime.model.context_projection import model_result_json, text_preview
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.sandbox.sensitive import default_scanner
+
+logger = logging.getLogger("eidos.runtime")
 
 REVIEW_POLICY = """You are Eidos's independent approval reviewer. Assess the exact
 proposed action or permission grant. Your assessment does not execute the action
@@ -160,8 +163,25 @@ class RiskAssessment(EidosFrozenStrictModel):
     rationale: str = Field(min_length=1, max_length=400)
 
 
+def _notify_stage(
+    on_stage: Callable[[str, int], None] | None,
+    stage: str,
+    attempt: int,
+) -> None:
+    if on_stage is None:
+        return
+    try:
+        on_stage(stage, attempt)
+    except Exception:
+        logger.warning("Approval review stage callback failed", exc_info=True)
+
+
 def review_approval(
-    model: ModelClient, evidence: str, cancel: threading.Event
+    model: ModelClient,
+    evidence: str,
+    cancel: threading.Event,
+    *,
+    on_stage: Callable[[str, int], None] | None = None,
 ) -> ApprovalReview:
     evidence = model_result_json(evidence)
     started = time.monotonic()
@@ -187,7 +207,11 @@ def review_approval(
     # The provider client keeps its own connect/read timeouts and the user can
     # cancel. One more attempt covers a malformed or interrupted answer.
     for attempt in range(2):
-        review = _review_once(model, evidence, cancel, instructions, structured, metadata, started)
+        _notify_stage(on_stage, "retrying" if attempt else "evaluating", attempt + 1)
+        review = _review_once(
+            model, evidence, cancel, instructions, structured, metadata, started,
+            on_stage=on_stage, attempt=attempt + 1,
+        )
         if review.reason_code != "auto_review_failed" or cancel.is_set() or attempt:
             return review
     return review
@@ -196,6 +220,9 @@ def review_approval(
 def _review_once(
     model: ModelClient, evidence: str, cancel: threading.Event, instructions: str,
     structured: bool, metadata: dict[str, str], started: float,
+    *,
+    on_stage: Callable[[str, int], None] | None = None,
+    attempt: int = 1,
 ) -> ApprovalReview:
     output_bytes = 0
 
@@ -221,6 +248,7 @@ def _review_once(
             allow_tools=structured,
             tool_definitions=(definition,) if structured else (),
         )
+        _notify_stage(on_stage, "deciding", attempt)
         if len(response.text.encode()) > MAX_REVIEW_OUTPUT_BYTES:
             raise ValueError("invalid review response")
         if structured:

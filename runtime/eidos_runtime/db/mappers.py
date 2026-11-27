@@ -58,10 +58,46 @@ def _remote_model_id_from_profile(value: object) -> str | None:
     return None
 
 
+def _approval_review_summary(review_json: object) -> dict[str, object] | None:
+    parsed = _load_json_object(review_json)
+    if parsed is None:
+        return None
+    source = parsed.get("source")
+    decision = parsed.get("decision")
+    reason_code = parsed.get("reason_code")
+    rationale = parsed.get("rationale")
+    if (
+        source not in {"model", "mode", "manual", "hook"}
+        or decision not in {"approve", "reject"}
+        or not isinstance(reason_code, str)
+        or not (1 <= len(reason_code) <= 100)
+        or not isinstance(rationale, str)
+        or not (1 <= len(rationale) <= 1500)
+    ):
+        return None
+    risk = parsed.get("risk")
+    normalized_risk = (
+        risk if risk in {"low", "medium", "high", "critical", "unknown"} else "unknown"
+    )
+    summary: dict[str, object] = {
+        "source": source,
+        "decision": decision,
+        "reasonCode": reason_code,
+        "rationale": rationale,
+        "risk": normalized_risk,
+    }
+    duration_ms = parsed.get("duration_ms")
+    if isinstance(duration_ms, int) and not isinstance(duration_ms, bool) and duration_ms >= 0:
+        summary["durationMs"] = duration_ms
+    return summary
+
+
 def _snapshot_item(
-    row: sqlite3.Row, tool_row: sqlite3.Row | None
+    row: sqlite3.Row,
+    tool_row: sqlite3.Row | None,
+    approval_review_json: str | None = None,
 ) -> dict[str, object]:
-    item = project_tool_text(_item_from_row(row, tool_row))
+    item = project_tool_text(_item_from_row(row, tool_row, approval_review_json=approval_review_json))
     content = item.get("content")
     if isinstance(content, str):
         item["content"] = _truncate_snapshot_text(content)
@@ -335,7 +371,9 @@ def _model_attempt_from_row(row: sqlite3.Row) -> dict[str, object]:
     }
 
 def _item_from_row(
-    row: sqlite3.Row, tool_row: sqlite3.Row | None
+    row: sqlite3.Row,
+    tool_row: sqlite3.Row | None,
+    approval_review_json: str | None = None,
 ) -> dict[str, object]:
     item: dict[str, object] = {
         "id": row["id"],
@@ -389,6 +427,9 @@ def _item_from_row(
             tool_call["approvalDecision"] = tool_row["approval_decision"]
         if tool_row["approval_feedback"] is not None:
             tool_call["approvalFeedback"] = tool_row["approval_feedback"]
+        review_summary = _approval_review_summary(approval_review_json)
+        if review_summary is not None:
+            tool_call["approvalReview"] = review_summary
         if tool_row["approval_diff"] is not None:
             tool_call["changeDiff"] = tool_row["approval_diff"]
         if tool_row["base_sha256"] is not None:

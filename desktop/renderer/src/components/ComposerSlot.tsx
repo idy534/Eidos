@@ -24,26 +24,18 @@ export function ComposerSlot({
   children,
   ...props
 }: ComposerSlotProps) {
-  // 1. Waiting Approval has priority
-  if (run?.status === "waiting_approval" && run.approvalMode !== "full_access") {
-    if (!approval?.reviewFallback && !approval?.requiresHumanConfirmation && run.approvalMode === "auto_review") {
-      return (
-        <ApprovalStatusBanner
-          mode={run.approvalMode}
-          title="模型正在审查操作…"
-          hint="正在评估工具调用的安全性与潜在风险"
-        />
-      );
-    }
-    return approval
-      ? <ApprovalComposer {...props} run={run} approval={approval} autoFocus />
-      : (
-        <ApprovalStatusBanner
-          mode="manual"
-          title="正在恢复待批准请求…"
-          hint="正在同步审批详情与变更内容"
-        />
-      );
+  // 1. Only replace the Session composer when human approval is loaded and genuinely required.
+  //    Normal auto_review and approval syncing keep their live status inside the feed.
+  const needsHumanApproval = run?.status === "waiting_approval"
+    && run.approvalMode !== "full_access"
+    && Boolean(approval)
+    && (
+      run.approvalMode !== "auto_review"
+      || Boolean(approval?.reviewFallback)
+      || Boolean(approval?.requiresHumanConfirmation)
+    );
+  if (needsHumanApproval && run && approval) {
+    return <ApprovalComposer {...props} run={run} approval={approval} autoFocus />;
   }
 
   // 2. Pending user input replaces the ordinary composer.
@@ -72,54 +64,6 @@ export function ComposerSlot({
 
   // 4. Default normal Composer
   return children;
-}
-
-function ApprovalStatusBanner({
-  mode,
-  title,
-  hint,
-}: {
-  mode: "auto_review" | "full_access" | "manual";
-  title: string;
-  hint: string;
-}) {
-  const isDanger = mode === "full_access";
-  return (
-    <div
-      role="status"
-      className={`approval-status-banner${isDanger ? " approval-status-banner--danger" : ""}`}
-    >
-      <div className="approval-status-banner__main">
-        <div className="approval-status-banner__icon-wrap">
-          <svg
-            className="approval-status-banner__spinner"
-            viewBox="0 0 16 16"
-            width="14"
-            height="14"
-            fill="none"
-            aria-hidden="true"
-          >
-            <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1.8" />
-            <path
-              d="M8 2.5C11.0376 2.5 13.5 4.96243 13.5 8"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-            />
-          </svg>
-        </div>
-        <div className="approval-status-banner__content">
-          <span className="approval-status-banner__title">{title}</span>
-          <span className="approval-status-banner__hint">{hint}</span>
-        </div>
-      </div>
-      <div className="approval-status-banner__badge">
-        {mode === "auto_review" && <span>替我审批</span>}
-        {mode === "full_access" && <span>完全访问</span>}
-        {mode === "manual" && <span>请求审批</span>}
-      </div>
-    </div>
-  );
 }
 
 function ClarificationStatusBanner({

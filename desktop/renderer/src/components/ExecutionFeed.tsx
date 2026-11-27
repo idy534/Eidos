@@ -27,6 +27,7 @@ import { InlineRichEditor } from "./InlineRichEditor.js";
 import { ToolTextView } from "./ToolTextView.js";
 import { LiveActivityLine } from "./LiveActivityLine.js";
 import type { LiveThinking, LiveThinkingMap } from "../live-thinking.js";
+import type { LiveApprovalReview, LiveApprovalReviewMap } from "../live-approval-review.js";
 import { BrowserToolBody, McpPluginNamesContext, McpToolBody, browserPageHost, mcpToolTitle, toolAttachments, useToolContentPreview } from "./McpToolDetails.js";
 import { ImageLightbox, type LightboxImage } from "./ImageLightbox.js";
 import { toolFilePaths } from "./ResultFiles.js";
@@ -52,6 +53,7 @@ import type {
   ResponseFeedbackValue,
   Run,
   SessionCheckpoint,
+  ToolApprovalReview,
   ToolCall,
 } from "../contracts.js";
 import { parseStructuredReviewFindings, type StructuredReviewFinding } from "./review-findings.js";
@@ -113,6 +115,8 @@ interface Props {
   goalActivities?: readonly GoalActivity[] | undefined;
   /** Live-only reasoning summaries by Run id; absent entries fall back to the current action. */
   liveThinking?: LiveThinkingMap | undefined;
+  /** Live-only auto-review progress by Run id. */
+  liveApprovalReview?: LiveApprovalReviewMap | undefined;
   onOpenModelSettings?: (() => void) | undefined;
   items: Item[];
   resultItems?: Item[];
@@ -200,6 +204,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   modelRetries = EMPTY_RETRIES,
   goalActivities = EMPTY_GOAL_ACTIVITIES,
   liveThinking,
+  liveApprovalReview,
   onOpenModelSettings,
   items,
   resultItems = items,
@@ -477,6 +482,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
                     isSearchTarget={searchTarget?.itemId === segment.user?.id}
                     searchItemId={searchTarget?.itemId}
                     thinking={liveThinking?.[runId]}
+                    approvalReview={liveApprovalReview?.[runId]}
                   />
                 ))}
                 <RunNotice run={run} retry={runRetries.at(-1)} onOpenModelSettings={onOpenModelSettings} />
@@ -534,6 +540,7 @@ const RunSegment = memo(function RunSegment({
   isSearchTarget = false,
   searchItemId,
   thinking,
+  approvalReview,
 }: {
   segment: Segment;
   run: Run;
@@ -567,6 +574,7 @@ const RunSegment = memo(function RunSegment({
   isSearchTarget?: boolean | undefined;
   searchItemId?: string | undefined;
   thinking?: LiveThinking | undefined;
+  approvalReview?: LiveApprovalReview | undefined;
 }) {
   const mcpNames = useContext(McpPluginNamesContext);
   const searchQueries = useContext(SearchTextQueriesContext);
@@ -578,24 +586,40 @@ const RunSegment = memo(function RunSegment({
     const data = objectField(parseObject(item.toolCall.resultJson), "data");
     return item.status === "failed" && !stringField(data, "executionStatus");
   });
-  // One live line ends a running Run. Approval, question and sub-agent waits,
-  // retries and compaction already show their own state, and streamed final
-  // text is itself the activity.
+  // One live line ends a running Run (or an auto-review / approval-sync wait).
+  // Human approval cards, question prompts, sub-agent waits, retries, compaction,
+  // and streamed final text already carry their own visible status.
+  const runPendingApproval = approvals.find((request) => request.runId === run.id);
+  const isHumanApprovalReady = run.status === "waiting_approval"
+    && run.approvalMode !== "full_access"
+    && Boolean(runPendingApproval)
+    && (
+      run.approvalMode !== "auto_review"
+      || Boolean(runPendingApproval?.reviewFallback)
+      || Boolean(runPendingApproval?.requiresHumanConfirmation)
+    );
+  const isAutoReviewing = run.status === "waiting_approval"
+    && run.approvalMode === "auto_review"
+    && !isHumanApprovalReady;
+  const isSyncingApproval = run.status === "waiting_approval"
+    && run.approvalMode !== "full_access"
+    && run.approvalMode !== "auto_review"
+    && !runPendingApproval;
   const stageBusy = segment.retries.at(-1)?.status === "waiting"
     || segment.retries.at(-1)?.status === "requesting"
     || segment.process.some((entry) => entry.kind === "compaction" && entry.activity.status === "running");
   const showLive = isLast
-    && LIVE_RUN_STATUSES.has(run.status)
+    && (LIVE_RUN_STATUSES.has(run.status) || isAutoReviewing || isSyncingApproval)
     && segment.response.length === 0
     && !stageBusy;
   const processNodes = groupProcessEntries(visibleProcess);
   // A standalone tool row already names and animates its own action, so the live
   // line only repeats a tool that is hidden inside a collapsed group.
-  const groupedActiveTool = showLive
+  const groupedActiveTool = showLive && !isAutoReviewing && !isSyncingApproval
     ? processNodes.flatMap((node) => (node.kind === "tools" || node.kind === "images" ? node.items : []))
       .reverse().find((item) => !item.inherited && item.status === "in_progress")
     : undefined;
-  const standaloneToolRunning = showLive && !groupedActiveTool && processNodes.some((node) => (
+  const standaloneToolRunning = showLive && !isAutoReviewing && !isSyncingApproval && !groupedActiveTool && processNodes.some((node) => (
     node.kind === "item" && isToolEntryItem(node.item) && !node.item.inherited && node.item.status === "in_progress"
   ));
   // A tool finishing after the summary arrived means the model has moved on; the
@@ -604,10 +628,15 @@ const RunSegment = memo(function RunSegment({
     entry.kind === "item" && isToolEntryItem(entry.item) && entry.item.status !== "in_progress"
     && entry.item.completedAt !== undefined && entry.item.completedAt > thinking.receivedAt
   )) ? thinking : undefined;
-  const liveText = currentThinking?.title
-    ?? (groupedActiveTool?.toolCall ? activeToolText(groupedActiveTool.toolCall, agents, mcpNames, false, searchQueries) : undefined)
-    ?? (standaloneToolRunning ? "正在执行" : undefined)
-    ?? (run.status === "finalizing" ? "正在整理回复" : "正在思考");
+  const liveIconKind: "mark" | "shield" = isAutoReviewing || isSyncingApproval ? "shield" : "mark";
+  const liveText = isAutoReviewing
+    ? autoReviewStageText(approvalReview)
+    : isSyncingApproval
+      ? "正在同步待审批请求…"
+      : currentThinking?.title
+        ?? (groupedActiveTool?.toolCall ? activeToolText(groupedActiveTool.toolCall, agents, mcpNames, false, searchQueries) : undefined)
+        ?? (standaloneToolRunning ? "正在执行" : undefined)
+        ?? (run.status === "finalizing" ? "正在整理回复" : "正在思考");
 
   return (
     <>
@@ -667,7 +696,14 @@ const RunSegment = memo(function RunSegment({
           })}
         </ProcessGroup>
       )}
-      {showLive && <LiveActivityLine text={liveText} thinking={currentThinking} />}
+      {showLive && (
+        <LiveActivityLine
+          text={liveText}
+          thinking={isAutoReviewing || isSyncingApproval ? undefined : currentThinking}
+          iconKind={liveIconKind}
+          approvalReview={isAutoReviewing ? approvalReview : undefined}
+        />
+      )}
       {segment.response.map((item, index) => {
         if (item.toolCall?.toolName === "write_plan") {
           return (
@@ -1910,21 +1946,185 @@ const ProcessItem = memo(function ProcessItem({
     return item.status === "failed" ? <p className="shell-error-summary">命令跟进失败 · {stringField(parseObject(item.toolCall.resultJson), "code") || "暂时无法读取命令状态"}</p> : null;
   }
 
-  const toolItem = item.toolCall.toolName === "run_shell"
-    ? <ShellItem item={item} toolCall={item.toolCall} waitingApproval={Boolean(approval)} />
-    : <ToolItem item={item} toolCall={item.toolCall} onOpenFile={onOpenFile} onOpenHistoryMatch={onOpenHistoryMatch} agents={agents} onOpenSubagent={onOpenSubagent} />;
+  const isFullAccess = run.approvalMode === "full_access";
+  const badge = approvalInlineBadge(item.toolCall, run, approval);
+  const autoApprovedAuditNote = !isFullAccess && isAutoApprovedToolCall(item.toolCall, run)
+    ? formatAutoApprovedAuditNote(item.toolCall.approvalReview)
+    : undefined;
 
-  if (approval && run.approvalMode !== "full_access") {
-    return <><p className="feed-label">需要批准 · {{ file_change: "文件变更", command_execution: "Shell 命令", network_access: "网络访问", external_tool: "MCP 工具", browser_access: "浏览器", permission_request: "权限申请" }[approval.kind]} · <span>{approval.summary}</span></p>{toolItem}</>;
-  }
-  if (item.toolCall.approvalDecision && run.approvalMode !== "full_access") {
-    return <div>{item.toolCall.toolName !== "request_permissions" && <p className="feed-label">{run.approvalMode === "auto_review" ? "审批 · " : ""}{item.toolCall.approvalDecision === "approve" ? "已批准" : "已拒绝"} · {item.toolCall.toolName}</p>}
-      {item.toolCall.approvalFeedback && <p className="feed-label">{item.toolCall.approvalFeedback}</p>}
-      {toolItem}</div>;
+  const toolItem = item.toolCall.toolName === "run_shell"
+    ? (
+      <ShellItem
+        item={item}
+        toolCall={item.toolCall}
+        waitingApproval={Boolean(approval)}
+        approvalBadge={badge}
+        autoApprovedAuditNote={autoApprovedAuditNote}
+      />
+    )
+    : (
+      <ToolItem
+        item={item}
+        toolCall={item.toolCall}
+        approvalBadge={badge}
+        onOpenFile={onOpenFile}
+        onOpenHistoryMatch={onOpenHistoryMatch}
+        agents={agents}
+        onOpenSubagent={onOpenSubagent}
+      />
+    );
+
+  if (!approval && item.toolCall.approvalDecision === "reject" && !isFullAccess) {
+    return <ApprovalOutcomeItem toolCall={item.toolCall} run={run} toolItem={toolItem} />;
   }
 
   return toolItem;
 });
+
+interface ApprovalInlineBadgeData {
+  label: string;
+  tone: "success" | "warning" | "danger" | "neutral";
+  title?: string | undefined;
+}
+
+const INCOMPLETE_AUTO_REVIEW_REASON_CODES = new Set([
+  "auto_review_failed",
+  "auto_review_timeout",
+  "auto_review_unavailable",
+  "auto_review_input_too_large",
+  "auto_review_interrupted",
+  "auto_review_unresolved",
+]);
+
+const MODEL_APPROVAL_GUIDANCE_PATTERNS = [
+  /\s*You may retry the same action, or use an approach that needs no approval\.\s*$/i,
+  /\s*Split the action into smaller steps\.\s*$/i,
+  /\s*Supply the missing evidence in the justification or narrow the action, then retry\.(?:\s*If the review still cannot decide, the user will be asked\.)?\s*$/i,
+  /\s*Do not retry the same action or circumvent this refusal\.(?:\s*Choose a materially safer alternative or explain the blocker\.)?\s*$/i,
+  /\s*Do not repeat the same rejected action[\s\S]*$/i,
+  /\s*Ask the user before trying again\.\s*$/i,
+  /^User rejected this approval\.\s*Do not repeat this rejected request;\s*choose a different action or explain what remains blocked\.\s*$/i,
+  /\s*Do not repeat this rejected request;\s*choose a different action or explain what remains blocked\.\s*$/i,
+];
+
+function autoReviewStageText(review: LiveApprovalReview | undefined): string {
+  if (!review) return "正在自动审批…";
+  switch (review.stage) {
+    case "preparing":
+      return "自动审批中 · 准备审查上下文";
+    case "evaluating":
+      return review.actionTitle
+        ? `自动审批中 · 评估「${review.actionTitle}」`
+        : "自动审批中 · 评估操作风险";
+    case "retrying":
+      return "自动审批中 · 重试安全评估";
+    case "deciding":
+      return "自动审批中 · 生成审批结论";
+  }
+}
+
+function cleanApprovalRationale(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  let text = raw.trim();
+  for (const pattern of MODEL_APPROVAL_GUIDANCE_PATTERNS) {
+    text = text.replace(pattern, "").trim();
+  }
+  return text || undefined;
+}
+
+function isAutoApprovedToolCall(toolCall: ToolCall, run: Run): boolean {
+  if (toolCall.approvalDecision !== "approve") return false;
+  if (toolCall.approvalReview) {
+    return toolCall.approvalReview.source === "model";
+  }
+  return run.approvalMode === "auto_review";
+}
+
+function formatAutoApprovedAuditNote(review: ToolApprovalReview | undefined): string {
+  if (review?.durationMs !== undefined && review.durationMs > 0) {
+    const duration = review.durationMs >= 1000
+      ? `${(review.durationMs / 1000).toFixed(1)}s`
+      : `${review.durationMs}ms`;
+    return `自动审批通过 · ${duration}`;
+  }
+  return "自动审批通过";
+}
+
+function approvalInlineBadge(
+  toolCall: ToolCall,
+  run: Run,
+  approval: ApprovalRequest | undefined,
+): ApprovalInlineBadgeData | undefined {
+  if (run.approvalMode === "full_access") return undefined;
+  if (approval) {
+    return {
+      label: approval.requiresHumanConfirmation ? "待确认" : "待批准",
+      tone: "warning",
+      title: approval.summary,
+    };
+  }
+  if (toolCall.approvalDecision === "approve") {
+    if (toolCall.toolName === "request_permissions") return undefined;
+    if (isAutoApprovedToolCall(toolCall, run)) return undefined;
+    const label = toolCall.approvalReview?.reasonCode === "manual_dangerous_approved"
+      ? "✓ 已确认"
+      : "✓ 已批准";
+    return { label, tone: "success" };
+  }
+  return undefined;
+}
+
+function ApprovalOutcomeItem({
+  toolCall,
+  run,
+  toolItem,
+}: {
+  toolCall: ToolCall;
+  run: Run;
+  toolItem: ReactNode;
+}) {
+  const review = toolCall.approvalReview;
+  const reasonCode = review?.reasonCode ?? "";
+  const isIncomplete = INCOMPLETE_AUTO_REVIEW_REASON_CODES.has(reasonCode);
+  const isAutoReview = review
+    ? (review.source === "model" || reasonCode.startsWith("auto_review_"))
+    : run.approvalMode === "auto_review";
+  const tone = isIncomplete ? "warning" : "rejected";
+  const title = isIncomplete
+    ? "自动审批未完成"
+    : isAutoReview
+      ? "自动审批未通过"
+      : "已拒绝审批";
+  const rationale = cleanApprovalRationale(review?.rationale)
+    ?? cleanApprovalRationale(toolCall.approvalFeedback);
+
+  return (
+    <div className={`approval-outcome approval-outcome--${tone}`}>
+      <div className="approval-outcome-head">
+        <span className="approval-outcome-icon" aria-hidden="true">
+          {tone === "warning" ? (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              <line x1="9.5" y1="9.5" x2="14.5" y2="14.5" />
+              <line x1="14.5" y1="9.5" x2="9.5" y2="14.5" />
+            </svg>
+          )}
+        </span>
+        <span className="approval-outcome-title">{title}</span>
+      </div>
+      <div className="approval-outcome-rail">
+        {rationale && <p className="approval-outcome-reason">{rationale}</p>}
+        {toolItem}
+      </div>
+    </div>
+  );
+}
 
 
 export interface ShellOutputSegment {
@@ -2019,10 +2219,18 @@ function useShellCommandHighlight(command: string, enabled: boolean): string | u
   return command ? (shellCommandHighlightCache.get(command) ?? highlightedHtml) : undefined;
 }
 
-const ShellItem = memo(function ShellItem({ item, toolCall, waitingApproval }: {
+const ShellItem = memo(function ShellItem({
+  item,
+  toolCall,
+  waitingApproval,
+  approvalBadge,
+  autoApprovedAuditNote,
+}: {
   item: Item;
   toolCall: ToolCall;
   waitingApproval: boolean;
+  approvalBadge?: ApprovalInlineBadgeData | undefined;
+  autoApprovedAuditNote?: string | undefined;
 }) {
   const args = useMemo(() => parseObject(toolCall.argumentsJson), [toolCall.argumentsJson]);
   const result = useMemo(() => parseObject(toolCall.resultJson), [toolCall.resultJson]);
@@ -2114,6 +2322,14 @@ const ShellItem = memo(function ShellItem({ item, toolCall, waitingApproval }: {
           <ShellIcon />
         </span>
         <span>{intent ? `${intentStatus} · ${intent}` : shellSummary(running ? "in_progress" : item.status, command)}</span>
+        {approvalBadge && (
+          <span
+            className={`approval-inline-badge approval-inline-badge--${approvalBadge.tone}`}
+            title={approvalBadge.title}
+          >
+            {approvalBadge.label}
+          </span>
+        )}
       </summary>
       {details.mounted && <div className="shell-result">
         <div className="shell-command-zone">
@@ -2149,6 +2365,9 @@ const ShellItem = memo(function ShellItem({ item, toolCall, waitingApproval }: {
         {!hasOutput && running && <p className="shell-empty">尚未输出</p>}
         {!hasOutput && !running && !pendingVerification && (success || (!showErrorCode && !showErrorSummary)) && <p className="shell-empty">无输出</p>}
         <p className={`shell-status shell-status--${statusTone}`}>
+          {autoApprovedAuditNote && (
+            <span className="shell-status-audit">{autoApprovedAuditNote}</span>
+          )}
           {showExitCode && (
             <span className="shell-exit-code-pill">
               退出码 {exitCode}
@@ -3197,6 +3416,7 @@ function SkillReadToolItem({
 const ToolItem = memo(function ToolItem({
   item,
   toolCall,
+  approvalBadge,
   onOpenFile,
   onOpenHistoryMatch,
   agents,
@@ -3204,6 +3424,7 @@ const ToolItem = memo(function ToolItem({
 }: {
   item: Item;
   toolCall: ToolCall;
+  approvalBadge?: ApprovalInlineBadgeData | undefined;
   onOpenFile?: ((path: string, position?: WorkspaceFilePosition) => void) | undefined;
   onOpenHistoryMatch?: ((target: { sessionId: string; itemId?: string | undefined; query?: string | undefined }) => void) | undefined;
   agents?: AgentSummary[] | undefined;
@@ -3469,6 +3690,14 @@ const ToolItem = memo(function ToolItem({
           {toolIcon(toolCall.toolName)}
         </span>
         <span>{summaryText}</span>
+        {approvalBadge && (
+          <span
+            className={`approval-inline-badge approval-inline-badge--${approvalBadge.tone}`}
+            title={approvalBadge.title}
+          >
+            {approvalBadge.label}
+          </span>
+        )}
       </div>
     );
   }
@@ -3492,6 +3721,14 @@ const ToolItem = memo(function ToolItem({
       <summary>
         <span className="tool-icon" aria-hidden="true">{toolIcon(toolCall.toolName, toolCall.argumentsJson, toolCall.resultJson)}</span>
         <span>{toolSummary(toolCall, item.status, agents, mcpNames, searchQueries)}</span>
+        {approvalBadge && (
+          <span
+            className={`approval-inline-badge approval-inline-badge--${approvalBadge.tone}`}
+            title={approvalBadge.title}
+          >
+            {approvalBadge.label}
+          </span>
+        )}
       </summary>
       {details.mounted && <div className="tool-body">
         {isViewImage ? (
@@ -3722,7 +3959,6 @@ function activeRunPresentation(run: Run) {
   switch (run.status) {
     case "waiting_agents": return { label: "等待子任务", tone: "warning" as const };
     case "waiting_input": return { label: "等待回答", tone: "warning" as const };
-    case "waiting_approval": return { label: "等待批准", tone: "warning" as const };
     default: return undefined;
   }
 }

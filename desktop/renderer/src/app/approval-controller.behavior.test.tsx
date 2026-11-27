@@ -289,7 +289,7 @@ describe("useApprovalController real behavior", () => {
     }
 
     render(<Harness />);
-    expect(screen.getByText(mockApprovalA.summary)).toBeInTheDocument();
+    expect(screen.getByTitle(mockApprovalA.summary)).toBeInTheDocument();
     expect(listPendingApprovals).toHaveBeenCalledTimes(1);
 
     await act(async () => {
@@ -299,9 +299,10 @@ describe("useApprovalController real behavior", () => {
     const banner = screen.getByRole("alert");
     expect(banner).toHaveTextContent("审批状态加载失败");
     expect(banner).not.toHaveTextContent("raw pending failure");
-    expect(screen.getByText(mockApprovalA.summary)).toBeInTheDocument();
+    expect(screen.getByTitle(mockApprovalA.summary)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重试加载审批" })).toBeInTheDocument();
-    expect(screen.getByText("等待批准")).toBeInTheDocument();
+    expect(screen.getByText("待批准")).toBeInTheDocument();
+    expect(screen.queryByText("等待批准")).not.toBeInTheDocument();
 
     const retry = screen.getByRole("button", { name: "重试加载审批" });
     fireEvent.click(retry);
@@ -309,14 +310,14 @@ describe("useApprovalController real behavior", () => {
     expect(listPendingApprovals).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("button", { name: "重试加载审批" })).toBeDisabled();
     expect(screen.getByText("加载中…")).toBeInTheDocument();
-    expect(screen.getByText(mockApprovalA.summary)).toBeInTheDocument();
+    expect(screen.getByTitle(mockApprovalA.summary)).toBeInTheDocument();
 
     await act(async () => {
       resolveRetry([mockApprovalB]);
       await Promise.resolve();
     });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.queryByText(mockApprovalA.summary)).not.toBeInTheDocument();
-    expect(screen.getByText(mockApprovalB.summary)).toBeInTheDocument();
+    expect(screen.queryByTitle(mockApprovalA.summary)).not.toBeInTheDocument();
+    expect(screen.getByTitle(mockApprovalB.summary)).toBeInTheDocument();
   });
 });

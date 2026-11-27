@@ -38,26 +38,8 @@ describe("Approval composer slot", () => {
     expect(screen.queryByRole('textbox')).toBeNull();
   });
 
-  it.each([
-    ["auto_review", "模型正在审查操作…"],
-  ] as const)("does not show manual buttons while %s is resolving", (approvalMode, message) => {
-    render(
-      <ComposerSlot
-        run={{ ...run, approvalMode }}
-        approval={approval}
-        onApprove={vi.fn()}
-        onReject={vi.fn()}
-      >
-        <textarea aria-label="message" />
-      </ComposerSlot>,
-    );
-    expect(screen.getByRole("status")).toHaveTextContent(message);
-    expect(screen.queryByRole("button", { name: "批准" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "拒绝" })).toBeNull();
-  });
-
-  it("renders the redesigned status banner with spinner, title, hint, and badge", () => {
-    render(
+  it("keeps the session composer visible while auto_review or syncing runs without fallback", () => {
+    const view = render(
       <ComposerSlot
         run={{ ...run, approvalMode: "auto_review" }}
         approval={approval}
@@ -67,12 +49,10 @@ describe("Approval composer slot", () => {
         <textarea aria-label="message" />
       </ComposerSlot>,
     );
-    const statusBanner = screen.getByRole("status");
-    expect(statusBanner).toHaveClass("approval-status-banner");
-    expect(statusBanner).toHaveTextContent("模型正在审查操作…");
-    expect(statusBanner).toHaveTextContent("正在评估工具调用的安全性与潜在风险");
-    expect(statusBanner).toHaveTextContent("替我审批");
-    expect(statusBanner.querySelector(".approval-status-banner__spinner")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "message" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "批准" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "拒绝" })).toBeNull();
+    expect(view.container.querySelector(".approval-status-banner")).toBeNull();
   });
 
   it("presents dangerous requests to the user in auto_review mode", () => {
@@ -132,10 +112,16 @@ it.each([
   { ...approval, kind: "network_access", toolName: "fetch", hosts: ["example.com"], target: "example.com" },
   { ...approval, kind: "external_tool", toolName: "mcp", arguments: {}, provenance: { kind: "mcp", sourceId: "x", sourceVersion: "1", contentHash: "h" }, permissionProfile: "connector", timeoutSeconds: 30, envNames: [] },
   { ...approval, kind: "permission_request", grantScope: "run", permissions: { network: { enabled: true } } },
-] as ApprovalRequest[])("renders $kind in the same composer", (request) => {
+] as ApprovalRequest[])("renders $kind in the same composer without redundant labels or button keycaps", (request) => {
   render(<ComposerSlot run={run} approval={request} onApprove={vi.fn()} onReject={vi.fn()}><textarea /></ComposerSlot>);
   expect(screen.queryByRole("textbox")).toBeNull();
-  expect(screen.getAllByRole("button")).toHaveLength(2);
+  const buttons = screen.getAllByRole("button");
+  expect(buttons).toHaveLength(3);
+  for (const button of buttons) {
+    expect(button.querySelector("kbd")).toBeNull();
+  }
+  expect(screen.queryByText("需要你的批准")).toBeNull();
+  expect(screen.queryByText("核对命令及授权范围后再行决定")).toBeNull();
 });
 
 describe("Browser approvals", () => {
