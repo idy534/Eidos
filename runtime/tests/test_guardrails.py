@@ -187,7 +187,7 @@ def test_guardrails_schema_migration_and_rollback(tmp_path):
     reopened = SessionStore(tmp_path / "migrate-data")
     reopened.initialize()
     try:
-        assert reopened.connection.execute("PRAGMA user_version").fetchone()[0] == 57
+        assert reopened.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         tables = {
             row[0]
             for row in reopened.connection.execute(

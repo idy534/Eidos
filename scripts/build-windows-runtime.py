@@ -24,6 +24,8 @@ RIPGREP_ARCHIVE = f"ripgrep-{RIPGREP_VERSION}-x86_64-pc-windows-msvc"
 RIPGREP_URL = f"https://github.com/BurntSushi/ripgrep/releases/download/{RIPGREP_VERSION}/{RIPGREP_ARCHIVE}.zip"
 GIT_URL = f"https://github.com/git-for-windows/git/releases/download/v{GIT_VERSION}.windows.1/MinGit-{GIT_VERSION}-64-bit.zip"
 RESOURCE_INPUTS = ROOT / "resources/runtime-dependencies"
+SANDBOX_TARGET = "x86_64-pc-windows-msvc"
+SANDBOX_EXECUTABLE = "eidos-sandbox-win.exe"
 CRT_SHA256 = "4aaf54db0bfc9435f7c3660e1a00237a4b556042bfeea64bde44c2e0194e6ee5"
 # Microsoft.VC.14.44.17.14.CRT.Redist.X64.base 14.44.35211 from the VS 2022 release channel.
 CRT_URL = (
@@ -32,8 +34,8 @@ CRT_URL = (
 )
 
 
-def _run(*args: str | Path, env: dict[str, str] | None = None) -> None:
-    subprocess.run([str(arg) for arg in args], cwd=ROOT, env=env, check=True)
+def _run(*args: str | Path, env: dict[str, str] | None = None, cwd: Path = ROOT) -> None:
+    subprocess.run([str(arg) for arg in args], cwd=cwd, env=env, check=True)
 
 
 def _download(url: str, destination: Path, expected_bytes: int | None, expected_digest: str) -> None:
@@ -106,6 +108,26 @@ def _runtime_environment(app: Path) -> dict[str, str]:
         "OTEL_SDK_DISABLED": "true",
     })
     return environment
+
+
+def _install_windows_sandbox(stage: Path) -> None:
+    crate = ROOT / "native/windows-sandbox"
+    manifest = crate / "Cargo.toml"
+    target_dir = ROOT / "build/windows-sandbox-target"
+    environment = {
+        key: value for key, value in os.environ.items()
+        if not key.upper().startswith("MXC_TELEMETRY_")
+    }
+    # An explicit empty value disables SDK event routing at compile time.
+    environment["MXC_TELEMETRY_COMPONENT_PATH"] = ""
+    _run("cargo", "build", "--locked", "--release", "--manifest-path", manifest,
+         "--target", SANDBOX_TARGET, "--target-dir", target_dir, "--bin", "eidos-sandbox-win",
+         cwd=crate, env=environment)
+    destination = stage / "app/eidos_runtime/resources/bin/windows-sandbox"
+    destination.mkdir(parents=True)
+    shutil.copyfile(target_dir / SANDBOX_TARGET / "release" / SANDBOX_EXECUTABLE,
+                    destination / SANDBOX_EXECUTABLE)
+    shutil.copyfile(crate / "LICENSE-MXC.md", destination / "LICENSE-MXC.md")
 
 
 def _install_node_resources(dependencies: Path, scratch: Path, system_root: Path) -> None:
@@ -259,6 +281,7 @@ def main() -> None:
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"),
         )
         _install_tools(stage, scratch)
+        _install_windows_sandbox(stage)
         _install_managed_resources(stage, python, scratch)
         _verify_runtime(python, app, scratch)
         if target.exists() or target.is_symlink():

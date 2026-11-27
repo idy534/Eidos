@@ -21,6 +21,7 @@ from eidos_runtime.persistence.errors import (
     PersistenceCorruptionError,
 )
 from eidos_runtime.sandbox.permissions import AdditionalPermissionProfile
+from eidos_runtime.workspace.recorded_identity import same_recorded_directory
 
 
 CONTROL_SCOPE = "long_task/control"
@@ -391,7 +392,9 @@ class ResumeVerifier:
         checkpoint_integrity_valid: bool = True,
     ) -> ResumeVerification:
         reasons: list[str] = []
-        if expected_workspace != current_workspace:
+        if expected_workspace[0] != current_workspace[0] or not same_recorded_directory(
+            expected_workspace[1:], current_workspace[1:]
+        ):
             reasons.append("workspace_identity_changed")
         if expected_git_head != current_git_head:
             reasons.append("git_head_changed")

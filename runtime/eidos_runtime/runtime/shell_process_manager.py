@@ -15,6 +15,7 @@ import uuid
 import logging
 
 from eidos_runtime.infrastructure import host_processes
+from eidos_runtime.infrastructure.mxc_status import MxcProcessStatus
 from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
     RuntimeResource,
@@ -30,6 +31,8 @@ from eidos_runtime.sandbox.shell import (
     ShellProcessStartError,
     _process_group_exists,
     _terminate_group,
+    apply_mxc_status,
+    mxc_process_status,
 )
 from eidos_runtime.sandbox.sensitive import SensitiveScanner, StreamingSensitiveScanner, SensitiveScanError
 from eidos_runtime.runtime.shell_output_buffer import ShellOutputBuffer
@@ -71,6 +74,7 @@ class ShellProcessSession:
     columns: int | None = None
     rows: int | None = None
     exit_code: int | None = None
+    mxc_status: MxcProcessStatus | None = None
     execution_status: str = "running"
     termination: str = "running"
     drain_error: str | None = None
@@ -284,7 +288,9 @@ class ShellProcessManager:
                     if on_input is not None:
                         on_input()
                     try:
-                        if host_processes.WINDOWS:
+                        if session.launch.mxc is not None:
+                            self._terminate(session)
+                        elif host_processes.WINDOWS:
                             _terminate_owned_process(session)
                         else:
                             os.killpg(session.process_group_id, signal.SIGINT)
@@ -504,7 +510,7 @@ class ShellProcessManager:
                 data.update(columns=session.columns, rows=session.rows)
             if background:
                 data.update(backgroundProcesses=True, leaderExitCode=session.exit_code)
-            return {
+            result = {
                 "schemaVersion": 1,
                 "toolName": tool_name,
                 "outcome": "success"
@@ -533,6 +539,7 @@ class ShellProcessManager:
                     session.drain_error in {"output_persistence_failed", "process_termination_failed"}
                 ) or (not running and session.exit_code is None),
             }
+            return apply_mxc_status(result, session.mxc_status) if not running else result
 
     def _wait_until_exit(
         self,
@@ -653,7 +660,7 @@ class ShellProcessManager:
                                 session.termination = "exit"
                     if _owned_process_exists(session):
                         with session.lock:
-                            adopted = session.termination == "exit"
+                            adopted = session.termination == "exit" and session.launch.mxc is None
                         if adopted:
                             # Background processes started by the command stay
                             # owned by this session. The result stays open until
@@ -716,6 +723,9 @@ class ShellProcessManager:
                     buffer.finished = True
             selector.close()
             session.stop.set()
+            session.mxc_status = mxc_process_status(session.process)
+            if session.mxc_status is not None and _owned_process_exists(session):
+                session.mxc_status = MxcProcessStatus()
             self._close_pipes(session)
             with session.lock:
                 if session.exit_code is None:

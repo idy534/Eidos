@@ -21,6 +21,7 @@ from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedMod
 from eidos_runtime.context.builder import ContextBuilder  # noqa: E402
 from eidos_runtime.extensions.skills import SkillCatalog  # noqa: E402
 from eidos_runtime.sandbox.seatbelt import SeatbeltSelfTestResult  # noqa: E402
+from eidos_runtime.sandbox.windows_mxc import MxcSelfTestResult  # noqa: E402
 from eidos_runtime.sandbox.sensitive import SensitiveScanner  # noqa: E402
 from eidos_runtime.protocol.server import (  # noqa: E402
     RuntimeServer,
@@ -476,7 +477,7 @@ class RuntimeProtocolTests(unittest.TestCase):
             {"code": "RUNTIME_NOT_INITIALIZED", "retryable": False},
         )
 
-    def test_initialize_runs_seatbelt_self_test_without_enabling_shell(self) -> None:
+    def test_initialize_enables_shell_after_platform_self_test(self) -> None:
         output = io.StringIO()
         request = {
             "jsonrpc": "2.0",
@@ -490,25 +491,32 @@ class RuntimeProtocolTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(prefix="eidos-data-") as data_directory:
             server = RuntimeServer(output, Path(data_directory))
+            if sys.platform == "win32":
+                self_test_name = "run_mxc_self_test"
+                self_test_result = MxcSelfTestResult(available=True)
+                backend = "MXC"
+            else:
+                self_test_name = "run_seatbelt_self_test"
+                self_test_result = SeatbeltSelfTestResult(available=True, passed_checks=("workspace_write",), failures=())
+                backend = "Seatbelt"
             with (
                 patch(
-                    "eidos_runtime.protocol.server.run_seatbelt_self_test",
-                    return_value=SeatbeltSelfTestResult(
-                        available=True,
-                        passed_checks=("workspace_write",),
-                        failures=(),
-                    ),
+                    f"eidos_runtime.protocol.server.{self_test_name}",
+                    return_value=self_test_result,
                 ) as self_test,
                 self.assertLogs("eidos.runtime", level="INFO") as logs,
             ):
                 server.handle(request)
             server.close()
 
-        self_test.assert_called_once_with()
+        if sys.platform == "win32":
+            self_test.assert_called_once_with(server.runtime_dependency_catalog)
+        else:
+            self_test.assert_called_once_with()
         response = json.loads(output.getvalue())
         self.assertTrue(response["result"]["capabilities"]["runShell"])
         self.assertFalse(response["result"]["capabilities"]["modelConfigured"])
-        self.assertTrue(any("Seatbelt self-test passed" in line for line in logs.output))
+        self.assertTrue(any(f"{backend} self-test passed" in line for line in logs.output))
 
     def test_initialize_then_shutdown_keeps_stdout_protocol_only(self) -> None:
         completed = run_runtime(

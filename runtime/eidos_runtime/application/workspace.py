@@ -25,6 +25,7 @@ from eidos_runtime.protocol.methods import (
     WorkspaceReadFilePreviewResponseDto,
 )
 from eidos_runtime.workspace.discovery_scope import DiscoveryScopeError
+from eidos_runtime.workspace.recorded_identity import current_session_root
 from eidos_runtime.workspace.reader import (
     WorkspacePathError,
     WorkspaceReader,
@@ -253,7 +254,7 @@ class WorkspaceExplorerApplication:
                 return capture_workspace_identity(workspace_root)
             raise ApplicationError("RESOURCE_NOT_FOUND")
         if projection.session.roots:
-            roots = projection.session.roots
+            roots = tuple(current_session_root(root) for root in projection.session.roots)
             selected = None
             for root in roots:
                 path = Path(root.path)

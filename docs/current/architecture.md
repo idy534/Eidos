@@ -515,7 +515,7 @@ ApprovalCoordinator 把扩权 Approval request、用户 decision、feedback、�
 
 默认 Shell attempt 使用 macOS Seatbelt。Seatbelt Policy 根据 Workspace、Runtime root、Eidos 数据目录、永久拒绝、附加权限和网络权限物化为 effective permission profile，并保存 profile hash。默认 Workspace profile 在权限校验和 Durable Intent 后直接启动。显式权限升级会创建新的 Approval attempt。用户可以通过高危人工审批允许显式 unsandboxed attempt。窗口说明命令及其子进程会使用当前 macOS 用户的权限。Runtime 不因未知副作用自动重放命令。
 
-Windows 使用 NTFS 句柄执行已准备的文件提交。Runtime 保留权限物化、Durable Intent、目标与版本核对、排他创建、原地写入和结果验证。Windows 的 Job Object 管理授权的 Shell、ConPTY 和浏览器进程。Runtime 使用同一托管资源目录安装随包提供的 Windows 文档与浏览器资源。默认受限 Shell 与本地 MCP 仍返回沙盒不可用。Windows 的范围和实机验收见 [当前限制](limitations.md#平台与分发) 和 [开发参考](../development/README.md#windows-x64-预览)。
+Windows 使用 NTFS 句柄执行已准备的文件提交。Runtime 保留权限物化、Durable Intent、目标与版本核对、排他创建、原地写入和结果验证。MXC 自检通过后，Runtime 将已物化的权限编译为 ProcessContainer 策略，通过本地管道传给经哈希核验的随包启动器。请求管道也充当启动闸门。Runtime 在受管 Job Object 登记启动后才放行请求，另一个管道回报启动与退出。放行后缺失可信退出记录时保存未知结果。受限 Shell PIPE 和命令 Hook 使用这个后端。SQLite v58 保留此前尝试记录并接受 `windows_mxc`。Windows 的范围和实机验收见 [当前限制](limitations.md#平台与分发) 和 [开发参考](../development/README.md#windows-x64-预览)。
 
 ### Shell
 
@@ -685,6 +685,8 @@ Schema v23 的 `projectless_workspace_creations` 保存新工作空间的操作 
 
 会话和目录创建预留记录保留完整的设备号与文件 ID。超出 SQLite 有符号整数范围的值写入带前缀的十六进制文本，原有整数记录继续可读，读取后用原始数值核验目录身份。
 
+macOS 在卷挂载时按 `/dev/disk` 节点分配 `st_dev`，同一 APFS 卷重启或重新挂载后可能换成另一个设备号。`workspace/recorded_identity.py` 统一处理早先进程记录的目录身份。本地 Session 列、Session 根快照、Git dir 与 Git common dir 身份、Worktree Git dir 和 `RunResolutionSnapshot.workspace_identity` 载入时，若同一路径仍能用拒绝符号链接的 fd 方式打开，且 inode 与 owner 不变，Runtime 改用当前设备号，后续 fd 核验仍严格比较 device、inode 和 owner。路径不可用、经过符号链接或 inode/owner 变化时保留原记录，现有检查返回原错误码。Worktree 校验、Fork/Handoff 复制根核验和长任务恢复核对使用同一规则。该规则不改写已保存的身份。Windows 的 `st_dev` 是卷序列号，继续要求设备号一致。在同一路径挂载另一卷且目录 inode 与 owner 恰好相同时，Runtime 会把它当作同一目录。
+
 本次 Alpha 更新不兼容或迁移旧无项目 Session。Runtime 在持有 state lock、恢复持久事实后，废弃旧 Projectless 根目录下的无项目 Session 和父子关联记录，并清理对应历史投影。该过程不启动旧 Run、不移动或删除旧工作空间文件，也不触碰 Project/Worktree Session。新版不保留旧路径回退或历史文件映射。
 
 ### Local ↔ Managed Worktree Handoff
@@ -759,7 +761,7 @@ Renderer 使用 `react-diff-view` 的 gutter event 和 widget extension 展示 C
 
 Desktop `GitWorkflowControls` 只编排现有 typed Git API。它读取 `session/gitRemoteStatus` 和 `project/gitContext.branches`，不解析 Git 输出。Commit、Fetch、Pull、Push、Merge、Rebase 和 continue/abort 都携带 operationId。传输未知或 operation 仍在进行时，Renderer 保留 operationId；已确定的 terminal failure 会删除缓存并让下一次显式点击生成新的 identity；`GIT_REMOTE_OUTCOME_UNCERTAIN` 会先提示用户检查远端状态。message、target、branch 或 HEAD 改变后，Renderer 会生成新的 identity。一个操作执行时，其他冲突操作会被禁用。Active Run、Session Handoff 和 branch attach 期间，AppShell 也会禁用这些控制。操作完成后，Renderer 刷新 structured status、当前 file Diff、Remote observation 和 mutation 返回的 operation state。Desktop 不保存 Git credential，也不改变 native Git policy。
 
-Run 的执行 identity 固化在 `RunResolutionSnapshot.workspace_identity`。Runtime 会在启动和恢复 Run 时重新验证 Worktree、root、Git dir、Git common dir 和 inode/device/owner。Runtime 不会把 managed Run fallback 到 repository root。
+Run 的执行 identity 固化在 `RunResolutionSnapshot.workspace_identity`。Runtime 会在启动和恢复 Run 时重新验证 Worktree、root、Git dir、Git common dir 和 inode/device/owner；macOS 重启造成的设备号变化按已记录目录身份规则处理。Runtime 不会把 managed Run fallback 到 repository root。
 
 Runtime 使用 typed Git observations，并在 observation failure、timeout 或 bounded diff truncation 时不更新 lifecycle state。`deleted` 是 terminal state。Kernel 不修改 Run 并发语义。
 

@@ -222,6 +222,12 @@ _RUN_SHELL_DESCRIPTION = (
     "Install missing dependencies only in isolated workspace environments, never in Eidos, "
     "its bundled runtime or a global interpreter. Keep TLS certificate verification enabled."
 )
+if local_files.WINDOWS:
+    # MXC ends the container's process tree when the foreground command exits.
+    _RUN_SHELL_DESCRIPTION += (
+        " In the Windows sandbox, background processes stop when the command exits, "
+        "so keep a service as the foreground command."
+    )
 
 
 _BUILTIN_CONTRACTS = (

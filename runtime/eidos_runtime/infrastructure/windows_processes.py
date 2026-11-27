@@ -1,7 +1,7 @@
 """Windows subprocess ownership and polling for redirected pipes."""
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import ctypes
 from ctypes import wintypes
 import errno
@@ -15,6 +15,8 @@ import threading
 import time
 from typing import BinaryIO, Iterator, Sequence
 import _winapi
+
+from eidos_runtime.infrastructure.mxc_status import MAX_MXC_STATUS_BYTES, MxcProcessStatus, parse_mxc_status
 
 
 _kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -37,6 +39,7 @@ _assign_job = _api("AssignProcessToJobObject", _BOOL, _HANDLE, _HANDLE)
 _terminate_job = _api("TerminateJobObject", _BOOL, _HANDLE, wintypes.UINT)
 _close = _api("CloseHandle", _BOOL, _HANDLE)
 _peek = _api("PeekNamedPipe", _BOOL, _HANDLE, _PTR, _DWORD, _DWORD_PTR, _DWORD_PTR, _DWORD_PTR)
+_set_pipe_state = _api("SetNamedPipeHandleState", _BOOL, _HANDLE, _DWORD_PTR, _DWORD_PTR, _DWORD_PTR)
 _write_file = _api("WriteFile", _BOOL, _HANDLE, _PTR, _DWORD, _DWORD_PTR, _PTR)
 _current_process = _api("GetCurrentProcess", _HANDLE)
 _open_process = _api("OpenProcess", _HANDLE, _DWORD, _BOOL, _DWORD)
@@ -93,6 +96,9 @@ class _Accounting(ctypes.Structure):
 
 
 _BOOTSTRAP = Path(__file__).with_name("windows_process_launcher.py")
+_PIPE_EOF_ERRORS = frozenset({109, 232, 233})
+_PIPE_NOWAIT = 0x00000001
+_MAX_MXC_REQUEST_BYTES = 1024 * 1024
 
 
 class ProcessJob:
@@ -141,34 +147,48 @@ class JobProcess(subprocess.Popen[bytes]):
         self, argv: Sequence[str], *, cwd: Path | str, env: dict[str, str],
         stdin: int | BinaryIO | None, stdout: int | None, stderr: int | None, hold: bool = False,
     ) -> None:
-        self.job = ProcessJob()
-        self._gate_lock = threading.Lock()
-        self._gate = -1
-        read_end = -1
-        try:
-            read_end, self._gate = os.pipe()
-            handle = msvcrt.get_osfhandle(read_end)
-            os.set_handle_inheritable(handle, True)
-            startup = subprocess.STARTUPINFO(lpAttributeList={"handle_list": [handle]})
-            super().__init__(
+        with self._launch_gate() as handle:
+            self._start_in_job(
                 [sys.executable, "-I", "-B", "-S", "-u", str(_BOOTSTRAP), str(handle), *argv],
-                cwd=cwd, env=env, stdin=stdin, stdout=stdout, stderr=stderr,
-                startupinfo=startup, close_fds=True,
-                creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+                handles=[handle], cwd=cwd, env=env, stdin=stdin, stdout=stdout, stderr=stderr,
             )
-            # CPython retains this exact process handle for poll/wait. A PID
-            # lookup cannot provide the same identity if the launcher died.
-            self.job.assign(int(self._handle))
             if not hold:
                 self.release()
+
+    @contextmanager
+    def _launch_gate(self, size: int = 0) -> Iterator[int]:
+        """Keep the child's gate unreadable until the host has registered it."""
+        self.job = ProcessJob()
+        self._gate_lock = threading.Lock()
+        self._gate: int | None = None
+        read_handle = None
+        try:
+            read_handle, self._gate = _winapi.CreatePipe(None, size)
+            yield read_handle
         except BaseException:
             self.close_job()
             if getattr(self, "_child_created", False):
                 self.abort_setup()
             raise
         finally:
-            if read_end >= 0:
-                os.close(read_end)
+            if read_handle is not None:
+                _winapi.CloseHandle(read_handle)
+
+    def _start_in_job(
+        self, argv: Sequence[str], *, handles: list[int], cwd: Path | str, env: dict[str, str],
+        stdin: int | BinaryIO | None, stdout: int | None, stderr: int | None,
+    ) -> None:
+        for handle in handles:
+            os.set_handle_inheritable(handle, True)
+        startup = subprocess.STARTUPINFO(lpAttributeList={"handle_list": handles})
+        super().__init__(
+            argv, cwd=cwd, env=env, stdin=stdin, stdout=stdout, stderr=stderr,
+            startupinfo=startup, close_fds=True,
+            creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+        # CPython retains this exact process handle for poll/wait. A PID lookup
+        # cannot provide the same identity if the launcher died.
+        self.job.assign(int(self._handle))
 
     def abort_setup(self) -> None:
         for stream in (self.stdin, self.stdout, self.stderr):
@@ -184,16 +204,16 @@ class JobProcess(subprocess.Popen[bytes]):
 
     def release(self) -> None:
         with self._gate_lock:
-            if self._gate >= 0:
+            if self._gate is not None:
                 try:
-                    os.write(self._gate, b"\x01")
+                    _winapi.WriteFile(self._gate, b"\x01")
                 finally:
                     self._close_gate()
 
     def _close_gate(self) -> None:
-        if self._gate >= 0:
-            os.close(self._gate)
-            self._gate = -1
+        if self._gate is not None:
+            _winapi.CloseHandle(self._gate)
+            self._gate = None
 
     def has_members(self) -> bool:
         return self.job.has_members()
@@ -205,6 +225,110 @@ class JobProcess(subprocess.Popen[bytes]):
         with self._gate_lock:
             self._close_gate()
             self.job.close()
+
+
+class MxcJobProcess(JobProcess):
+    """Pass the request and launch status on two pipes separate from workload stdio."""
+
+    def __init__(
+        self, argv: Sequence[str], *, cwd: Path | str, env: dict[str, str],
+        stdin: int | BinaryIO | None, stdout: int | None, stderr: int | None,
+        request: bytes, launch_resources: ExitStack | None = None,
+    ) -> None:
+        if not request or len(request) > _MAX_MXC_REQUEST_BYTES:
+            raise ValueError("MXC request must fit in a 1 MiB pipe")
+        self._request = request
+        self._release_attempted = False
+        self._status_read: int | None = None
+        self._status: MxcProcessStatus | None = None
+        self._launch_resources: ExitStack | None = None
+        status_read, status_write = _winapi.CreatePipe(None, MAX_MXC_STATUS_BYTES)
+        try:
+            with self._launch_gate(len(request)) as request_read:
+                mode = _DWORD(_PIPE_NOWAIT)
+                if not _set_pipe_state(self._gate, ctypes.byref(mode), None, None):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                self._start_in_job(
+                    [*argv, "--request-handle", str(request_read), "--status-handle", str(status_write)],
+                    handles=[request_read, status_write], cwd=cwd, env=env,
+                    stdin=stdin, stdout=stdout, stderr=stderr,
+                )
+            self._status_read = status_read
+            # Ownership transfers after the constructor has successfully launched the held helper.
+            self._launch_resources = launch_resources
+        except BaseException:
+            _winapi.CloseHandle(status_read)
+            raise
+        finally:
+            _winapi.CloseHandle(status_write)
+
+    def release(self) -> None:
+        with self._gate_lock:
+            if self._gate is None:
+                return
+            self._release_attempted = True
+            try:
+                # CreatePipe's capacity is advisory. If there is a short write,
+                # stop the job before sending EOF to the helper.
+                try:
+                    written, error = _winapi.WriteFile(self._gate, self._request)
+                except OSError:
+                    written, error = 0, 1
+                if error or written != len(self._request):
+                    self.job.terminate()
+            finally:
+                self._request = b""
+                self._close_gate()
+
+    def mxc_status(self) -> MxcProcessStatus:
+        with self._gate_lock:
+            returncode = self.poll()
+            if returncode is None:
+                raise RuntimeError("MXC launcher is still running")
+            return self._finish_status(returncode)
+
+    def _finish_status(self, returncode: int | None) -> MxcProcessStatus:
+        if self._status is None:
+            if not self._release_attempted:
+                self._status = MxcProcessStatus(failure_code="not_released")
+            elif returncode is None or self._status_read is None:
+                self._status = MxcProcessStatus()
+            else:
+                try:
+                    payload = _read_mxc_status(self._status_read)
+                except OSError:
+                    payload = b""
+                self._status = parse_mxc_status(payload, returncode)
+        return self._status
+
+    def close_job(self) -> None:
+        super().close_job()
+        with self._gate_lock:
+            if self._status_read is not None:
+                self._finish_status(self.poll())
+                _winapi.CloseHandle(self._status_read)
+                self._status_read = None
+            self._request = b""
+            resources, self._launch_resources = self._launch_resources, None
+        if resources is not None:
+            resources.close()
+
+
+def _read_mxc_status(handle: int) -> bytes:
+    """Read at most one pipe buffer and require the helper's writer to be closed."""
+    pending = _DWORD()
+    if not _peek(handle, None, 0, None, ctypes.byref(pending), None):
+        return b""
+    size = pending.value
+    if not 0 < size <= MAX_MXC_STATUS_BYTES:
+        return b""
+    payload, error = _winapi.ReadFile(handle, size)
+    if error or len(payload) != size:
+        return b""
+    # Reject a valid-looking prefix if a writer survived the launcher.
+    if _peek(handle, None, 0, None, None, None) or ctypes.get_last_error() not in _PIPE_EOF_ERRORS:
+        return b""
+    return payload
 
 
 def write_pipe(descriptor: int, data: bytes) -> int:
@@ -262,6 +386,6 @@ def _readable(descriptor: int) -> bool:
     if _peek(msvcrt.get_osfhandle(descriptor), None, 0, None, ctypes.byref(pending), None):
         return pending.value > 0
     error = ctypes.get_last_error()
-    if error in {109, 232, 233}:  # End of stream.
+    if error in _PIPE_EOF_ERRORS:
         return True
     raise ctypes.WinError(error)

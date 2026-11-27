@@ -12,6 +12,7 @@
 | [任务拆解与步骤清单](task-checklist-research.md) | Codex `update_plan`、Claude Code TodoWrite / Task 工具的公开行为与源码，以及 Eidos 执行期步骤清单的方案建议。 | [Plan 与协作](../architecture/collaboration-planning.md)、[上下文压缩](../architecture/context-compaction.md) |
 | [目标模式 `/goal`](goal-mode-research.md) | Codex 目标扩展源码、Claude Code `/goal` 官方文档，以及 Eidos Session 级目标与续跑 Run 的方案建议。 | [Durable Agent Loop](../architecture/runtime-loop.md)、[Plugin Hooks](../current/features/hooks.md)、[任务拆解与步骤清单](task-checklist-research.md) |
 | [Codex 桌面端资源位置与准备时机](codex-desktop-runtime-resources.md) | 本机 Runtime 目录、启动下载日志、依赖工具行为，以及 Eidos 统一目录和沙盒建议。 | [文档资源裁剪与按需下载](../design/document-resource-delivery.md) |
+| [Windows 沙盒：Agent Harness 调研](windows-sandbox-agent-harnesses.md) | Windows 隔离原语，Codex、Copilot CLI、VS Code、Antigravity、srt、Claude Code、Gemini CLI、Cursor 的做法，以及 MXC 的版本、策略与已知问题。 | [Windows 沙盒适配设计](../design/windows-sandbox-design.md) |
 
 专题设计原本包含调研背景时，正文仍完整保留在 [设计目录](../design/README.md)。带运行证据的诊断与评测放在 [验证与评估](../evaluations/README.md)。更早的外部技术参考保存在 [历史参考资料](../archive/references/README.md)。
 

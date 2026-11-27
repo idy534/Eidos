@@ -35,6 +35,7 @@ _create_file = _api(
 )
 _close = _api(_kernel, "CloseHandle", wintypes.BOOL, _HANDLE)
 _final_path = _api(_kernel, "GetFinalPathNameByHandleW", _DWORD, _HANDLE, wintypes.LPWSTR, _DWORD, _DWORD)
+_logical_drives = _api(_kernel, "GetLogicalDrives", _DWORD)
 _drive_type = _api(_kernel, "GetDriveTypeW", wintypes.UINT, wintypes.LPCWSTR)
 _volume = _api(
     _kernel, "GetVolumeInformationW", wintypes.BOOL, wintypes.LPCWSTR, wintypes.LPWSTR,
@@ -98,6 +99,13 @@ def _error(code: int | None = None) -> OSError:
 
 def _extended(path: Path) -> str:
     return _EXTENDED_PREFIX + str(path)
+
+
+def logical_drive_roots() -> tuple[str, ...]:
+    drives = _logical_drives()
+    if not drives:
+        raise _error()
+    return tuple(f"{letter}:\\" for index, letter in enumerate("ABCDEFGHIJKLMNOPQRSTUVWXYZ") if drives & (1 << index))
 
 
 def _check_local_path(path: Path) -> None:

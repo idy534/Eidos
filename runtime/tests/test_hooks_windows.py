@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 import threading
+from typing import Literal
 
 import pytest
 
@@ -22,6 +24,7 @@ from eidos_runtime.sandbox.shell import ShellLaunchSpec
 
 def _create_hook_service(
     tmp_path: Path, events: dict[str, object],
+    *, approval_mode: Literal["full_access", "manual"] = "full_access",
 ) -> tuple[SessionStore, HookService, HookBinding, Path]:
     source = tmp_path / "source"
     (source / "hooks").mkdir(parents=True)
@@ -46,7 +49,7 @@ def _create_hook_service(
     run, _ = store.create_run(
         session["id"],
         "Hook Windows fixture",
-        approval_mode="full_access",
+        approval_mode=approval_mode,
         extension_snapshot=SkillCatalog(catalog).extension_snapshot(),
     )
     binding = HookBinding.model_validate(store.read_run_extension_snapshot(run["id"])["hooks"][0])
@@ -148,5 +151,39 @@ def test_hook_service_skips_windows_only_hook_cleanly_on_posix(
         assert latest is not None
         assert latest.status == "skipped"
         assert latest.error_code == "hook_platform_command_missing"
+    finally:
+        store.close()
+
+
+@pytest.mark.platform
+@pytest.mark.skipif(sys.platform != "win32", reason="requires a Windows ProcessContainer host")
+def test_restricted_command_hook_runs_in_mxc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from eidos_runtime.infrastructure.windows_files import configure_process_file_owner
+    from eidos_runtime.runtime.runtime_dependencies import discover_runtime_dependency_catalog
+    from eidos_runtime.sandbox import windows_mxc
+
+    configure_process_file_owner()
+    monkeypatch.setattr(windows_mxc, "_ready_helper", None)
+    monkeypatch.delenv("EIDOS_WINDOWS_SANDBOX", raising=False)
+    capability = windows_mxc.run_mxc_self_test(discover_runtime_dependency_catalog())
+    if capability.failures in {
+        ("mxc_helper_missing",), ("mxc_psec_unavailable",), ("mxc_fs_deny_unsupported",),
+    }:
+        pytest.skip(capability.failures[0])
+    assert capability.available, capability.failures
+
+    command = (
+        "if ([Console]::In.ReadToEnd() -ne '{}') { exit 42 }\n"
+        "[IO.File]::WriteAllText((Join-Path (Get-Location).ProviderPath 'hook-ran'), 'ok')\n"
+        "Write-Output '{}'"
+    )
+    store, service, binding, workspace = _create_hook_service(
+        tmp_path, {"PreToolUse": [{"hooks": [{"type": "command", "commandWindows": command}]}]},
+        approval_mode="manual",
+    )
+    try:
+        result = service._execute(binding, "tool:mxc-hook", "{}", threading.Event())
+        assert result.status == "completed", result
+        assert (workspace / "hook-ran").read_text(encoding="utf-8") == "ok"
     finally:
         store.close()

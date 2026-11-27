@@ -2110,7 +2110,9 @@ export function AppShell({ runtime }: AppShellProps) {
       workspaceRevision={draftGitRevision}
       workspaceRoots={inputWorkspaceRoots}
       projectId={sessionProject?.id}
-      onAdd={runActions.addReference} onInsert={runActions.insertReference} onSettings={handleInputSettings}
+      currentText={runState.input}
+      currentReferences={runState.references}
+      onAdd={runActions.addReference} onInsert={runActions.insertReference} onPasteQuery={runActions.pasteDraftContent} onSettings={handleInputSettings}
       onNavigateToSession={handleInputNavigateToSession}>
     <main className={`workbench${sidebarOpen && !settingsOpen && !automationsOpen ? "" : " workbench--sidebar-collapsed"}${settingsOpen ? " workbench--settings" : ""}${automationsOpen ? " workbench--settings workbench--automations" : ""}`}>
       <ToastContainer toasts={toasts} onDismiss={dismissToast} portal={false} />

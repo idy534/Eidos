@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 
 from eidos_runtime.db.backup import FORMAT, backup, restore
-from eidos_runtime.db.schema import SCHEMA_VERSION
+from eidos_runtime.db.schema import SCHEMA_VERSION, V57_SCHEMA_VERSION
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.application.projects import ProjectApplication
 from eidos_runtime.application.sessions import SessionApplication
@@ -128,7 +128,9 @@ def test_v46_backup_restore_pins_existing_worktree_gitdir_identity(tmp_path):
         restored.close()
 
 
-@pytest.mark.parametrize("schema_version", [40, 41, 42, 43, 44, 45, 46, 47, 50, 51, 52, 53, 54, 55, 56, SCHEMA_VERSION])
+@pytest.mark.parametrize(
+    "schema_version", [40, 41, 42, 43, 44, 45, 46, 47, 50, 51, 52, 53, 54, 55, 56, V57_SCHEMA_VERSION, SCHEMA_VERSION],
+)
 def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(
     tmp_path, schema_version, downgrade_project_workspaces_schema
 ):
@@ -173,7 +175,7 @@ def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(
                 remove_agent_workspace_schema(connection)
             elif schema_version == 53:
                 remove_memory_usage_schema(connection)
-            else:
+            elif schema_version < 53:
                 remove_shell_display_schema(connection)
             if schema_version < 51:
                 remove_goal_schema(connection)

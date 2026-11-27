@@ -6,26 +6,13 @@ import {
   isInlineReference,
   replaceInlineReferenceTokenId,
 } from "../../../shared/inline-references.js";
+import {
+  isSameReferenceTarget,
+  mergePastedQueryIntoDraft,
+} from "../../../shared/query-clipboard.js";
 
 const EMPTY: InputDraft = { text: "", references: [] };
 const storageKey = (id: string): string => id.startsWith("draft-") ? "new-conversation" : id;
-
-function isSameReferenceTarget(existing: InputReference, incoming: InputReference): boolean {
-  if (existing.id === incoming.id) return true;
-  if (
-    existing.source === "clipboard:image"
-    || incoming.source === "clipboard:image"
-    || existing.kind === "excerpt"
-    || incoming.kind === "excerpt"
-  ) {
-    return false;
-  }
-  return (
-    existing.kind === incoming.kind
-    && existing.source === incoming.source
-    && existing.label === incoming.label
-  );
-}
 
 /** Serializes writes per draft. A late hydration cannot replace local edits. */
 export function useInputDrafts(sessionId: string | undefined, storageReady: boolean) {
@@ -121,6 +108,23 @@ export function useInputDrafts(sessionId: string | undefined, storageReady: bool
     return caretOffset;
   }, [add, update]);
 
+  const paste = useCallback((
+    id: string,
+    pasted: { text: string; references: readonly InputReference[] },
+    range?: { start: number; end: number },
+  ): { caretOffset: number; overflowDegradedCount: number } | undefined => {
+    let outcome: { caretOffset: number; overflowDegradedCount: number } | undefined;
+    update(id, (draft) => {
+      const merged = mergePastedQueryIntoDraft(draft, pasted, range);
+      outcome = {
+        caretOffset: merged.caretOffset,
+        overflowDegradedCount: merged.overflowDegradedCount,
+      };
+      return merged.draft;
+    });
+    return outcome;
+  }, [update]);
+
   const flush = useCallback(async (id: string) => {
     await write(id, values.current[id] ?? EMPTY);
   }, [write]);
@@ -138,5 +142,5 @@ export function useInputDrafts(sessionId: string | undefined, storageReady: bool
     }
   }, []);
 
-  return { drafts, values, update, add, insert, flush, clearError, error: sessionId ? errors[sessionId] : undefined, ready: !sessionId || loaded[sessionId] === true };
+  return { drafts, values, update, add, insert, paste, flush, clearError, error: sessionId ? errors[sessionId] : undefined, ready: !sessionId || loaded[sessionId] === true };
 }

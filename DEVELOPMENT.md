@@ -68,7 +68,7 @@ pnpm test:electron-smoke
 | `pnpm package:win` | 在 Windows x64 构建 NSIS 安装包。 |
 
 开发者在 [构建打包与原生验证](docs/development/README.md#构建打包与原生验证) 中查看 Bundle 校验、签名顺序、CI 复用条件与产物位置。
-Windows 的源码启动、打包和实机验收见 [Windows x64 预览](docs/development/README.md#windows-x64-预览)。
+构建 Windows Runtime 还需要 Rustup、MSVC C++ x64 工具和 Windows SDK。Windows 的源码启动、打包和实机验收见 [Windows x64 预览](docs/development/README.md#windows-x64-预览)。
 
 ## 详细参考
 

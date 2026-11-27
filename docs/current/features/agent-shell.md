@@ -2,7 +2,9 @@
 
 Agent Shell 由 Python Runtime 按 Run 管理。`run_shell` 默认继续使用 PIPE。模型可以设置 `tty=true`，为需要终端的程序创建 PTY。Desktop Terminal 是用户操作的另一条路径。
 
-Windows Agent Shell 使用 Windows PowerShell。`tty=true` 接入 ConPTY，支持 UTF-8 输入输出、Ctrl-C 和尺寸调整。Runtime 登记启动后才放行命令。Job Object 管理 PIPE、PTY 及其子进程。Windows 的 PIPE Ctrl-C 会结束进程树，PTY 会把 Ctrl-C 交给终端。Windows 普通模式下的 Shell 需要明确授权才能无沙盒运行。Windows 的用户终端仍使用 `node-pty`。下文的 `openpty`、Unix 信号和 Seatbelt 说明适用于 macOS。
+Windows Agent Shell 使用 Windows PowerShell。原生 MXC 自检通过时，受限 Run 的 PIPE 命令和命令 Hook 使用微软 ProcessContainer。默认允许工作区内普通写入、临时目录读写和本地固定 NTFS 卷的广泛读取，保护 Git 与 Eidos 保留路径并禁网。缺失的 `.git`、`.agents`、`.eidos` 也纳入系统拒绝规则。附加文件和联网权限沿用审批与 Run Grant。当前联网扩权支持访问公网。MXC 在前台命令退出时结束容器内的全部进程，受限命令启动的后台进程不会留在会话中，结果也不带 `backgroundProcesses`。需要常驻的服务应作为前台命令运行，工具说明在 Windows 上同样提示模型。
+
+Windows 缺少所需能力或自检失败时，受限命令返回沙盒不可用。单条 Shell 可显式申请沙盒外执行，用户也可确认整个 Run 完全访问。Windows 沙盒外的 `tty=true` 接入 ConPTY。Runtime 登记启动后放行命令，Job Object 管理 PIPE、PTY 及其子进程。PIPE Ctrl-C 结束进程树，PTY 将 Ctrl-C 交给终端。Windows 用户终端使用 `node-pty`，下文的 `openpty`、Unix 信号和 Seatbelt 说明适用于 macOS。
 
 ## 工具
 

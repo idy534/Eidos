@@ -432,7 +432,12 @@ class EffectivePermissionProfile(ClosedModel):
 
 class SandboxType(StrEnum):
     MACOS_SEATBELT = "macos_seatbelt"
+    WINDOWS_MXC = "windows_mxc"
     NONE = "none"
+
+
+def platform_shell_sandbox() -> SandboxType:
+    return SandboxType.WINDOWS_MXC if local_files.WINDOWS else SandboxType.MACOS_SEATBELT
 
 
 class SandboxAttempt(ClosedModel):

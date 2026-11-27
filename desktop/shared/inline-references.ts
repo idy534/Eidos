@@ -2,7 +2,7 @@ import type { InputReference, InputReferenceKind } from "./input-context.js";
 
 const INLINE_REF_TOKEN_SOURCE = "\\[([^\\[\\]\\r\\n]+)\\]\\(ref:([A-Za-z0-9_-]{1,64})\\)";
 
-function matchesReferenceTokenId(referenceId: string, tokenRefId: string): boolean {
+export function matchesReferenceTokenId(referenceId: string, tokenRefId: string): boolean {
   return referenceId === tokenRefId || (tokenRefId.length >= 8 && referenceId.startsWith(tokenRefId));
 }
 
@@ -193,4 +193,21 @@ export function insertInlineReferenceAtSelection(
 export function formatInlineReferencesAsPlainText(text: string): string {
   const pattern = new RegExp(INLINE_REF_TOKEN_SOURCE, "g");
   return text.replace(pattern, (_fullMatch, label: string) => label);
+}
+
+export function formatInlineReferencePlainLabel(reference: InputReference): string {
+  const prefix = reference.kind === "skill" ? "$" : "@";
+  const safeLabel = sanitizeInlineReferenceLabel(reference.label) || reference.kind;
+  return `${prefix}${safeLabel}`;
+}
+
+export function replaceInlineReferenceTokenWithPlainText(
+  text: string,
+  reference: InputReference,
+): string {
+  const replacement = formatInlineReferencePlainLabel(reference);
+  const pattern = new RegExp(INLINE_REF_TOKEN_SOURCE, "g");
+  return text.replace(pattern, (fullMatch, _label: string, refPrefix: string) => (
+    matchesReferenceTokenId(reference.id, refPrefix) ? replacement : fullMatch
+  ));
 }

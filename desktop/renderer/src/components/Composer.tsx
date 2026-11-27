@@ -4,6 +4,11 @@ import { InputReferenceCards, isInlineReference, isShelfReference, useInputConte
 import { InlineRichEditor } from "./InlineRichEditor.js";
 import { InputPicker, type InputPickerMode, LightbulbIcon, TargetGoalIcon, TeamIcon } from "./InputPicker.js";
 import { forwardRef, useCallback, useState, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef } from "react";
+import {
+  consumeRecentShiftPaste,
+  markShiftPasteIfMatching,
+  readQueryFromClipboardEvent,
+} from "../query-clipboard.js";
 import type { ApprovalMode, ContextUsage, ModelId, ModelReasoningSelection, Run, Session } from "../contracts.js";
 import type { ComposerMode } from "../session-state.js";
 import { formatContextUsage } from "../context-usage.js";
@@ -487,6 +492,17 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           }}
         />
       )}
+      {context?.notice && (
+        <ToastContainer
+          toasts={[{
+            id: `composer-reference-notice-${context.notice}`,
+            message: context.notice,
+            type: "warning",
+            duration: 4000,
+          }]}
+          onDismiss={() => context.clearNotice?.()}
+        />
+      )}
       {showStatus && <p className="input-reference-hint">{context?.sessionId} · {contextUsage ? formatContextUsage(contextUsage) : "暂无上下文统计"}</p>}
       {picker && <InputPicker mode={picker.mode} query={picker.query} inline={picker.start !== undefined}
         anchor={composerRef}
@@ -562,6 +578,11 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
               if (!isSubmitDisabled) onSubmit();
             }}
             onPasteFiles={handlePasteFiles}
+            onPasteQuery={context?.pasteQuery ? (payload, range) => {
+              setPicker(undefined);
+              void context.pasteQuery!(payload, range);
+              return true;
+            } : undefined}
           />
           {inlineActivationDialogs}
         </>
@@ -619,12 +640,24 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
             };
           }}
           onPaste={(event) => {
-            const files = Array.from(event.clipboardData.files);
+            const files = Array.from(event.clipboardData?.files ?? []);
             if (handlePasteFiles(files)) {
               event.preventDefault();
+              return;
+            }
+            const preferPlainText = consumeRecentShiftPaste();
+            const queryPayload = readQueryFromClipboardEvent(event, { preferPlainText });
+            if (queryPayload && context?.pasteQuery) {
+              event.preventDefault();
+              setPicker(undefined);
+              void context.pasteQuery(queryPayload, {
+                start: event.currentTarget.selectionStart,
+                end: event.currentTarget.selectionEnd,
+              });
             }
           }}
           onKeyDown={(e) => {
+            markShiftPasteIfMatching(e);
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               if (!isSubmitDisabled) onSubmit();

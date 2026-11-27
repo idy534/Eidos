@@ -108,6 +108,7 @@ from eidos_runtime.sandbox.permissions import (
     FileSystemPermissionEntry,
     materialize_effective_profile,
     merge_permissions,
+    platform_shell_sandbox,
     SandboxAttempt,
     SandboxPermissions,
     SandboxType,
@@ -122,6 +123,7 @@ from eidos_runtime.sandbox.seatbelt import (
     SeatbeltUnavailableError,
     is_seatbelt_ready,
 )
+from eidos_runtime.sandbox.windows_mxc import MxcUnavailableError, current_mxc_helper
 from eidos_runtime.persistence.shell_environment import ShellEnvironmentRepository
 from eidos_runtime.sandbox.shell import (
     ShellProcessStartError,
@@ -778,6 +780,7 @@ class ShellToolHandler:
         )
         full_access = bool(self.dependencies.base_permissions and self.dependencies.base_permissions.full_access)
         effective_sandbox_permissions = shell_input.effective_sandbox_permissions
+        default_sandbox = platform_shell_sandbox()
         if (
             effective_sandbox_permissions
             is not SandboxPermissions.REQUIRE_ESCALATED
@@ -788,6 +791,17 @@ class ShellToolHandler:
                 tool_error(
                     call.name, "sandbox_unavailable", "Shell sandbox is unavailable"
                 ),
+                "failed",
+                "failed",
+            )
+        if (
+            default_sandbox is SandboxType.WINDOWS_MXC
+            and not full_access
+            and effective_sandbox_permissions is not SandboxPermissions.REQUIRE_ESCALATED
+            and shell_input.tty
+        ):
+            return HandlerOutcome(
+                tool_error(call.name, "sandbox_unavailable", "Windows MXC supports PIPE; omit tty to run this command."),
                 "failed",
                 "failed",
             )
@@ -1008,7 +1022,7 @@ class ShellToolHandler:
             effective_sandbox_permissions
             is not SandboxPermissions.REQUIRE_ESCALATED
             and not full_access
-            and not is_seatbelt_ready()
+            and not (current_mxc_helper() is not None if local_files.WINDOWS else is_seatbelt_ready())
         ):
             return HandlerOutcome(
                 sandbox_unavailable_result(skill_invocation=skill_invocation),
@@ -1203,7 +1217,7 @@ class ShellToolHandler:
                         dependency_provenance,
                     )
                 return result, None
-            except SeatbeltUnavailableError:
+            except (SeatbeltUnavailableError, MxcUnavailableError):
                 result = sandbox_unavailable_result(
                     skill_invocation=skill_invocation,
                 )
@@ -1259,7 +1273,7 @@ class ShellToolHandler:
             raw_data = raw_result.get("data")
             if (
                 raw_result.get("outcome") == "success"
-                and attempt.sandbox is SandboxType.MACOS_SEATBELT
+                and attempt.sandbox is not SandboxType.NONE
                 and isinstance(raw_data, dict)
                 and raw_data.get("executionStatus") == "exited"
             ):
@@ -1534,6 +1548,7 @@ class ShellToolHandler:
                 base_permissions=base_permissions,
                 granted_permissions=grants,
                 execution_started=self.dependencies.execution_started,
+                default_sandbox=default_sandbox,
             ),
             approve=approve,
             authorize_without_approval=lambda: (

@@ -40,7 +40,7 @@
 
 ## 平台与沙盒
 
-- [Windows 沙盒适配调研与设计](windows-sandbox-design.md)：候选隔离机制对比、MXC 进程容器方案、权限映射、Shell/Hook/本地 MCP 接入、实机验证清单与分期；当前为设计方案，尚未实施。
+- [Windows 沙盒适配设计](windows-sandbox-design.md)：V2 方案，MXC ProcessContainer 后端、基于 MXC V1 Rust SDK 的随包 helper、与 macOS 对齐的权限映射、Shell/Hook/本地 MCP 接入、实机验证清单与分期；当前为设计方案，尚未实施。调研材料见 [Agent Harness 调研](../research/windows-sandbox-agent-harnesses.md)。
 
 ## 执行流
 

@@ -190,4 +190,88 @@ describe("useInputDrafts behavior", () => {
       secondExcerpt,
     ]);
   });
+
+  it("atomically pastes text with mixed inline and shelf references and degrades overflow past 20", async () => {
+    const agentRef: InputReference = {
+      id: "1234567890ab" + "a".repeat(52),
+      kind: "agent",
+      label: "researcher",
+      source: "researcher",
+      sha256: "b".repeat(64),
+      status: "selection",
+      size: 20,
+    };
+    const fileRef: InputReference = {
+      id: "fedcba987654" + "c".repeat(52),
+      kind: "file",
+      label: "spec.md",
+      source: "/workspace/spec.md",
+      sha256: "d".repeat(64),
+      status: "content",
+      size: 32,
+    };
+    const api = setupRuntime({
+      readInputDraft: vi.fn().mockResolvedValue({ text: "前缀内容后缀", references: [] }),
+    });
+    const { result } = renderHook(() => useInputDrafts("session-1", true));
+
+    await waitFor(() => expect(result.current.ready).toBe(true));
+
+    let outcome: { caretOffset: number; overflowDegradedCount: number } | undefined;
+    act(() => {
+      outcome = result.current.paste(
+        "session-1",
+        {
+          text: `[@researcher](ref:${agentRef.id.slice(0, 12)}) 参考`,
+          references: [fileRef, agentRef],
+        },
+        { start: 4, end: 4 },
+      );
+    });
+
+    const expectedText = `前缀内容[@researcher](ref:${agentRef.id.slice(0, 12)}) 参考后缀`;
+    expect(result.current.drafts["session-1"]?.text).toBe(expectedText);
+    expect(result.current.drafts["session-1"]?.references).toEqual([fileRef, agentRef]);
+    expect(outcome).toEqual({
+      caretOffset: `前缀内容[@researcher](ref:${agentRef.id.slice(0, 12)}) 参考`.length,
+      overflowDegradedCount: 0,
+    });
+    await waitFor(() => expect(api.writeInputDraft).toHaveBeenCalledWith("session-1", {
+      text: expectedText,
+      references: [fileRef, agentRef],
+    }));
+
+    const existing19 = Array.from({ length: 18 }, (_, i) => ({
+      ...reference,
+      id: (i + 1).toString(16).padStart(64, "0"),
+      label: `doc-${i}.txt`,
+      source: `/workspace/doc-${i}.txt`,
+    }));
+    act(() => {
+      for (const extra of existing19) {
+        result.current.add("session-1", extra);
+      }
+    });
+    expect(result.current.drafts["session-1"]?.references).toHaveLength(20);
+
+    const extraSkill: InputReference = {
+      ...agentRef,
+      id: "999988887777" + "e".repeat(52),
+      kind: "skill",
+      label: "docx",
+      source: "skills/docx",
+    };
+    act(() => {
+      outcome = result.current.paste(
+        "session-1",
+        {
+          text: ` [$docx](ref:${extraSkill.id.slice(0, 12)})`,
+          references: [extraSkill],
+        },
+      );
+    });
+    expect(outcome?.overflowDegradedCount).toBe(1);
+    expect(result.current.drafts["session-1"]?.references).toHaveLength(20);
+    expect(result.current.drafts["session-1"]?.text).toBe(`${expectedText} $docx`);
+  });
 });

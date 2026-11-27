@@ -445,6 +445,11 @@
 .input-reference-remove:focus-visible {
   outline: none;
 }
+.user-message-bubble .input-reference--bubble,
+.user-message-bubble .input-reference--bubble .input-reference__btn {
+  user-select: text;
+  -webkit-user-select: text;
+}
 .user-message-bubble .input-reference-list--shelf {
   padding: 0;
   margin-bottom: 0.5rem;

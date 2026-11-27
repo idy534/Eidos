@@ -31,8 +31,9 @@ from eidos_runtime.runtime.runtime_dependencies import RuntimeDependencyCoordina
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile, BasePermissionProfile, FileSystemAccessMode,
     FileSystemPermissionEntry, SandboxAttempt, SandboxType,
-    current_grants, materialize_effective_profile, merge_permissions,
+    current_grants, materialize_effective_profile, merge_permissions, platform_shell_sandbox,
 )
+from eidos_runtime.sandbox.windows_mxc import MxcUnavailableError
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
 from eidos_runtime.sandbox.shell import prepare_shell_launch_for_execution, run_shell_process
 from eidos_runtime.sandbox.workspace_manifest import capture_workspace_roots_manifest, diff_workspace_manifests
@@ -241,8 +242,10 @@ class HookService:
                 ),)),
             ), allow_protected=True)
             workspace = self.store.workspace_for_run(self.run_id)
-            attempt = SandboxAttempt(ordinal=0, sandbox=SandboxType.NONE if base.full_access else SandboxType.MACOS_SEATBELT,
+            sandbox = SandboxType.NONE if base.full_access else platform_shell_sandbox()
+            attempt = SandboxAttempt(ordinal=0, sandbox=sandbox,
                 sandboxRequested=not base.full_access, permissions=permissions,
+                profileHash=permissions.profile_hash if sandbox is SandboxType.WINDOWS_MXC else None,
                 sandboxCwd=str(workspace.path), workspaceRoots=tuple(str(root.path) for root in (workspace, *workspace.additional_roots)))
             from eidos_runtime.workspace.reader import WorkspaceReader
             for identity in (workspace, *workspace.additional_roots):
@@ -286,7 +289,9 @@ class HookService:
             output = HookOutput(stdout=stdout[:262144], stderr=stderr[:262144],
                 raw_truncated=body.get("truncated") is True or len(stdout) > 262144 or len(stderr) > 262144,
                 raw_omitted_bytes=int(body.get("omittedBytes", 0)) + len(stdout[262144:].encode("utf-8")) + len(stderr[262144:].encode("utf-8")))
-            if body.get("termination") != "exit":
+            if body.get("termination") == "not_started" and raw.get("sideEffectsMayExist") is False:
+                result = HookResult(status="failed", error_code="hook_" + str(raw.get("code", "execution_failed")))
+            elif body.get("termination") != "exit":
                 result = HookResult(status="unknown", error_code="hook_" + str(body.get("termination", "execution_failed")))
             elif output.raw_truncated:
                 result = HookResult(status="failed", error_code="hook_output_limit")
@@ -302,6 +307,8 @@ class HookService:
                 "duration_ms": max(0, int((time.monotonic() - started) * 1000))})
             if binding.definition.background:
                 result = result.model_copy(update={"action": "pass", "updated_input": None, "permission_decision": None, "message": ""})
+        except MxcUnavailableError:
+            result = HookResult(status="failed", error_code="hook_sandbox_unavailable")
         except RuntimeCancelled:
             result = HookResult(status="unknown" if launched else "failed", error_code="hook_canceled")
         except Exception as error:

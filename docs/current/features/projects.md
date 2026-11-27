@@ -48,7 +48,7 @@ Windows Git 状态查询与 Worktree 操作使用随 Windows Runtime 提供的 M
 
 主要文件夹只是仓库子目录时，Shell 使用已核验仓库的 `.git` 标记。Fork 会把来源 Session 的挂载子目录映射到新 Worktree 中对应的位置。受保护数据目录内的 Worktree 允许读取已核验的 Git metadata 和 checkout 目录本身。这个目录权限不递归开放未挂载文件的内容或写入。默认 Git metadata 写入仍被拒绝；用户批准的 Git 写入继续使用原有权限流程。用户配置的保密路径拒绝规则继续生效。
 
-Worktree、Session 根快照、保留快照和生命周期记录固定源 repository root 与 common directory。Session 根快照也保存 Git metadata 目录身份；按根读取 Git 状态或 Diff 前会核对身份，替换 metadata 会返回 `WORKSPACE_IDENTITY_CHANGED`。切换项目主要文件夹后，旧 Worktree 的运行、Fork、Handoff、恢复和清理仍使用原仓库。新会话会重新发现 Git，所以项目保存后才初始化的仓库也能被新会话识别。
+Worktree、Session 根快照、保留快照和生命周期记录固定源 repository root 与 common directory。Session 根快照也保存 Git metadata 目录身份；按根读取 Git 状态或 Diff 前会核对身份，替换 metadata 会返回 `WORKSPACE_IDENTITY_CHANGED`。macOS 重启后卷设备号变化不会触发该错误：路径、inode 和 owner 不变时，Runtime 视为同一目录。切换项目主要文件夹后，旧 Worktree 的运行、Fork、Handoff、恢复和清理仍使用原仓库。新会话会重新发现 Git，所以项目保存后才初始化的仓库也能被新会话识别。
 
 Worktree 快照与恢复只覆盖主仓库现有 Git 能力可保存的内容。其他仓库、共享文件夹、ignored 文件和非 Git 文件夹不属于该恢复范围。本版本不提供多仓库 Worktree 组、多仓库原子提交或统一 PR。Repo Intelligence 的自动索引仍以主要目录为范围；Agent 可以显式搜索其他根。
 

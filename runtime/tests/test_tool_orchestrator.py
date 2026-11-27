@@ -187,6 +187,25 @@ class ToolOrchestratorTests(unittest.TestCase):
         self.assertEqual([request.attempt_ordinal for request in approvals], [0, 1])
         self.assertNotEqual(approvals[0].approval_key, approvals[1].approval_key)
 
+    def test_mxc_denial_never_enters_the_unsandboxed_retry_path(self) -> None:
+        denied = SandboxDenied(
+            category=SandboxDenialCategory.FILESYSTEM_READ,
+            summary="MXC denied file read",
+            original_exit_code=1,
+        )
+        runtime = _Runtime([({"outcome": "error", "code": "sandbox_denied"}, denied)])
+        approvals = []
+        result = ToolOrchestrator().run(
+            runtime, _Request(),
+            replace(self.context, default_sandbox=SandboxType.WINDOWS_MXC),
+            approve=lambda request: approvals.append(request) or True,
+        )
+        self.assertEqual(result.attempt_count, 1)
+        self.assertFalse(result.escalated)
+        self.assertEqual(runtime.attempts[0].sandbox, SandboxType.WINDOWS_MXC)
+        self.assertTrue(result.result["data"]["sandboxed"])
+        self.assertEqual([request.attempt_ordinal for request in approvals], [0])
+
     def test_network_denial_does_not_escalate_or_request_unsandboxed_approval(
         self,
     ) -> None:

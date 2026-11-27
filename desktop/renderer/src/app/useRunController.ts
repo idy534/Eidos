@@ -39,6 +39,11 @@ export interface RunControllerState {
 export interface RunControllerActions {
   addReference: (sessionId: string, reference: InputReference) => void;
   insertReference: (sessionId: string, reference: InputReference, range?: { start: number; end: number }) => number | undefined;
+  pasteDraftContent: (
+    sessionId: string,
+    pasted: { text: string; references: readonly InputReference[] },
+    range?: { start: number; end: number },
+  ) => { caretOffset: number; overflowDegradedCount: number } | undefined;
   removeReference: (id: string) => void;
   clearDraftIfUnchanged: (sessionId: string, text: string, references: InputReference[]) => void;
   setInput: (value: string) => void;
@@ -344,6 +349,7 @@ export function useRunController(
   const actions: RunControllerActions = {
     addReference: draftStore.add,
     insertReference: draftStore.insert,
+    pasteDraftContent: draftStore.paste,
     removeReference: (id) => {
       if (currentSessionId) {
         draftStore.update(currentSessionId, (draft) => ({

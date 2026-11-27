@@ -397,7 +397,7 @@ Run `e277e61b`（`deepseek-v4-1-flash-261017`，reasoning high）共 10 步。�
 ## 平台与分发
 
 - Eidos 的正式交付目标是 macOS arm64。仓库增加了 Windows 11 x64、本地 NTFS 的预览代码、安装包入口和原生验收用例。Windows 实机结果见后续验收记录。
-- Windows 预览接入了 Desktop、独立 Python Runtime、MinGit、ripgrep、受控文件提交、PowerShell PIPE 和 ConPTY。浏览器桥接与文档 Skill 使用随 Windows 安装包发布的资源。默认受限 Shell 和本地 MCP 仍因缺少对应的沙盒后端而拒绝执行。Windows 浏览器工具需要用户确认完全访问。Windows Qoder 资源包仍待适配。
+- Windows 预览接入了 Desktop、独立 Python Runtime、MinGit、ripgrep、受控文件提交、PowerShell PIPE 和 ConPTY。受限 Shell PIPE 与命令 Hook 要求 MXC 原生能力及功能自检通过。MXC 的遥测退出由构建期强制，实机抓包核验在首次面向用户发布前完成。系统缺少能力时，单条 Shell 可以显式申请沙盒外执行，也可由用户确认完全访问。受限 ConPTY 与本地 MCP 沙盒仍待实现，Windows 浏览器工具需要用户确认完全访问。Windows Qoder 资源包仍待适配。
 - Linux、Windows ARM64、macOS x64 和 Universal binary 仍无交付入口。
 - Auto Update、GitHub Release 发布闭环和其他平台 artifact 尚未实现。
 - Release packaging 的签名、notarization、stapling 和 Gatekeeper 命令已经接入脚本，但这些步骤需要 Apple credentials。没有 credentials 时不能证明已生成可发布的 Release artifact。
@@ -643,6 +643,7 @@ Run `e277e61b`（`deepseek-v4-1-flash-261017`，reasoning high）共 10 步。�
 - 历史引用正文与图片受上下文预算限制。超出时，Context 会保留说明，原始快照仍在存储中。用户可以重新引用当前需要的内容。
 - 尚未创建 Session 的输入共用一个持久草稿槽。Session 草稿相互独立。保存失败时，界面保留当前文字并提示重试；应用异常退出前尚未完成持久化的编辑仍可能丢失。
 - Runtime 在添加新引用时清理超过 7 天、且没有被消息或草稿引用的记录。物理 Blob 回收沿用现有 GC 时机。界面暂未提供附件存储管理页。
+- 已发送用户消息、引导对话与输入框支持完整复制与粘贴还原（涵盖复制按钮、气泡框选复制、编辑器复制/剪切、输入框粘贴以及最近一条用户消息的编辑重发态粘贴）。复制到外部应用时保留可读纯文本（内联引用转为 `@`/`$` 标签，文件/文件夹/图片/摘录等货架引用转为 `[文件: ...]` 等说明）；其中复制按钮的结构化还原依赖当前桌面窗口内存镜像，跨应用重启不保留，外部复制覆盖剪贴板后自动退回纯文本。应用内粘贴时会按“策略 A1”校验尚未持有的引用以及 `history`/扩展 `selection` 引用：文件/文件夹/图片/摘录校验持久化快照仍在库中且元数据一致；`history` 校验快照且原会话未被删除；`agent`/`skill`/`plugin`/`mcp` 校验当前已启用且版本号/内容哈希未变更（其中 `mcp` 借助现有 `prepareInput` 比对哈希，配置更新时会写入一条约数百字节的未引用快照并在 7 天后自动 GC，引用存储达 512 MiB 上限时降级为纯文本）；最近一条消息编辑重发态保留原消息的 `agent` 快照，而 `skill`/`plugin`/`mcp` 仍按当前状态校验。已删除、停用、更新或超出 20 个上限的引用会自动降级为纯文本并通过警告提示告知用户；使用 `Ctrl/Cmd+Shift+V` 可主动仅粘贴纯文本（右键菜单“粘贴并匹配样式”暂不区分于普通粘贴）。
 - MCP、Plugin 选择只使用已安装、已启用且已授权的扩展。安装、配置和授权继续在设置中完成。Composer 使用现有 Run FIFO 接收下一轮输入，输入框上方的列表支持编辑排队消息文字和删除消息。队列编辑保留已有引用，目前没有修改引用或拖动排序的入口。用户可以通过队列行的箭头追加运行中引导。引导在下一次采样边界生效，不打断正在执行的模型请求、Shell 或审批。涉及扩展 selection、已关联计划或当前模型不支持的图片时，消息会保留在队列中。网页引用不在本批范围内。
 
 ## Plan 模式验证状态

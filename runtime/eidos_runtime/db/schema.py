@@ -40,9 +40,15 @@ from eidos_runtime.db.agent_workspace_migration import AGENT_WORKSPACE_SCHEMA_SQ
 from eidos_runtime.db.team_migration import TEAM_SCHEMA_SQL
 from eidos_runtime.db.guardrails_migration import GUARDRAILS_SCHEMA_SQL
 from eidos_runtime.db.personalization_migration import PERSONALIZATION_SCHEMA_SQL
+from eidos_runtime.db.tool_attempt_sandbox_migration import (
+    ONE_RUNNING_TOOL_ATTEMPT_INDEX_SQL,
+    TOOL_ATTEMPTS_TABLE_SQL,
+    V57_TOOL_ATTEMPTS_TABLE_SQL,
+)
 
 
-SCHEMA_VERSION = 57
+SCHEMA_VERSION = 58
+V57_SCHEMA_VERSION = 57
 V56_SCHEMA_VERSION = 56
 V55_SCHEMA_VERSION = 55
 V54_SCHEMA_VERSION = 54
@@ -95,7 +101,7 @@ V8_SCHEMA_VERSION = 8
 V7_SCHEMA_VERSION = 7
 V6_SCHEMA_VERSION = 6
 V5_SCHEMA_VERSION = 5
-PREVIOUS_SCHEMA_VERSION = V56_SCHEMA_VERSION
+PREVIOUS_SCHEMA_VERSION = V57_SCHEMA_VERSION
 LEGACY_SCHEMA_VERSION = 1
 
 TOOL_CALL_PAYLOAD_KIND_COLUMN = (
@@ -125,7 +131,8 @@ _LEGACY_ACTIVE_RUN_INDEX_SQL = (
     "WHERE status IN ('running', 'finalizing');\n"
 )
 
-_RAW_BASE_SCHEMA_SQL = """
+_RAW_BASE_SCHEMA_SQL = (
+    """
 CREATE TABLE sessions (
     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
@@ -280,31 +287,10 @@ CREATE UNIQUE INDEX one_pending_approval_per_run
 ON approvals (run_id)
 WHERE status = 'pending';
 
-CREATE TABLE tool_attempts (
-    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-    id TEXT NOT NULL UNIQUE,
-    tool_call_id TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE RESTRICT,
-    ordinal INTEGER NOT NULL CHECK (ordinal IN (0, 1)),
-    sandbox_type TEXT NOT NULL CHECK (
-        sandbox_type IN ('macos_seatbelt', 'none')
-    ),
-    sandbox_requested INTEGER NOT NULL CHECK (sandbox_requested IN (0, 1)),
-    effective_permissions_json TEXT NOT NULL,
-    profile_hash TEXT,
-    escalation_reason TEXT,
-    status TEXT NOT NULL CHECK (
-        status IN ('running', 'completed', 'failed', 'canceled', 'uncertain')
-    ),
-    started_at INTEGER NOT NULL,
-    completed_at INTEGER,
-    result_code TEXT,
-    UNIQUE(tool_call_id, ordinal)
-);
-
-CREATE UNIQUE INDEX one_running_tool_attempt_per_tool_call
-ON tool_attempts(tool_call_id)
-WHERE status = 'running';
-
+"""
+    + V57_TOOL_ATTEMPTS_TABLE_SQL
+    + ONE_RUNNING_TOOL_ATTEMPT_INDEX_SQL
+    + """
 CREATE TABLE execution_segments (
     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
@@ -547,6 +533,7 @@ ON async_operations(scope, operation_id)
 WHERE status IN ('accepted', 'running');
 
 """
+)
 
 REPOSITORY_SCHEMA_SQL = """
 CREATE TABLE repository_snapshots (
@@ -1558,7 +1545,8 @@ V53_SCHEMA_SQL = V52_SCHEMA_SQL + SHELL_DISPLAY_MIGRATION_SQL
 V54_SCHEMA_SQL = V53_SCHEMA_SQL + MEMORY_USAGE_SCHEMA_SQL
 V55_SCHEMA_SQL = V54_SCHEMA_SQL + AGENT_WORKSPACE_SCHEMA_SQL
 V56_SCHEMA_SQL = V55_SCHEMA_SQL + TEAM_SCHEMA_SQL
-SCHEMA_SQL = V56_SCHEMA_SQL + GUARDRAILS_SCHEMA_SQL
+V57_SCHEMA_SQL = V56_SCHEMA_SQL + GUARDRAILS_SCHEMA_SQL
+SCHEMA_SQL = V57_SCHEMA_SQL.replace(V57_TOOL_ATTEMPTS_TABLE_SQL, TOOL_ATTEMPTS_TABLE_SQL, 1)
 
 # Test/upgrade fixture for schema v5. Schema v5 still kept the rebuildable
 # repository index in the state database.

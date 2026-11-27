@@ -4,6 +4,9 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/rea
 import { Composer, type ComposerProps } from "./Composer.js";
 import { setInlineEditorSelectionOffsets } from "./InlineRichEditor.js";
 import { InputContextProvider } from "./InputContext.js";
+import { useInputDrafts } from "../app/useInputDrafts.js";
+import { QUERY_CLIPBOARD_MIME, buildQueryClipboardPayload, serializeQueryClipboardPayload } from "../../../shared/query-clipboard.js";
+import { clearQueryClipboardMirror, writeQueryToClipboard } from "../query-clipboard.js";
 import {
   canonicalizeInlineText,
   insertInlineReferenceAtSelection,
@@ -1076,4 +1079,287 @@ it("exposes and dispatches /compact, /fork, and /review slash commands through t
   fireEvent.change(textbox, { target: { value: "/review" } });
   fireEvent.click(await screen.findByRole("option", { name: /\/review/ }));
   expect(onOpenReview).toHaveBeenCalledTimes(1);
+});
+
+describe("Composer structured query copy and paste", () => {
+  const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+  const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+
+  beforeEach(() => {
+    clearQueryClipboardMirror();
+  });
+
+  afterEach(() => {
+    clearQueryClipboardMirror();
+    if (runtimeDescriptor) Object.defineProperty(window, "eidosRuntime", runtimeDescriptor);
+    else delete (window as Partial<Window>).eidosRuntime;
+    if (clipboardDescriptor) Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
+    else delete (navigator as Partial<Navigator>).clipboard;
+  });
+
+  function renderDraftComposer(apiOverrides: Record<string, unknown> = {}, referenceCatalog: InputReference[] = []) {
+    const refById = new Map([composerReference, ...referenceCatalog].map((ref) => [ref.id, ref]));
+    const api = {
+      readInputDraft: vi.fn().mockResolvedValue({ text: "", references: [] }),
+      writeInputDraft: vi.fn().mockResolvedValue({ text: "", references: [] }),
+      readInput: vi.fn(async (id: string) => {
+        const matched = refById.get(id);
+        if (!matched) throw new Error("RESOURCE_NOT_FOUND");
+        return { reference: matched, text: "ok" };
+      }),
+      readSession: vi.fn().mockResolvedValue({ session: { id: "hist-1" } }),
+      listSkills: vi.fn().mockResolvedValue({ skills: [] }),
+      listPlugins: vi.fn().mockResolvedValue({ plugins: [] }),
+      listMcpServers: vi.fn().mockResolvedValue({ servers: [] }),
+      listSessions: vi.fn().mockResolvedValue({ items: [] }),
+      listAgentTypes: vi.fn().mockResolvedValue({ agents: [] }),
+      listWorkspaceDirectory: vi.fn().mockResolvedValue({ entries: [], truncated: false }),
+      onInputQuote: vi.fn().mockReturnValue(vi.fn()),
+      ...apiOverrides,
+    };
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, writable: true, value: api });
+
+    function Harness({ storageReady = true }: { storageReady?: boolean }) {
+      const drafts = useInputDrafts("session-1", storageReady);
+      const draft = drafts.drafts["session-1"] ?? { text: "", references: [] };
+      return (
+        <InputContextProvider
+          sessionId="session-1"
+          workspaceRoot="/workspace"
+          ready={drafts.ready}
+          currentText={draft.text}
+          currentReferences={draft.references}
+          onAdd={drafts.add}
+          onInsert={drafts.insert}
+          onPasteQuery={drafts.paste}
+          onSettings={vi.fn()}
+        >
+          <Composer
+            {...defaultProps}
+            draftReady={drafts.ready}
+            input={draft.text}
+            references={draft.references}
+            onInputChange={(text) => drafts.update("session-1", (prev) => ({ ...prev, text }))}
+            onRemoveReference={(id) => drafts.update("session-1", (prev) => ({
+              ...prev,
+              text: removeInlineReferenceTokenById(prev.text, id),
+              references: prev.references.filter((r) => r.id !== id),
+            }))}
+          />
+        </InputContextProvider>
+      );
+    }
+
+    return render(<Harness />);
+  }
+
+  it("restores copied sent query with shelf and inline references into an empty textarea Composer", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+
+    const agentRef: InputReference = {
+      ...composerReference,
+      id: "111122223333" + "0".repeat(52),
+      kind: "agent",
+      label: "researcher",
+      source: "researcher",
+      status: "selection",
+    };
+    const historyRef: InputReference = {
+      ...composerReference,
+      id: "444455556666" + "1".repeat(52),
+      kind: "history",
+      label: "前期讨论",
+      source: "hist-1",
+    };
+    const fileRef: InputReference = {
+      ...composerReference,
+      id: "777788889999" + "2".repeat(52),
+      kind: "file",
+      label: "notes.txt",
+      source: "/workspace/notes.txt",
+    };
+
+    const { container } = renderDraftComposer({
+      listAgentTypes: vi.fn().mockResolvedValue({
+        agents: [{ name: "researcher", source: "r.toml", enabled: true, available: true, definitionVersion: agentRef.sha256 }],
+      }),
+    }, [fileRef, agentRef, historyRef]);
+
+    const textarea = await waitFor(() => screen.getByRole("textbox")) as HTMLTextAreaElement;
+    await writeQueryToClipboard(
+      `使用 [@researcher](ref:${agentRef.id.slice(0, 12)}) 结合 [@前期讨论](ref:${historyRef.id.slice(0, 12)})`,
+      [fileRef, agentRef, historyRef],
+    );
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        getData: (type: string) => type === "text/plain" ? "[文件: notes.txt]\n使用 @researcher 结合 @前期讨论" : "",
+        setData: vi.fn(),
+        files: [],
+      },
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector(".composer .composer-rich-editor")).not.toBeNull();
+    });
+    expect(screen.getByRole("button", { name: "移除 notes.txt" })).toBeInTheDocument();
+    expect(container.querySelector(`[data-shelf-ref-id="${fileRef.id}"]`)).not.toBeNull();
+    expect(screen.getByRole("button", { name: "researcher" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "前期讨论" })).toBeInTheDocument();
+  });
+
+  it("supports InlineRichEditor copy, cross-session paste, Shift+Paste plain text, and invalid/overflow degradation", async () => {
+    const agentRef: InputReference = {
+      ...composerReference,
+      id: "aaaa1111bbbb" + "0".repeat(52),
+      kind: "agent",
+      label: "researcher",
+      source: "researcher",
+      status: "selection",
+    };
+    const staleAgent: InputReference = {
+      ...composerReference,
+      id: "cccc2222dddd" + "1".repeat(52),
+      kind: "agent",
+      label: "stale-agent",
+      source: "stale-agent",
+      sha256: "f".repeat(64),
+      status: "selection",
+    };
+
+    const { container } = renderDraftComposer({
+      readInputDraft: vi.fn().mockResolvedValue({
+        text: `[@researcher](ref:${agentRef.id.slice(0, 12)}) 分析`,
+        references: [agentRef],
+      }),
+      listAgentTypes: vi.fn().mockResolvedValue({
+        agents: [
+          { name: "researcher", source: "r.toml", enabled: true, available: true, definitionVersion: agentRef.sha256 },
+          { name: "stale-agent", source: "s.toml", enabled: true, available: true, definitionVersion: "e".repeat(64) },
+        ],
+      }),
+    }, [agentRef, staleAgent]);
+
+    const richEditor = await waitFor(() => {
+      const el = container.querySelector(".composer .composer-rich-editor") as HTMLDivElement | null;
+      expect(el).not.toBeNull();
+      return el!;
+    });
+
+    // Copy entire richEditor content
+    setInlineEditorSelectionOffsets(richEditor, 0, `[@researcher](ref:${agentRef.id.slice(0, 12)}) 分析`.length);
+    const copiedStore = new Map<string, string>();
+    fireEvent.copy(richEditor, {
+      clipboardData: {
+        getData: (t: string) => copiedStore.get(t) ?? "",
+        setData: (t: string, v: string) => { copiedStore.set(t, v); },
+      },
+    });
+    expect(copiedStore.get("text/plain")).toBe("@researcher 分析");
+    expect(copiedStore.has(QUERY_CLIPBOARD_MIME)).toBe(true);
+
+    // Ctrl+Shift+V pastes plain text only without triggering structured degradation
+    fireEvent.keyDown(richEditor, { key: "V", ctrlKey: true, shiftKey: true });
+    setInlineEditorSelectionOffsets(
+      richEditor,
+      `[@researcher](ref:${agentRef.id.slice(0, 12)}) 分析`.length,
+      `[@researcher](ref:${agentRef.id.slice(0, 12)}) 分析`.length,
+    );
+    fireEvent.paste(richEditor, {
+      clipboardData: {
+        getData: (type: string) => copiedStore.get(type) ?? "",
+        setData: vi.fn(),
+        files: [],
+      },
+    });
+    expect(richEditor.textContent).toBe("researcher 分析@researcher 分析");
+
+    // Paste stale agent payload -> degrades stale agent to plain text + shows warning toast
+    const stalePayload = buildQueryClipboardPayload(
+      ` [@stale-agent](ref:${staleAgent.id.slice(0, 12)})`,
+      [staleAgent],
+    );
+    const endOffset = `[@researcher](ref:${agentRef.id.slice(0, 12)}) 分析@researcher 分析`.length;
+    setInlineEditorSelectionOffsets(richEditor, endOffset, endOffset);
+    fireEvent.paste(richEditor, {
+      clipboardData: {
+        getData: (type: string) => type === QUERY_CLIPBOARD_MIME ? serializeQueryClipboardPayload(stalePayload) : "",
+        setData: vi.fn(),
+        files: [],
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("部分引用已更新或不可用，已降级为纯文本。")).toBeInTheDocument();
+    });
+    expect(richEditor.textContent).toBe("researcher 分析@researcher 分析 @stale-agent");
+  });
+
+  it("omits structured MIME on pure-text copy from InlineRichEditor and keeps tokens intact across rapid double async paste", async () => {
+    const agentRef: InputReference = {
+      ...composerReference,
+      id: "dddd1111eeee" + "0".repeat(52),
+      kind: "agent",
+      label: "researcher",
+      source: "researcher",
+      status: "selection",
+    };
+    const { container } = renderDraftComposer({
+      readInputDraft: vi.fn().mockResolvedValue({
+        text: `[@researcher](ref:${agentRef.id.slice(0, 12)}) 纯文本片段`,
+        references: [agentRef],
+      }),
+      listAgentTypes: vi.fn().mockResolvedValue({
+        agents: [{ name: "researcher", source: "r.toml", enabled: true, available: true, definitionVersion: agentRef.sha256 }],
+      }),
+    }, [agentRef]);
+
+    const richEditor = await waitFor(() => {
+      const el = container.querySelector(".composer .composer-rich-editor") as HTMLDivElement | null;
+      expect(el).not.toBeNull();
+      return el!;
+    });
+
+    // Copy only "纯文本片段" (no inline tokens) -> does NOT emit QUERY_CLIPBOARD_MIME
+    const prefixLen = `[@researcher](ref:${agentRef.id.slice(0, 12)}) `.length;
+    const totalLen = prefixLen + "纯文本片段".length;
+    setInlineEditorSelectionOffsets(richEditor, prefixLen, totalLen);
+    const plainStore = new Map<string, string>();
+    fireEvent.copy(richEditor, {
+      clipboardData: {
+        getData: (t: string) => plainStore.get(t) ?? "",
+        setData: (t: string, v: string) => { plainStore.set(t, v); },
+      },
+    });
+    expect(plainStore.get("text/plain")).toBe("纯文本片段");
+    expect(plainStore.has(QUERY_CLIPBOARD_MIME)).toBe(false);
+
+    // Rapid consecutive async pastes at the same selection do not tear inline tokens and close open picker
+    const token = `[@researcher](ref:${agentRef.id.slice(0, 12)})`;
+    const payload = buildQueryClipboardPayload(token, [agentRef]);
+    // Open picker via "+" button, then paste directly into richEditor -> picker closes and tokens stay intact
+    fireEvent.click(screen.getByRole("button", { name: "添加引用" }));
+    expect(await screen.findByRole("listbox")).toBeInTheDocument();
+    setInlineEditorSelectionOffsets(richEditor, totalLen, totalLen);
+    fireEvent.paste(richEditor, {
+      clipboardData: {
+        getData: (type: string) => type === QUERY_CLIPBOARD_MIME ? serializeQueryClipboardPayload(payload) : "",
+        setData: vi.fn(),
+        files: [],
+      },
+    });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    fireEvent.paste(richEditor, {
+      clipboardData: {
+        getData: (type: string) => type === QUERY_CLIPBOARD_MIME ? serializeQueryClipboardPayload(payload) : "",
+        setData: vi.fn(),
+        files: [],
+      },
+    });
+
+    await waitFor(() => {
+      expect(richEditor.textContent).toBe("researcher 纯文本片段researcherresearcher");
+    });
+  });
 });
