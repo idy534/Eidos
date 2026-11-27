@@ -138,14 +138,21 @@
 /* Body */
 
 .approval-body {
-  max-height: min(45vh, 26rem);
+  max-height: min(45vh, 28rem);
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 0.9rem 1rem;
   color: var(--text);
   background: var(--surface-raised);
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
+}
+
+/* Keep scrollable/clipped sections at their intrinsic height so .approval-body scrolls instead of compressing them. */
+.approval-body > * {
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 /* Simple Clean Code Box */
@@ -203,7 +210,7 @@
 
 .approval-detail-row {
   display: grid;
-  grid-template-columns: 5rem minmax(0, 1fr);
+  grid-template-columns: 5.5rem minmax(0, 1fr);
   gap: 0.65rem;
   padding: 0.45rem 0.75rem;
   border-bottom: 1px solid var(--line);

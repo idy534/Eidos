@@ -314,6 +314,20 @@ describe("clarification option alignment", () => {
   });
 });
 
+describe("approval composer layout", () => {
+  it("prevents flex children inside .approval-body from shrinking and clipping vertically", () => {
+    expect(styles).toMatch(
+      /\.approval-body\s*\{[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior:\s*contain;[^}]*display:\s*flex;[^}]*flex-direction:\s*column;/s,
+    );
+    expect(styles).toMatch(
+      /\.approval-body\s*>\s*\*\s*\{[^}]*flex:\s*0\s+0\s+auto;[^}]*min-width:\s*0;/s,
+    );
+    expect(styles).toMatch(
+      /\.approval-detail-row\s*\{[^}]*grid-template-columns:\s*5\.5rem minmax\(0,\s*1fr\);/s,
+    );
+  });
+});
+
 describe("windows platform styles", () => {
   it("provides Windows font fallbacks and opaque, traffic-light-free overrides under data-platform=windows", () => {
     expect(styles).toMatch(/--font-ui:[^;]*"Segoe UI Variable Text"[^;]*"Microsoft YaHei UI"[^;]*sans-serif;/);
