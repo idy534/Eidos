@@ -85,11 +85,12 @@ def test_runtime_application_container_composes_all_phase_ef_boundaries(tmp_path
         "context/usage",
         "workspace/listDirectory", "workspace/readAsset", "workspace/readFilePreview",
         "review/listComments", "review/createComment", "review/deleteComment",
+        "checkpoint/list", "checkpoint/rewind",
     } <= registered
     # Methods with no Desktop caller stay unregistered.
     assert not registered & {
         "run/status", "run/pause", "skill/read",
-        "checkpoint/create", "checkpoint/list", "checkpoint/rewind", "checkpoint/fork",
+        "checkpoint/create", "checkpoint/fork",
     }
     server.close()
 

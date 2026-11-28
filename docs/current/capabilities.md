@@ -113,12 +113,12 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - 普通采样和无工具收尾调用会把敏感扫描已释放的文本写入同一个 `in_progress` Assistant Item，并通过 SQLite Event/Outbox 和 JSON-RPC `item/delta` 更新界面；首段文本立即显示，之后按 100 ms 或 4 KiB 批量更新。完整响应校验成功后，Runtime 才确认该 Item。失败草稿使用现有 incomplete 状态，并从模型上下文排除。
 - 新 `item/delta` Event 包含 UTF-16 文本偏移 `offset`。Renderer 只在本地内容长度与偏移一致时追加，避免重复投递和已含增量的快照造成重复文字。旧 Event 没有 offset 时仍按原协议读取。Run 结束后，现有 Session 快照刷新负责校正缺失内容。Desktop 和 Runtime 应一起更新。
 
-- `models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。内置 Catalog 提供 DeepSeek、MiniMax、Kimi 和火山引擎 Agent Plan 的十一个推荐模型预设模板，不再强制全等校验。已有模型配置缺少思考档位时，`model/list` 会回退到对应 Catalog 档位，不会改写 `models.json`；已有非空档位仍优先。
+- `models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。内置 Catalog 提供 DeepSeek、MiniMax、Kimi、火山引擎 Agent Plan、OpenAI、Anthropic 和 Gemini 的 23 个推荐模型预设模板，不再强制全等校验。已有模型配置缺少思考档位时，`model/list` 会回退到对应 Catalog 档位，不会改写 `models.json`；已有非空档位仍优先。
 - 内置多模态支持模型包括 `deepseek-v4.1-flash` 和 `kimi-k3.1-pro`（火山引擎 Agent Plan 图像理解）、`glm-5.3-flash`（智谱原生多模态）、`minimax-m3` / `MiniMax-M3`（MiniMax 原生多模态）、`kimi-k3` 与 `kimi-k2.7-code-highspeed`（Kimi 原生多模态）。纯文本/代码目录项包括 `glm-5.3` 和 `deepseek-flash`。
 - 火山引擎 Agent Plan 的内置 Catalog 指向 `https://ark.cn-beijing.volces.com/api/plan/v3`，包含 `deepseek-v4.1-flash`、`deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5.3`、`glm-5.3-flash`、`kimi-k3.1-pro` 和 `minimax-m3`。Kimi K3.1 Pro 使用 OpenAI-compatible Chat Completions，目录声明 1,024,000 上下文、131,072 最大输出、图片输入与工具调用；该端点需要 Agent Plan 专属 Key。
 - Model 配置保存在 `models.json`。默认位置是 `~/.eidos/models.json`。本地文件使用 owner-only 权限。
 - API Key 通过本地 Model 配置写请求链路传到 Runtime：Renderer typed IPC → Electron Main → `model/create` / `model/update` JSON-RPC request → ModelConfigStore。Runtime 在模型列表、创建和编辑响应中返回本机保存的 Key，供设置表单回显。Python 响应 DTO 与 Main 严格校验均接受字符串 `apiKey`。Key 不进入 SQLite、Event/Feed 或正常日志，配置对象的文本表示隐藏 Key。
-- Runtime 同时支持 OpenAI-compatible Chat Completions 和 OpenAI Responses。Chat Completions 是兼容路径，不是废弃路径。Responses profile 只有在同时声明 `supports_custom_tools=true` 和 `supports_tool_grammar=true` 时才使用 native Custom `apply_patch`；其他 Responses profile 和所有 Chat Completions profile 使用 Function Tool。
+- Runtime 支持 OpenAI-compatible Chat Completions、OpenAI Responses 和 Anthropic Messages 三种 wire API，Qoder 模型另走 Qoder SDK。内置 OpenAI 模型使用 Responses，内置 Anthropic 模型使用 Messages，其余内置 Provider 使用 Chat Completions。Chat Completions 是兼容路径，不是废弃路径。Responses profile 只有在同时声明 `supports_custom_tools=true` 和 `supports_tool_grammar=true` 时才使用 native Custom `apply_patch`；其他 Responses profile 和所有 Chat Completions profile 使用 Function Tool。
 - Runtime 使用 Pydantic AI Model API 处理 Chat Completions 的 Provider 构造、流式 Model Response、Usage 和 ToolCall 归一化。Responses adapter 只有在收到 `response.completed` 后才返回可执行 response。`response.failed`、`response.incomplete`、`error` 和意外 EOF 都会失败。Runtime 的模型取消会关闭 Responses stream，取消等待中的 `anext` task，并把结果映射为 `sampling_canceled`。
 - 每个 Run 固化 Model Profile、Model capability declaration 和 Extension Snapshot。活动 Run 不会被后续 Model 配置编辑或删除改变。
 - 回复中的模型优先显示当前配置的名称。配置不存在时，界面显示 Run 的 Model Profile 中保存的远端模型 ID；旧快照没有远端 ID 时仍显示内部模型 ID。新分叉会保留远端模型 ID。旧分叉在来源 Run 仍存在时可以读取该 ID；来源 Run 已删除且旧分叉没有保存 ID 时，界面继续显示内部 ID。现有 Run 快照不保存自定义展示名。
@@ -387,10 +387,11 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Checkpoint
 
-- Checkpoint create/list、Rewind 和 Checkpoint Fork 的 RPC 与应用层已移除，Desktop 从未提供这些入口。
-- 从某条回答继续另一条对话使用会话分叉（`session/fork`）；独立 Worktree 分叉复用 Worktree Snapshot。
-- `checkpoints` 与 `checkpoint_actions` 表仍在 Schema 中，不再写入；Session 删除时仍会清理其中的旧记录，被旧记录引用的 Snapshot 不会被 retention 替换。
-- Non-Git Local Workspace 不支持 filesystem rewind。
+- Git 会话在每轮 Run 启动前自动保存轻量级工作区 Checkpoint，底层复用 Worktree Snapshot，并记录 Git HEAD 和当时的对话位置。
+- `checkpoint/list` 列出会话的 Checkpoint；`checkpoint/rewind` 把主工作区或受管 Worktree 的文件与 HEAD 恢复到该 Checkpoint，并在 `checkpoint_actions` 记录这次回退。Rewind 不回退对话记录；Session 有活动 Run 时返回 `SESSION_ACTIVE`。
+- `checkpoint/create` 与 `checkpoint/fork` 未注册。从某条回答继续另一条对话使用会话分叉（`session/fork`）；独立 Worktree 分叉复用 Worktree Snapshot。
+- 删除会话时一并释放它的 Checkpoint 快照、隐藏 ref 和快照文件；无法立即清理的快照解除会话引用后交给启动核对。
+- 多目录项目的次级文件夹、Non-Git 项目和 Projectless 会话不支持回退。
 
 ## Distribution
 
