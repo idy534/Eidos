@@ -1,6 +1,6 @@
 # Eidos 评测程序与执行方案（macOS）
 
-日期：2026-11-07 起草，2026-11-18 按当前源码修订，2026-11-28 改为只在 macOS 上实施的方案，并补充外部产品对照、分层运行和机制消融。状态：设计方案，尚未实现评测程序，也没有产生真实模型成绩。
+日期：2026-11-07 起草，2026-11-18 按当前源码修订，2026-11-28 改为只在 macOS 上实施的方案，并补充分层运行和机制消融；同日再次修订：以带答案的题库为主，外部产品对照改为只在首个基线时运行一次，并确定本期受测模型。状态：设计方案，尚未实现评测程序，也没有产生真实模型成绩。
 
 本方案回答三个问题：Eidos 能完成哪些真实任务？Eidos 在哪一步失败？一次产品改动是否带来了可重复的改善？
 
@@ -16,9 +16,11 @@
 | --- | --- | --- |
 | 本地真实任务 | 用户交给 Eidos 的工作能否完成？ | 程序通过生产 stdio 协议驱动完整 Runtime，外部程序检查答案和产物。 |
 | 产品可靠性 | 取消、审批、重启、长任务和资源清理是否正确？ | 程序在可丢弃环境中执行有明确预期的场景。 |
-| 外部产品对照 | 同一模型、同一任务下，Eidos 与 Codex 的差距在哪里？ | 程序用同一任务卡和判分器驱动 Codex CLI。Claude Code 作为可选对照。 |
+| 外部产品对照 | 同一模型、同一任务下，Eidos 与其他 harness 的差距在哪里？ | 只在首个基线时运行一次，对照对象是本机的 DeepSeek Harness；日常优化不运行。 |
 
-外部产品对照从首个基线开始执行，不放到最后。Terminal-Bench 维护者测到，同一模型只因 harness 不同，分数相差约 20 个百分点；放宽时间预算后，大部分差距会收回。Eidos 的内置 OpenAI 模型走 Responses API，可以与 Codex 使用同一个模型。这组对照能直接回答 Eidos 的工具、上下文和提示词与 Codex 相比差多少、差在哪里。[Terminal-Bench 持续维护论文](https://arxiv.org/abs/2611.08417)
+日常优化只运行 Eidos，并按题库已有的答案判分。代码题的答案是隐藏测试，问答题的答案是参考要点和评分条目，判分不需要另一个 harness 参与。外部产品对照会让模型消耗至少翻倍，因此只在首个基线时把首批任务各运行一次，结果保存后供后续批次引用；之后只在大版本对比时重新运行。
+
+这次一次性对照仍然必要。Terminal-Bench 维护者测到，同一模型只因 harness 不同，分数相差约 20 个百分点；放宽时间预算后，大部分差距会收回。[Terminal-Bench 持续维护论文](https://arxiv.org/abs/2611.08417) 对照用来确认同一模型下，Eidos 的工具、上下文和提示词有没有明显拖后腿。SWE-bench 题目另有公开的其他系统轨迹（第 5.1 节），可以免费用于定性对照。
 
 Runtime 评测覆盖协议、应用服务、调度、模型、工具、权限和持久化。它不覆盖 Renderer、preload、Electron 生命周期和真实用户交互。程序另外保留少量 Desktop 验收案例。
 
@@ -45,7 +47,8 @@ Runtime 评测覆盖协议、应用服务、调度、模型、工具、权限和
 | `model_attempts` 表 | 保存 `usage_json`（含 `input_tokens`、`output_tokens`、`cache_read_tokens`、`cache_write_tokens`）、`ttft_ms`、`duration_ms`、`error_code`、`http_status`、`retry_decision_json` 和 `tool_call_count`。数据库文件为 `<EIDOS_DATA_DIR>/state.sqlite`。 | 受测进程退出后，用只读导出器补充用量和轨迹诊断，见第 9.1 节。 |
 | `scripts/evaluate-request-content.py`、`evaluate-context-compaction.py`、`evaluate-memory-learning.py`、`evaluate-memory-cases.py` | 请求内容、上下文压缩和记忆的专项回放。 | 保留为专项回归，不当作通用任务完成率。 |
 | [`eval/runner.py`](../../eval/runner.py) 与 `eval/cases/baseline.json` | 3 个脚本化用例，直接调用 RuntimeEngine 和 `ScriptedModel`。 | 保留为组件实验，不产生能力成绩，也不作为新程序的基础。 |
-| Codex CLI | 本机已安装 0.166.0。`codex exec` 支持 `--json`、`-m`、`-s`、`-C`、`-c key=value`、`--skip-git-repo-check`、`--ephemeral`、`--ignore-user-config` 和 `-o`。 | Codex Adapter 使用非交互执行，见第 6.2 节。实施时以 `codex exec --help` 的实际输出为准，并把版本和完整参数写入 manifest。 |
+| DeepSeek Harness（下称 dsh） | 本机已安装 0.2.2-rc.5，CLI 为 `/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh`。`dsh --profile headless` 无界面运行一个任务，支持 `--json`（NDJSON 事件）、`--patch`（叠加配置）、`--permission-mode`、`--approval-policy`、`--add-dir` 和 `--session-id`。工作区为进程的 cwd，配置根目录由 `DSH_HOME` 决定；`--dump-config` 和 `--dump-config-schema` 输出合成后的配置和 schema。headless 模式关闭了凭据插件，只能从环境变量读取 API Key。 | 基线对照的 Adapter，见第 6.2 节。实施时以 CLI 帮助和 schema 的实际输出为准，并把版本、完整参数和合成后的配置写入 manifest。 |
+| Codex CLI | 本机已安装 0.166.0，`codex exec` 支持 `--json` 等非交互参数。 | 以后使用 OpenAI 模型时再接入，本期不实现。 |
 
 Run 状态包括 `queued`、`running`、`waiting_approval`、`waiting_input`、`waiting_agents`、`finalizing`，以及终态 `succeeded`、`failed`、`stopped`、`canceled` 和 `interrupted`。
 
@@ -61,7 +64,7 @@ Run 状态包括 `queued`、`running`、`waiting_approval`、`waiting_input`、`
 为每次尝试创建独立 trial 根目录（工作区、数据目录、HOME、TMPDIR）
     ↓
 Eidos Adapter → RuntimeClient → stdio → Eidos 完整 Runtime
-Codex Adapter → codex exec --json
+dsh Adapter → dsh --profile headless --json（只在基线对照时）
     ↓
 收集最终回答、产物、事件和诊断记录
     ↓
@@ -78,7 +81,7 @@ Codex Adapter → codex exec --json
 | Fixture Manager | 准备代码、依赖、黄金 HOME 和初始状态。 | 只操作评测目录，不改动用户日常仓库和日常数据目录。 |
 | Runner | 执行批次、分配 trial 根目录、检查预算、收集产物、清理进程。 | 只维护评测进度，不写 Eidos 业务状态。 |
 | Eidos Adapter | 通过 RuntimeClient 提交任务、读取事件、应答审批、取消 Run。 | 不更换工具，不缩短模型循环，不向模型补充隐含提示。 |
-| Codex Adapter | 通过 `codex exec` 提交同一任务，收集 JSONL 事件和最终回答。 | 不修改 Codex 的提示词和工具，只记录其版本和配置。 |
+| dsh Adapter | 通过 `dsh --profile headless` 提交同一任务，收集 NDJSON 事件和最终回答。 | 不修改 dsh 的提示词、工具和默认行为，只覆盖模型、联网和遥测配置，并记录版本和合成后的配置。 |
 | Grader | 在外部干净副本中检查最终结果。 | 保留判分证据和自身版本，不信任 Agent 的完成声明。 |
 | Analyzer | 根据已保存证据归类失败，计算对照结果。 | 把已确认原因和待验证判断分开。 |
 | Reporter | 输出 JSON、Markdown 和可离线打开的 HTML 报告。 | 展示样本、缺失数据和比较边界。 |
@@ -95,10 +98,11 @@ eval/
 ├── lib/                    配置、批次、尝试、证据、预算、报告
 ├── adapters/
 │   ├── eidos.mjs           RuntimeClient 驱动
-│   └── codex.mjs           codex exec 驱动
+│   └── dsh.mjs             DeepSeek Harness 驱动（基线对照）
+├── importers/              Eidos 修复历史、SWE-bench、SWE-Atlas 等题库的导入与 macOS 校准
 ├── tasks/<taskId>/         公开材料：task.json、prompt.md、fixture 脚本
 ├── suites/                 suite.json：任务列表与分组
-├── agents/                 agent.json：受测产品配置
+├── agents/                 agent.json：受测产品配置；dsh 的评测补丁也放在这里
 └── test/                   评测程序自测（EIDOS_FAKE_MODEL）
 ```
 
@@ -143,7 +147,7 @@ Fixture Manager 每个批次准备一份**黄金 HOME**：最小的 `.zprofile` 
 任务工作区不能与受测构建目录或日常源码目录重合。每个批次记录：
 
 - Eidos 构建标签、源码版本、是否含未提交变更；
-- macOS 版本、芯片、内存、语言、时区、Xcode Command Line Tools、uv、Python、Node 和 Codex CLI 版本；
+- macOS 版本、芯片、内存、语言、时区、Xcode Command Line Tools、uv、Python、Node 和 DeepSeek Harness 版本；
 - Provider、精确模型标识、推理设置和模型配置快照；
 - 权限模式、审批应答策略、自动审查模型、Shell 环境继承策略、黄金 HOME 摘要；
 - Skill、Plugin、MCP、Hooks、记忆、个性化和浏览器配置；
@@ -151,10 +155,25 @@ Fixture Manager 每个批次准备一份**黄金 HOME**：最小的 `.zprofile` 
 
 基线批次使用全新的 Session 和数据目录。普通任务关闭记忆学习，并固定其余扩展配置；专项任务才启用被测功能。Provider 别名可能指向变化的模型，报告保留运行日期和服务返回的版本信息。
 
+**本期受测模型**是火山方舟 Coding Plan 上的 DeepSeek V4.1 Flash：
+
+| 参数 | 值 |
+| --- | --- |
+| 端点 | `https://ark.cn-beijing.volces.com/api/coding/v3`，使用 Chat Completions |
+| 模型 | `deepseek-v4-1-flash-261017` |
+| 上下文窗口与最大输出 | 1,048,576 与 393,216，最大输出使用 `max_tokens` 字段 |
+| 思考强度 | `high`，作为顶层 `reasoning_effort` 发送 |
+| 图片输入 | 关闭 |
+
+Eidos 通过 `model/create` 创建自定义模型：providerId `ArkCodingPlan`，wireApi `chat_completions`，reasoningFormat `openai`，reasoningControl `configured`，可选档位 `none`、`low`、`high`、`max`，outputTokenField `max_tokens`，supportsImages 为 false。字段名以 [`model/config.py`](../../runtime/eidos_runtime/model/config.py) 的 `CustomModelSettings` 和 Desktop 创建自定义模型时实际发送的参数为准。这个模型没有默认思考档位，`run/start` 必须显式传入 `reasoningSelection`。auto_review 的审查模型也使用同一模型；做不到时在 manifest 中记录实际使用的审查模型。
+
+`api/coding/v3` 属于订阅制的 Coding Plan，消耗套餐额度。`api/v3` 是按量计费的在线推理接口，不扣套餐额度，评测不使用。
+
 ### 4.3 凭据与进程环境
 
-- Eidos 的 API Key 当前以明文保存在 `<EIDOS_DATA_DIR>/models.json`。Fixture Manager 在 Runtime 初始化后调用 `model/create` 写入，Key 来自评测用户的受控环境变量。程序不复制日常数据目录。冻结数据快照、打包证据和生成报告前，程序排除 `models.json`，并在预检中确认证据中没有凭据。
-- Codex 每次尝试使用独立的 `CODEX_HOME`，在其中写入本批次的配置；凭据通过 Codex 支持的环境变量传入。程序不读取或复制用户的 `~/.codex`。
+- 本期的 API Key 只从环境变量 `ARK_API_KEY` 读取。Key 不进入对话、文件、日志或证据。
+- Eidos 的 API Key 当前以明文保存在 `<EIDOS_DATA_DIR>/models.json`。Fixture Manager 在 Runtime 初始化后调用 `model/create` 写入。Eidos Runtime 进程本身不继承 `ARK_API_KEY`。程序不复制日常数据目录 `~/.eidos`。冻结数据快照、打包证据和生成报告前，程序排除 `models.json`，并在预检中确认证据中没有凭据。
+- dsh 每次尝试使用独立的 `DSH_HOME`：先从出厂 headless 模板准备一份黄金 `DSH_HOME`，每次尝试用 APFS 克隆复制。Key 通过 `ARK_API_KEY` 环境变量传入，遥测用 `DSH_TELEMETRY_MODE=DISABLED` 关闭。程序不读取、复制或修改用户的 `~/.dsh`，尤其是 `.credentials.yaml`、`.env` 和 `settings.yaml`。用户自己的 profile 可能指向其他网关或路由组，不能用于评测。
 - Runner 为受测进程构造白名单环境，只传入运行所需变量。评分模型凭据、Runner 自身配置和其他 Provider Key 不进入受测进程。
 - Shell 环境继承策略（`all`、`core`、`none`）属于受测条件，写入批次配置；比较不同策略时另开批次。
 
@@ -195,27 +214,37 @@ Fixture Manager 每个批次准备一份**黄金 HOME**：最小的 `.zprofile` 
 
 首个单题运行完成后，维护者用实测用量替换估算值。费用数据不完整时，程序同时保留调用次数和时间限制，并标记限制来源。
 
+本期模型按套餐额度计费，真正的限制是额度和刷新周期，而不是单价。阶段零先实测单题的 token 消耗，再据此决定每个批次的规模，使一个批次能在一个额度窗口内跑完。
+
 预检需要确认：Runner 能启动和关闭受测 Runtime 并通过健康检查；任务的初始状态、依赖和参考解法已经校准；黄金 HOME、受管资源和 Shell profile 与批次记录一致；程序能取消 Run 并完成清理；Runner 能按策略应答审批和用户输入；证据和报告中没有凭据；私有材料没有暴露给 Agent。预检可以使用 `EIDOS_FAKE_MODEL`，但模拟模型只能证明运行链路，不能生成能力基线。
 
 ## 5. 任务库建设
 
 ### 5.1 任务来源
 
-公开基准在 2026 年暴露出大量题目缺陷。OpenAI 在 2026 年 2 月停止报告 SWE-bench Verified：审计中 59.4% 的题目测试有问题，且存在明显污染。7 月 OpenAI 又撤回了对 SWE-bench Pro 的推荐，估计约 30% 的题目有问题。Terminal-Bench 2.0 审计出约 30% 的题目有缺陷，已修订为 2.1。因此本方案以私有任务为主要信号，公开题只作参考，并且每道题都必须通过第 5.3 节的校准。[SWE-bench Verified 说明](https://openai.com/index/why-we-no-longer-evaluate-swe-bench-verified/)、[SWE-bench Pro 审计](https://openai.com/index/separating-signal-from-noise-coding-evaluations)
+公开基准在 2026 年暴露出大量题目缺陷。OpenAI 在 2026 年 2 月停止报告 SWE-bench Verified：审计中 59.4% 的题目测试有问题，且存在明显污染。7 月 OpenAI 又撤回了对 SWE-bench Pro 的推荐，估计约 30% 的题目有问题。Terminal-Bench 2.0 审计出约 30% 的题目有缺陷，已修订为 2.1。因此本方案的能力结论以低污染任务为准，高污染的公开题只用于发现 harness 缺陷和做回归，并且每道题都必须通过第 5.3 节的校准。[SWE-bench Verified 说明](https://openai.com/index/why-we-no-longer-evaluate-swe-bench-verified/)、[SWE-bench Pro 审计](https://openai.com/index/separating-signal-from-noise-coding-evaluations)
 
-| 来源 | 类别 | 做法 | 污染风险 |
-| --- | --- | --- | --- |
-| Eidos 自身的修复历史 | 代码交付 | 选择同时修改测试的 Fix 提交，优先只涉及 Python Runtime 的提交（环境只需 `uv sync --locked`）。工作区为父提交的 `git archive`，隐藏测试取自修复提交，判分运行定向 pytest。 | 低。仓库公开，按受测模型的知识截止日期标注。 |
-| 已记录的真实失败 | 代码交付、可靠性 | `docs/current/limitations.md`、`docs/evaluations/` 和 issue 中记录的真实失败。 | 低 |
-| 小型开源仓库的近期修复 | 代码交付 | 纯 Python 或纯 TypeScript、依赖能在 macOS 上直接安装的项目，优先选受测模型知识截止日期之后的修复。 | 中 |
-| SWE-Atlas-QnA-AA | 仓库问答 | 在 macOS 上按固定提交克隆仓库，不使用其 Docker 镜像；沿用原评分条目和评审配置，结果标为 macOS 改编。[数据集](https://huggingface.co/datasets/ArtificialAnalysis/SWE-Atlas-QnA-AA) | 中 |
-| 本地终端工作流 | 终端 | 文件与数据处理、Git 冲突处理、构建与测试脚本、日志分析、SQLite、Shell 脚本。 | 低 |
-| Terminal-Bench 2.1 中不依赖 Linux 的题 | 终端 | 逐题改写环境并重新校准，标为 macOS 改编，不与官方榜单比较。 | 中 |
-| 第 8 节可靠性场景 | 可靠性 | 通过公开协议、进程控制和本地代理注入故障。 | 无 |
+| 来源 | 类别 | 自带的材料 | 在 macOS 上的做法 | 污染风险与用途 |
+| --- | --- | --- | --- | --- |
+| Eidos 自身的修复历史 | 代码交付 | 题目来自 Fix 提交的说明和关联问题；答案是修复提交及其中的测试。 | 优先选只涉及 Python Runtime 的提交（环境只需 `uv sync --locked`）。工作区为父提交的 `git archive`，判分运行修复提交中的定向 pytest。 | 低。能力结论的主要来源。仓库公开，按受测模型的知识截止日期标注。 |
+| 已记录的真实失败 | 代码交付、可靠性 | `docs/current/limitations.md`、`docs/evaluations/` 和 issue 中的失败记录。 | 维护者补写验收条件。 | 低 |
+| SWE-bench Verified 的纯 Python 子集 | 代码交付 | 题目、标准补丁，以及必须由失败变为通过（FAIL_TO_PASS）和必须保持通过（PASS_TO_PASS）的测试。[swe-bench/experiments](https://github.com/swe-bench/experiments) 公开了其他系统的逐题轨迹和日志，部分提交的文件放在 S3。 | 只选 Django、SymPy、pytest、pylint、requests、Sphinx 等纯 Python 仓库，用 uv 按题目要求的 Python 版本重建环境，优先选环境要求较新 Python 的题。判分在干净副本中运行这两组测试。 | 高：模型可能背出标准补丁。用于发现 harness 缺陷、做回归，以及与公开轨迹做定性对照。 |
+| SWE-Atlas-QnA-AA | 仓库问答 | 问题、参考答案和评分条目。[数据集](https://huggingface.co/datasets/ArtificialAnalysis/SWE-Atlas-QnA-AA) | 按固定提交克隆仓库，不使用其 Docker 镜像；沿用原评分条目和评审配置，结果标为 macOS 改编。 | 中 |
+| Aider Polyglot | 代码交付（小范围） | 225 道 Exercism 练习，覆盖 C++、Go、Java、JavaScript、Python、Rust，带单元测试；各模型的公开通过率可作参考。[基准说明](https://epoch.ai/benchmarks/aider-polyglot) | 安装固定版本的各语言工具链即可运行。 | 高。适合检查 `apply_patch`、工具调用和失败后自我修正的可靠性，题目小、消耗低。 |
+| 小型开源仓库的近期修复 | 代码交付 | 修复提交和测试。 | 纯 Python 或纯 TypeScript、依赖能在 macOS 上直接安装的项目，优先选受测模型知识截止日期之后的修复。 | 中 |
+| 本地终端工作流 | 终端 | 维护者编写。 | 文件与数据处理、Git 冲突处理、构建与测试脚本、日志分析、SQLite、Shell 脚本。 | 低 |
+| Terminal-Bench 2.1 中不依赖 Linux 的题 | 终端 | 题目、标准解脚本和测试。 | 逐题改写环境并重新校准，标为 macOS 改编，不与官方榜单比较。 | 中 |
+| 第 8 节可靠性场景 | 可靠性 | 维护者编写。 | 通过公开协议、进程控制和本地代理注入故障。 | 无 |
+
+使用这些题库时注意三点：
+
+- **代码题的答案是测试，不是参考补丁。** 程序在干净副本中运行隐藏测试判分，不把 Agent 的补丁与标准补丁逐字比较，因为正确的实现可以有多种写法。只有问答题按参考要点和评分条目判分。
+- **公开轨迹只做定性对照。** 这些轨迹来自其他模型、其他 harness 和 Linux 环境，适合用来查看同一道题上第一处分歧，不能用来比较分数。
+- **高污染题库的分数会偏高。** SWE-bench 和 Aider Polyglot 的结果不作为能力结论。SWE-rebench 每月提供去污染的新题，但环境是 Linux Docker，见第 15 节。[SWE-rebench](https://nebius.com/blog/posts/introducing-swe-rebench)
 
 ### 5.2 配额
 
-首批 10 题用来校准流程，建议包含 4 个代码修改（其中至少 3 个来自 Eidos 修复历史）、2 个仓库问答、2 个终端工作流和 2 个可靠性场景。首批不承担成熟度判断。
+首批 10 题用来校准流程，建议包含 4 道 Eidos 修复历史题、3 道 SWE-bench Verified 纯 Python 子集题、2 道 SWE-Atlas-QnA-AA 问答题和 1 个可靠性场景。终端工作流从第二批开始加入。首批不承担成熟度判断。
 
 后续扩展到约 40 题，四类各约 10 题。其中保留 10 题用于阶段验收，其余用于日常优化。相同缺陷的变体和同一修复链不能跨组分配。被反复用于调试的保留题转入开发组，由新题替换。
 
@@ -239,7 +268,8 @@ Fixture Manager 每个批次准备一份**黄金 HOME**：最小的 `.zprofile` 
 - 参考修复通过目标验收和相关回归；
 - 明显不完整的解法被判分器拒绝；
 - 存在多种合理实现时，至少一种替代实现能够通过，避免测试只接受参考补丁的内部写法；
-- 问答题缺少关键要点的回答会失败，可靠性题没有实现目标恢复行为的环境会失败。
+- 问答题缺少关键要点的回答会失败，可靠性题没有实现目标恢复行为的环境会失败；
+- SWE-bench 题在 macOS 上重新校准：原始代码运行 FAIL_TO_PASS 测试应失败，应用标准补丁后 FAIL_TO_PASS 和 PASS_TO_PASS 都应通过。任一条件不满足即判为 `invalid_setup` 并换题。
 
 某道题在多次尝试中始终失败时，先审计任务本身（描述、测试是否过窄或过宽、环境是否有差异），再判断是 Agent 的问题。
 
@@ -285,9 +315,17 @@ Fixture Manager 每个批次准备一份**黄金 HOME**：最小的 `.zprofile` 
   "schemaVersion": 1,
   "product": "eidos",
   "buildId": "<受测构建>",
-  "provider": "openai",
-  "modelId": "<内置模型 ID>",
-  "reasoningSelection": "<与 Codex 相同的思考强度>",
+  "model": {
+    "kind": "custom",
+    "providerId": "ArkCodingPlan",
+    "baseUrl": "https://ark.cn-beijing.volces.com/api/coding/v3",
+    "wireApi": "chat_completions",
+    "modelId": "deepseek-v4-1-flash-261017",
+    "contextWindowTokens": 1048576,
+    "maxOutputTokens": 393216,
+    "apiKeyEnv": "ARK_API_KEY"
+  },
+  "reasoningSelection": "high",
   "approvalMode": "auto_review",
   "approvalResponsePolicy": "reject_escalations",
   "shellEnvironmentPolicy": "all",
@@ -298,15 +336,18 @@ Fixture Manager 每个批次准备一份**黄金 HOME**：最小的 `.zprofile` 
 ```json
 {
   "schemaVersion": 1,
-  "product": "codex",
-  "codexVersion": "<codex --version 的输出>",
-  "model": "<与 Eidos 相同的模型>",
-  "reasoningEffort": "<与 Eidos 相同的思考强度>",
-  "sandbox": "workspace-write",
+  "product": "dsh",
+  "dshVersion": "<dsh --version 的输出>",
+  "profile": "headless",
+  "patchFile": "agents/dsh/ark-flash.patch.yml",
+  "permissionMode": "workspace-write",
   "approvalPolicy": "never",
+  "environment": { "DSH_TELEMETRY_MODE": "DISABLED", "apiKeyEnv": "ARK_API_KEY" },
   "extraArgs": []
 }
 ```
+
+上面的字段名是格式示例，实际字段由实施者确定。模型参数写在 dsh 的评测补丁里，见第 6.2 节。
 
 `suite.json` 固定任务列表和分组；`batch.json` 固定通道（D、F、V）、受测产品列表、重复次数、预算和执行顺序。程序在运行前生成完整的有效配置，避免默认值变化后无法解释成绩。
 
@@ -331,15 +372,21 @@ Fixture Manager 每个批次准备一份**黄金 HOME**：最小的 `.zprofile` 
 
 程序不能直接调用 `store.create_run`、改写 SQLite 状态或通过 RuntimeEngine 的模型包装器生成正式成绩。这些机制只能用于单独标注的组件实验。
 
-### 6.2 Codex
+### 6.2 DeepSeek Harness（基线对照）
 
 1. 步骤 1～3 与 Eidos 相同，使用同一任务卡、同一 fixture 和同一预算。
-2. Codex Adapter 在 trial 根目录创建独立的 `CODEX_HOME`，写入本批次的模型、思考强度和审批策略配置。
-3. Adapter 以白名单环境执行 `codex exec --json -m <model> -s workspace-write -C <工作区> --skip-git-repo-check --ephemeral --ignore-user-config -o <answer.md> <提示词>`，并把审批策略等其余配置通过 `-c` 或 `CODEX_HOME` 中的配置传入。实际参数以实施时 `codex exec --help` 的输出为准。
-4. Adapter 保存 stdout 的 JSONL 事件、stderr 和最终回答。预算到期时先发送中断信号，等待一段有界的清理时间，再终止进程组。
-5. 后续的产物收集、判分、分析和清理与 Eidos 相同。
+2. dsh Adapter 在 trial 根目录克隆黄金 `DSH_HOME`。
+3. Adapter 以工作区为 cwd、以白名单环境（`PATH`、`HOME`、`TMPDIR`、`DSH_HOME`、`DSH_TELEMETRY_MODE`、`ARK_API_KEY` 等必要变量）执行 `dsh --profile headless --patch <评测补丁> --json --permission-mode workspace-write --approval-policy never <提示词>`。实际参数以实施时 CLI 帮助的输出为准。
+4. 评测补丁包含三部分：
+   - `llm-pi-ai` 定义 provider `ark`：`api` 为 `openai-completions`，`baseURL` 为第 4.2 节的端点，`apiKeyEnv` 为 `ARK_API_KEY`；模型参数与第 4.2 节一致，包括 `reasoningEfforts` 映射（off、low、high、max）、`compat.supportsReasoningEffort: true` 和 `compat.maxTokensField: max_tokens`，`input` 只有 `text`。
+   - `agent-default-model` 选择 provider `ark` 和该模型，`reasoningEffort` 为 `high`。
+   - `tool-web` 的 `search` 和 `fetch` 都设为 false。
 
-Codex 会读取工作区内的 `AGENTS.md`，这与 Eidos 读取项目规则的行为对应，双方都保留。
+   字段以 `dsh --profile headless --dump-config-schema` 为准，并用 `--dump-config` 检查合成结果。用户在 dsh 界面中可能把同一模型配置为 Responses API，评测补丁统一改为 Chat Completions，与 Eidos 一致。两边都使用 Responses 的组合以后单独作为一组配置运行。
+5. Adapter 保存 stdout 的 NDJSON 事件、stderr 和最终回答。预算到期时先发送中断信号，等待一段有界的清理时间，再终止进程组。
+6. 后续的产物收集、判分、分析和清理与 Eidos 相同。
+
+dsh 的 agent-instructions 插件负责读取项目说明文件。实施时确认它读取哪些文件名并记录；双方都保留读取项目规则的默认行为。dsh 在 headless 模式下遇到需要扩权的操作时会怎样（拒绝、报错还是挂起），在首次真实运行时实测并记录；如果会挂起，由 Runner 按预算超时处理。
 
 ### 6.3 超时、崩溃与断点继续
 
@@ -361,7 +408,7 @@ Runner 中断后，继续批次只调度尚未启动的任务。对于已经启�
 
 每个任务卡声明预期的 Run 终态。取消场景可以把 `canceled` 作为正确状态，普通交付任务检查正常完成和资源清理。Agent 修好了代码但 Runtime 崩溃时，报告显示产物通过、完整交付失败；Agent 正常结束但外部测试失败时，报告显示任务未通过。
 
-产品对照只比较 `outcome_pass`。Codex 的 `control_pass` 只检查进程正常退出和资源清理，因为 Eidos 特有的生命周期事实在 Codex 中没有对应项。
+产品对照只比较 `outcome_pass`。dsh 的 `control_pass` 只检查进程正常退出和资源清理，因为 Eidos 特有的生命周期事实在 dsh 中没有对应项。
 
 ### 7.2 不同任务的判分器
 
@@ -410,7 +457,7 @@ Grader 检查测试文件和评分输出是否被操纵、Agent 是否读取参�
 ```text
 manifest.json              固定配置、版本和状态
 protocol.jsonl             脱敏后的请求、响应和通知（Eidos）
-codex-events.jsonl         codex exec 的 JSONL 事件（Codex）
+dsh-events.jsonl           dsh 的 NDJSON 事件（DeepSeek Harness）
 stderr.jsonl               本地诊断
 events.jsonl               持久事件导出（Eidos）
 answer.md                  最终回答
@@ -435,7 +482,7 @@ Eidos 的完整用量和轨迹字段无法全部从协议获得时，程序在�
 | 上下文压缩与记忆 | 各自模块的用量记录，实施时逐字段核对。 |
 | 标题生成等其他辅助调用 | 来源待核对。 |
 
-Codex 的用量从其 JSONL 事件中读取，字段以实施时的实际输出为准。
+dsh 的用量从其 NDJSON 事件中读取，字段以实施时的实际输出为准。
 
 日志不能保存 API Key、Authorization Header、完整环境变量或用户日常敏感文件。程序只记录实际可获得的模型输出。
 
@@ -451,7 +498,9 @@ Codex 的用量从其 JSONL 事件中读取，字段以实施时的实际输出�
 
 Provider 在运行期间失败属于实际交付结果，报告可以分出服务失败原因，但不能静默删掉这些尝试。维护者在运行前声明批次级服务异常的判定条件（例如某时间窗内服务错误比例超过阈值），满足条件的批次保留全部尝试并标记“服务异常”，事后不删除尝试，也不调整阈值。
 
-正式对照每题重复三次。每题通过率 = 该题通过次数 ÷ 该题尝试次数；某类通过率 = 该类各题通过率之和 ÷ 题目数。10 题各跑 3 次仍是 10 个任务、30 次尝试。程序同时报告 pass@k（k 次中至少一次通过的任务比例）和 pass^k（k 次全部通过的任务比例）。有未评分项时，报告同时给出已评分结果和上下界，并标明是未完成报告。
+按额度计费的服务在额度或限流窗口用完后会持续返回错误。Runner 识别到这类错误时暂停批次，等额度恢复后只调度尚未启动的任务；已经启动的尝试按实际结果记录，并标注额度原因，不计为 Agent 能力失败。
+
+日常开发批次每题运行 1 次；里程碑和正式对照每题重复三次。每题通过率 = 该题通过次数 ÷ 该题尝试次数；某类通过率 = 该类各题通过率之和 ÷ 题目数。10 题各跑 3 次仍是 10 个任务、30 次尝试。程序同时报告 pass@k（k 次中至少一次通过的任务比例）和 pass^k（k 次全部通过的任务比例）。有未评分项时，报告同时给出已评分结果和上下界，并标明是未完成报告。
 
 ### 9.3 必报指标
 
@@ -482,8 +531,8 @@ Provider 在运行期间失败属于实际交付结果，报告可以分出服�
 | 层 | 规模 | 何时运行 | 用途 |
 | --- | --- | --- | --- |
 | 冒烟回归 | 5～8 道基线中稳定通过（pass^3 = 1）的题，每题 1 次，可用较便宜的模型 | 修改系统提示词、上下文构建、工具契约或模型适配的改动合并前 | 发现明显退化，目标接近 100% |
-| 开发批次 | 20～40 题，每题 3 次 | 每次单方向优化 | 改动前后对照 |
-| 里程碑 | 保留集，加上 Codex 同模型对照和预算曲线 | 阶段验收 | 判断阶段目标 |
+| 开发批次 | 20～40 题，每题 1 次；结论不稳定的题加跑到 3 次 | 每次单方向优化 | 改动前后对照 |
+| 里程碑 | 保留集，每题 3 次，加上预算曲线；大版本对比时重新运行外部对照 | 阶段验收 | 判断阶段目标 |
 
 冒烟回归属于回归评测，通过率应接近 100%；开发批次中的题目属于能力评测，通过率应有提升空间。能力题在稳定通过后可以转入冒烟回归。三层都不接入 `pnpm test`，也不改变仓库“只有用户明确要求才运行 Full Suite”的规则。
 
@@ -491,19 +540,22 @@ Provider 在运行期间失败属于实际交付结果，报告可以分出服�
 
 ### 11.1 对照顺序
 
-1. 固定 Eidos 构建、一个主模型、任务与判分器，建立初始基线。
-2. 用同一模型和同一任务运行 Codex，形成产品对照。
+1. 固定 Eidos 构建、本期受测模型、任务与判分器，建立初始基线。
+2. 在首个基线时，用同一模型和同一任务把首批任务在 dsh 上各运行一次，形成一次性的产品对照。结果保存后供后续批次引用，日常优化不再运行。
 3. 每次只改动一个产品方向，保持模型和其余配置不变，比较改动前后。
 4. 另开批次比较不同模型，保留相同的 Eidos 构建。
-5. 需要时增加 Claude Code 对照（使用 Anthropic 模型）。
+5. 需要时增加 Codex CLI（OpenAI 模型）或 Claude Code（Anthropic 模型）对照。
+
+SWE-bench 题不需要另外付费运行对照：[swe-bench/experiments](https://github.com/swe-bench/experiments) 中其他系统的逐题轨迹可以直接用于查找第一处分歧。
 
 ### 11.2 产品对照的可比条件
 
-- 相同的模型标识和思考强度；相同的提示词原文、fixture、预算和判分器。
-- 双方都读取工作区内的项目规则文件，都不联网，都只写工作区。
-- Eidos 使用 `auto_review` 并拒绝转交的审批，Codex 使用 `workspace-write` 和 `never`。任务设计成不需要扩权，程序记录双方的扩权或沙箱拒绝次数。
-- Codex 自带的系统提示词、工具和上下文策略属于被测 harness 的一部分，不做调整。
-- 无法对齐的条件（例如 Codex 没有仓库索引、Eidos 没有某个 Codex 工具）写入报告的比较边界。
+- 相同的端点、接口（Chat Completions）、模型标识和思考强度；相同的提示词原文、fixture、预算和判分器。
+- **请求一致性检查。** 首次真实运行时，两边各让一次请求经过只在本机监听的记录代理（不记录 Authorization 头），对比 `model`、`reasoning_effort`、`max_tokens`、`stream`、`temperature` 和工具数量。不一致时先修正配置，再运行对照。代理只用于这次检查，正式尝试直连端点。
+- 双方都读取工作区内的项目规则文件，都不联网（dsh 关闭网页搜索和抓取），都只写工作区。
+- Eidos 使用 `auto_review` 并拒绝转交的审批，dsh 使用 `workspace-write` 和 `never`。任务设计成不需要扩权，程序记录双方的扩权或沙箱拒绝次数。
+- dsh 自带的系统提示词、工具、子 Agent、团队和上下文策略属于被测 harness 的一部分，不做调整。
+- 无法对齐的默认值（例如 dsh 的 Shell 默认超时、Eidos 的仓库索引）写入报告的比较边界，不去拉平。
 
 ### 11.3 机制消融
 
@@ -552,7 +604,7 @@ Analyzer 为每次失败记录：第一个已确认偏差及其事件编号、�
 | 改动正确但验证不足 | 验收目标、命令结果和收尾判断。 | 加入外部失败条件，检查错误完成声明是否减少。 |
 | 压缩后忘记要求 | 压缩前后的目标、决定、验证结果和副作用事实。 | 重复同一长任务，比较保留内容与最终产物。 |
 | 因权限等待无法完成 | 实际操作、授权证据、审批理由和人工时间。 | 固定权限模式比较审批改动，另查越权行为。 |
-| 与 Codex 同模型差距明显 | 两边在同一题上的第一处分歧。 | 对分歧点做单方向改动，再跑同一子集。 |
+| 与外部 harness 同模型差距明显 | 两边在同一题上的第一处分歧；SWE-bench 题另外对照公开轨迹。 | 对分歧点做单方向改动，再跑同一子集。 |
 | 正确性相同但费用或耗时上升 | 重复检索、上下文长度、缓存命中率和审批调用。 | 在通过率不下降的条件下比较耗时与总费用。 |
 
 程序不能仅凭一次失败就把原因归给模型或提示词。诊断性重跑另存为实验，不回填到原基线。维护者先处理数据、权限和重复副作用等严重问题，再处理高频交付阻断，最后处理正确性不变时的费用和交互优化。每个优化事项包含受影响任务、证据、预期收益、最小改动和对应回归。
@@ -565,9 +617,10 @@ Analyzer 为每次失败记录：第一个已确认偏差及其事件编号、�
 
 ```text
 eidos-eval doctor   --lane D|F|V
-eidos-eval import   --source eidos-history --commits <提交列表>
+eidos-eval import   --source eidos-history|swe-bench-verified|swe-atlas-qna --ids <题目列表>
 eidos-eval validate --suite suites/seed-10.json
-eidos-eval plan     --suite suites/seed-10.json --agent agents/eidos-baseline.json --agent agents/codex.json --repeat 3 --lane F
+eidos-eval plan     --suite suites/seed-10.json --agent agents/eidos-baseline.json --repeat 1 --lane D
+eidos-eval plan     --suite suites/seed-10.json --agent agents/eidos-baseline.json --agent agents/dsh-baseline.json --repeat 3 --lane F
 eidos-eval run      --plan plans/<planId>.json
 eidos-eval grade    --batch <batchId>
 eidos-eval analyze  --batch <batchId>
@@ -581,10 +634,10 @@ eidos-eval compare  --baseline <batchId> --candidate <batchId>
 
 | 阶段 | 要完成的工作 | 交付物 | 进入下一阶段的条件 |
 | --- | --- | --- | --- |
-| 零：端到端竖切 | 在 D 通道选 1 道可确定性判分的终端任务。先用 `EIDOS_FAKE_MODEL` 跑通 Eidos Adapter，再用真实模型运行一次；同一任务用 Codex Adapter 运行一次。 | 两个产品各 1 次尝试的完整证据目录和 `result.json`；凭据脱敏和 HOME 隔离的检查记录；评测程序自测。 | 凭据注入、审批应答、取消、快照脱敏和外部判分在真实链路上可用。 |
-| 一：首批任务与正式通道 | 搭建 F 通道（`eidoseval` 用户、受测构建目录、黄金 HOME、探针检查）。选定首批 10 题并完成校准。 | 任务卡、私有判分材料、校准记录、通道搭建记录。 | 每题的未修改状态、参考结果和不完整解法都能被正确区分；探针检查通过。 |
-| 二：最小评测程序 | 完成 `plan`、`run`、`grade`、`report`、`compare`，以及预算控制、证据采集、确定性判分和批次续跑。 | 可执行 CLI 和 `eval/README.md`。 | 一道真实任务通过生产 stdio 链路运行并完成外部判分；取消、中断和重新评分都可验证。 |
-| 三：首个基线与 Codex 对照 | 在 F 通道用固定 Eidos 和主模型运行 10 题 × 3 次，Codex 同模型运行 10 题 × 3 次。阅读全部失败记录。 | 60 次尝试的证据、逐题矩阵、产品差距报告和前三项优化建议。 | 报告能解释每个失败；未评分项已处理或明确列出；没有用重跑替换失败。 |
+| 零：端到端竖切（只跑 Eidos） | 在 D 通道准备 2 道题：1 道 Eidos 修复历史题、1 道在 macOS 上校准通过的 SWE-bench Verified 纯 Python 题。先用 `EIDOS_FAKE_MODEL` 跑通 Eidos Adapter，再用本期受测模型各运行一次，按已有答案判分，生成报告。 | 2 次尝试的完整证据目录、`result.json` 和报告；单题 token 消耗；凭据脱敏和 HOME 隔离的检查记录；评测程序自测。 | 凭据注入、审批应答、取消、快照脱敏、外部判分和报告在真实链路上可用；单题消耗已知，可以据此确定批次规模。 |
+| 一：首批任务与正式通道 | 搭建 F 通道（`eidoseval` 用户、受测构建目录、黄金 HOME、探针检查）。按第 5.2 节选定首批 10 题并完成校准。 | 任务卡、私有判分材料、校准记录、通道搭建记录。 | 每题的未修改状态、参考结果和不完整解法都能被正确区分；探针检查通过。 |
+| 二：最小评测程序 | 完成 `plan`、`run`、`grade`、`report`、`compare`，以及预算控制、额度暂停、证据采集、确定性判分和批次续跑。 | 可执行 CLI 和 `eval/README.md`。 | 一道真实任务通过生产 stdio 链路运行并完成外部判分；取消、中断和重新评分都可验证。 |
+| 三：首个基线与一次性对照 | 在 F 通道用固定 Eidos 和本期受测模型运行 10 题 × 3 次。实现 dsh Adapter，完成请求一致性检查后，在 dsh 上把同样 10 题各运行 1 次。SWE-bench 题另外对照公开轨迹。阅读全部失败记录。 | 40 次尝试的证据、逐题矩阵、产品差距报告和前三项优化建议。 | 报告能解释每个失败；未评分项已处理或明确列出；没有用重跑替换失败。 |
 | 四：扩展、分层与消融 | 扩展到 20～40 题并设立保留集；建立冒烟回归层；完成 2～3 个机制消融和一个模型对照；做一次预算曲线。 | 分项基线、冒烟回归清单、消融报告和优化清单。 | 结果能显示收益、退化与不稳定项，维护者据此选择下一项优化。 |
 | 五：Desktop 验收 | 补充少量 Desktop 端到端案例（审批交互、长任务展示、取消）。 | Desktop 证据和验收记录。 | Desktop 结果与 Runtime 结果分开报告。 |
 
@@ -606,6 +659,7 @@ eidos-eval compare  --baseline <batchId> --candidate <batchId>
 - 不向生产 Runtime 添加只为评测存在的隐藏开关。
 - 非 `full_access` 批次不构造完全访问确认字段；`full_access` 只在 V 通道使用。
 - API Key 不进入证据、日志和报告；`models.json` 在快照中排除。
+- 不读取、复制或修改用户的 `~/.dsh` 和日常数据目录 `~/.eidos`。
 - 评测程序不进入 `pnpm test`，不进入发布包，不向 Runtime 增加依赖。
 - 评测程序自身的回归使用 `EIDOS_FAKE_MODEL`，覆盖预算取消、批次续跑、事件去重、审批应答和快照脱敏。
 - 实现后在 `docs/development/README.md` 补充运行说明，把真实批次的结果记录到 `docs/evaluations/`。
@@ -613,13 +667,13 @@ eidos-eval compare  --baseline <batchId> --candidate <batchId>
 
 ## 17. 维护者操作顺序
 
-1. 选定固定的 Eidos 构建、一个主模型（建议选 Eidos 与 Codex 都能使用的 OpenAI 模型），记录权限、审批应答策略和扩展配置。
-2. 实施者完成阶段零竖切，确认凭据注入、审批应答、取消、快照脱敏和 Codex 适配在真实链路上可用。
+1. 选定固定的 Eidos 构建和第 4.2 节的本期受测模型，记录权限、审批应答策略和扩展配置。
+2. 实施者完成阶段零竖切，确认凭据注入、审批应答、取消、快照脱敏、判分和报告在真实链路上可用，并量出单题消耗。
 3. 搭建 F 通道并完成探针检查。
-4. 整理首批 10 张任务卡，优先从 Eidos 修复历史中挑选，不急于填满 40 题。
+4. 按第 5.2 节整理首批 10 张任务卡，不急于填满 40 题。
 5. 验证参考结果、未修改结果和不完整结果，修复无效判分。
 6. 实施者完成最小 CLI，并用首批任务完成真实端到端验证。
-7. 生成正式执行计划，检查尝试数量和预计费用上限，再启动 Eidos 与 Codex 的批次。
+7. 生成正式执行计划，检查尝试数量和额度是否够用，再启动 Eidos 批次；首个基线时另外运行一次 dsh 对照。
 8. 完成独立评分，核对全部首批模型判分，阅读每个失败的第一处偏差。
 9. 选择一项证据最充分、影响较大的优化，冻结其余配置后实现，按相同规则比较改动前后。
 10. 把已确认问题转成最小产品回归，再逐步扩大任务库和冒烟回归层。
@@ -636,6 +690,8 @@ eidos-eval compare  --baseline <batchId> --candidate <batchId>
 - Linux 限制：[搜索驱动](../../runtime/eidos_runtime/workspace/search_driver.py)、[CI 配置](../../.github/workflows/ci.yml)。
 - 用量字段：[模型客户端](../../runtime/eidos_runtime/model/client.py)、[SQLite Schema](../../runtime/eidos_runtime/db/schema.py)、[数据库布局](../../runtime/eidos_runtime/db/layout.py)。
 - 本机 Codex CLI 0.166.0 的 `codex exec --help` 输出。
+- 本机 DeepSeek Harness 0.2.2-rc.5 的 `dsh --help`、`dsh --profile headless --help`、`--dump-default-config` 和 `--dump-config-schema` 输出（provider、模型、权限、遥测和网页工具的配置字段）。
+- 用户日常 Eidos 配置中该 Ark 模型的非凭据参数（读取时已隐去 API Key）。
 
 评测方法参考：
 

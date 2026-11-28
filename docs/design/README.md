@@ -52,7 +52,7 @@
 
 ## 评测
 
-- [Eidos 评测程序与执行方案（macOS）](evaluation-system-design.md)：只在 macOS 上实施的评测规格，包括三档隔离通道、任务库、生产协议驱动、Codex 同模型对照、外部判分、分层运行、机制消融和分阶段实施；当前为设计方案，评测程序尚未实现。
+- [Eidos 评测程序与执行方案（macOS）](evaluation-system-design.md)：只在 macOS 上实施的评测规格，包括三档隔离通道、带答案的题库、生产协议驱动、DeepSeek Harness 一次性同模型对照、外部判分、分层运行、机制消融和分阶段实施；当前为设计方案，评测程序尚未实现。
 
 ## 缺陷与改进追踪
 
